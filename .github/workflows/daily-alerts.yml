@@ -1,0 +1,42 @@
+name: Daily Stock Alerts
+
+on:
+  schedule:
+    - cron: "0 0 * * 1-5"   # 14:30 UTC = 8:00pm IST / ~10:30am ET; Mon–Fri
+  workflow_dispatch: {}         # run manually from Actions tab anytime
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Restore alert_state.json from cache so we don't re-fire alerts
+      # that already fired in a previous run (edge-triggered dedup)
+      - name: Restore alert state
+        uses: actions/cache@v4
+        with:
+          path: alert_state.json
+          key: alert-state-${{ github.run_id }}
+          restore-keys: |
+            alert-state-
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run alert check
+        run: python alert_check.py
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+      # Save updated alert_state.json so next run picks it up
+      - name: Save alert state
+        uses: actions/cache@v4
+        with:
+          path: alert_state.json
+          key: alert-state-${{ github.run_id }}
