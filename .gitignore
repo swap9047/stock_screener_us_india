@@ -1,0 +1,10 @@
+discord_config.json
+telegram_config.json
+auth_config.json
+alert_state.json
+__pycache__/
+*.pyc
+alert_report_*.csv
+.streamlit/secrets.toml
+streamlit.log
+*.log

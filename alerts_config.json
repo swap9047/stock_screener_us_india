@@ -1,0 +1,16 @@
+[
+  {
+    "id": "default1",
+    "scope": "ALL",
+    "metric": "cross_below_10wema",
+    "threshold": null,
+    "enabled": true
+  },
+  {
+    "id": "default2",
+    "scope": "ALL",
+    "metric": "cross_below_40wema",
+    "threshold": null,
+    "enabled": true
+  }
+]

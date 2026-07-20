@@ -1,0 +1,20 @@
+{
+  "ema_weekly": [
+    10,
+    20,
+    40
+  ],
+  "ema_daily": [
+    10,
+    50,
+    200
+  ],
+  "rsi_period": 14,
+  "rs_lookback_daily": 63,
+  "rs_lookback_weekly": 26,
+  "rs_lookback_monthly": 12,
+  "vstop_length": 20,
+  "vstop_factor": 2.0,
+  "benchmark_us": "SPY",
+  "benchmark_india": "^CRSLDX"
+}
