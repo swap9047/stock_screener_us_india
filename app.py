@@ -24,11 +24,14 @@ combined with AND logic alongside the preset Above/Below/range filters.
 
 Sidebar "Settings" opens a dialog where every calculation parameter (EMA
 periods, RSI period, RS lookbacks, VStop length/factor, benchmarks) can be
-edited. Changes are saved to settings.json and take effect on next refresh.
+edited -- changes are saved to settings.json and take effect on next refresh
+-- plus a "Login (optional)" section to set/change/disable the username and
+password gate directly from the UI (saves to a local auth_config.json).
 
-Optional login: set AUTH_USERNAME / AUTH_PASSWORD as Streamlit secrets (cloud)
-or in a local auth_config.json (see README/DEPLOYMENT notes) to require sign-in
-before the app shows any data. If neither is configured, the app is open.
+For a Streamlit Cloud deployment, set AUTH_USERNAME / AUTH_PASSWORD as
+Streamlit secrets instead (Settings dialog will say so if a secret is
+already active) -- secrets persist across redeploys, a local file doesn't.
+If no login is configured anywhere, the app is open.
 """
 
 import uuid
@@ -129,6 +132,16 @@ def save_discord_webhook_local(url):
         json.dump({"webhook_url": url}, f, indent=2)
 
 
+def save_auth_credentials_local(username, password):
+    with open(AUTH_CONFIG_FILE, "w") as f:
+        json.dump({"username": username, "password": password}, f, indent=2)
+
+
+def clear_auth_credentials_local():
+    if os.path.exists(AUTH_CONFIG_FILE):
+        os.remove(AUTH_CONFIG_FILE)
+
+
 def ema_col_labels(settings):
     """Column-header labels for the 6 EMA slots, reflecting the currently
     configured periods (e.g. {'w_fast': '10 WEMA', ...})."""
@@ -183,7 +196,7 @@ LINK_COLUMN_CONFIG = {
 # ---------- Settings dialog ----------
 
 
-@st.dialog("Calculation Settings")
+@st.dialog("Settings")
 def settings_dialog():
     settings = load_settings()
     st.caption(
@@ -254,6 +267,52 @@ def settings_dialog():
         st.session_state.refresh_token += 1
         st.success("Reset to defaults.")
         st.rerun()
+
+    st.divider()
+    st.markdown("**Login (optional)**")
+    cloud_secret_active = False
+    try:
+        cloud_secret_active = "AUTH_USERNAME" in st.secrets and "AUTH_PASSWORD" in st.secrets
+    except Exception:
+        pass
+
+    if cloud_secret_active:
+        st.caption(
+            "A login is already configured via Streamlit secrets (AUTH_USERNAME/AUTH_PASSWORD) — "
+            "that takes priority over anything set here. To change it, edit the secret in your "
+            "Streamlit Cloud app's Settings → Secrets."
+        )
+    else:
+        current_user, _ = get_auth_credentials()
+        if current_user:
+            st.caption(f"Login is currently required. Signed-in username: **{current_user}**.")
+        else:
+            st.caption(
+                "No login is required yet — anyone with the app URL can use it. Set a username "
+                "and password below to require sign-in."
+            )
+        l1, l2 = st.columns(2)
+        new_username = l1.text_input("Username", value=current_user or "", key="set_auth_username")
+        new_password = l2.text_input("Password", type="password", key="set_auth_password")
+
+        lc1, lc2 = st.columns(2)
+        if lc1.button("Save login", width="stretch"):
+            if not new_username.strip() or not new_password:
+                st.error("Enter both a username and a password.")
+            else:
+                save_auth_credentials_local(new_username.strip(), new_password)
+                st.success("Login saved. It applies on your next visit (local file, not committed to git).")
+        if current_user and lc2.button("Disable login", width="stretch"):
+            clear_auth_credentials_local()
+            st.session_state.authenticated = False
+            st.success("Login disabled — app is open again.")
+            st.rerun()
+
+        st.caption(
+            "This saves to a local `auth_config.json` file (gitignored). For an app deployed on "
+            "Streamlit Community Cloud, prefer setting AUTH_USERNAME/AUTH_PASSWORD as Streamlit "
+            "secrets instead — local file changes there don't survive a redeploy."
+        )
 
 
 def render_watchlist_editor(market, watchlists):
