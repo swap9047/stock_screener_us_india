@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+"""
+Scheduled alert checker. Meant to be run daily (via Cowork's scheduler,
+cron, or manually) — independent of whether the Streamlit app is open.
+
+Fetches BOTH the US watchlist and the India watchlist, each benchmarked per
+settings.json (default: S&P 500 / Nifty 500), combines them, evaluates alerts_config.json rules
+with edge-triggered logic (alert_state.json), and sends any newly
+triggered alerts to Discord.
+
+Config files (same folder):
+    watchlist.json        - {"US": [...], "INDIA": [...]}
+    alerts_config.json    - rules (add/edit via the Streamlit app's Alert Rules tab)
+    discord_config.json   - {"webhook_url": "..."}
+    alert_state.json      - auto-managed, tracks what's already fired
+
+Run: python3 alert_check.py
+"""
+
+from stock_data import fetch_all_markets, load_settings
+from alerts import load_rules, load_state, save_state, load_discord_webhook, evaluate_and_fire, send_discord, build_metrics
+
+
+def main():
+    rules = load_rules()
+    if not rules:
+        print("No alert rules configured yet (alerts_config.json is empty). Nothing to check.")
+        return
+
+    settings = load_settings()
+    combined, as_of, per_market = fetch_all_markets(settings=settings)
+    print(f"Checking {len(rules)} rule(s) against {len(per_market['US'])} US + {len(per_market['INDIA'])} India tickers...")
+
+    state = load_state()
+    messages, new_state = evaluate_and_fire(rules, combined, state, metrics=build_metrics(settings))
+    save_state(new_state)
+
+    if not messages:
+        print("No new alerts triggered.")
+        return
+
+    print(f"{len(messages)} new alert(s) triggered:")
+    for m in messages:
+        print(" -", m)
+
+    webhook = load_discord_webhook()
+    if not webhook:
+        print("\nNo discord_config.json / webhook_url set — alerts were NOT sent anywhere.")
+        return
+
+    header = f"**Stock Alert Check — {as_of}**\n"
+    body = "\n".join(messages)
+    ok = send_discord(webhook, header + body)
+    print("Sent to Discord." if ok else "Failed to send to Discord.")
+
+
+if __name__ == "__main__":
+    main()
