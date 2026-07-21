@@ -17,8 +17,8 @@ Config files (same folder):
 Run: python3 alert_check.py
 """
 
-from stock_data import fetch_all_markets, load_settings
-from alerts import load_rules, load_state, save_state, load_discord_webhook, evaluate_and_fire, send_discord, build_metrics
+from stock_data import fetch_all_markets, load_settings, get_filterable_metrics
+from alerts import load_rules, load_state, save_state, load_discord_webhook, evaluate_and_fire, send_discord
 
 
 def main():
@@ -31,8 +31,9 @@ def main():
     combined, as_of, per_market = fetch_all_markets(settings=settings)
     print(f"Checking {len(rules)} rule(s) against {len(per_market['US'])} US + {len(per_market['INDIA'])} India tickers...")
 
+    metric_labels = {v: k for k, v in get_filterable_metrics(settings).items()}
     state = load_state()
-    messages, new_state = evaluate_and_fire(rules, combined, state, metrics=build_metrics(settings))
+    messages, new_state = evaluate_and_fire(rules, combined, state, metric_labels=metric_labels)
     save_state(new_state)
 
     if not messages:

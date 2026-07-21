@@ -1,12 +1,44 @@
 name: Daily Stock Alerts
 
+# Target: every day at 9:00pm US Eastern Time. GitHub Actions cron is UTC-only
+# and does NOT adjust for daylight saving, so 9pm ET is 01:00 UTC during EDT
+# (mid-Mar to early Nov) but 02:00 UTC during EST (early Nov to mid-Mar) --
+# a fixed single cron would silently drift an hour off twice a year. Instead
+# we schedule BOTH possible times and let the "gate" job below check the
+# real America/New_York wall-clock hour at run time, skipping whichever of
+# the two firings isn't actually 9pm ET that day. Both crons use Tue-Sat
+# (UTC) since 9pm ET on a Mon-Fri US trading day has already rolled into the
+# next UTC calendar day.
 on:
   schedule:
-    - cron: "0 0 * * 1-5"   # 14:30 UTC = 8:00pm IST / ~10:30am ET; Mon–Fri
-  workflow_dispatch: {}         # run manually from Actions tab anytime
+    - cron: "0 1 * * 2-6"   # 01:00 UTC = 9:00pm ET during EDT
+    - cron: "0 2 * * 2-6"   # 02:00 UTC = 9:00pm ET during EST
+  workflow_dispatch: {}         # run manually from Actions tab anytime, bypasses the gate
 
 jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - id: check
+        name: Only proceed if it's actually 9pm ET right now
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          hour=$(TZ="America/New_York" date +%H)
+          echo "Current ET hour: $hour"
+          if [ "$hour" = "21" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
   check:
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true'
     runs-on: ubuntu-latest
 
     steps:
