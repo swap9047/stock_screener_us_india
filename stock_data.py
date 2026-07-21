@@ -75,6 +75,9 @@ DEFAULT_SETTINGS = {
     "benchmark_us": BENCHMARKS["US"],
     "benchmark_india": BENCHMARKS["INDIA"],
     "trend_slope_lookback": 3,   # weeks used for the slow WEMA's regression slope (Trend read)
+    "volume_explode_ratio": 1.4,   # avg_volume_10d / avg_volume_100d >= this => "Exploding"
+    "volume_decline_ratio": 0.7,   # avg_volume_10d / avg_volume_100d <= this => "Declining"
+    "tech_uptrend_min_vstop_weeks": 3,   # weeks since last VStop flip required for Tech Uptrend
 }
 
 
@@ -130,6 +133,9 @@ def get_filterable_metrics(settings=None):
         "52W Low": "week52_low",
         "Vol 10D Avg": "avg_volume_10d",
         "Vol 100D Avg": "avg_volume_100d",
+        "% Day Change": "pct_change_1d",
+        "VStop Weeks Since Change": "vstop_weekly_weeks_since_change",
+        "Tech Uptrend": "tech_uptrend",
     }
 
 
@@ -376,6 +382,9 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
     vstop_length = settings["vstop_length"]
     vstop_factor = settings["vstop_factor"]
     trend_slope_lookback = settings.get("trend_slope_lookback", 3)
+    volume_explode_ratio = settings.get("volume_explode_ratio", 1.4)
+    volume_decline_ratio = settings.get("volume_decline_ratio", 0.7)
+    tech_uptrend_min_vstop_weeks = settings.get("tech_uptrend_min_vstop_weeks", 3)
 
     if not tickers:
         return [], datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -505,6 +514,9 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                         vstop_weekly_flipped = bool(weeks_since == 0)
 
             last_close = float(daily_close.iloc[-1])
+            pct_change_1d = None
+            if len(daily_close) >= 2 and daily_close.iloc[-2]:
+                pct_change_1d = round(float((daily_close.iloc[-1] / daily_close.iloc[-2] - 1) * 100), 2)
             data_start = daily_close.index[0].strftime("%Y-%m-%d")
             data_end = daily_close.index[-1].strftime("%Y-%m-%d")
             data_end_age_days = (datetime.now().date() - daily_close.index[-1].date()).days
@@ -512,6 +524,16 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
             daily_volume = df["Volume"].dropna()
             avg_volume_10d = round(float(daily_volume.tail(10).mean())) if len(daily_volume) >= 10 else None
             avg_volume_100d = round(float(daily_volume.tail(100).mean())) if len(daily_volume) >= 100 else None
+
+            volume_trend = None
+            if avg_volume_10d is not None and avg_volume_100d is not None and avg_volume_100d > 0:
+                vol_ratio = avg_volume_10d / avg_volume_100d
+                if vol_ratio >= volume_explode_ratio:
+                    volume_trend = "Exploding"
+                elif vol_ratio <= volume_decline_ratio:
+                    volume_trend = "Declining"
+                else:
+                    volume_trend = "In-line"
 
             # 52-week high/low: intraday extremes over the trailing ~252 trading days
             window_252 = df.tail(252)
@@ -525,18 +547,38 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                     avg_volume_10d, avg_volume_100d, trend_slope_lookback,
                 )
 
+            # Tech Uptrend: close > weekly VStop (in an uptrend that's held for
+            # a while) + close above the slow weekly WEMA + volume surging.
+            tech_uptrend = 0
+            if (
+                vstop_weekly is not None
+                and vstop_weekly_weeks_since_change is not None
+                and ema40 is not None
+                and avg_volume_10d is not None
+                and avg_volume_100d is not None
+            ):
+                tech_uptrend = int(
+                    last_close > vstop_weekly
+                    and vstop_weekly_weeks_since_change > tech_uptrend_min_vstop_weeks
+                    and last_close > ema40
+                    and avg_volume_10d > volume_explode_ratio * avg_volume_100d
+                )
+
             results.append({
                 "ticker": t,
                 "last_close": round(last_close, 1),
+                "pct_change_1d": pct_change_1d,
                 "data_start": data_start,
                 "data_end": data_end,
                 "data_end_age_days": data_end_age_days,
                 "avg_volume_10d": avg_volume_10d,
                 "avg_volume_100d": avg_volume_100d,
+                "volume_trend": volume_trend,
                 "week52_high": week52_high,
                 "week52_low": week52_low,
                 "trend": trend,
                 "trend_rank": trend_rank,
+                "tech_uptrend": tech_uptrend,
                 "ema10": ema10,
                 "ema20": ema20,
                 "ema40": ema40,

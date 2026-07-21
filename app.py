@@ -136,6 +136,24 @@ def get_discord_webhook():
     return None
 
 
+def chunk_lines_for_discord(lines, limit=1900):
+    """Groups lines into chunks that stay under Discord's ~2000-char message
+    limit (1900 for margin), so a big preview result still sends cleanly as
+    multiple messages instead of failing outright."""
+    chunks = []
+    current = ""
+    for line in lines:
+        candidate = f"{current}\n{line}" if current else line
+        if len(candidate) > limit and current:
+            chunks.append(current)
+            current = line
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 def save_discord_webhook_local(url):
     with open(DISCORD_CONFIG_FILE, "w") as f:
         json.dump({"webhook_url": url}, f, indent=2)
@@ -194,6 +212,17 @@ def style_row(row, ema_labels):
             color = trend_colors.get(val)
             if color:
                 styles[i] = f"color:{color};font-weight:700"
+        elif col == "% Chg" and pd.notna(val):
+            styles[i] = "color:#1e8449;font-weight:600" if val > 0 else ("color:#c0392b;font-weight:600" if val < 0 else "")
+        elif col == "Vol Trend" and isinstance(val, str):
+            vol_colors = {"Exploding": "#1e8449", "Declining": "#c0392b"}
+            color = vol_colors.get(val)
+            if color:
+                styles[i] = f"color:{color};font-weight:600"
+        elif col == "Tech Uptrend" and val == "Yes":
+            styles[i] = "color:#1e8449;font-weight:700"
+        elif col == "Alerts" and isinstance(val, str) and val not in ("—", ""):
+            styles[i] = "color:#8e44ad;font-weight:600"
     return styles
 
 
@@ -205,6 +234,7 @@ def numeric_cols(ema_labels):
 
 
 VOLUME_COLS = ["Vol 10D", "Vol 100D"]
+PCT_COLS = ["% Chg"]
 
 
 LINK_COLUMN_CONFIG = {
@@ -298,6 +328,25 @@ def settings_dialog():
              "noisier); longer = smoother but slower to detect a real trend change.",
     )
 
+    st.markdown("**Volume & Tech Uptrend classification**")
+    vt1, vt2, vt3 = st.columns(3)
+    volume_explode_ratio = vt1.number_input(
+        "16. Volume 'Exploding' ratio (10D ÷ 100D avg ≥)", min_value=1.0, step=0.1, format="%.2f",
+        value=float(settings.get("volume_explode_ratio", 1.4)), key="set_vol_explode",
+        help="Vol Trend shows 'Exploding' when 10-day average volume is at least this many times the 100-day average.",
+    )
+    volume_decline_ratio = vt2.number_input(
+        "17. Volume 'Declining' ratio (10D ÷ 100D avg ≤)", min_value=0.0, step=0.1, format="%.2f",
+        value=float(settings.get("volume_decline_ratio", 0.7)), key="set_vol_decline",
+        help="Vol Trend shows 'Declining' when 10-day average volume is at or below this fraction of the 100-day average.",
+    )
+    tech_uptrend_min_vstop_weeks = vt3.number_input(
+        "18. Tech Uptrend: min weeks held above VStop", min_value=0, step=1,
+        value=int(settings.get("tech_uptrend_min_vstop_weeks", 3)), key="set_tech_min_weeks",
+        help="Tech Uptrend requires the weekly VStop to have been in an uptrend for MORE than this many weeks "
+             "(in addition to close > VStop, close > slow WEMA, and volume ≥ the 'Exploding' ratio above).",
+    )
+
     st.divider()
     c1, c2 = st.columns(2)
     if c1.button("Save", type="primary", width="stretch"):
@@ -322,6 +371,9 @@ def settings_dialog():
                 "benchmark_us": benchmark_us.strip().upper(),
                 "benchmark_india": benchmark_india.strip(),
                 "trend_slope_lookback": int(trend_slope_lookback),
+                "volume_explode_ratio": float(volume_explode_ratio),
+                "volume_decline_ratio": float(volume_decline_ratio),
+                "tech_uptrend_min_vstop_weeks": int(tech_uptrend_min_vstop_weeks),
             })
             st.session_state.refresh_token += 1
             st.success("Settings saved.")
@@ -460,9 +512,16 @@ def render_custom_filter_builder(market, filterable_metrics):
     operator_choice = fc2.selectbox("Op", [">", "<", ">=", "<=", "=="], key=f"cf_op_{market}")
     compare_type = fc3.radio("Compare to", ["Metric", "Fixed value"], key=f"cf_ctype_{market}", horizontal=True)
 
+    multiplier, offset = 1.0, 0.0
     if compare_type == "Metric":
         metric_b_label = fc4.selectbox("Metric B", metric_names, key=f"cf_b_{market}")
         value = None
+        mc1, mc2 = st.columns(2)
+        multiplier = mc1.number_input(
+            "× Multiplier (optional)", value=1.0, step=0.1, format="%.2f", key=f"cf_mult_{market}",
+            help="e.g. set to 1.4 for 'Vol 10D Avg >= 1.4 × Vol 100D Avg'.",
+        )
+        offset = mc2.number_input("+ Offset (optional)", value=0.0, step=0.1, format="%.2f", key=f"cf_off_{market}")
     else:
         value = fc4.number_input("Value", value=0.0, step=0.1, format="%.1f", key=f"cf_val_{market}")
         metric_b_label = None
@@ -477,6 +536,10 @@ def render_custom_filter_builder(market, filterable_metrics):
         }
         if compare_type == "Metric":
             new_filter["metric_b"] = filterable_metrics[metric_b_label]
+            if multiplier != 1.0:
+                new_filter["multiplier"] = multiplier
+            if offset != 0.0:
+                new_filter["offset"] = offset
         else:
             new_filter["value"] = value
         active_filters.append(new_filter)
@@ -541,12 +604,16 @@ def render_market_tab(market, results, settings):
     f_rs_w = c11.slider("RS Weekly", -150, 150, (-150, 150), key=f"f_rsw_{market}")
     f_rs_m = c12.slider("RS Monthly", -150, 150, (-150, 150), key=f"f_rsm_{market}")
 
-    src1, src2 = st.columns([3, 1])
+    src1, src2, src3, src4 = st.columns([3, 1.3, 1.3, 1])
     search = src1.text_input("Ticker search", "", key=f"search_{market}").strip().upper()
     f_trend = src2.selectbox(
         "Trend", ["Any", "Strong Uptrend", "Uptrend", "Downtrend", "Strong Downtrend"],
         key=f"f_trend_{market}",
     )
+    f_vol_trend = src3.selectbox(
+        "Vol Trend", ["Any", "Exploding", "In-line", "Declining"], key=f"f_voltrend_{market}",
+    )
+    f_tech_only = src4.checkbox("Tech Uptrend only", key=f"f_tech_{market}")
 
     with st.expander("Custom filters (metric vs metric, or metric vs fixed value; chain with AND/OR)", expanded=False):
         active_custom_filters = render_custom_filter_builder(market, filterable_metrics)
@@ -595,6 +662,10 @@ def render_market_tab(market, results, settings):
             continue
         if f_trend != "Any" and row.get("trend") != f_trend:
             continue
+        if f_vol_trend != "Any" and row.get("volume_trend") != f_vol_trend:
+            continue
+        if f_tech_only and not row.get("tech_uptrend"):
+            continue
         filtered.append(row)
 
     filtered = apply_filters(filtered, active_custom_filters)
@@ -607,33 +678,135 @@ def render_market_tab(market, results, settings):
                 return "—"
             return str(row["vstop_weekly_weeks_since_change"])
 
-        df = pd.DataFrame(filtered)[[
-            "ticker", "last_close", "trend", "week52_high", "week52_low", "data_end",
-            "ema10", "ema20", "ema40", "ema10_daily", "ema50", "ema200",
-            "rsi14_daily", "rsi14_weekly", "rsi14_monthly", "rs_daily", "rs_weekly", "rs_monthly",
-            "vstop_weekly", "vstop_weekly_direction", "avg_volume_10d", "avg_volume_100d",
-        ]].copy()
-        df["vstop_change"] = [vstop_change_str(r) for r in filtered]
-        df["ticker"] = [
+        raw_df = pd.DataFrame(filtered)
+        raw_df["vstop_change"] = [vstop_change_str(r) for r in filtered]
+        raw_df["tech_uptrend_label"] = raw_df["tech_uptrend"].apply(lambda v: "Yes" if v else "No")
+        raw_df["ticker_link"] = [
             f'<a href="{tradingview_url(r["ticker"])}" target="_blank" rel="noopener noreferrer">{r["ticker"]}</a>'
             for r in filtered
         ]
-        df.columns = ["Ticker", "Last", "Trend", "52W High", "52W Low", "Data Thru",
-                      labels["w_fast"], labels["w_mid"], labels["w_slow"],
-                      labels["d_fast"], labels["d_mid"], labels["d_slow"],
-                      "RSI-D", "RSI-W", "RSI-M", "RS-D", "RS-W", "RS-M",
-                      "VStop-W", "VStop Dir", "Vol 10D", "Vol 100D", "VStop Weeks Ago"]
-        df["Trend"] = df["Trend"].fillna("—")
 
-        num_cols = numeric_cols(labels)
+        # Which enabled alert rules is each ticker currently matching?
+        # Reuses the same preview engine the Alert Rules tab's "Run preview"
+        # button uses, scoped to this market's own rows so ALL/US/INDIA/
+        # per-ticker scope all resolve correctly without cross-market leakage.
+        alert_rules_all = load_rules()
+        alert_matches = {}
+        if alert_rules_all:
+            for p in preview_rules(alert_rules_all, results):
+                if p["is_true_now"]:
+                    alert_matches.setdefault(p["ticker"], []).append(p.get("rule_name") or "(unnamed)")
+        raw_df["matched_alerts"] = [", ".join(alert_matches.get(r["ticker"], [])) or "—" for r in filtered]
+
+        # (data key, column label) for every optional (hideable) column, in
+        # display order. Ticker/Last are mandatory and not offered here.
+        optional_defs = [
+            ("trend", "Trend"),
+            ("matched_alerts", "Alerts"),
+            ("pct_change_1d", "% Chg"),
+            ("week52_high", "52W High"),
+            ("week52_low", "52W Low"),
+            ("data_end", "Data Thru"),
+            ("ema10", labels["w_fast"]),
+            ("ema20", labels["w_mid"]),
+            ("ema40", labels["w_slow"]),
+            ("ema10_daily", labels["d_fast"]),
+            ("ema50", labels["d_mid"]),
+            ("ema200", labels["d_slow"]),
+            ("rsi14_daily", "RSI-D"),
+            ("rsi14_weekly", "RSI-W"),
+            ("rsi14_monthly", "RSI-M"),
+            ("rs_daily", "RS-D"),
+            ("rs_weekly", "RS-W"),
+            ("rs_monthly", "RS-M"),
+            ("vstop_weekly", "VStop-W"),
+            ("vstop_weekly_direction", "VStop Dir"),
+            ("vstop_change", "VStop Weeks Ago"),
+            ("volume_trend", "Vol Trend"),
+            ("tech_uptrend_label", "Tech Uptrend"),
+            ("avg_volume_10d", "Vol 10D"),
+            ("avg_volume_100d", "Vol 100D"),
+        ]
+        label_by_key = dict(optional_defs)
+        key_by_label = {lbl: k for k, lbl in optional_defs}
+        all_labels = list(label_by_key.values())
+        # Raw 10D/100D volume are hidden by default (Vol Trend already
+        # summarizes them); everything else shows by default.
+        default_hidden = {"Vol 10D", "Vol 100D"}
+        default_visible = [lbl for lbl in all_labels if lbl not in default_hidden]
+
+        order_state_key = f"col_order_{market}"
+        if order_state_key not in st.session_state:
+            st.session_state[order_state_key] = [key_by_label[lbl] for lbl in default_visible]
+
+        with st.expander("Columns to show / reorder", expanded=False):
+            st.caption("Ticker and Last always show first. Pick which other columns to show:")
+            visible_labels = st.multiselect(
+                "Columns to show", options=all_labels, default=default_visible, key=f"cols_{market}",
+                label_visibility="collapsed",
+            )
+            selected_keys = [key_by_label[lbl] for lbl in visible_labels if lbl in key_by_label]
+
+            # Keep the existing order for columns that are still selected,
+            # append any newly-selected ones at the end, drop deselected ones.
+            order = [k for k in st.session_state[order_state_key] if k in selected_keys]
+            for k in selected_keys:
+                if k not in order:
+                    order.append(k)
+            st.session_state[order_state_key] = order
+
+            if order:
+                st.caption("Order (use ↑ / ↓ to move a column left/right in the table):")
+                move = None  # (index, direction)
+                for i, k in enumerate(order):
+                    oc1, oc2, oc3 = st.columns([6, 1, 1])
+                    oc1.write(f"{i + 1}. {label_by_key[k]}")
+                    if oc2.button("↑", key=f"colup_{market}_{k}", disabled=(i == 0), width="stretch"):
+                        move = (i, -1)
+                    if oc3.button("↓", key=f"coldown_{market}_{k}", disabled=(i == len(order) - 1), width="stretch"):
+                        move = (i, 1)
+                if move is not None:
+                    i, d = move
+                    order[i], order[i + d] = order[i + d], order[i]
+                    st.session_state[order_state_key] = order
+                    st.rerun()
+
+        visible_keys = st.session_state[order_state_key]
+
+        df = raw_df[["ticker_link", "last_close"] + visible_keys].copy()
+        df.columns = ["Ticker", "Last"] + [label_by_key[k] for k in visible_keys]
+        if "Trend" in df.columns:
+            df["Trend"] = df["Trend"].fillna("—")
+
+        num_cols = [c for c in numeric_cols(labels) if c in df.columns]
+        pct_cols = [c for c in PCT_COLS if c in df.columns]
+        vol_cols = [c for c in VOLUME_COLS if c in df.columns]
+
         styled = (
             df.style
             .hide(axis="index")
             .apply(lambda row: style_row(row, labels), axis=1)
             .format("{:.1f}", subset=num_cols, na_rep="—")
-            .format("{:,.0f}", subset=VOLUME_COLS, na_rep="—")
+            .format("{:,.0f}", subset=vol_cols, na_rep="—")
         )
+        if pct_cols:
+            styled = styled.format(lambda v: f"{v:+.2f}%" if pd.notna(v) else "—", subset=pct_cols)
         st.markdown(sticky_header_html(styled), unsafe_allow_html=True)
+
+        # Footer legend: spell out what each alert name in the Alerts column
+        # actually checks for, so you don't have to jump to the Alert Rules
+        # tab to remember what e.g. "RSI hot" means.
+        if "Alerts" in df.columns and alert_matches:
+            used_names = {name for names in alert_matches.values() for name in names}
+            metric_labels_market = {v: k for k, v in filterable_metrics.items()}
+            legend_bits, seen_names = [], set()
+            for r in alert_rules_all:
+                name = r.get("name") or "(unnamed)"
+                if name in used_names and name not in seen_names and r.get("conditions"):
+                    seen_names.add(name)
+                    legend_bits.append(f"**{name}** — {describe_chain(r['conditions'], metric_labels_market)}")
+            if legend_bits:
+                st.caption("Alert legend: " + " · ".join(legend_bits))
     else:
         st.info("No tickers match the current filters.")
 
@@ -649,8 +822,14 @@ def render_market_tab(market, results, settings):
         "weekly RS for direction; 'Strong' additionally requires price within 10% of its 52-week high/low "
         "AND rising volume (10D avg > 100D avg) — a sort/filter aid, not a precise signal. "
         "52W High/Low = trailing 12-month intraday extremes. Vol 10D/100D = average daily share volume "
-        "over the last 10 / 100 trading days. All values shown to 1 decimal. Edit any of these parameters "
-        "via Settings in the sidebar."
+        "over the last 10 / 100 trading days. % Chg = 1-day close-to-close change. Vol Trend classifies "
+        f"10D-vs-100D average volume as Exploding (≥{settings.get('volume_explode_ratio', 1.4)}×), "
+        f"Declining (≤{settings.get('volume_decline_ratio', 0.7)}×), or In-line — thresholds editable in "
+        "Settings. Tech Uptrend = close above the weekly VStop (held for more than "
+        f"{settings.get('tech_uptrend_min_vstop_weeks', 3)} weeks) AND close above the slow WEMA AND 10D "
+        "volume surging past the Exploding ratio above. All values shown to 1 decimal. Use 'Columns to "
+        "show' above the table to hide/show columns. Edit any of these parameters via Settings in the "
+        "sidebar."
     )
 
 
@@ -745,9 +924,16 @@ with tab_alerts:
     dr_metric_a = rc1.selectbox("Metric A", metric_names_alert, key="dr_metric_a")
     dr_operator = rc2.selectbox("Op", [">", "<", ">=", "<=", "=="], key="dr_operator")
     dr_compare_type = rc3.radio("Compare to", ["Metric", "Fixed value"], key="dr_compare_type", horizontal=True)
+    dr_multiplier, dr_offset = 1.0, 0.0
     if dr_compare_type == "Metric":
         dr_metric_b = rc4.selectbox("Metric B", metric_names_alert, key="dr_metric_b")
         dr_value = None
+        dmc1, dmc2 = st.columns(2)
+        dr_multiplier = dmc1.number_input(
+            "× Multiplier (optional)", value=1.0, step=0.1, format="%.2f", key="dr_mult",
+            help="e.g. set to 1.4 for 'Vol 10D Avg >= 1.4 × Vol 100D Avg'.",
+        )
+        dr_offset = dmc2.number_input("+ Offset (optional)", value=0.0, step=0.1, format="%.2f", key="dr_off")
     else:
         dr_value = rc4.number_input("Value", value=0.0, step=0.1, format="%.1f", key="dr_value")
         dr_metric_b = None
@@ -761,6 +947,10 @@ with tab_alerts:
         }
         if dr_compare_type == "Metric":
             new_cond["metric_b"] = filterable_metrics_alert[dr_metric_b]
+            if dr_multiplier != 1.0:
+                new_cond["multiplier"] = dr_multiplier
+            if dr_offset != 0.0:
+                new_cond["offset"] = dr_offset
         else:
             new_cond["value"] = dr_value
         st.session_state.draft_rule_conditions.append(new_cond)
@@ -830,7 +1020,11 @@ with tab_alerts:
     st.markdown("**Preview: what would fire right now**")
     if st.button("Run preview"):
         preview = preview_rules(rules, combined_results)
-        active = [p for p in preview if p["is_true_now"]]
+        st.session_state.preview_active = [p for p in preview if p["is_true_now"]]
+        st.session_state.preview_as_of = as_of
+
+    active = st.session_state.get("preview_active")
+    if active is not None:
         if not active:
             st.write("No rule conditions are currently true.")
         else:
@@ -843,6 +1037,23 @@ with tab_alerts:
                 })
             pdf = pd.DataFrame(rows_preview)
             st.dataframe(pdf, width="stretch", column_config=LINK_COLUMN_CONFIG)
+
+            if st.button("📤 Send this preview to Discord"):
+                webhook = get_discord_webhook()
+                if not webhook:
+                    st.error("No Discord webhook configured yet — set one in the Discord section below first.")
+                else:
+                    lines = [f"**Alert Preview — {st.session_state.get('preview_as_of', as_of)}**"]
+                    for p in active:
+                        name = p.get("rule_name") or "(unnamed)"
+                        desc = describe_chain_with_values(p["row"], p["conditions"], metric_labels_alert)
+                        lines.append(f"**{p['ticker']}** — {name}: {desc}")
+                    chunks = chunk_lines_for_discord(lines)
+                    ok = all(send_discord(webhook, chunk) for chunk in chunks)
+                    if ok:
+                        st.success(f"Sent {len(active)} match(es) to Discord ({len(chunks)} message{'s' if len(chunks) != 1 else ''}).")
+                    else:
+                        st.error("Failed to send — check the webhook URL in the Discord section below.")
 
     # ── Discord ───────────────────────────────────────────────────────────────
     st.divider()
