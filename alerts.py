@@ -148,12 +148,16 @@ def preview_rules(rules, snapshot_results):
 
 def evaluate_and_fire(rules, snapshot_results, state, metric_labels=None):
     """Edge-triggered evaluation used by the scheduled alert_check.py run.
-    Returns (messages list, updated_state dict)."""
+    Returns (messages list, updated_state dict). `messages` is one Discord-
+    ready table PER RULE that has at least one ticker newly triggering today
+    (false -> true transition) -- tickers that were already active stay
+    silent, matching the existing edge-triggered behavior exactly; only the
+    formatting (a table instead of one line per ticker) changed."""
     metric_labels = metric_labels or {}
     by_ticker = {r["ticker"]: r for r in snapshot_results}
     today = date.today().isoformat()
-    messages = []
     new_state = dict(state)
+    newly_triggered_by_rule = {}  # rule_id -> [ticker, ...]
 
     for rule in rules:
         if not rule.get("enabled", True) or not rule.get("conditions"):
@@ -167,10 +171,15 @@ def evaluate_and_fire(rules, snapshot_results, state, metric_labels=None):
             prev = new_state.get(key, {"was_active": False, "last_triggered_date": None})
 
             if is_true and not prev.get("was_active"):
-                messages.append(_format_rule_message(ticker, rule, metric_labels))
+                newly_triggered_by_rule.setdefault(rule["id"], []).append(ticker)
                 new_state[key] = {"was_active": True, "last_triggered_date": today}
             else:
                 new_state[key] = {"was_active": is_true, "last_triggered_date": prev.get("last_triggered_date")}
+
+    rules_by_id = {r["id"]: r for r in rules}
+    messages = []
+    for rule_id, tickers in newly_triggered_by_rule.items():
+        messages.extend(build_discord_messages_for_rule(rules_by_id[rule_id], tickers, by_ticker, metric_labels))
 
     return messages, new_state
 
@@ -181,6 +190,91 @@ def _format_rule_message(ticker, rule, metric_labels):
     if name:
         return f"**{ticker}** — {name}: {desc}"
     return f"**{ticker}** — {desc}"
+
+
+def _metrics_used_in_conditions(conditions):
+    """Every metric referenced by a rule's condition chain, in first-seen
+    order (metric_a always; metric_b too when compare_type is "metric"),
+    deduplicated -- these become the table's columns."""
+    seen = []
+    for cond in conditions:
+        metrics_here = [cond.get("metric_a")]
+        if cond.get("compare_type") == "metric":
+            metrics_here.append(cond.get("metric_b"))
+        for m in metrics_here:
+            if m and m not in seen:
+                seen.append(m)
+    return seen
+
+
+def _format_cell(metric_key, value):
+    if value is None:
+        return "—"
+    if metric_key == "tech_uptrend":
+        return "Yes" if value else "No"
+    if isinstance(value, float):
+        return f"{value:,.1f}"
+    if isinstance(value, int):
+        return f"{value:,}"
+    return str(value)
+
+
+def _ascii_table(headers, rows):
+    widths = [len(str(h)) for h in headers]
+    for r in rows:
+        for i, c in enumerate(r):
+            widths[i] = max(widths[i], len(str(c)))
+
+    def fmt_row(cells):
+        return " | ".join(str(c).ljust(widths[i]) for i, c in enumerate(cells))
+
+    sep = "-+-".join("-" * w for w in widths)
+    return "\n".join([fmt_row(headers), sep] + [fmt_row(r) for r in rows])
+
+
+def build_discord_messages_for_rule(rule, tickers, snapshot_by_ticker, metric_labels, limit=1900):
+    """Builds one or more Discord-ready messages for a single rule: a
+    monospace table with Ticker as the first column, then one column per
+    metric referenced in the rule's conditions with that ticker's current
+    value. Splits into multiple messages (repeating the header) if the full
+    table would exceed Discord's ~2000-char limit. Returns [] if `tickers`
+    is empty."""
+    if not tickers:
+        return []
+    metrics = _metrics_used_in_conditions(rule.get("conditions", []))
+    headers = ["Ticker"] + [metric_labels.get(m, m) for m in metrics]
+    all_rows = []
+    for t in tickers:
+        row = snapshot_by_ticker.get(t, {})
+        all_rows.append([t] + [_format_cell(m, row.get(m)) for m in metrics])
+
+    name = rule.get("name") or "(unnamed)"
+    scope_label = SCOPE_LABELS.get(rule.get("scope"), rule.get("scope"))
+    title = f"**{name}** — {scope_label}"
+
+    def build_chunk(rows_subset, part=None):
+        table = _ascii_table(headers, rows_subset)
+        head = title + (f" (part {part})" if part else "")
+        return f"{head}\n```\n{table}\n```"
+
+    whole = build_chunk(all_rows)
+    if len(whole) <= limit:
+        return [whole]
+
+    # Doesn't fit in one message -- split rows across multiple, each with
+    # its own header/title so every chunk is readable standalone.
+    messages, current, part = [], [], 1
+    for r in all_rows:
+        trial = current + [r]
+        if len(build_chunk(trial, part)) > limit and current:
+            messages.append(build_chunk(current, part))
+            part += 1
+            current = [r]
+        else:
+            current = trial
+    if current:
+        messages.append(build_chunk(current, part))
+    return messages
 
 
 def send_discord(webhook_url, content):

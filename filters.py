@@ -31,6 +31,14 @@ most simple rule builders, e.g. Zapier/IFTTT, work).
 
 Custom filters are stored per market in custom_filters.json:
 {"US": [ {...condition, "id": "..."}, ... ], "INDIA": [ ... ]}
+
+Fixed ("value") comparisons accept text as well as numbers -- e.g.
+{"metric_a": "tech_uptrend", "operator": "==", "compare_type": "value",
+ "value": "Yes"} matches the same rows as {"value": 1}. Numeric-looking text
+("45", "1.4") is parsed to a number; "yes"/"true"/"no"/"false" (any case) map
+to 1/0 when the metric itself is numeric (so it lines up with 0/1 fields
+like Tech Uptrend); anything else is compared as a case-insensitive string.
+See _coerce_fixed_value below.
 """
 
 import json
@@ -100,10 +108,41 @@ def save_market_filters(market, filter_list):
     save_custom_filters(all_filters)
 
 
+_BOOL_TRUE_WORDS = {"yes", "true", "1"}
+_BOOL_FALSE_WORDS = {"no", "false", "0"}
+
+
+def _coerce_fixed_value(a, value):
+    """Coerces a fixed ("value") comparison target to line up with `a`
+    (the current metric_a value) at compare time:
+      - non-string values (old saved filters, already numeric) pass through
+      - numeric-looking text ("45", "1.4") -> float
+      - "yes"/"true"/"no"/"false" (any case) -> 1/0, but only when `a` is
+        itself numeric, so it matches 0/1 fields like Tech Uptrend
+      - anything else is left as a stripped string for case-insensitive
+        string comparison (e.g. a categorical metric)
+    """
+    if not isinstance(value, str):
+        return value
+    stripped = value.strip()
+    try:
+        return float(stripped)
+    except ValueError:
+        pass
+    lowered = stripped.lower()
+    if isinstance(a, (int, float)) and not isinstance(a, bool):
+        if lowered in _BOOL_TRUE_WORDS:
+            return 1
+        if lowered in _BOOL_FALSE_WORDS:
+            return 0
+    return stripped
+
+
 def _resolve_metric_b(row, filt):
     """Returns the effective right-hand-side value for a condition, or None
     if it can't be resolved (missing metric). Applies multiplier/offset when
-    compare_type is "metric" (both default to identity: *1 +0)."""
+    compare_type is "metric" (both default to identity: *1 +0); coerces
+    text fixed values (see _coerce_fixed_value) otherwise."""
     if filt["compare_type"] == "metric":
         b = row.get(filt["metric_b"])
         if b is None:
@@ -111,7 +150,7 @@ def _resolve_metric_b(row, filt):
         multiplier = filt.get("multiplier", 1) or 1
         offset = filt.get("offset", 0) or 0
         return b * multiplier + offset
-    return filt["value"]
+    return _coerce_fixed_value(row.get(filt["metric_a"]), filt["value"])
 
 
 def passes_filter(row, filt):
@@ -124,6 +163,13 @@ def passes_filter(row, filt):
     if b is None:
         return False
     operator_symbol = filt["operator"]
+    if isinstance(a, str) or isinstance(b, str):
+        # Only equality is really meaningful for strings; other operators
+        # fall back to lexicographic comparison rather than erroring.
+        a_cmp, b_cmp = str(a).strip().lower(), str(b).strip().lower()
+        if operator_symbol == "==":
+            return a_cmp == b_cmp
+        return OPERATORS[operator_symbol](a_cmp, b_cmp)
     if operator_symbol == "==":
         return abs(a - b) <= EQ_TOLERANCE
     return OPERATORS[operator_symbol](a, b)

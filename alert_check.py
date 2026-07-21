@@ -49,10 +49,15 @@ def main():
         print("\nNo discord_config.json / webhook_url set — alerts were NOT sent anywhere.")
         return
 
-    header = f"**Stock Alert Check — {as_of}**\n"
-    body = "\n".join(messages)
-    ok = send_discord(webhook, header + body)
-    print("Sent to Discord." if ok else "Failed to send to Discord.")
+    # `messages` is now one Discord-ready table PER RULE (each already sized
+    # to fit under Discord's message limit on its own -- see
+    # alerts.build_discord_messages_for_rule) -- send the header, then each
+    # table, as SEPARATE messages rather than joining them into one, since a
+    # joined blob could exceed the limit when several rules fire the same day.
+    ok = send_discord(webhook, f"**Stock Alert Check — {as_of}**")
+    for m in messages:
+        ok = send_discord(webhook, m) and ok
+    print("Sent to Discord." if ok else "Failed to send one or more messages to Discord.")
 
 
 if __name__ == "__main__":
