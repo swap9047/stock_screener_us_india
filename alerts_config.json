@@ -1,15 +1,30 @@
 [
   {
-    "id": "0cd47857",
-    "name": "us watchlist less than 40wema",
-    "scope": "US",
+    "id": "ed95c887",
+    "name": "below 40 wema",
+    "scope": "ALL",
     "conditions": [
       {
         "metric_a": "last_close",
-        "operator": "<=",
+        "operator": ">",
         "compare_type": "metric",
         "logic": "AND",
         "metric_b": "ema40"
+      }
+    ],
+    "enabled": true
+  },
+  {
+    "id": "b66037f4",
+    "name": "below 20 wema",
+    "scope": "ALL",
+    "conditions": [
+      {
+        "metric_a": "last_close",
+        "operator": ">",
+        "compare_type": "metric",
+        "logic": "AND",
+        "metric_b": "ema20"
       }
     ],
     "enabled": true

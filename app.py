@@ -46,7 +46,8 @@ from stock_data import (
     load_settings, save_settings, DEFAULT_SETTINGS, get_benchmarks, get_filterable_metrics,
     MARKETS,
 )
-from alerts import load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE, send_discord, SCOPE_LABELS
+from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE, send_discord, SCOPE_LABELS,
+                     build_discord_messages_for_rule)
 from filters import (get_market_filters, save_market_filters, apply_filters, describe_filter,
                      describe_chain, describe_chain_with_values)
 import json
@@ -136,22 +137,17 @@ def get_discord_webhook():
     return None
 
 
-def chunk_lines_for_discord(lines, limit=1900):
-    """Groups lines into chunks that stay under Discord's ~2000-char message
-    limit (1900 for margin), so a big preview result still sends cleanly as
-    multiple messages instead of failing outright."""
-    chunks = []
-    current = ""
-    for line in lines:
-        candidate = f"{current}\n{line}" if current else line
-        if len(candidate) > limit and current:
-            chunks.append(current)
-            current = line
-        else:
-            current = candidate
-    if current:
-        chunks.append(current)
-    return chunks
+def parse_filter_value_text(text):
+    """Converts a typed 'Value' field (filter/alert condition builders) to a
+    float when it looks numeric, otherwise keeps it as a stripped string
+    (e.g. "Yes" for Tech Uptrend). The word->0/1 mapping itself happens at
+    compare time in filters._coerce_fixed_value, since that needs the row's
+    live metric_a value to know whether "Yes" should mean 1."""
+    text = (text or "").strip()
+    try:
+        return float(text)
+    except ValueError:
+        return text
 
 
 def save_discord_webhook_local(url):
@@ -523,7 +519,10 @@ def render_custom_filter_builder(market, filterable_metrics):
         )
         offset = mc2.number_input("+ Offset (optional)", value=0.0, step=0.1, format="%.2f", key=f"cf_off_{market}")
     else:
-        value = fc4.number_input("Value", value=0.0, step=0.1, format="%.1f", key=f"cf_val_{market}")
+        value_text = fc4.text_input(
+            "Value", value="0", key=f"cf_val_{market}",
+            help="A number (e.g. 45) or a word for boolean-like metrics, e.g. Yes / No for Tech Uptrend.",
+        )
         metric_b_label = None
 
     if fc5.button("Add", key=f"cf_add_{market}"):
@@ -541,7 +540,7 @@ def render_custom_filter_builder(market, filterable_metrics):
             if offset != 0.0:
                 new_filter["offset"] = offset
         else:
-            new_filter["value"] = value
+            new_filter["value"] = parse_filter_value_text(value_text)
         active_filters.append(new_filter)
         save_market_filters(market, active_filters)
         st.rerun()
@@ -549,7 +548,107 @@ def render_custom_filter_builder(market, filterable_metrics):
     return active_filters
 
 
-def render_market_tab(market, results, settings):
+def build_column_defs(labels):
+    """(data key, column label) for every optional (hideable) watchlist
+    column, in display order, plus derived lookup dicts. Ticker/Last are
+    mandatory and not included here. Shared by both market tabs (via
+    render_shared_column_picker) so US and India always offer/show the
+    identical set of columns."""
+    optional_defs = [
+        ("trend", "Trend"),
+        ("matched_alerts", "Alerts"),
+        ("pct_change_1d", "% Chg"),
+        ("week52_high", "52W High"),
+        ("week52_low", "52W Low"),
+        ("data_end", "Data Thru"),
+        ("ema10", labels["w_fast"]),
+        ("ema20", labels["w_mid"]),
+        ("ema40", labels["w_slow"]),
+        ("ema10_daily", labels["d_fast"]),
+        ("ema50", labels["d_mid"]),
+        ("ema200", labels["d_slow"]),
+        ("rsi14_daily", "RSI-D"),
+        ("rsi14_weekly", "RSI-W"),
+        ("rsi14_monthly", "RSI-M"),
+        ("rs_daily", "RS-D"),
+        ("rs_weekly", "RS-W"),
+        ("rs_monthly", "RS-M"),
+        ("vstop_weekly", "VStop-W"),
+        ("vstop_weekly_direction", "VStop Dir"),
+        ("vstop_change", "VStop Weeks Ago"),
+        ("volume_trend", "Vol Trend"),
+        ("tech_uptrend_label", "Tech Uptrend"),
+        ("avg_volume_10d", "Vol 10D"),
+        ("avg_volume_100d", "Vol 100D"),
+    ]
+    label_by_key = dict(optional_defs)
+    key_by_label = {lbl: k for k, lbl in optional_defs}
+    all_labels = list(label_by_key.values())
+    # Raw 10D/100D volume are hidden by default (Vol Trend already
+    # summarizes them); everything else shows by default.
+    default_hidden = {"Vol 10D", "Vol 100D"}
+    default_visible = [lbl for lbl in all_labels if lbl not in default_hidden]
+    return optional_defs, label_by_key, key_by_label, all_labels, default_visible
+
+
+def render_shared_column_picker(labels):
+    """Single 'Columns to show / reorder' control, rendered ONCE (in the
+    sidebar) and shared by both the US and India watchlist tables, so
+    picking/reordering columns always applies to both.
+
+    This used to be two separate widgets (one per tab) kept in sync by
+    force-writing the shared value into each widget's session_state before
+    it was instantiated -- that turns out to be unreliable in Streamlit:
+    doing that write on the SAME render where the user just interacted with
+    THAT widget silently clobbers their pending change before the widget
+    ever sees it (confirmed empirically, not just suspected). A single
+    shared widget sidesteps the problem entirely rather than working around
+    it. Returns (visible_keys, label_by_key)."""
+    optional_defs, label_by_key, key_by_label, all_labels, default_visible = build_column_defs(labels)
+
+    SHARED_ORDER_KEY = "shared_col_order"
+    if SHARED_ORDER_KEY not in st.session_state:
+        st.session_state[SHARED_ORDER_KEY] = [key_by_label[lbl] for lbl in default_visible]
+    # Drop any keys that no longer exist (e.g. a future app update renames
+    # or removes a column) so stale saved state can't crash the lookup below.
+    st.session_state[SHARED_ORDER_KEY] = [k for k in st.session_state[SHARED_ORDER_KEY] if k in label_by_key]
+
+    with st.sidebar.expander("Columns to show / reorder", expanded=False):
+        st.caption("Applies to both the US and India tables. Ticker and Last always show first.")
+        current_labels = [label_by_key[k] for k in st.session_state[SHARED_ORDER_KEY]]
+        visible_labels = st.multiselect(
+            "Columns to show", options=all_labels, default=current_labels, key="shared_cols_multiselect",
+        )
+        selected_keys = [key_by_label[lbl] for lbl in visible_labels if lbl in key_by_label]
+
+        # Keep the existing order for columns that are still selected,
+        # append any newly-selected ones at the end, drop deselected ones.
+        order = [k for k in st.session_state[SHARED_ORDER_KEY] if k in selected_keys]
+        for k in selected_keys:
+            if k not in order:
+                order.append(k)
+        st.session_state[SHARED_ORDER_KEY] = order
+
+        if order:
+            st.caption("Order (use ↑ / ↓ to move a column left/right in the table):")
+            move = None  # (index, direction)
+            for i, k in enumerate(order):
+                oc1, oc2, oc3 = st.columns([6, 1, 1])
+                oc1.write(f"{i + 1}. {label_by_key[k]}")
+                if oc2.button("↑", key=f"colup_{k}", disabled=(i == 0), width="stretch"):
+                    move = (i, -1)
+                if oc3.button("↓", key=f"coldown_{k}", disabled=(i == len(order) - 1), width="stretch"):
+                    move = (i, 1)
+            if move is not None:
+                i, d = move
+                order[i], order[i + d] = order[i + d], order[i]
+                st.session_state[SHARED_ORDER_KEY] = order
+                st.rerun()
+
+    return st.session_state[SHARED_ORDER_KEY], label_by_key
+
+
+def render_market_tab(market, results, settings, visible_keys, label_by_key):
     benchmarks = get_benchmarks(settings)
     bench = benchmarks[market]
     labels = ema_col_labels(settings)
@@ -690,89 +789,28 @@ def render_market_tab(market, results, settings):
         # Reuses the same preview engine the Alert Rules tab's "Run preview"
         # button uses, scoped to this market's own rows so ALL/US/INDIA/
         # per-ticker scope all resolve correctly without cross-market leakage.
+        # Shown as a number (1, 2, 3...) rather than the full rule name to
+        # keep the column compact -- numbers are assigned by each rule's
+        # position in alerts_config.json, so they mean the same thing on
+        # both the US and India tabs; the footer legend below spells out
+        # what each number actually means.
         alert_rules_all = load_rules()
+        numbered_rules = [r for r in alert_rules_all if r.get("enabled", True) and r.get("conditions")]
+        rule_number = {r["id"]: i + 1 for i, r in enumerate(numbered_rules)}
         alert_matches = {}
         if alert_rules_all:
             for p in preview_rules(alert_rules_all, results):
                 if p["is_true_now"]:
-                    alert_matches.setdefault(p["ticker"], []).append(p.get("rule_name") or "(unnamed)")
-        raw_df["matched_alerts"] = [", ".join(alert_matches.get(r["ticker"], [])) or "—" for r in filtered]
-
-        # (data key, column label) for every optional (hideable) column, in
-        # display order. Ticker/Last are mandatory and not offered here.
-        optional_defs = [
-            ("trend", "Trend"),
-            ("matched_alerts", "Alerts"),
-            ("pct_change_1d", "% Chg"),
-            ("week52_high", "52W High"),
-            ("week52_low", "52W Low"),
-            ("data_end", "Data Thru"),
-            ("ema10", labels["w_fast"]),
-            ("ema20", labels["w_mid"]),
-            ("ema40", labels["w_slow"]),
-            ("ema10_daily", labels["d_fast"]),
-            ("ema50", labels["d_mid"]),
-            ("ema200", labels["d_slow"]),
-            ("rsi14_daily", "RSI-D"),
-            ("rsi14_weekly", "RSI-W"),
-            ("rsi14_monthly", "RSI-M"),
-            ("rs_daily", "RS-D"),
-            ("rs_weekly", "RS-W"),
-            ("rs_monthly", "RS-M"),
-            ("vstop_weekly", "VStop-W"),
-            ("vstop_weekly_direction", "VStop Dir"),
-            ("vstop_change", "VStop Weeks Ago"),
-            ("volume_trend", "Vol Trend"),
-            ("tech_uptrend_label", "Tech Uptrend"),
-            ("avg_volume_10d", "Vol 10D"),
-            ("avg_volume_100d", "Vol 100D"),
+                    num = rule_number.get(p["rule_id"])
+                    if num is not None:
+                        alert_matches.setdefault(p["ticker"], []).append(num)
+        raw_df["matched_alerts"] = [
+            ", ".join(str(n) for n in sorted(alert_matches.get(r["ticker"], []))) or "—" for r in filtered
         ]
-        label_by_key = dict(optional_defs)
-        key_by_label = {lbl: k for k, lbl in optional_defs}
-        all_labels = list(label_by_key.values())
-        # Raw 10D/100D volume are hidden by default (Vol Trend already
-        # summarizes them); everything else shows by default.
-        default_hidden = {"Vol 10D", "Vol 100D"}
-        default_visible = [lbl for lbl in all_labels if lbl not in default_hidden]
 
-        order_state_key = f"col_order_{market}"
-        if order_state_key not in st.session_state:
-            st.session_state[order_state_key] = [key_by_label[lbl] for lbl in default_visible]
-
-        with st.expander("Columns to show / reorder", expanded=False):
-            st.caption("Ticker and Last always show first. Pick which other columns to show:")
-            visible_labels = st.multiselect(
-                "Columns to show", options=all_labels, default=default_visible, key=f"cols_{market}",
-                label_visibility="collapsed",
-            )
-            selected_keys = [key_by_label[lbl] for lbl in visible_labels if lbl in key_by_label]
-
-            # Keep the existing order for columns that are still selected,
-            # append any newly-selected ones at the end, drop deselected ones.
-            order = [k for k in st.session_state[order_state_key] if k in selected_keys]
-            for k in selected_keys:
-                if k not in order:
-                    order.append(k)
-            st.session_state[order_state_key] = order
-
-            if order:
-                st.caption("Order (use ↑ / ↓ to move a column left/right in the table):")
-                move = None  # (index, direction)
-                for i, k in enumerate(order):
-                    oc1, oc2, oc3 = st.columns([6, 1, 1])
-                    oc1.write(f"{i + 1}. {label_by_key[k]}")
-                    if oc2.button("↑", key=f"colup_{market}_{k}", disabled=(i == 0), width="stretch"):
-                        move = (i, -1)
-                    if oc3.button("↓", key=f"coldown_{market}_{k}", disabled=(i == len(order) - 1), width="stretch"):
-                        move = (i, 1)
-                if move is not None:
-                    i, d = move
-                    order[i], order[i + d] = order[i + d], order[i]
-                    st.session_state[order_state_key] = order
-                    st.rerun()
-
-        visible_keys = st.session_state[order_state_key]
-
+        # Column visibility/order is chosen ONCE via the shared sidebar
+        # picker (render_shared_column_picker) and passed in, so US and
+        # India always show identical columns in identical order.
         df = raw_df[["ticker_link", "last_close"] + visible_keys].copy()
         df.columns = ["Ticker", "Last"] + [label_by_key[k] for k in visible_keys]
         if "Trend" in df.columns:
@@ -793,18 +831,18 @@ def render_market_tab(market, results, settings):
             styled = styled.format(lambda v: f"{v:+.2f}%" if pd.notna(v) else "—", subset=pct_cols)
         st.markdown(sticky_header_html(styled), unsafe_allow_html=True)
 
-        # Footer legend: spell out what each alert name in the Alerts column
-        # actually checks for, so you don't have to jump to the Alert Rules
-        # tab to remember what e.g. "RSI hot" means.
+        # Footer legend: spell out what each number in the Alerts column
+        # actually means, so you don't have to jump to the Alert Rules tab
+        # to remember what e.g. "2" refers to.
         if "Alerts" in df.columns and alert_matches:
-            used_names = {name for names in alert_matches.values() for name in names}
+            used_numbers = {n for nums in alert_matches.values() for n in nums}
             metric_labels_market = {v: k for k, v in filterable_metrics.items()}
-            legend_bits, seen_names = [], set()
-            for r in alert_rules_all:
-                name = r.get("name") or "(unnamed)"
-                if name in used_names and name not in seen_names and r.get("conditions"):
-                    seen_names.add(name)
-                    legend_bits.append(f"**{name}** — {describe_chain(r['conditions'], metric_labels_market)}")
+            legend_bits = []
+            for r in numbered_rules:
+                num = rule_number[r["id"]]
+                if num in used_numbers:
+                    name = r.get("name") or "(unnamed)"
+                    legend_bits.append(f"**{num}** = {name} — {describe_chain(r['conditions'], metric_labels_market)}")
             if legend_bits:
                 st.caption("Alert legend: " + " · ".join(legend_bits))
     else:
@@ -857,13 +895,15 @@ as_of, per_market = cached_fetch_all(
 st.sidebar.caption(f"Data as of: {as_of}")
 st.sidebar.caption(f"US: {len(per_market.get('US', []))} · India: {len(per_market.get('INDIA', []))}")
 
+shared_visible_keys, shared_label_by_key = render_shared_column_picker(ema_col_labels(settings_now))
+
 tab_us, tab_india, tab_alerts = st.tabs(["US Watchlist", "India Watchlist", "Alert Rules"])
 
 with tab_us:
-    render_market_tab("US", per_market.get("US", []), settings_now)
+    render_market_tab("US", per_market.get("US", []), settings_now, shared_visible_keys, shared_label_by_key)
 
 with tab_india:
-    render_market_tab("INDIA", per_market.get("INDIA", []), settings_now)
+    render_market_tab("INDIA", per_market.get("INDIA", []), settings_now, shared_visible_keys, shared_label_by_key)
 
 with tab_alerts:
     st.subheader("Alert rules")
@@ -935,7 +975,10 @@ with tab_alerts:
         )
         dr_offset = dmc2.number_input("+ Offset (optional)", value=0.0, step=0.1, format="%.2f", key="dr_off")
     else:
-        dr_value = rc4.number_input("Value", value=0.0, step=0.1, format="%.1f", key="dr_value")
+        dr_value_text = rc4.text_input(
+            "Value", value="0", key="dr_value",
+            help="A number (e.g. 45) or a word for boolean-like metrics, e.g. Yes / No for Tech Uptrend.",
+        )
         dr_metric_b = None
 
     if rc5.button("＋ Add condition"):
@@ -952,7 +995,7 @@ with tab_alerts:
             if dr_offset != 0.0:
                 new_cond["offset"] = dr_offset
         else:
-            new_cond["value"] = dr_value
+            new_cond["value"] = parse_filter_value_text(dr_value_text)
         st.session_state.draft_rule_conditions.append(new_cond)
         st.rerun()
 
@@ -1043,15 +1086,30 @@ with tab_alerts:
                 if not webhook:
                     st.error("No Discord webhook configured yet — set one in the Discord section below first.")
                 else:
-                    lines = [f"**Alert Preview — {st.session_state.get('preview_as_of', as_of)}**"]
+                    # One table per rule (Ticker + the metrics that rule's
+                    # conditions reference), not a flat per-ticker line list —
+                    # same format used by the daily automated alert send.
+                    rules_by_id = {r["id"]: r for r in rules}
+                    by_ticker_preview = {p["ticker"]: p["row"] for p in active}
+                    tickers_by_rule = {}
                     for p in active:
-                        name = p.get("rule_name") or "(unnamed)"
-                        desc = describe_chain_with_values(p["row"], p["conditions"], metric_labels_alert)
-                        lines.append(f"**{p['ticker']}** — {name}: {desc}")
-                    chunks = chunk_lines_for_discord(lines)
-                    ok = all(send_discord(webhook, chunk) for chunk in chunks)
+                        tickers_by_rule.setdefault(p["rule_id"], []).append(p["ticker"])
+
+                    all_msgs = [f"**Alert Preview — {st.session_state.get('preview_as_of', as_of)}**"]
+                    for rule_id, tickers in tickers_by_rule.items():
+                        rule = rules_by_id.get(rule_id)
+                        if not rule:
+                            continue
+                        all_msgs.extend(
+                            build_discord_messages_for_rule(rule, tickers, by_ticker_preview, metric_labels_alert)
+                        )
+
+                    ok = all(send_discord(webhook, m) for m in all_msgs)
                     if ok:
-                        st.success(f"Sent {len(active)} match(es) to Discord ({len(chunks)} message{'s' if len(chunks) != 1 else ''}).")
+                        st.success(
+                            f"Sent {len(active)} match(es) across {len(tickers_by_rule)} rule(s) to Discord "
+                            f"({len(all_msgs)} message{'s' if len(all_msgs) != 1 else ''})."
+                        )
                     else:
                         st.error("Failed to send — check the webhook URL in the Discord section below.")
 
