@@ -12,6 +12,15 @@ value:
     {"metric_a": "ema10", "operator": ">", "compare_type": "value", "value": 40}
     {"metric_a": "ema20", "operator": ">", "compare_type": "metric", "metric_b": "ema40"}
 
+When compare_type is "metric", metric_b may optionally be scaled with a
+multiplier and/or offset before the comparison -- e.g. "Vol 10D Avg >= 1.4 *
+Vol 100D Avg" is:
+    {"metric_a": "avg_volume_10d", "operator": ">=", "compare_type": "metric",
+     "metric_b": "avg_volume_100d", "multiplier": 1.4, "offset": 0}
+The effective right-hand side is always: row[metric_b] * multiplier + offset
+(multiplier defaults to 1, offset defaults to 0, so old saved conditions
+without these keys behave exactly as before).
+
 Multiple conditions chain left-to-right, each with its own "logic" field
 ("AND" or "OR", default "AND") describing how it combines with the running
 result of everything before it. The first condition's "logic" is ignored
@@ -91,18 +100,29 @@ def save_market_filters(market, filter_list):
     save_custom_filters(all_filters)
 
 
+def _resolve_metric_b(row, filt):
+    """Returns the effective right-hand-side value for a condition, or None
+    if it can't be resolved (missing metric). Applies multiplier/offset when
+    compare_type is "metric" (both default to identity: *1 +0)."""
+    if filt["compare_type"] == "metric":
+        b = row.get(filt["metric_b"])
+        if b is None:
+            return None
+        multiplier = filt.get("multiplier", 1) or 1
+        offset = filt.get("offset", 0) or 0
+        return b * multiplier + offset
+    return filt["value"]
+
+
 def passes_filter(row, filt):
     """Returns True/False for a single condition against one row. A missing
     value (metric not computed for this ticker) fails the condition."""
     a = row.get(filt["metric_a"])
     if a is None:
         return False
-    if filt["compare_type"] == "metric":
-        b = row.get(filt["metric_b"])
-        if b is None:
-            return False
-    else:
-        b = filt["value"]
+    b = _resolve_metric_b(row, filt)
+    if b is None:
+        return False
     operator_symbol = filt["operator"]
     if operator_symbol == "==":
         return abs(a - b) <= EQ_TOLERANCE
@@ -132,12 +152,27 @@ def apply_filters(rows, filter_list):
     return [row for row in rows if passes_filter_chain(row, filter_list)]
 
 
+def _metric_b_expr(filt, metric_labels):
+    """Human-readable right-hand side, e.g. 'Vol 100D Avg', '1.4 * Vol 100D
+    Avg', or '1.4 * Vol 100D Avg + 5' when a multiplier/offset is set."""
+    if filt["compare_type"] != "metric":
+        return str(filt["value"])
+    label_b = metric_labels.get(filt["metric_b"], filt["metric_b"])
+    multiplier = filt.get("multiplier", 1) or 1
+    offset = filt.get("offset", 0) or 0
+    expr = label_b
+    if multiplier != 1:
+        expr = f"{multiplier}× {expr}"
+    if offset > 0:
+        expr = f"{expr} + {offset}"
+    elif offset < 0:
+        expr = f"{expr} - {abs(offset)}"
+    return expr
+
+
 def describe_filter(filt, metric_labels):
     label_a = metric_labels.get(filt["metric_a"], filt["metric_a"])
-    if filt["compare_type"] == "metric":
-        label_b = metric_labels.get(filt["metric_b"], filt["metric_b"])
-        return f"{label_a} {filt['operator']} {label_b}"
-    return f"{label_a} {filt['operator']} {filt['value']}"
+    return f"{label_a} {filt['operator']} {_metric_b_expr(filt, metric_labels)}"
 
 
 def describe_chain(conditions, metric_labels):
@@ -160,12 +195,9 @@ def describe_chain_with_values(row, conditions, metric_labels):
         label_a = metric_labels.get(cond["metric_a"], cond["metric_a"])
         val_a = row.get(cond["metric_a"])
         val_a_str = f"{val_a:.1f}" if isinstance(val_a, float) else str(val_a)
-        if cond["compare_type"] == "metric":
-            label_b = metric_labels.get(cond["metric_b"], cond["metric_b"])
-            val_b = row.get(cond["metric_b"])
-            val_b_str = f"{val_b:.1f}" if isinstance(val_b, float) else str(val_b)
-            desc = f"{label_a}[{val_a_str}] {cond['operator']} {label_b}[{val_b_str}]"
-        else:
-            desc = f"{label_a}[{val_a_str}] {cond['operator']} {cond['value']}"
+        expr_b = _metric_b_expr(cond, metric_labels)
+        resolved_b = _resolve_metric_b(row, cond)
+        resolved_b_str = f"{resolved_b:.1f}" if isinstance(resolved_b, float) else str(resolved_b)
+        desc = f"{label_a}[{val_a_str}] {cond['operator']} {expr_b}[{resolved_b_str}]"
         parts.append(f"{prefix}{desc}")
     return "".join(parts)
