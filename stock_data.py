@@ -43,6 +43,7 @@ import json
 import os
 from datetime import datetime
 
+import numpy as np
 import pandas as pd
 import yfinance as yf
 
@@ -73,6 +74,7 @@ DEFAULT_SETTINGS = {
     "vstop_factor": VSTOP_FACTOR,
     "benchmark_us": BENCHMARKS["US"],
     "benchmark_india": BENCHMARKS["INDIA"],
+    "trend_slope_lookback": 3,   # weeks used for the slow WEMA's regression slope (Trend read)
 }
 
 
@@ -123,6 +125,11 @@ def get_filterable_metrics(settings=None):
         "RS Weekly": "rs_weekly",
         "RS Monthly": "rs_monthly",
         "VStop Weekly": "vstop_weekly",
+        "Trend Rank": "trend_rank",
+        "52W High": "week52_high",
+        "52W Low": "week52_low",
+        "Vol 10D Avg": "avg_volume_10d",
+        "Vol 100D Avg": "avg_volume_100d",
     }
 
 
@@ -286,6 +293,77 @@ def compute_vstop(ohlc_df, length=VSTOP_LENGTH, factor=VSTOP_FACTOR):
     return vstop, direction
 
 
+def compute_trend(last_close, ema_slow_series, rs_weekly, week52_high, week52_low,
+                   avg_volume_10d, avg_volume_100d, slope_lookback):
+    """Returns (trend_label, trend_rank) -- a 4-level trend-strength read:
+    "Strong Uptrend" / "Uptrend" / "Downtrend" / "Strong Downtrend"
+    (trend_rank: 4/3/2/1, for numeric sort/filter use).
+
+    Direction (up vs down) is a 2-3 vote system:
+      1. price vs the slow WEMA (above/below)
+      2. the WEMA's own regression slope over `slope_lookback` weeks (a
+         least-squares fit, not a raw two-point diff -- see note below)
+      3. Mansfield RS vs the benchmark (positive/negative), if available
+    Majority vote wins; a genuine tie (only when RS is unavailable and the
+    other two disagree) falls back to price vs MA.
+
+    Strength ("Strong" prefix) requires BOTH of:
+      - price within 10% of its trailing 52-week high (for an uptrend) or
+        52-week low (for a downtrend) -- i.e. the move has real extension
+      - 10-day average volume > 100-day average volume -- i.e. recent
+        activity is elevated, not drying up
+    Both must agree for "Strong"; otherwise it's just Uptrend/Downtrend.
+
+    Using a regression slope (not a 2-point endpoint diff) for the WEMA
+    direction matters for volatile movers: a violent spike-and-fade (e.g. a
+    short squeeze) keeps a longer-window endpoint diff positive for weeks
+    after the MA has already turned down, since the old spike still
+    outweighs the new decline. A short regression window reads the MA's
+    *current* direction instead.
+
+    This is still a simplified, fully mechanical read -- a genuine
+    multi-factor stage/trend indicator would also weigh momentum and beta --
+    so treat it as a sort/filter aid, not a precise signal. Returns
+    (None, None) if there isn't enough weekly history yet.
+    """
+    n = len(ema_slow_series)
+    if n < slope_lookback + 1:
+        return None, None
+    window = ema_slow_series.iloc[-(slope_lookback + 1):]
+    if window.isna().any():
+        return None, None
+    x = np.arange(len(window))
+    slope = np.polyfit(x, window.values, 1)[0]
+    last_ma = window.iloc[-1]
+
+    votes = [1 if last_close > last_ma else -1, 1 if slope > 0 else -1]
+    if rs_weekly is not None:
+        if rs_weekly > 0:
+            votes.append(1)
+        elif rs_weekly < 0:
+            votes.append(-1)
+    direction_score = sum(votes)
+
+    if direction_score > 0:
+        direction = "Uptrend"
+    elif direction_score < 0:
+        direction = "Downtrend"
+    else:
+        direction = "Uptrend" if last_close > last_ma else "Downtrend"
+
+    near_high = week52_high is not None and week52_high > 0 and last_close >= week52_high * 0.90
+    near_low = week52_low is not None and week52_low > 0 and last_close <= week52_low * 1.10
+    volume_rising = (
+        avg_volume_10d is not None and avg_volume_100d is not None and avg_volume_10d > avg_volume_100d
+    )
+
+    if direction == "Uptrend":
+        strong = near_high and volume_rising
+        return ("Strong Uptrend" if strong else "Uptrend"), (4 if strong else 3)
+    strong = near_low and volume_rising
+    return ("Strong Downtrend" if strong else "Downtrend"), (1 if strong else 2)
+
+
 def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
     """Returns (results list of dicts, as_of timestamp string) for one market's tickers."""
     settings = settings or load_settings()
@@ -297,6 +375,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
     rs_lb_monthly = settings["rs_lookback_monthly"]
     vstop_length = settings["vstop_length"]
     vstop_factor = settings["vstop_factor"]
+    trend_slope_lookback = settings.get("trend_slope_lookback", 3)
 
     if not tickers:
         return [], datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -342,6 +421,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
             ema10 = ema20 = ema40 = None
             crossed_below_10 = crossed_below_40 = False
             crossed_above_10 = crossed_above_40 = False
+            ema40_series = None
 
             if len(weekly) >= w_slow + 1:
                 ema10_series = weekly["Close"].ewm(span=w_fast, adjust=False).mean()
@@ -429,12 +509,34 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
             data_end = daily_close.index[-1].strftime("%Y-%m-%d")
             data_end_age_days = (datetime.now().date() - daily_close.index[-1].date()).days
 
+            daily_volume = df["Volume"].dropna()
+            avg_volume_10d = round(float(daily_volume.tail(10).mean())) if len(daily_volume) >= 10 else None
+            avg_volume_100d = round(float(daily_volume.tail(100).mean())) if len(daily_volume) >= 100 else None
+
+            # 52-week high/low: intraday extremes over the trailing ~252 trading days
+            window_252 = df.tail(252)
+            week52_high = round(float(window_252["High"].max()), 1) if window_252["High"].notna().any() else None
+            week52_low = round(float(window_252["Low"].min()), 1) if window_252["Low"].notna().any() else None
+
+            trend = trend_rank = None
+            if ema40_series is not None:
+                trend, trend_rank = compute_trend(
+                    last_close, ema40_series, rs_weekly, week52_high, week52_low,
+                    avg_volume_10d, avg_volume_100d, trend_slope_lookback,
+                )
+
             results.append({
                 "ticker": t,
                 "last_close": round(last_close, 1),
                 "data_start": data_start,
                 "data_end": data_end,
                 "data_end_age_days": data_end_age_days,
+                "avg_volume_10d": avg_volume_10d,
+                "avg_volume_100d": avg_volume_100d,
+                "week52_high": week52_high,
+                "week52_low": week52_low,
+                "trend": trend,
+                "trend_rank": trend_rank,
                 "ema10": ema10,
                 "ema20": ema20,
                 "ema40": ema40,
@@ -491,6 +593,8 @@ def fetch_all_markets(watchlists=None, period="5y", settings=None):
         tickers = watchlists.get(market, [])
         bench = benchmarks.get(market, "SPY")
         results, as_of = fetch_snapshot(tickers, benchmark=bench, period=period, settings=settings)
+        for r in results:
+            r["market"] = market
         per_market[market] = results
 
     combined = [r for market in MARKETS for r in per_market[market]]

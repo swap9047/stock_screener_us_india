@@ -1,26 +1,4 @@
 {
   "US": [],
-  "INDIA": [
-    {
-      "id": "ea05eab8",
-      "metric_a": "ema10",
-      "operator": ">",
-      "compare_type": "metric",
-      "metric_b": "ema40"
-    },
-    {
-      "id": "28e5aef4",
-      "metric_a": "last_close",
-      "operator": ">",
-      "compare_type": "metric",
-      "metric_b": "ema40"
-    },
-    {
-      "id": "dd77eac1",
-      "metric_a": "last_close",
-      "operator": ">=",
-      "compare_type": "metric",
-      "metric_b": "ema10"
-    }
-  ]
+  "INDIA": []
 }

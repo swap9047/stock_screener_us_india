@@ -1,16 +1,17 @@
 [
   {
-    "id": "default1",
-    "scope": "ALL",
-    "metric": "cross_below_10wema",
-    "threshold": null,
-    "enabled": true
-  },
-  {
-    "id": "default2",
-    "scope": "ALL",
-    "metric": "cross_below_40wema",
-    "threshold": null,
+    "id": "0cd47857",
+    "name": "us watchlist less than 40wema",
+    "scope": "US",
+    "conditions": [
+      {
+        "metric_a": "last_close",
+        "operator": "<=",
+        "compare_type": "metric",
+        "logic": "AND",
+        "metric_b": "ema40"
+      }
+    ],
     "enabled": true
   }
 ]
