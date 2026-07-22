@@ -1,5 +1,13 @@
 name: Daily Stock Alerts
 
+# *** TEMPORARILY RUNNING EVERY 15 MIN FOR TESTING ***
+# The gate's is_rule_due() check and the 12pm/9pm restriction are both
+# bypassed right now (gate forced to due=true, check job runs with
+# --force) so you can see live Discord alerts fire quickly. This burns
+# GitHub Actions minutes much faster than the normal 2x/day schedule --
+# revert to the commented-out 4-line cron + restore the real gate check +
+# drop --force once testing is done.
+#
 # Each alert rule carries its OWN day + time-of-day schedule (see the Alert
 # Rules tab in the app, and alerts.is_rule_due) -- but to keep GitHub
 # Actions usage low, every rule's time is restricted to just 2 choices:
@@ -24,10 +32,12 @@ name: Daily Stock Alerts
 # job (which fetches live prices) only runs when the gate says yes.
 on:
   schedule:
-    - cron: "0 16 * * *"   # 16:00 UTC = 12:00 PM ET during EDT
-    - cron: "0 17 * * *"   # 17:00 UTC = 12:00 PM ET during EST
-    - cron: "0 1 * * *"    # 01:00 UTC = 9:00 PM ET during EDT
-    - cron: "0 2 * * *"    # 02:00 UTC = 9:00 PM ET during EST
+    # --- TEMPORARY: testing every 15 min, replace with the 4 lines below when done ---
+    - cron: "*/15 * * * *"
+    # - cron: "0 16 * * *"   # 16:00 UTC = 12:00 PM ET during EDT
+    # - cron: "0 17 * * *"   # 17:00 UTC = 12:00 PM ET during EST
+    # - cron: "0 1 * * *"    # 01:00 UTC = 9:00 PM ET during EDT
+    # - cron: "0 2 * * *"    # 02:00 UTC = 9:00 PM ET during EST
   workflow_dispatch: {}   # run manually from the Actions tab anytime, bypasses the gate
 
 jobs:
@@ -48,12 +58,15 @@ jobs:
       - id: check
         name: Is any enabled rule due right now?
         run: |
-          python - <<'EOF' >> "$GITHUB_OUTPUT"
-          from alerts import load_rules, is_rule_due
-          rules = load_rules()
-          due = any(r.get("enabled", True) and r.get("conditions") and is_rule_due(r) for r in rules)
-          print(f"due={'true' if due else 'false'}")
-          EOF
+          # TEMPORARY: forced to always "true" while testing every 15 min.
+          # Restore the real is_rule_due() check (below) when done testing.
+          echo "due=true" >> "$GITHUB_OUTPUT"
+          # python - <<'EOF' >> "$GITHUB_OUTPUT"
+          # from alerts import load_rules, is_rule_due
+          # rules = load_rules()
+          # due = any(r.get("enabled", True) and r.get("conditions") and is_rule_due(r) for r in rules)
+          # print(f"due={'true' if due else 'false'}")
+          # EOF
 
   check:
     needs: gate
@@ -80,7 +93,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run alert check
-        run: python alert_check.py
+        run: python alert_check.py --force  # TEMPORARY: bypasses per-rule schedule while testing every 15 min
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
 

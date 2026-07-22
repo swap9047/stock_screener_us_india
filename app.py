@@ -1171,32 +1171,6 @@ as_of, per_market = cached_fetch_all(
 st.sidebar.caption(f"Data as of: {as_of}")
 st.sidebar.caption(f"US: {len(per_market.get('US', []))} · India: {len(per_market.get('INDIA', []))}")
 
-with st.sidebar.expander("☁️ Push config to GitHub", expanded=False):
-    gh_token, gh_repo, gh_branch = get_github_config(getattr(st, "secrets", None))
-    if not gh_token or not gh_repo:
-        st.caption(
-            "Edits made here (watchlist, custom filters, settings, alert rules) only live on "
-            "this instance's disk -- they won't reach GitHub Actions (or survive a redeploy) "
-            "until pushed. Set **GITHUB_TOKEN** (a fine-grained PAT with Contents: read/write "
-            "on this repo) and **GITHUB_REPO** (`owner/repo-name`) as secrets to enable this -- "
-            "see DEPLOYMENT.md."
-        )
-    else:
-        st.caption(f"Target: `{gh_repo}` @ `{gh_branch}`")
-        file_labels = {label: fname for fname, label in SYNCABLE_FILES}
-        selected_labels = st.multiselect(
-            "Files to push", options=list(file_labels.keys()),
-            default=list(file_labels.keys()), key="gh_push_files",
-        )
-        if st.button("Push selected to GitHub", width="stretch"):
-            if not selected_labels:
-                st.warning("Select at least one file.")
-            else:
-                targets = [file_labels[lbl] for lbl in selected_labels]
-                results = push_all_config(gh_token, gh_repo, gh_branch, filenames=targets)
-                for fname, ok, msg in results:
-                    (st.success if ok else st.error)(msg)
-
 shared_visible_keys, shared_label_by_key = render_shared_column_picker(ema_col_labels(settings_now))
 
 tab_us, tab_india, tab_alerts = st.tabs(["US Watchlist", "India Watchlist", "Alert Rules"])
@@ -1509,3 +1483,36 @@ with tab_alerts:
         else:
             ok = send_discord(webhook_input, "✅ Test alert from your Stock Watchlist app.")
             st.success("Sent!") if ok else st.error("Failed to send — check the webhook URL.")
+
+    st.divider()
+    with st.expander("☁️ Push config to GitHub", expanded=False):
+        gh_token, gh_repo, gh_branch = get_github_config(getattr(st, "secrets", None))
+        if not gh_token or not gh_repo:
+            st.caption(
+                "Edits made here (watchlist, custom filters, settings, alert rules) only live on "
+                "this instance's disk -- they won't reach GitHub Actions (or survive a redeploy) "
+                "until pushed. Set **GITHUB_TOKEN** (a fine-grained PAT with Contents: read/write "
+                "on this repo) and **GITHUB_REPO** (`owner/repo-name`) as secrets to enable this -- "
+                "see DEPLOYMENT.md."
+            )
+        else:
+            st.caption(f"Target: `{gh_repo}` @ `{gh_branch}`")
+            file_labels = {label: fname for fname, label in SYNCABLE_FILES}
+            selected_labels = st.multiselect(
+                "Files to push", options=list(file_labels.keys()),
+                default=list(file_labels.keys()), key="gh_push_files",
+            )
+            st.caption(
+                "Pushes everything selected as one combined commit -- important on Streamlit Cloud, "
+                "which auto-redeploys the instant any commit lands, so separate per-file commits risk "
+                "the redeploy interrupting the push before later files go through."
+            )
+            if st.button("Push selected to GitHub", width="stretch"):
+                if not selected_labels:
+                    st.warning("Select at least one file.")
+                else:
+                    targets = [file_labels[lbl] for lbl in selected_labels]
+                    ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=targets)
+                    (st.success if ok else st.error)(msg)
+                    if ok:
+                        st.caption("Your app may restart shortly since Streamlit Cloud watches this repo.")
