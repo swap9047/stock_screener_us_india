@@ -58,6 +58,19 @@ OPERATORS = {
 
 EQ_TOLERANCE = 0.05  # values are rounded to 1 decimal, so treat "==" as approx-equal
 
+# Metric field -> its full set of valid values, for any metric that's really
+# a category/label rather than a continuous number (Trend, Vol Trend, VStop
+# Dir, Tech Uptrend). The app's condition builders use this to swap the
+# free-text "Value" box for a multiselect of the real values, and to enable
+# the "in" operator (match ANY of several selected values, e.g. Trend in
+# [Downtrend, Strong Downtrend]) instead of only single-value "==".
+CATEGORICAL_METRICS = {
+    "trend": ["Strong Uptrend", "Uptrend", "Downtrend", "Strong Downtrend"],
+    "volume_trend": ["Exploding", "In-line", "Declining"],
+    "vstop_weekly_direction": ["Up", "Down"],
+    "tech_uptrend": ["Yes", "No"],
+}
+
 
 def _normalize_conditions(val):
     """Accepts old formats -- a plain list with no per-item "logic" (implicit
@@ -141,8 +154,11 @@ def _coerce_fixed_value(a, value):
 def _resolve_metric_b(row, filt):
     """Returns the effective right-hand-side value for a condition, or None
     if it can't be resolved (missing metric). Applies multiplier/offset when
-    compare_type is "metric" (both default to identity: *1 +0); coerces
-    text fixed values (see _coerce_fixed_value) otherwise."""
+    compare_type is "metric" (both default to identity: *1 +0); for the
+    "in" operator returns the raw list of selected values unchanged (each
+    item gets coerced individually in passes_filter, since they need to be
+    compared against `a` one at a time); otherwise coerces a single text
+    fixed value (see _coerce_fixed_value)."""
     if filt["compare_type"] == "metric":
         b = row.get(filt["metric_b"])
         if b is None:
@@ -150,6 +166,8 @@ def _resolve_metric_b(row, filt):
         multiplier = filt.get("multiplier", 1) or 1
         offset = filt.get("offset", 0) or 0
         return b * multiplier + offset
+    if filt.get("operator") == "in":
+        return filt.get("value")
     return _coerce_fixed_value(row.get(filt["metric_a"]), filt["value"])
 
 
@@ -163,6 +181,22 @@ def passes_filter(row, filt):
     if b is None:
         return False
     operator_symbol = filt["operator"]
+
+    if operator_symbol == "in":
+        # Matches if `a` equals ANY of the selected values -- e.g. Trend in
+        # [Downtrend, Strong Downtrend]. Used for categorical metrics (see
+        # CATEGORICAL_METRICS), where `value` is a list of option strings
+        # picked from a multiselect, not a single typed value.
+        candidates = b if isinstance(b, list) else [b]
+        coerced = [_coerce_fixed_value(a, v) for v in candidates]
+        if isinstance(a, str):
+            a_cmp = a.strip().lower()
+            return a_cmp in {str(v).strip().lower() for v in coerced}
+        return any(
+            (a == v) or (isinstance(v, (int, float)) and not isinstance(v, bool) and abs(a - v) <= EQ_TOLERANCE)
+            for v in coerced
+        )
+
     if isinstance(a, str) or isinstance(b, str):
         # Only equality is really meaningful for strings; other operators
         # fall back to lexicographic comparison rather than erroring.
@@ -200,7 +234,12 @@ def apply_filters(rows, filter_list):
 
 def _metric_b_expr(filt, metric_labels):
     """Human-readable right-hand side, e.g. 'Vol 100D Avg', '1.4 * Vol 100D
-    Avg', or '1.4 * Vol 100D Avg + 5' when a multiplier/offset is set."""
+    Avg', or '1.4 * Vol 100D Avg + 5' when a multiplier/offset is set. For
+    "in", renders the selected values as a bracketed list, e.g.
+    '[Downtrend, Strong Downtrend]'."""
+    if filt.get("operator") == "in":
+        values = filt.get("value") or []
+        return "[" + ", ".join(str(v) for v in values) + "]"
     if filt["compare_type"] != "metric":
         return str(filt["value"])
     label_b = metric_labels.get(filt["metric_b"], filt["metric_b"])
@@ -242,8 +281,14 @@ def describe_chain_with_values(row, conditions, metric_labels):
         val_a = row.get(cond["metric_a"])
         val_a_str = f"{val_a:.1f}" if isinstance(val_a, float) else str(val_a)
         expr_b = _metric_b_expr(cond, metric_labels)
-        resolved_b = _resolve_metric_b(row, cond)
-        resolved_b_str = f"{resolved_b:.1f}" if isinstance(resolved_b, float) else str(resolved_b)
-        desc = f"{label_a}[{val_a_str}] {cond['operator']} {expr_b}[{resolved_b_str}]"
+        if cond.get("operator") == "in":
+            # expr_b is already the full bracketed value list -- no separate
+            # "resolved" value to show alongside it (unlike a metric_b,
+            # which has both a label and a live number).
+            desc = f"{label_a}[{val_a_str}] in {expr_b}"
+        else:
+            resolved_b = _resolve_metric_b(row, cond)
+            resolved_b_str = f"{resolved_b:.1f}" if isinstance(resolved_b, float) else str(resolved_b)
+            desc = f"{label_a}[{val_a_str}] {cond['operator']} {expr_b}[{resolved_b_str}]"
         parts.append(f"{prefix}{desc}")
     return "".join(parts)

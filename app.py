@@ -51,7 +51,7 @@ from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE, 
                      build_discord_messages_for_rule, describe_schedule, DAY_CODES, DAY_LABELS,
                      DEFAULT_DAYS, ALLOWED_HOURS, HOUR_LABELS)
 from filters import (get_market_filters, save_market_filters, apply_filters, describe_filter,
-                     describe_chain, describe_chain_with_values, passes_filter_chain)
+                     describe_chain, describe_chain_with_values, passes_filter_chain, CATEGORICAL_METRICS)
 from github_sync import get_github_config, push_all_config, SYNCABLE_FILES
 import json
 import os
@@ -372,11 +372,18 @@ def tech_uptrend_tooltip(row, settings, labels):
     return "\n".join(lines)
 
 
-def numeric_cols(ema_labels):
+def price_cols(ema_labels):
+    """Price-denominated columns -- shown as whole numbers (no decimal),
+    since sub-dollar/rupee precision isn't meaningful at a glance here."""
     return ["Last", ema_labels["w_fast"], ema_labels["w_mid"], ema_labels["w_slow"],
             ema_labels["d_fast"], ema_labels["d_mid"], ema_labels["d_slow"],
-            "RSI-D", "RSI-W", "RSI-M", "RS-D", "RS-W", "RS-M", "VStop-W",
-            "52W High", "52W Low"]
+            "VStop-W", "52W High", "52W Low"]
+
+
+def ratio_cols():
+    """Oscillator/ratio columns -- kept at 1 decimal (whole numbers would
+    lose meaningful resolution for RSI/RS reads)."""
+    return ["RSI-D", "RSI-W", "RSI-M", "RS-D", "RS-W", "RS-M"]
 
 
 VOLUME_COLS = ["Vol 10D", "Vol 100D"]
@@ -739,6 +746,79 @@ def render_watchlist_editor(market, watchlists):
                 st.rerun()
 
 
+def render_condition_builder(key_prefix, metric_names, filterable_metrics, logic_choice):
+    """Renders one full condition-builder row (Metric A / Operator / Compare
+    to / Value / Add button) shared by the watchlist custom-filter builder,
+    the new-rule builder, and each existing rule's inline condition editor
+    -- one implementation instead of three near-duplicates.
+
+    When Metric A is a categorical field (Trend, Vol Trend, VStop Dir, Tech
+    Uptrend -- see filters.CATEGORICAL_METRICS), the Operator/Compare-to/
+    Value widgets are replaced with a multiselect of that metric's real
+    values and the operator is fixed to "in" -- so instead of typing
+    "Downtrend" and hoping it's spelled/capitalized exactly right, you pick
+    from the real list, and can match several at once (e.g. Trend in
+    [Downtrend, Strong Downtrend]).
+
+    Returns a finished condition dict (with "logic" set to `logic_choice`,
+    ready to append to a conditions list) the moment "Add" is clicked with
+    valid inputs, else None."""
+    metric_a_label = st.selectbox("Metric A", metric_names, key=f"{key_prefix}_a")
+    metric_a_key = filterable_metrics[metric_a_label]
+    categorical_options = CATEGORICAL_METRICS.get(metric_a_key)
+
+    if categorical_options:
+        c1, c2 = st.columns([4, 1])
+        selected = c1.multiselect(
+            "Value(s) — matches if Trend/Vol Trend/etc. is ANY of these",
+            options=categorical_options, key=f"{key_prefix}_catval",
+        )
+        if c2.button("＋ Add condition", key=f"{key_prefix}_addbtn"):
+            if not selected:
+                st.warning("Select at least one value.")
+                return None
+            return {
+                "metric_a": metric_a_key, "operator": "in", "compare_type": "value",
+                "value": selected, "logic": logic_choice,
+            }
+        return None
+
+    c1, c2, c3 = st.columns([1, 1.5, 2])
+    operator_choice = c1.selectbox("Op", [">", "<", ">=", "<=", "=="], key=f"{key_prefix}_op")
+    compare_type = c2.radio("Compare to", ["Metric", "Fixed value"], key=f"{key_prefix}_ctype", horizontal=True)
+    if compare_type == "Metric":
+        metric_b_label = c3.selectbox("Metric B", metric_names, key=f"{key_prefix}_b")
+        mc1, mc2, mc3 = st.columns([1, 1, 1])
+        multiplier = mc1.number_input(
+            "× Multiplier (optional)", value=1.0, step=0.1, format="%.2f", key=f"{key_prefix}_mult",
+            help="e.g. set to 1.4 for 'Vol 10D Avg >= 1.4 × Vol 100D Avg'.",
+        )
+        offset = mc2.number_input("+ Offset (optional)", value=0.0, step=0.1, format="%.2f", key=f"{key_prefix}_off")
+        if mc3.button("＋ Add condition", key=f"{key_prefix}_addbtn"):
+            cond = {
+                "metric_a": metric_a_key, "operator": operator_choice, "compare_type": "metric",
+                "metric_b": filterable_metrics[metric_b_label], "logic": logic_choice,
+            }
+            if multiplier != 1.0:
+                cond["multiplier"] = multiplier
+            if offset != 0.0:
+                cond["offset"] = offset
+            return cond
+        return None
+    else:
+        vc1, vc2 = st.columns([2, 1])
+        value_text = vc1.text_input(
+            "Value", value="0", key=f"{key_prefix}_val",
+            help="A number (e.g. 45) or a word for boolean-like metrics, e.g. Yes / No for Tech Uptrend.",
+        )
+        if vc2.button("＋ Add condition", key=f"{key_prefix}_addbtn"):
+            return {
+                "metric_a": metric_a_key, "operator": operator_choice, "compare_type": "value",
+                "value": parse_filter_value_text(value_text), "logic": logic_choice,
+            }
+        return None
+
+
 def render_custom_filter_builder(market, filterable_metrics):
     st.markdown(
         "**Custom filters** — compare any metric to another metric or a fixed value. "
@@ -774,44 +854,9 @@ def render_custom_filter_builder(market, filterable_metrics):
     else:
         logic_choice = "AND"
 
-    fc1, fc2, fc3, fc4, fc5 = st.columns([2, 1, 1.5, 2, 1])
-    metric_a_label = fc1.selectbox("Metric A", metric_names, key=f"cf_a_{market}")
-    operator_choice = fc2.selectbox("Op", [">", "<", ">=", "<=", "=="], key=f"cf_op_{market}")
-    compare_type = fc3.radio("Compare to", ["Metric", "Fixed value"], key=f"cf_ctype_{market}", horizontal=True)
-
-    multiplier, offset = 1.0, 0.0
-    if compare_type == "Metric":
-        metric_b_label = fc4.selectbox("Metric B", metric_names, key=f"cf_b_{market}")
-        value = None
-        mc1, mc2 = st.columns(2)
-        multiplier = mc1.number_input(
-            "× Multiplier (optional)", value=1.0, step=0.1, format="%.2f", key=f"cf_mult_{market}",
-            help="e.g. set to 1.4 for 'Vol 10D Avg >= 1.4 × Vol 100D Avg'.",
-        )
-        offset = mc2.number_input("+ Offset (optional)", value=0.0, step=0.1, format="%.2f", key=f"cf_off_{market}")
-    else:
-        value_text = fc4.text_input(
-            "Value", value="0", key=f"cf_val_{market}",
-            help="A number (e.g. 45) or a word for boolean-like metrics, e.g. Yes / No for Tech Uptrend.",
-        )
-        metric_b_label = None
-
-    if fc5.button("Add", key=f"cf_add_{market}"):
-        new_filter = {
-            "id": uuid.uuid4().hex[:8],
-            "metric_a": filterable_metrics[metric_a_label],
-            "operator": operator_choice,
-            "compare_type": "metric" if compare_type == "Metric" else "value",
-            "logic": logic_choice,
-        }
-        if compare_type == "Metric":
-            new_filter["metric_b"] = filterable_metrics[metric_b_label]
-            if multiplier != 1.0:
-                new_filter["multiplier"] = multiplier
-            if offset != 0.0:
-                new_filter["offset"] = offset
-        else:
-            new_filter["value"] = parse_filter_value_text(value_text)
+    new_filter = render_condition_builder(f"cf_{market}", metric_names, filterable_metrics, logic_choice)
+    if new_filter:
+        new_filter["id"] = uuid.uuid4().hex[:8]
         active_filters.append(new_filter)
         save_market_filters(market, active_filters)
         st.rerun()
@@ -1123,7 +1168,8 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key):
         if "Trend" in df.columns:
             df["Trend"] = df["Trend"].fillna("—")
 
-        num_cols = [c for c in numeric_cols(labels) if c in df.columns]
+        price_cs = [c for c in price_cols(labels) if c in df.columns]
+        ratio_cs = [c for c in ratio_cols() if c in df.columns]
         pct_cols = [c for c in PCT_COLS if c in df.columns]
         vol_cols = [c for c in VOLUME_COLS if c in df.columns]
 
@@ -1131,11 +1177,12 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key):
             df.style
             .hide(axis="index")
             .apply(lambda row: style_row(row, labels), axis=1)
-            .format("{:.1f}", subset=num_cols, na_rep="—")
+            .format("{:,.0f}", subset=price_cs, na_rep="—")
+            .format("{:.1f}", subset=ratio_cs, na_rep="—")
             .format("{:,.0f}", subset=vol_cols, na_rep="—")
         )
         if pct_cols:
-            styled = styled.format(lambda v: f"{v:+.2f}%" if pd.notna(v) else "—", subset=pct_cols)
+            styled = styled.format(lambda v: f"{v:+.1f}%" if pd.notna(v) else "—", subset=pct_cols)
         table_html = add_header_tooltips(sticky_header_html(styled), column_definitions(settings, labels))
         st.markdown(table_html, unsafe_allow_html=True)
 
@@ -1274,42 +1321,8 @@ with tab_alerts:
     else:
         dr_logic = "AND"
 
-    rc1, rc2, rc3, rc4, rc5 = st.columns([2, 1, 1.5, 2, 1])
-    dr_metric_a = rc1.selectbox("Metric A", metric_names_alert, key="dr_metric_a")
-    dr_operator = rc2.selectbox("Op", [">", "<", ">=", "<=", "=="], key="dr_operator")
-    dr_compare_type = rc3.radio("Compare to", ["Metric", "Fixed value"], key="dr_compare_type", horizontal=True)
-    dr_multiplier, dr_offset = 1.0, 0.0
-    if dr_compare_type == "Metric":
-        dr_metric_b = rc4.selectbox("Metric B", metric_names_alert, key="dr_metric_b")
-        dr_value = None
-        dmc1, dmc2 = st.columns(2)
-        dr_multiplier = dmc1.number_input(
-            "× Multiplier (optional)", value=1.0, step=0.1, format="%.2f", key="dr_mult",
-            help="e.g. set to 1.4 for 'Vol 10D Avg >= 1.4 × Vol 100D Avg'.",
-        )
-        dr_offset = dmc2.number_input("+ Offset (optional)", value=0.0, step=0.1, format="%.2f", key="dr_off")
-    else:
-        dr_value_text = rc4.text_input(
-            "Value", value="0", key="dr_value",
-            help="A number (e.g. 45) or a word for boolean-like metrics, e.g. Yes / No for Tech Uptrend.",
-        )
-        dr_metric_b = None
-
-    if rc5.button("＋ Add condition"):
-        new_cond = {
-            "metric_a": filterable_metrics_alert[dr_metric_a],
-            "operator": dr_operator,
-            "compare_type": "metric" if dr_compare_type == "Metric" else "value",
-            "logic": dr_logic,
-        }
-        if dr_compare_type == "Metric":
-            new_cond["metric_b"] = filterable_metrics_alert[dr_metric_b]
-            if dr_multiplier != 1.0:
-                new_cond["multiplier"] = dr_multiplier
-            if dr_offset != 0.0:
-                new_cond["offset"] = dr_offset
-        else:
-            new_cond["value"] = parse_filter_value_text(dr_value_text)
+    new_cond = render_condition_builder("dr", metric_names_alert, filterable_metrics_alert, dr_logic)
+    if new_cond:
         st.session_state.draft_rule_conditions.append(new_cond)
         st.rerun()
 
@@ -1403,6 +1416,67 @@ with tab_alerts:
                     st.rerun()
                 if del_col.button("🗑 Delete rule", key=f"del_{rule['id']}"):
                     rules = [r for r in rules if r["id"] != rule["id"]]
+                    save_rules(rules)
+                    st.rerun()
+
+                st.markdown("**Name & scope**")
+                nm_col, sc_col = st.columns([2, 2])
+                edit_name = nm_col.text_input("Name", value=rule.get("name", ""), key=f"nm_{rule['id']}")
+                scope_label_map = {"ALL": "All watchlist", "US": "US watchlist", "INDIA": "India watchlist"}
+                scope_edit_options = ["All watchlist", "US watchlist", "India watchlist"] + combined_tickers
+                current_scope_label = scope_label_map.get(rule.get("scope"), rule.get("scope"))
+                if current_scope_label not in scope_edit_options:
+                    scope_edit_options = [current_scope_label] + scope_edit_options
+                edit_scope_label = sc_col.selectbox(
+                    "Scope", scope_edit_options, index=scope_edit_options.index(current_scope_label),
+                    key=f"sc_{rule['id']}",
+                )
+                if st.button("Save name/scope", key=f"nmsc_save_{rule['id']}"):
+                    if edit_scope_label == "All watchlist":
+                        edit_scope_val = "ALL"
+                    elif edit_scope_label == "US watchlist":
+                        edit_scope_val = "US"
+                    elif edit_scope_label == "India watchlist":
+                        edit_scope_val = "INDIA"
+                    else:
+                        edit_scope_val = edit_scope_label
+                    rule["name"] = edit_name.strip()
+                    rule["scope"] = edit_scope_val
+                    save_rules(rules)
+                    st.success("Name/scope saved.")
+                    st.rerun()
+
+                st.markdown("**Conditions**")
+                edit_conds = rule.get("conditions", [])
+                if edit_conds:
+                    ec_remove_idx = None
+                    for i, cond in enumerate(edit_conds):
+                        ec1, ec2 = st.columns([5, 1])
+                        prefix = "" if i == 0 else f"{cond.get('logic', 'AND')}  "
+                        ec1.write(f"{prefix}{describe_filter(cond, metric_labels_alert)}")
+                        if ec2.button("Remove", key=f"ec_rm_{rule['id']}_{i}"):
+                            ec_remove_idx = i
+                    if ec_remove_idx is not None:
+                        edit_conds.pop(ec_remove_idx)
+                        rule["conditions"] = edit_conds
+                        save_rules(rules)
+                        st.rerun()
+
+                st.caption("Add a condition to this rule:" if not edit_conds else "Add another condition:")
+                if edit_conds:
+                    ec_logic = st.radio(
+                        "Combine with the condition(s) above using", ["AND", "OR"],
+                        key=f"ec_logic_{rule['id']}", horizontal=True,
+                    )
+                else:
+                    ec_logic = "AND"
+
+                new_edit_cond = render_condition_builder(
+                    f"ec_{rule['id']}", metric_names_alert, filterable_metrics_alert, ec_logic,
+                )
+                if new_edit_cond:
+                    edit_conds.append(new_edit_cond)
+                    rule["conditions"] = edit_conds
                     save_rules(rules)
                     st.rerun()
 
