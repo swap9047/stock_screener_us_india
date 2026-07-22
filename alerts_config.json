@@ -24,5 +24,31 @@
       ],
       "time_et": "21:00"
     }
+  },
+  {
+    "id": "cea7878f",
+    "name": "stocks below 10w ema",
+    "scope": "ALL",
+    "conditions": [
+      {
+        "metric_a": "last_close",
+        "operator": "<=",
+        "compare_type": "metric",
+        "logic": "AND",
+        "metric_b": "ema40"
+      }
+    ],
+    "enabled": true,
+    "schedule": {
+      "type": "scheduled",
+      "days": [
+        "MON",
+        "TUE",
+        "WED",
+        "THU",
+        "FRI"
+      ],
+      "time_et": "21:00"
+    }
   }
 ]
