@@ -1,92 +1,15 @@
 [
   {
-    "id": "ed95c887",
-    "name": "below 40 wema",
+    "id": "fb030685",
+    "name": "stocks below 40w ema",
     "scope": "ALL",
     "conditions": [
       {
         "metric_a": "last_close",
-        "operator": ">",
+        "operator": "<=",
         "compare_type": "metric",
         "logic": "AND",
         "metric_b": "ema40"
-      }
-    ],
-    "enabled": true,
-    "schedule": {
-      "type": "scheduled",
-      "days": [
-        "MON",
-        "TUE",
-        "WED",
-        "THU",
-        "FRI"
-      ],
-      "time_et": "21:00"
-    }
-  },
-  {
-    "id": "2f2c6154",
-    "name": "above 20 wema",
-    "scope": "ALL",
-    "conditions": [
-      {
-        "metric_a": "last_close",
-        "operator": ">",
-        "compare_type": "metric",
-        "logic": "AND",
-        "metric_b": "ema20"
-      }
-    ],
-    "enabled": true,
-    "schedule": {
-      "type": "scheduled",
-      "days": [
-        "MON",
-        "TUE",
-        "WED",
-        "THU",
-        "FRI"
-      ],
-      "time_et": "21:00"
-    }
-  },
-  {
-    "id": "9f2b2278",
-    "name": "below 10 wema",
-    "scope": "ALL",
-    "conditions": [
-      {
-        "metric_a": "last_close",
-        "operator": "<=",
-        "compare_type": "metric",
-        "logic": "AND",
-        "metric_b": "ema10"
-      }
-    ],
-    "enabled": true,
-    "schedule": {
-      "type": "scheduled",
-      "days": [
-        "MON",
-        "TUE",
-        "WED",
-        "THU"
-      ],
-      "time_et": "12:00"
-    }
-  },
-  {
-    "id": "d91987d3",
-    "name": "below 20 wema",
-    "scope": "ALL",
-    "conditions": [
-      {
-        "metric_a": "last_close",
-        "operator": "<=",
-        "compare_type": "metric",
-        "logic": "AND",
-        "metric_b": "ema20"
       }
     ],
     "enabled": true,
