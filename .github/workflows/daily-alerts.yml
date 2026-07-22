@@ -1,6 +1,12 @@
 name: Daily Stock Alerts
 
-# *** TEMPORARILY RUNNING EVERY 15 MIN FOR TESTING ***
+# *** TEMPORARILY RUNNING EVERY HOUR FOR TESTING ***
+# (previously every 15 min -- GitHub's scheduler is documented as
+# best-effort and in practice barely honored sub-hourly cron at all,
+# firing only twice in ~3 hours during testing; hourly schedules are far
+# more reliably honored by GitHub's own scheduler, so this trades a bit of
+# granularity for actually firing when expected.)
+#
 # The gate's is_rule_due() check and the 12pm/9pm restriction are both
 # bypassed right now (gate forced to due=true, check job runs with
 # --force) so you can see live Discord alerts fire quickly. This burns
@@ -32,8 +38,8 @@ name: Daily Stock Alerts
 # job (which fetches live prices) only runs when the gate says yes.
 on:
   schedule:
-    # --- TEMPORARY: testing every 15 min, replace with the 4 lines below when done ---
-    - cron: "*/15 * * * *"
+    # --- TEMPORARY: testing every hour, replace with the 4 lines below when done ---
+    - cron: "0 * * * *"
     # - cron: "0 16 * * *"   # 16:00 UTC = 12:00 PM ET during EDT
     # - cron: "0 17 * * *"   # 17:00 UTC = 12:00 PM ET during EST
     # - cron: "0 1 * * *"    # 01:00 UTC = 9:00 PM ET during EDT
@@ -58,7 +64,7 @@ jobs:
       - id: check
         name: Is any enabled rule due right now?
         run: |
-          # TEMPORARY: forced to always "true" while testing every 15 min.
+          # TEMPORARY: forced to always "true" while testing every hour.
           # Restore the real is_rule_due() check (below) when done testing.
           echo "due=true" >> "$GITHUB_OUTPUT"
           # python - <<'EOF' >> "$GITHUB_OUTPUT"
@@ -93,7 +99,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run alert check
-        run: python alert_check.py --force  # TEMPORARY: bypasses per-rule schedule while testing every 15 min
+        run: python alert_check.py --force  # TEMPORARY: bypasses per-rule schedule while testing every hour
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
 
