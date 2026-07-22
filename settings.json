@@ -16,5 +16,12 @@
   "vstop_length": 20,
   "vstop_factor": 2.0,
   "benchmark_us": "SPY",
-  "benchmark_india": "^CRSLDX"
+  "benchmark_india": "^CRSLDX",
+  "trend_slope_lookback": 3,
+  "trend_near_high_low_pct": 0.1,
+  "trend_volume_ratio": 1.0,
+  "volume_explode_ratio": 1.4,
+  "volume_decline_ratio": 0.7,
+  "tech_uptrend_min_vstop_weeks": 3,
+  "tech_uptrend_volume_ratio": 1.3
 }

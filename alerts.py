@@ -44,6 +44,108 @@ DISCORD_CONFIG_FILE = os.path.join(SCRIPT_DIR, "discord_config.json")
 
 SCOPE_LABELS = {"ALL": "All watchlist", "US": "US watchlist", "INDIA": "India watchlist"}
 
+# --- Per-rule scheduling -----------------------------------------------
+# Each rule carries a "schedule" dict: {"type": "scheduled"|"none", "days":
+# [...], "time_et": "HH:00"}. "none" means the rule is a scan-only rule --
+# never sent to Discord, but still usable as a watchlist filter (see
+# app.py's "Filter by Saved Scans / Alerts"). "time_et" can only be one of
+# ALLOWED_HOURS (12pm or 9pm ET) -- that's the cadence the GitHub Actions
+# workflow actually runs on (see daily-alerts.yml), chosen specifically to
+# keep Actions usage to 2 real checks/day instead of running every hour.
+# normalize_schedule() clamps any other hour (including old per-hour or
+# sub-hourly values from before this restriction) down to the nearest
+# allowed slot, so a stale schedule can never quietly hold up a rule.
+DAY_CODES = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
+DAY_LABELS = {"MON": "Mon", "TUE": "Tue", "WED": "Wed", "THU": "Thu", "FRI": "Fri", "SAT": "Sat", "SUN": "Sun"}
+DEFAULT_DAYS = ["MON", "TUE", "WED", "THU", "FRI"]
+ALLOWED_HOURS = [12, 21]  # 12:00 (noon) and 21:00 (9pm) ET -- the only 2 times the workflow runs
+HOUR_LABELS = {12: "12:00 PM (noon)", 21: "9:00 PM"}
+
+
+def normalize_schedule(sched):
+    """Coerce any schedule dict (missing, partial, or malformed) into a
+    valid {"type", "days", "time_et"} dict, where time_et is always one of
+    ALLOWED_HOURS. Idempotent -- also clamps any other hour (e.g. an old
+    per-hour or sub-hourly value from before the workflow moved to 2x/day)
+    to the nearest allowed slot, so a previously saved schedule that no
+    longer matches when the workflow actually runs can't silently go
+    stale -- it gets pulled to a real slot instead."""
+    if not isinstance(sched, dict):
+        sched = {}
+
+    stype = sched.get("type", "scheduled")
+    if stype not in ("scheduled", "none"):
+        stype = "scheduled"
+
+    days = sched.get("days")
+    if not isinstance(days, list) or not days:
+        days = list(DEFAULT_DAYS)
+    else:
+        days = [d.upper() for d in days if isinstance(d, str) and d.upper() in DAY_CODES]
+        if not days:
+            days = list(DEFAULT_DAYS)
+
+    time_et = sched.get("time_et", "21:00")
+    hour = 21
+    if isinstance(time_et, str) and ":" in time_et:
+        h, _, _m = time_et.partition(":")
+        if h.isdigit() and 0 <= int(h) < 24:
+            hour = int(h)
+    if hour not in ALLOWED_HOURS:
+        hour = min(ALLOWED_HOURS, key=lambda a: abs(a - hour))
+    time_et = f"{hour:02d}:00"
+
+    return {"type": stype, "days": days, "time_et": time_et}
+
+
+def describe_schedule(rule):
+    sched = rule.get("schedule", {})
+    if sched.get("type") == "none":
+        return "🔍 Scan Only"
+    days = sched.get("days", DEFAULT_DAYS)
+    days_str = ", ".join(DAY_LABELS.get(d, d) for d in days)
+    time_et = sched.get("time_et", "21:00")
+    return f"🔔 {days_str} @ {time_et} ET"
+
+
+def is_rule_due(rule, et_now=None):
+    """Is this rule due to be checked right now? Compares the rule's
+    schedule against `et_now` (a tz-aware America/New_York datetime;
+    defaults to the current time). Matches on day-of-week plus hour only --
+    the workflow only runs at 12pm and 9pm ET (see daily-alerts.yml and
+    ALLOWED_HOURS), so any minute within the rule's chosen hour counts as
+    a match."""
+    sched = rule.get("schedule", {})
+    if sched.get("type") == "none":
+        return False
+
+    if et_now is None:
+        from datetime import datetime
+        try:
+            import zoneinfo
+            et_tz = zoneinfo.ZoneInfo("America/New_York")
+        except Exception:
+            # Practically unreachable: GitHub Actions runs Python 3.11+,
+            # where zoneinfo is stdlib. No safe fixed-offset fallback
+            # exists here (it would be wrong by an hour half the year),
+            # so if this ever triggers, treat nothing as due rather than
+            # guess.
+            return False
+        et_now = datetime.now(et_tz)
+
+    day_code = DAY_CODES[et_now.weekday()]
+    allowed_days = sched.get("days", DEFAULT_DAYS)
+    if day_code not in allowed_days:
+        return False
+
+    time_et = sched.get("time_et", "21:00")
+    try:
+        rule_hour = int(time_et.split(":")[0])
+    except Exception:
+        rule_hour = 21
+
+    return et_now.hour == rule_hour
+
 
 def normalize_rule(rule):
     """Upgrade older rule formats to the current metric-comparison schema.
@@ -58,6 +160,7 @@ def normalize_rule(rule):
         rule.setdefault("name", "")
         rule.setdefault("scope", "ALL")
         rule.setdefault("enabled", True)
+        rule["schedule"] = normalize_schedule(rule.get("schedule"))
         return rule
     return {
         "id": rule.get("id"),
@@ -65,6 +168,7 @@ def normalize_rule(rule):
         "scope": rule.get("scope", "ALL"),
         "conditions": [],
         "enabled": False,
+        "schedule": normalize_schedule(None),
     }
 
 

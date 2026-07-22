@@ -1,4 +1,38 @@
 {
   "US": [],
-  "INDIA": []
+  "INDIA": [
+    {
+      "id": "c98e13c8",
+      "metric_a": "last_close",
+      "operator": ">",
+      "compare_type": "metric",
+      "logic": "AND",
+      "metric_b": "ema40"
+    },
+    {
+      "id": "631ca841",
+      "metric_a": "last_close",
+      "operator": ">",
+      "compare_type": "metric",
+      "logic": "AND",
+      "metric_b": "vstop_weekly"
+    },
+    {
+      "id": "97e21ffb",
+      "metric_a": "vstop_weekly_weeks_since_change",
+      "operator": ">=",
+      "compare_type": "value",
+      "logic": "AND",
+      "value": 3.0
+    },
+    {
+      "id": "a9f1c7a2",
+      "metric_a": "avg_volume_10d",
+      "operator": ">=",
+      "compare_type": "metric",
+      "logic": "AND",
+      "metric_b": "avg_volume_100d",
+      "multiplier": 1.4
+    }
+  ]
 }

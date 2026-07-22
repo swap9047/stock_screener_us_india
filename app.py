@@ -34,6 +34,7 @@ already active) -- secrets persist across redeploys, a local file doesn't.
 If no login is configured anywhere, the app is open.
 """
 
+import html
 import re
 import uuid
 from datetime import date, datetime
@@ -47,9 +48,11 @@ from stock_data import (
     MARKETS,
 )
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE, send_discord, SCOPE_LABELS,
-                     build_discord_messages_for_rule)
+                     build_discord_messages_for_rule, describe_schedule, DAY_CODES, DAY_LABELS,
+                     DEFAULT_DAYS, ALLOWED_HOURS, HOUR_LABELS)
 from filters import (get_market_filters, save_market_filters, apply_filters, describe_filter,
-                     describe_chain, describe_chain_with_values)
+                     describe_chain, describe_chain_with_values, passes_filter_chain)
+from github_sync import get_github_config, push_all_config, SYNCABLE_FILES
 import json
 import os
 
@@ -176,12 +179,29 @@ def ema_col_labels(settings):
     }
 
 
+_SPAN_TEXT_RE = re.compile(r"^<span\b[^>]*>(.*)</span>$")
+
+
+def _plain_text(val):
+    """Trend/Vol Trend/Tech Uptrend cells are wrapped in <span title=...> for
+    their hover tooltip (see with_tooltip) -- unwrap back to the plain label
+    so the coloring matches below (which compare against exact label
+    strings like "Strong Uptrend") keep working."""
+    if isinstance(val, str):
+        m = _SPAN_TEXT_RE.match(val)
+        if m:
+            return html.unescape(m.group(1))
+    return val
+
+
 def style_row(row, ema_labels):
     styles = [""] * len(row)
     last = row["Last"]
     ema_cols = set(ema_labels.values())
     for i, col in enumerate(row.index):
         val = row[col]
+        if col in ("Trend", "Vol Trend", "Tech Uptrend"):
+            val = _plain_text(val)
         if col in ema_cols and pd.notna(val):
             styles[i] = "color:#c0392b;font-weight:600" if last < val else "color:#1e8449;font-weight:600"
         elif col in ("RSI-D", "RSI-W", "RSI-M") and pd.notna(val):
@@ -220,6 +240,113 @@ def style_row(row, ema_labels):
         elif col == "Alerts" and isinstance(val, str) and val not in ("—", ""):
             styles[i] = "color:#8e44ad;font-weight:600"
     return styles
+
+
+def _mark(passed):
+    """✓/✗/n·a marker for a tri-state condition (True/False/None -- None
+    means the condition wasn't evaluable, e.g. RS unavailable)."""
+    if passed is None:
+        return "n/a"
+    return "✓" if passed else "✗"
+
+
+def with_tooltip(display_value, tooltip_text):
+    """Wraps a cell's display text in a <span title=...> for a native
+    browser hover tooltip -- no CSS/JS needed (Streamlit's markdown renderer
+    strips <style>/<script> tags outright even with unsafe_allow_html=True,
+    so a title attribute is the only reliable hover mechanism here; see
+    sticky_header_html's docstring for the same constraint). Both the
+    visible text and the tooltip are HTML-escaped so stray quotes/special
+    characters in tooltip text can't break the attribute or the table."""
+    if not tooltip_text:
+        return html.escape(str(display_value))
+    return f'<span title="{html.escape(tooltip_text)}">{html.escape(str(display_value))}</span>'
+
+
+def trend_tooltip(row, labels):
+    """Builds the hover-tooltip text for a Trend cell: which of the 4 hard
+    requirements passed/failed, plus the Strong criteria -- so you can see
+    at a glance which condition is blocking a better/worse read."""
+    detail = row.get("trend_detail")
+    if not detail:
+        return "Not enough weekly history yet to compute Trend."
+    w_slow = labels["w_slow"]
+    w_fast = labels["w_fast"]
+    lines = ["Uptrend requires ALL of (else Downtrend):"]
+    lines.append(f"{_mark(detail['price_above_ma'])} Price > {w_slow} ({detail['last_close']:.1f} vs {detail['last_ma']:.1f})")
+    lines.append(f"{_mark(detail['slope_rising'])} {w_slow} slope rising ({detail['slope']:+.3f}/wk)")
+    if detail.get("ema_aligned") is not None:
+        lines.append(f"{_mark(detail['ema_aligned'])} {w_fast} > {w_slow} ({detail['ema_fast']:.1f} vs {detail['last_ma']:.1f})")
+    if detail.get("rs_positive") is not None:
+        lines.append(f"{_mark(detail['rs_positive'])} Weekly RS positive ({detail['rs_weekly']:+.1f})")
+    lines.append(f"→ {detail['direction']}")
+    lines.append("")
+    lines.append("Strong also needs BOTH:")
+    ref_price = detail["week52_high"] if detail["direction"] == "Uptrend" else detail["week52_low"]
+    ref_label = "52W high" if detail["direction"] == "Uptrend" else "52W low"
+    pct_label = f"{detail['near_high_low_pct'] * 100:.0f}%"
+    if ref_price is not None:
+        lines.append(f"{_mark(detail['near_high_low_pass'])} Within {pct_label} of {ref_label} ({detail['last_close']:.1f} vs {ref_price:.1f})")
+    else:
+        lines.append(f"n/a Within {pct_label} of {ref_label} (no 52W data)")
+    if detail.get("avg_volume_10d") is not None and detail.get("avg_volume_100d") is not None:
+        ratio = detail["avg_volume_10d"] / detail["avg_volume_100d"] if detail["avg_volume_100d"] else None
+        ratio_str = f"{ratio:.2f}×" if ratio is not None else "n/a"
+        lines.append(f"{_mark(detail['volume_rising'])} Vol 10D ≥ {detail['volume_ratio']}× Vol 100D ({ratio_str})")
+    else:
+        lines.append(f"n/a Vol 10D ≥ {detail['volume_ratio']}× Vol 100D (no volume data)")
+    lines.append(f"→ {'Strong' if detail['strong'] else 'Not Strong'}")
+    return "\n".join(lines)
+
+
+def vol_trend_tooltip(row, settings):
+    """Builds the hover-tooltip text for a Vol Trend cell: the actual 10D/100D
+    ratio against both thresholds."""
+    v10, v100 = row.get("avg_volume_10d"), row.get("avg_volume_100d")
+    explode = settings.get("volume_explode_ratio", 1.4)
+    decline = settings.get("volume_decline_ratio", 0.7)
+    if v10 is None or v100 is None or not v100:
+        return "Not enough volume history yet to compute Vol Trend."
+    ratio = v10 / v100
+    lines = [
+        f"Vol 10D ÷ Vol 100D = {v10:,.0f} ÷ {v100:,.0f} = {ratio:.2f}×",
+        f"Exploding needs ≥ {explode}×",
+        f"Declining needs ≤ {decline}×",
+        f"→ {row.get('volume_trend') or '—'}",
+    ]
+    return "\n".join(lines)
+
+
+def tech_uptrend_tooltip(row, settings, labels):
+    """Builds the hover-tooltip text for a Tech Uptrend cell: each of the 4
+    requirements and whether it passed."""
+    vstop = row.get("vstop_weekly")
+    weeks_since = row.get("vstop_weekly_weeks_since_change")
+    ema40 = row.get("ema40")
+    last_close = row.get("last_close")
+    v10, v100 = row.get("avg_volume_10d"), row.get("avg_volume_100d")
+    min_weeks = settings.get("tech_uptrend_min_vstop_weeks", 3)
+    vol_ratio = settings.get("tech_uptrend_volume_ratio", 1.4)
+    w_slow = labels["w_slow"]
+
+    if vstop is None or weeks_since is None or ema40 is None or v10 is None or v100 is None:
+        return "Not enough data yet to compute Tech Uptrend."
+
+    close_above_vstop = last_close > vstop
+    held_long_enough = weeks_since > min_weeks
+    close_above_wema = last_close > ema40
+    vol_surging = v10 > vol_ratio * v100
+    ratio = v10 / v100 if v100 else None
+
+    lines = [
+        "Tech Uptrend requires ALL of:",
+        f"{_mark(close_above_vstop)} Close > Weekly VStop ({last_close:.1f} vs {vstop:.1f})",
+        f"{_mark(held_long_enough)} Held > {min_weeks} weeks since VStop flip ({weeks_since} weeks)",
+        f"{_mark(close_above_wema)} Close > {w_slow} ({last_close:.1f} vs {ema40:.1f})",
+        f"{_mark(vol_surging)} Vol 10D ≥ {vol_ratio}× Vol 100D ({ratio:.2f}× )" if ratio is not None else f"{_mark(vol_surging)} Vol 10D ≥ {vol_ratio}× Vol 100D",
+        f"→ {'Yes' if row.get('tech_uptrend') else 'No'}",
+    ]
+    return "\n".join(lines)
 
 
 def numeric_cols(ema_labels):
@@ -273,6 +400,76 @@ def sticky_header_html(styler):
     return re.sub(r"<th\b", f'<th style="{STICKY_TH_STYLE}"', html)
 
 
+def column_definitions(settings, labels):
+    """label -> plain-language definition, for the header info-icon hover
+    tooltip. Bench/period/threshold numbers are pulled from `settings` so
+    the tooltip always reflects your current configuration, not defaults."""
+    bench_note = "your configured benchmark"
+    defs = {
+        "Ticker": "Click to open this symbol's chart on TradingView.",
+        "Last": "Most recent daily closing price.",
+        labels["w_fast"]: f"Weekly EMA, fast period ({settings['ema_weekly'][0]} weeks).",
+        labels["w_mid"]: f"Weekly EMA, medium period ({settings['ema_weekly'][1]} weeks).",
+        labels["w_slow"]: f"Weekly EMA, slow period ({settings['ema_weekly'][2]} weeks). The 'slow WEMA' referenced by Trend and Tech Uptrend.",
+        labels["d_fast"]: f"Daily EMA, fast period ({settings['ema_daily'][0]} days).",
+        labels["d_mid"]: f"Daily EMA, medium period ({settings['ema_daily'][1]} days).",
+        labels["d_slow"]: f"Daily EMA, slow period ({settings['ema_daily'][2]} days).",
+        "RSI-D": f"Daily RSI, {settings['rsi_period']}-period. ≤30 oversold, ≥70 overbought.",
+        "RSI-W": f"Weekly RSI, {settings['rsi_period']}-period. ≤30 oversold, ≥70 overbought.",
+        "RSI-M": f"Monthly RSI, {settings['rsi_period']}-period. ≤30 oversold, ≥70 overbought.",
+        "RS-D": f"Mansfield RS (daily) vs {bench_note}. Positive = outperforming, negative = underperforming.",
+        "RS-W": f"Mansfield RS (weekly) vs {bench_note}. Positive = outperforming, negative = underperforming.",
+        "RS-M": f"Mansfield RS (monthly) vs {bench_note}. Positive = outperforming, negative = underperforming.",
+        "VStop-W": f"Weekly Volatility Stop (Wilder's ATR stop-and-reverse, length={settings['vstop_length']}, factor={settings['vstop_factor']}).",
+        "VStop Dir": "Current direction of the weekly VStop: Up or Down.",
+        "VStop Weeks Ago": "Weeks since the weekly VStop last flipped direction.",
+        "Trend": (
+            "Strong Uptrend / Uptrend / Downtrend / Strong Downtrend. Uptrend requires ALL of: price above "
+            f"slow WEMA, slow WEMA slope rising over {settings.get('trend_slope_lookback', 3)} weeks, fast "
+            "WEMA above slow WEMA, and weekly RS positive (when available) -- no partial credit, anything "
+            "short of unanimous is Downtrend. Strong additionally needs price within "
+            f"{settings.get('trend_near_high_low_pct', 0.10) * 100:.0f}% of the 52W high/low AND 10D avg "
+            f"volume ≥ {settings.get('trend_volume_ratio', 1.0)}× the 100D avg. Hover a cell for the "
+            "per-condition breakdown."
+        ),
+        "Alerts": "Numbers of the enabled alert/scan rules currently matching this ticker -- see the legend below the table.",
+        "% Chg": "1-day close-to-close percent change.",
+        "52W High": "Trailing 52-week (~252 trading day) intraday high.",
+        "52W Low": "Trailing 52-week (~252 trading day) intraday low.",
+        "Data Thru": "Most recent date with price data for this ticker. Shown in red if 3+ days stale.",
+        "Vol Trend": (
+            f"Exploding: 10D avg volume ≥ {settings.get('volume_explode_ratio', 1.4)}× the 100D avg. "
+            f"Declining: ≤ {settings.get('volume_decline_ratio', 0.7)}× the 100D avg. Otherwise In-line. "
+            "Hover a cell for the actual ratio."
+        ),
+        "Tech Uptrend": (
+            "Yes only if ALL of: close > weekly VStop, VStop held its direction for more than "
+            f"{settings.get('tech_uptrend_min_vstop_weeks', 3)} weeks, close > slow WEMA, and 10D avg volume "
+            f"≥ {settings.get('tech_uptrend_volume_ratio', 1.4)}× the 100D avg. Hover a cell for the "
+            "per-condition breakdown."
+        ),
+        "Vol 10D": "Average daily share volume over the last 10 trading days.",
+        "Vol 100D": "Average daily share volume over the last 100 trading days.",
+    }
+    return defs
+
+
+def add_header_tooltips(html_str, definitions):
+    """Appends a small 'ⓘ' info icon next to each column header found in
+    `definitions`, with the definition as a native title= hover tooltip --
+    same technique as with_tooltip (see its docstring): Streamlit strips
+    <style>/<script> tags from markdown even with unsafe_allow_html=True, so
+    a plain HTML title attribute is the only hover mechanism that survives."""
+    def _inject(m):
+        opening, label, closing = m.group(1), m.group(2), m.group(3)
+        definition = definitions.get(label.strip())
+        if not definition:
+            return m.group(0)
+        icon = f' <span title="{html.escape(definition)}" style="cursor:help;opacity:0.55;font-size:11px;">ⓘ</span>'
+        return f"{opening}{label}{icon}{closing}"
+    return re.sub(r"(<th\b[^>]*>)([^<]*)(</th>)", _inject, html_str)
+
+
 # ---------- Settings dialog ----------
 
 
@@ -315,32 +512,65 @@ def settings_dialog():
     benchmark_us = b1.text_input("13. US benchmark ticker", value=settings["benchmark_us"], key="set_bench_us")
     benchmark_india = b2.text_input("14. India benchmark ticker", value=settings["benchmark_india"], key="set_bench_india")
 
-    st.markdown("**Trend classification**")
-    trend_slope_lookback = st.number_input(
-        "15. Trend MA slope lookback (weeks)", min_value=2, step=1,
+    st.markdown("**Trend column** (Strong Uptrend / Uptrend / Downtrend / Strong Downtrend)")
+    st.caption(
+        "Uptrend requires ALL of: price above slow WEMA, the WEMA's own slope rising, fast WEMA above "
+        "slow WEMA (e.g. 10 WEMA > 40 WEMA), and Mansfield RS positive (when available) — no partial "
+        "credit; anything short of unanimous is Downtrend. "
+        "\"Strong\" additionally needs BOTH of the two thresholds below — parameters here only affect "
+        "this column, independent of Vol Trend or Tech Uptrend."
+    )
+    tr1, tr2, tr3 = st.columns(3)
+    trend_slope_lookback = tr1.number_input(
+        "15. MA slope lookback (weeks)", min_value=2, step=1,
         value=int(settings.get("trend_slope_lookback", 3)), key="set_trend_slope",
         help="Width of the regression window (in weeks) used to judge whether the slow WEMA is "
              "currently rising or falling. Shorter = catches recent rollovers faster (can be "
              "noisier); longer = smoother but slower to detect a real trend change.",
     )
+    trend_near_pct = tr2.number_input(
+        "16. \"Strong\": within % of 52W high/low", min_value=0.0, max_value=1.0, step=0.01, format="%.2f",
+        value=float(settings.get("trend_near_high_low_pct", 0.10)), key="set_trend_near_pct",
+        help="\"Strong\" requires price within this fraction of its 52-week high (uptrend) or low "
+             "(downtrend). Default 0.10 = within 10%. This column's own parameter, separate from "
+             "Vol Trend/Tech Uptrend's ratios below.",
+    )
+    trend_vol_ratio = tr3.number_input(
+        "17. \"Strong\": min 10D ÷ 100D vol ratio", min_value=0.0, step=0.1, format="%.2f",
+        value=float(settings.get("trend_volume_ratio", 1.0)), key="set_trend_vol_ratio",
+        help="\"Strong\" also requires 10-day average volume ≥ this many times the 100-day average. "
+             "Default 1.0 = just needs to be higher, no minimum multiple. This column's own "
+             "parameter, separate from Vol Trend's and Tech Uptrend's ratios.",
+    )
 
-    st.markdown("**Volume & Tech Uptrend classification**")
-    vt1, vt2, vt3 = st.columns(3)
+    st.markdown("**Vol Trend column** (Exploding / In-line / Declining)")
+    vt1, vt2 = st.columns(2)
     volume_explode_ratio = vt1.number_input(
-        "16. Volume 'Exploding' ratio (10D ÷ 100D avg ≥)", min_value=1.0, step=0.1, format="%.2f",
+        "18. 'Exploding' ratio (10D ÷ 100D avg ≥)", min_value=1.0, step=0.1, format="%.2f",
         value=float(settings.get("volume_explode_ratio", 1.4)), key="set_vol_explode",
-        help="Vol Trend shows 'Exploding' when 10-day average volume is at least this many times the 100-day average.",
+        help="Vol Trend shows 'Exploding' when 10-day average volume is at least this many times the "
+             "100-day average. Independent of Trend's and Tech Uptrend's volume ratios above/below.",
     )
     volume_decline_ratio = vt2.number_input(
-        "17. Volume 'Declining' ratio (10D ÷ 100D avg ≤)", min_value=0.0, step=0.1, format="%.2f",
+        "19. 'Declining' ratio (10D ÷ 100D avg ≤)", min_value=0.0, step=0.1, format="%.2f",
         value=float(settings.get("volume_decline_ratio", 0.7)), key="set_vol_decline",
         help="Vol Trend shows 'Declining' when 10-day average volume is at or below this fraction of the 100-day average.",
     )
-    tech_uptrend_min_vstop_weeks = vt3.number_input(
-        "18. Tech Uptrend: min weeks held above VStop", min_value=0, step=1,
+
+    st.markdown("**Tech Uptrend column** (boolean)")
+    tu1, tu2 = st.columns(2)
+    tech_uptrend_min_vstop_weeks = tu1.number_input(
+        "20. Min weeks held above VStop", min_value=0, step=1,
         value=int(settings.get("tech_uptrend_min_vstop_weeks", 3)), key="set_tech_min_weeks",
-        help="Tech Uptrend requires the weekly VStop to have been in an uptrend for MORE than this many weeks "
-             "(in addition to close > VStop, close > slow WEMA, and volume ≥ the 'Exploding' ratio above).",
+        help="Tech Uptrend requires the weekly VStop to have been in an uptrend for MORE than this "
+             "many weeks (in addition to close > VStop, close > slow WEMA, and the volume ratio below).",
+    )
+    tech_uptrend_vol_ratio = tu2.number_input(
+        "21. Min 10D ÷ 100D vol ratio", min_value=1.0, step=0.1, format="%.2f",
+        value=float(settings.get("tech_uptrend_volume_ratio", 1.4)), key="set_tech_vol_ratio",
+        help="Tech Uptrend also requires 10-day average volume ≥ this many times the 100-day average. "
+             "This column's own parameter — independent of Vol Trend's 'Exploding' ratio above, even "
+             "though both default to the same value.",
     )
 
     st.divider()
@@ -367,9 +597,12 @@ def settings_dialog():
                 "benchmark_us": benchmark_us.strip().upper(),
                 "benchmark_india": benchmark_india.strip(),
                 "trend_slope_lookback": int(trend_slope_lookback),
+                "trend_near_high_low_pct": float(trend_near_pct),
+                "trend_volume_ratio": float(trend_vol_ratio),
                 "volume_explode_ratio": float(volume_explode_ratio),
                 "volume_decline_ratio": float(volume_decline_ratio),
                 "tech_uptrend_min_vstop_weeks": int(tech_uptrend_min_vstop_weeks),
+                "tech_uptrend_volume_ratio": float(tech_uptrend_vol_ratio),
             })
             st.session_state.refresh_token += 1
             st.success("Settings saved.")
@@ -717,6 +950,24 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key):
     with st.expander("Custom filters (metric vs metric, or metric vs fixed value; chain with AND/OR)", expanded=False):
         active_custom_filters = render_custom_filter_builder(market, filterable_metrics)
 
+    # Filter this watchlist by any saved rule from the Alert Rules tab --
+    # reuses the exact same condition-chain engine (filters.passes_filter_chain)
+    # that alerts and custom filters use, so results match what that rule
+    # would flag. Rules are listed regardless of the market tab they were
+    # created for or their scope (US/INDIA/ALL) -- a rule is just a reusable
+    # bundle of conditions here, applicable from any tab.
+    scan_rules_all = [r for r in load_rules() if r.get("enabled", True) and r.get("conditions")]
+    scan_rule_labels = [f"{r.get('name') or '(unnamed)'} [{r['id']}]" for r in scan_rules_all]
+    scan_rule_by_label = dict(zip(scan_rule_labels, scan_rules_all))
+    selected_scan_labels = st.multiselect(
+        "Filter by Saved Scans / Alerts (combines with AND logic)",
+        options=scan_rule_labels,
+        key=f"f_scans_{market}",
+        help="Applies the metric conditions from selected alert/scan rules to this watchlist, "
+             "regardless of which tab or scope the rule was originally set up under.",
+    )
+    selected_scans = [scan_rule_by_label[lbl] for lbl in selected_scan_labels]
+
     def passes_ema(row, key, mode):
         if mode == "Any":
             return True
@@ -765,6 +1016,8 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key):
             continue
         if f_tech_only and not row.get("tech_uptrend"):
             continue
+        if selected_scans and not all(passes_filter_chain(row, sr.get("conditions", [])) for sr in selected_scans):
+            continue
         filtered.append(row)
 
     filtered = apply_filters(filtered, active_custom_filters)
@@ -779,7 +1032,23 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key):
 
         raw_df = pd.DataFrame(filtered)
         raw_df["vstop_change"] = [vstop_change_str(r) for r in filtered]
-        raw_df["tech_uptrend_label"] = raw_df["tech_uptrend"].apply(lambda v: "Yes" if v else "No")
+        # Trend / Vol Trend / Tech Uptrend cells carry a hover tooltip
+        # (native <span title=...>, see with_tooltip's docstring for why)
+        # spelling out which of the underlying conditions passed/failed --
+        # so you can see at a glance which one criterion is blocking a
+        # better (or worse) read, instead of just the final label.
+        raw_df["trend"] = [
+            with_tooltip(r["trend"] if r["trend"] else "—", trend_tooltip(r, labels))
+            for r in filtered
+        ]
+        raw_df["volume_trend"] = [
+            with_tooltip(r["volume_trend"] if r["volume_trend"] else "—", vol_trend_tooltip(r, settings))
+            for r in filtered
+        ]
+        raw_df["tech_uptrend_label"] = [
+            with_tooltip("Yes" if r["tech_uptrend"] else "No", tech_uptrend_tooltip(r, settings, labels))
+            for r in filtered
+        ]
         raw_df["ticker_link"] = [
             f'<a href="{tradingview_url(r["ticker"])}" target="_blank" rel="noopener noreferrer">{r["ticker"]}</a>'
             for r in filtered
@@ -829,7 +1098,8 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key):
         )
         if pct_cols:
             styled = styled.format(lambda v: f"{v:+.2f}%" if pd.notna(v) else "—", subset=pct_cols)
-        st.markdown(sticky_header_html(styled), unsafe_allow_html=True)
+        table_html = add_header_tooltips(sticky_header_html(styled), column_definitions(settings, labels))
+        st.markdown(table_html, unsafe_allow_html=True)
 
         # Footer legend: spell out what each number in the Alerts column
         # actually means, so you don't have to jump to the Alert Rules tab
@@ -855,19 +1125,25 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key):
         f"VStop-W = weekly Volatility Stop (Wilder's ATR stop-and-reverse system, "
         f"length={settings['vstop_length']}, factor={settings['vstop_factor']}) — not independently "
         "cross-checked against your chart the way RS/RSI were, so compare a few readings before relying "
-        "on it. Trend = a 4-level read (Strong Uptrend / Uptrend / Downtrend / Strong Downtrend) combining "
-        f"price vs. the slow WEMA, that WEMA's {settings.get('trend_slope_lookback', 3)}-week slope, and "
-        "weekly RS for direction; 'Strong' additionally requires price within 10% of its 52-week high/low "
-        "AND rising volume (10D avg > 100D avg) — a sort/filter aid, not a precise signal. "
+        "on it. Trend = a 4-level read (Strong Uptrend / Uptrend / Downtrend / Strong Downtrend). Uptrend "
+        "requires ALL of: price above the slow WEMA, that WEMA's "
+        f"{settings.get('trend_slope_lookback', 3)}-week slope rising, fast WEMA above slow WEMA (e.g. 10 "
+        "WEMA > 40 WEMA), and weekly RS positive (when available) — no partial credit, anything short of "
+        "unanimous is Downtrend. 'Strong' additionally requires price within "
+        f"{settings.get('trend_near_high_low_pct', 0.10) * 100:.0f}% of its 52-week high/low AND 10D avg "
+        f"volume ≥ {settings.get('trend_volume_ratio', 1.0)}× the 100D avg — its own parameters, "
+        "editable in Settings, independent of Vol Trend/Tech Uptrend below — a sort/filter aid, not a "
+        "precise signal. "
         "52W High/Low = trailing 12-month intraday extremes. Vol 10D/100D = average daily share volume "
         "over the last 10 / 100 trading days. % Chg = 1-day close-to-close change. Vol Trend classifies "
         f"10D-vs-100D average volume as Exploding (≥{settings.get('volume_explode_ratio', 1.4)}×), "
         f"Declining (≤{settings.get('volume_decline_ratio', 0.7)}×), or In-line — thresholds editable in "
         "Settings. Tech Uptrend = close above the weekly VStop (held for more than "
         f"{settings.get('tech_uptrend_min_vstop_weeks', 3)} weeks) AND close above the slow WEMA AND 10D "
-        "volume surging past the Exploding ratio above. All values shown to 1 decimal. Use 'Columns to "
-        "show' above the table to hide/show columns. Edit any of these parameters via Settings in the "
-        "sidebar."
+        f"volume ≥ {settings.get('tech_uptrend_volume_ratio', 1.4)}× the 100D avg — its own volume ratio, "
+        "independent of Vol Trend's Exploding ratio even though they default to the same value. All "
+        "values shown to 1 decimal. Use 'Columns to show' above the table to hide/show columns. Edit any "
+        "of these parameters via Settings in the sidebar."
     )
 
 
@@ -894,6 +1170,32 @@ as_of, per_market = cached_fetch_all(
 )
 st.sidebar.caption(f"Data as of: {as_of}")
 st.sidebar.caption(f"US: {len(per_market.get('US', []))} · India: {len(per_market.get('INDIA', []))}")
+
+with st.sidebar.expander("☁️ Push config to GitHub", expanded=False):
+    gh_token, gh_repo, gh_branch = get_github_config(getattr(st, "secrets", None))
+    if not gh_token or not gh_repo:
+        st.caption(
+            "Edits made here (watchlist, custom filters, settings, alert rules) only live on "
+            "this instance's disk -- they won't reach GitHub Actions (or survive a redeploy) "
+            "until pushed. Set **GITHUB_TOKEN** (a fine-grained PAT with Contents: read/write "
+            "on this repo) and **GITHUB_REPO** (`owner/repo-name`) as secrets to enable this -- "
+            "see DEPLOYMENT.md."
+        )
+    else:
+        st.caption(f"Target: `{gh_repo}` @ `{gh_branch}`")
+        file_labels = {label: fname for fname, label in SYNCABLE_FILES}
+        selected_labels = st.multiselect(
+            "Files to push", options=list(file_labels.keys()),
+            default=list(file_labels.keys()), key="gh_push_files",
+        )
+        if st.button("Push selected to GitHub", width="stretch"):
+            if not selected_labels:
+                st.warning("Select at least one file.")
+            else:
+                targets = [file_labels[lbl] for lbl in selected_labels]
+                results = push_all_config(gh_token, gh_repo, gh_branch, filenames=targets)
+                for fname, ok, msg in results:
+                    (st.success if ok else st.error)(msg)
 
 shared_visible_keys, shared_label_by_key = render_shared_column_picker(ema_col_labels(settings_now))
 
@@ -999,6 +1301,33 @@ with tab_alerts:
         st.session_state.draft_rule_conditions.append(new_cond)
         st.rerun()
 
+    st.markdown("**Alert mode & schedule**")
+    day_options = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    day_code_map = dict(zip(day_options, DAY_CODES))
+    inv_day_map = {v: k for k, v in day_code_map.items()}
+    hours_list = [f"{h:02d}" for h in ALLOWED_HOURS]
+    default_day_labels = [inv_day_map[d] for d in DEFAULT_DAYS]
+
+    dr_alert_mode = st.radio(
+        "Alert mode", ["Scheduled Discord alert", "Scan only (no alert)"],
+        key="rule_mode", horizontal=True,
+        help="Scheduled Discord alert sends Discord pings when due. Scan only never sends "
+             "Discord pings but stays available to filter watchlists by, in the market tabs above.",
+    )
+    if dr_alert_mode == "Scheduled Discord alert":
+        sc1, sc2 = st.columns([3, 1.2])
+        dr_days_labels = sc1.multiselect("Days (ET)", options=day_options, default=default_day_labels, key="rule_sched_days")
+        dr_hour = sc2.selectbox(
+            "Time (ET)", options=hours_list, index=hours_list.index("21"),
+            format_func=lambda h: HOUR_LABELS.get(int(h), h), key="rule_sched_hour",
+        )
+        st.caption(
+            "The alert check only runs at 12:00 PM and 9:00 PM ET (kept to 2x/day to save on "
+            "GitHub Actions minutes) — pick whichever of those your alert should check at."
+        )
+    else:
+        dr_days_labels, dr_hour = [], "21"
+
     save_col, clear_col = st.columns([1, 1])
     if save_col.button("Save rule", type="primary"):
         if not st.session_state.draft_rule_conditions:
@@ -1012,12 +1341,18 @@ with tab_alerts:
                 scope_val = "INDIA"
             else:
                 scope_val = scope_choice
+            if dr_alert_mode == "Scheduled Discord alert":
+                sched_days = [day_code_map[d] for d in dr_days_labels] if dr_days_labels else list(DEFAULT_DAYS)
+                new_schedule = {"type": "scheduled", "days": sched_days, "time_et": f"{dr_hour}:00"}
+            else:
+                new_schedule = {"type": "none", "days": list(DEFAULT_DAYS), "time_et": "21:00"}
             new_rule = {
                 "id": uuid.uuid4().hex[:8],
                 "name": st.session_state.get("rule_name", "").strip(),
                 "scope": scope_val,
                 "conditions": list(st.session_state.draft_rule_conditions),
                 "enabled": True,
+                "schedule": new_schedule,
             }
             rules.append(new_rule)
             save_rules(rules)
@@ -1037,7 +1372,8 @@ with tab_alerts:
             scope_label = SCOPE_LABELS.get(rule.get("scope"), rule.get("scope"))
             name_label = rule.get("name") or "(unnamed)"
             n_conds = len(rule.get("conditions", []))
-            expander_title = f"{name_label} — {scope_label} ({n_conds} condition{'s' if n_conds != 1 else ''})"
+            sched_summary = describe_schedule(rule)
+            expander_title = f"{name_label} — {scope_label} ({n_conds} condition{'s' if n_conds != 1 else ''}) | {sched_summary}"
 
             with st.expander(expander_title, expanded=False):
                 if rule.get("conditions"):
@@ -1056,6 +1392,47 @@ with tab_alerts:
                 if del_col.button("🗑 Delete rule", key=f"del_{rule['id']}"):
                     rules = [r for r in rules if r["id"] != rule["id"]]
                     save_rules(rules)
+                    st.rerun()
+
+                st.markdown("**Alert mode & schedule**")
+                curr_sched = rule.get("schedule", {"type": "scheduled", "days": DEFAULT_DAYS, "time_et": "21:00"})
+                es_mode_options = ["Scheduled Discord alert", "Scan only (no alert)"]
+                es_mode = st.radio(
+                    "Alert mode", es_mode_options,
+                    index=0 if curr_sched.get("type", "scheduled") == "scheduled" else 1,
+                    key=f"es_mode_{rule['id']}", horizontal=True,
+                )
+                curr_days_codes = curr_sched.get("days", DEFAULT_DAYS)
+                curr_days_labels = [inv_day_map[d] for d in curr_days_codes if d in inv_day_map]
+                curr_time = curr_sched.get("time_et", "21:00")
+                h_str = curr_time.split(":")[0] if ":" in curr_time else "21"
+                h_norm = f"{int(h_str):02d}" if h_str.isdigit() and int(h_str) in ALLOWED_HOURS else "21"
+                h_idx = hours_list.index(h_norm)
+
+                if es_mode == "Scheduled Discord alert":
+                    es_c1, es_c2 = st.columns([3, 1.2])
+                    es_days_labels = es_c1.multiselect(
+                        "Days (ET)", options=day_options, default=curr_days_labels, key=f"es_days_{rule['id']}"
+                    )
+                    es_hour = es_c2.selectbox(
+                        "Time (ET)", options=hours_list, index=h_idx,
+                        format_func=lambda h: HOUR_LABELS.get(int(h), h), key=f"es_h_{rule['id']}",
+                    )
+                else:
+                    es_days_labels, es_hour = curr_days_labels, h_norm
+
+                if st.button("Save schedule", key=f"es_save_{rule['id']}"):
+                    if es_mode == "Scheduled Discord alert":
+                        new_sched_days = [day_code_map[d] for d in es_days_labels] if es_days_labels else list(DEFAULT_DAYS)
+                        rule["schedule"] = {
+                            "type": "scheduled",
+                            "days": new_sched_days,
+                            "time_et": f"{es_hour}:00",
+                        }
+                    else:
+                        rule["schedule"] = {"type": "none", "days": curr_days_codes, "time_et": curr_time}
+                    save_rules(rules)
+                    st.success("Schedule saved.")
                     st.rerun()
 
     # ── Preview ─────────────────────────────────────────────────────────────

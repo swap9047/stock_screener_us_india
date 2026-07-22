@@ -12,11 +12,22 @@
         "metric_b": "ema40"
       }
     ],
-    "enabled": true
+    "enabled": true,
+    "schedule": {
+      "type": "scheduled",
+      "days": [
+        "MON",
+        "TUE",
+        "WED",
+        "THU",
+        "FRI"
+      ],
+      "time_et": "21:00"
+    }
   },
   {
-    "id": "b66037f4",
-    "name": "below 20 wema",
+    "id": "2f2c6154",
+    "name": "above 20 wema",
     "scope": "ALL",
     "conditions": [
       {
@@ -27,6 +38,17 @@
         "metric_b": "ema20"
       }
     ],
-    "enabled": true
+    "enabled": true,
+    "schedule": {
+      "type": "scheduled",
+      "days": [
+        "MON",
+        "TUE",
+        "WED",
+        "THU",
+        "FRI"
+      ],
+      "time_et": "21:00"
+    }
   }
 ]
