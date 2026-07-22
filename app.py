@@ -1353,9 +1353,8 @@ with tab_alerts:
             format_func=lambda h: HOUR_LABELS.get(int(h), h), key="rule_sched_hour",
         )
         st.caption(
-            "The GitHub Actions workflow currently only wakes up once a day at 10:00 PM ET to "
-            "save on Actions minutes — a rule scheduled for any other hour won't actually get "
-            "checked until the workflow is widened again."
+            "The alert check runs once a day at 10:00 PM ET (kept to 1x/day to save on GitHub "
+            "Actions minutes) — pick which day(s) it should check on."
         )
     else:
         dr_days_labels, dr_hour = [], "22"
