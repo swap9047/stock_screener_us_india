@@ -36,6 +36,15 @@
         "compare_type": "value",
         "logic": "AND",
         "value": "Yes"
+      },
+      {
+        "metric_a": "trend",
+        "operator": "in",
+        "compare_type": "value",
+        "value": [
+          "Strong Uptrend"
+        ],
+        "logic": "OR"
       }
     ],
     "enabled": true,
@@ -64,11 +73,20 @@
         "value": "Yes"
       },
       {
+        "metric_a": "trend",
+        "operator": "in",
+        "compare_type": "value",
+        "value": [
+          "Strong Uptrend"
+        ],
+        "logic": "OR"
+      },
+      {
         "metric_a": "last_close",
         "operator": "<=",
         "compare_type": "metric",
-        "logic": "AND",
-        "metric_b": "ema10"
+        "metric_b": "ema10",
+        "logic": "AND"
       }
     ],
     "enabled": true,
