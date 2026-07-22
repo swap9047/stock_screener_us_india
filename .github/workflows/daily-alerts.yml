@@ -1,34 +1,30 @@
 name: Daily Stock Alerts
 
-# Runs every hour, year-round -- deliberately simple. Each alert rule
-# carries its OWN day + hour schedule (any of the 24 hours, ET -- see the
-# Alert Rules tab in the app, and alerts.ALLOWED_HOURS/is_rule_due), so this
-# workflow just needs to show up every hour and ask "is anything due right
-# now?" rather than the workflow itself needing to know which hours matter.
-# That means changing a rule's schedule in the app is a pure JSON-config
-# change (alerts_config.json, pushed via the "Push config to GitHub" button
-# on the Alert Rules tab) -- it never requires editing or re-pushing this
-# workflow file, no matter which hour(s) you pick.
+# *** CURRENTLY RUNNING ONCE/DAY AT 10:00 PM ET ONLY (hourly disabled) ***
+# alerts.ALLOWED_HOURS still supports picking ANY of the 24 hours per rule
+# in the app (that part of the architecture is unchanged) -- but until this
+# workflow is switched back to hourly (`cron: "0 * * * *"`, see git history
+# for the exact line), ONLY rules scheduled for 10:00 PM ET will actually
+# get checked, since that's the only hour this workflow wakes up. Any rule
+# saved with a different hour will just sit there un-checked until either
+# it's moved to 10:00 PM or the workflow is widened again.
 #
-# This also sidesteps GitHub Actions cron's UTC-only, no-DST-awareness
-# problem entirely: since we fire every UTC hour anyway, there's no target
-# ET time that could "drift" across a DST boundary the way a once/twice-a-
-# day fixed cron would -- is_rule_due() just checks the real
-# America/New_York wall-clock hour (via zoneinfo) at run time, which is
-# always correct regardless of season.
+# 10:00 PM ET is 02:00 UTC (next day) during EDT (mid-Mar to early Nov) and
+# 03:00 UTC (next day) during EST (early Nov to mid-Mar) -- GitHub Actions
+# cron is UTC-only and does NOT adjust for daylight saving, so both lines
+# are scheduled and is_rule_due() checks the real America/New_York
+# wall-clock hour at run time to only actually act on the correct one for
+# the current season.
 #
-# Cost control: a cheap "gate" job runs every hour first -- it only installs
+# Cost control: a cheap "gate" job runs first -- it only installs
 # `requests` (the one third-party dependency alerts.py itself needs) and
-# asks is_rule_due() whether anything is actually due this hour. The
+# asks is_rule_due() whether anything is actually due right now. The
 # expensive "check" job (installs streamlit/yfinance/pandas and fetches
-# live prices) only runs when the gate says yes. In practice most hours
-# find nothing due and exit in well under a minute -- 24 cheap gate
-# runs/day plus however many real checks your rules' schedules actually
-# need comes in comfortably under GitHub's free 2,000 min/month for a
-# private repo (unlimited on a public repo).
+# live prices) only runs when the gate says yes.
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "0 2 * * *"   # 02:00 UTC = 10:00 PM ET during EDT
+    - cron: "0 3 * * *"   # 03:00 UTC = 10:00 PM ET during EST
   workflow_dispatch: {}   # run manually from the Actions tab anytime, bypasses the gate
 
 jobs:
