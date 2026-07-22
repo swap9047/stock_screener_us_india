@@ -50,38 +50,32 @@ Save — the app restarts automatically and picks these up (`get_discord_webhook
 
 For **local runs**, the equivalent is a `.streamlit/secrets.toml` file (same format, gitignored already) or the two local JSON files: `discord_config.json` (`{"webhook_url": "..."}`) and `auth_config.json` (`{"username": "...", "password": "..."}`).
 
-## 6. Schedule the daily alert check (Discord messages)
+## 6. Schedule the alert check (Discord messages)
 
-Streamlit Cloud only runs the interactive web app — it can't run `alert_check.py` on a timer. Free fix: a **GitHub Actions** workflow that checks out your repo daily and runs the script.
+Streamlit Cloud only runs the interactive web app — it can't run `alert_check.py` on a timer. Free fix: a **GitHub Actions** workflow, already committed at `.github/workflows/daily-alerts.yml`.
 
-Add `.github/workflows/daily-alerts.yml`:
+Each alert rule has its own day + time-of-day schedule (set per-rule in the Alert Rules tab), but the time is restricted to just **12:00 PM or 9:00 PM ET** (`alerts.ALLOWED_HOURS`) to keep GitHub Actions usage low — the workflow only runs at those 2 times per day (4 cron lines total, covering both DST offsets for each target time — see the comment block in the workflow file), plus a cheap "gate" job (installs only `requests`, no full dependency set) that checks whether any rule is actually due before the expensive job (which fetches live prices) runs. `alert_state.json` (tracks what's already fired, so you don't get duplicate pings) persists between runs via `actions/cache`, already wired up.
 
-```yaml
-name: Daily Stock Alerts
-on:
-  schedule:
-    - cron: "30 14 * * 1-5"   # 14:30 UTC = 8:00pm IST / after US market close-ish; adjust as you like
-  workflow_dispatch: {}         # lets you trigger it manually from the Actions tab too
+`load_discord_webhook()` checks the `DISCORD_WEBHOOK_URL` environment variable first (falling back to `discord_config.json` for local runs), so you just need `DISCORD_WEBHOOK_URL` as a **repo secret** (repo → Settings → Secrets and variables → Actions → New repository secret) — separate from the Streamlit Cloud secret above, GitHub Actions doesn't share those.
 
-jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - run: pip install -r requirements.txt
-      - run: python alert_check.py
-        env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-```
+Rough cost: 4 lightweight gate runs/day plus at most 2 full checks/day comes in well under GitHub's free 2,000 minutes/month for a private repo (or free either way on a public repo). One thing to know: GitHub auto-disables scheduled workflows after 60 days with no commits to the repo (it does email a heads-up first, sent to whoever last enabled the workflow) — a trivial commit (even just touching this README) resets that clock, so if you go quiet on the repo for ~2 months, either push something small or manually re-enable the workflow from the Actions tab.
 
-`load_discord_webhook()` already checks the `DISCORD_WEBHOOK_URL` environment variable first (falling back to `discord_config.json` for local runs), so the workflow above will work as-is once you add `DISCORD_WEBHOOK_URL` as a **repo secret** (repo → Settings → Secrets and variables → Actions → New repository secret) — separate from the Streamlit Cloud secret, GitHub Actions doesn't share those.
+## 7. Push config changes made through the deployed app back to GitHub
 
-One catch: `alert_state.json` (tracks what's already fired, so you don't get duplicate pings) is gitignored, so a stateless Actions run starts fresh each time unless the workflow also commits/restores it. Let me know when you're at this step and I'll wire up state persistence (commit it back to the repo after each run, or use Actions cache) — better to get the web app and Discord connection working first, then layer in scheduling.
+Here's a gap worth knowing about: if you edit alert rules, the watchlist, custom filters, or Settings through the **deployed** app's UI, that write only lands on that Streamlit Cloud instance's local disk. It does **not** reach your GitHub repo — so the GitHub Actions workflow above (which always checks out the repo's committed version of `alerts_config.json`) won't see those edits, and a redeploy wipes them.
 
-Alternative to GitHub Actions: Cowork's own scheduler can run `alert_check.py` for you, no GitHub Actions needed, but it runs from your Cowork session's environment, not from the deployed cloud app. Say the word and I'll set that up instead — it's simpler if you don't want to touch GitHub Actions YAML at all.
+The sidebar's **☁️ Push config to GitHub** section closes this gap: it commits `watchlist.json`, `custom_filters.json`, `settings.json`, and `alerts_config.json` straight to your repo via GitHub's REST API (no git/SSH needed — just an HTTPS call using `requests`, which is already a dependency). To enable it:
+
+1. On GitHub: **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**. Scope it to just this repo, with **Contents: Read and write** permission (nothing else needed).
+2. Add to your Streamlit Cloud secrets (same panel as step 5):
+   ```toml
+   GITHUB_TOKEN = "github_pat_xxxxx"
+   GITHUB_REPO = "your-username/your-repo-name"
+   GITHUB_BRANCH = "main"
+   ```
+3. Reload the app — the sidebar section will show which files it can push instead of the setup instructions.
+
+Each push is a separate commit (GitHub's Contents API updates one file per call), so pushing "all" creates a handful of small commits rather than one combined commit — fine for a personal repo of small JSON files.
 
 ## Summary of what's free vs. what needs setup
 
@@ -90,4 +84,5 @@ Alternative to GitHub Actions: Cowork's own scheduler can run `alert_check.py` f
 | Public URL for the dashboard | Free via Streamlit Community Cloud |
 | Login gate | Built in, just needs `AUTH_USERNAME`/`AUTH_PASSWORD` secrets set |
 | Discord alerts (manual "Send test message") | Works once webhook secret is set |
-| Discord alerts (automatic daily) | Needs a scheduler — GitHub Actions (free) or Cowork's scheduler |
+| Discord alerts (automatic, per-rule schedule) | Needs `DISCORD_WEBHOOK_URL` repo secret — GitHub Actions workflow is already committed |
+| Push config edits (made on the deployed app) back to GitHub | Needs `GITHUB_TOKEN`/`GITHUB_REPO` secrets — sidebar button already built |

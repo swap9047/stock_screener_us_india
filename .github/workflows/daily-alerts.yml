@@ -1,46 +1,64 @@
 name: Daily Stock Alerts
 
-# Target: every day at 9:00pm US Eastern Time. GitHub Actions cron is UTC-only
-# and does NOT adjust for daylight saving, so 9pm ET is 01:00 UTC during EDT
-# (mid-Mar to early Nov) but 02:00 UTC during EST (early Nov to mid-Mar) --
-# a fixed single cron would silently drift an hour off twice a year. Instead
-# we schedule BOTH possible times and let the "gate" job below check the
-# real America/New_York wall-clock hour at run time, skipping whichever of
-# the two firings isn't actually 9pm ET that day. Both crons use Tue-Sat
-# (UTC) since 9pm ET on a Mon-Fri US trading day has already rolled into the
-# next UTC calendar day.
+# Each alert rule carries its OWN day + time-of-day schedule (see the Alert
+# Rules tab in the app, and alerts.is_rule_due) -- but to keep GitHub
+# Actions usage low, every rule's time is restricted to just 2 choices:
+# 12:00 PM (noon) or 9:00 PM ET (see alerts.ALLOWED_HOURS). This workflow
+# runs at exactly those 2 ET times per day, not continuously.
+#
+# GitHub Actions cron is UTC-only and does NOT adjust for daylight saving,
+# so "noon ET" is 16:00 UTC during EDT (mid-Mar to early Nov) but 17:00 UTC
+# during EST (early Nov to mid-Mar) -- and likewise 9pm ET is 01:00 UTC
+# (next day) during EDT but 02:00 UTC during EST. A fixed single cron per
+# target time would silently drift an hour off twice a year, so instead we
+# schedule BOTH possible UTC times for BOTH ET targets (4 cron lines total)
+# and let is_rule_due() check the real America/New_York wall-clock hour at
+# run time -- the 2 firings that land on the "wrong" season for that target
+# simply find nothing due (or nothing beyond the cheap gate job) and exit.
+#
+# To avoid paying for a full dependency install (streamlit/yfinance/pandas)
+# on the "wrong season" firings (or on a real firing where nothing's due
+# that day), there's a cheap "gate" job first: it only installs `requests`
+# (the one third-party dependency alerts.py itself needs) and asks
+# is_rule_due() whether anything is due right now. The expensive "check"
+# job (which fetches live prices) only runs when the gate says yes.
 on:
   schedule:
-    - cron: "0 1 * * 2-6"   # 01:00 UTC = 9:00pm ET during EDT
-    - cron: "0 2 * * 2-6"   # 02:00 UTC = 9:00pm ET during EST
-  workflow_dispatch: {}         # run manually from Actions tab anytime, bypasses the gate
+    - cron: "0 16 * * *"   # 16:00 UTC = 12:00 PM ET during EDT
+    - cron: "0 17 * * *"   # 17:00 UTC = 12:00 PM ET during EST
+    - cron: "0 1 * * *"    # 01:00 UTC = 9:00 PM ET during EDT
+    - cron: "0 2 * * *"    # 02:00 UTC = 9:00 PM ET during EST
+  workflow_dispatch: {}   # run manually from the Actions tab anytime, bypasses the gate
 
 jobs:
   gate:
     runs-on: ubuntu-latest
     outputs:
-      should_run: ${{ steps.check.outputs.should_run }}
+      due: ${{ steps.check.outputs.due }}
     steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install lightweight deps for schedule check
+        run: pip install requests
+
       - id: check
-        name: Only proceed if it's actually 9pm ET right now
+        name: Is any enabled rule due right now?
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          hour=$(TZ="America/New_York" date +%H)
-          echo "Current ET hour: $hour"
-          if [ "$hour" = "21" ]; then
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_run=false" >> "$GITHUB_OUTPUT"
-          fi
+          python - <<'EOF' >> "$GITHUB_OUTPUT"
+          from alerts import load_rules, is_rule_due
+          rules = load_rules()
+          due = any(r.get("enabled", True) and r.get("conditions") and is_rule_due(r) for r in rules)
+          print(f"due={'true' if due else 'false'}")
+          EOF
 
   check:
     needs: gate
-    if: needs.gate.outputs.should_run == 'true'
+    if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.due == 'true'
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 

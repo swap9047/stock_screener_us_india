@@ -74,10 +74,16 @@ DEFAULT_SETTINGS = {
     "vstop_factor": VSTOP_FACTOR,
     "benchmark_us": BENCHMARKS["US"],
     "benchmark_india": BENCHMARKS["INDIA"],
-    "trend_slope_lookback": 3,   # weeks used for the slow WEMA's regression slope (Trend read)
+    # -- Trend column (Strong Uptrend/Uptrend/Downtrend/Strong Downtrend) --
+    "trend_slope_lookback": 3,   # weeks used for the slow WEMA's regression slope
+    "trend_near_high_low_pct": 0.10,   # "Strong" requires price within this % of the 52w high/low
+    "trend_volume_ratio": 1.0,   # "Strong" requires avg_volume_10d / avg_volume_100d >= this
+    # -- Vol Trend column (Exploding/In-line/Declining) -- independent of Trend/Tech Uptrend --
     "volume_explode_ratio": 1.4,   # avg_volume_10d / avg_volume_100d >= this => "Exploding"
     "volume_decline_ratio": 0.7,   # avg_volume_10d / avg_volume_100d <= this => "Declining"
+    # -- Tech Uptrend column (boolean) -- independent of Vol Trend's ratio above --
     "tech_uptrend_min_vstop_weeks": 3,   # weeks since last VStop flip required for Tech Uptrend
+    "tech_uptrend_volume_ratio": 1.4,   # avg_volume_10d / avg_volume_100d must be >= this
 }
 
 
@@ -300,25 +306,41 @@ def compute_vstop(ohlc_df, length=VSTOP_LENGTH, factor=VSTOP_FACTOR):
 
 
 def compute_trend(last_close, ema_slow_series, rs_weekly, week52_high, week52_low,
-                   avg_volume_10d, avg_volume_100d, slope_lookback):
+                   avg_volume_10d, avg_volume_100d, slope_lookback,
+                   near_high_low_pct=0.10, volume_ratio=1.0, ema_fast=None):
     """Returns (trend_label, trend_rank) -- a 4-level trend-strength read:
     "Strong Uptrend" / "Uptrend" / "Downtrend" / "Strong Downtrend"
     (trend_rank: 4/3/2/1, for numeric sort/filter use).
 
-    Direction (up vs down) is a 2-3 vote system:
-      1. price vs the slow WEMA (above/below)
-      2. the WEMA's own regression slope over `slope_lookback` weeks (a
-         least-squares fit, not a raw two-point diff -- see note below)
-      3. Mansfield RS vs the benchmark (positive/negative), if available
-    Majority vote wins; a genuine tie (only when RS is unavailable and the
-    other two disagree) falls back to price vs MA.
+    Direction (up vs down) is a hard AND across up to 4 conditions --
+    "Uptrend" requires ALL of the following that are evaluable (no partial
+    credit, no majority vote):
+      1. price above the slow WEMA
+      2. the WEMA's own regression slope over `slope_lookback` weeks is
+         rising (a least-squares fit, not a raw two-point diff -- see note
+         below)
+      3. fast WEMA above slow WEMA (e.g. 10 WEMA > 40 WEMA) -- moving-average
+         alignment, required whenever `ema_fast` is supplied
+      4. Mansfield RS vs the benchmark is positive, if available
+    "Downtrend" is the mirror image (all 4 conditions bearish). Any mixed
+    result -- some conditions bullish, some not, short of unanimous either
+    way -- is conservatively classified as "Downtrend": Uptrend must be
+    fully earned, not just have more signals in its favor. RS is the only
+    condition that can be skipped (when there isn't enough history yet for
+    the RS lookback) -- when skipped, only the remaining 3 need to
+    unanimously agree.
 
     Strength ("Strong" prefix) requires BOTH of:
-      - price within 10% of its trailing 52-week high (for an uptrend) or
-        52-week low (for a downtrend) -- i.e. the move has real extension
-      - 10-day average volume > 100-day average volume -- i.e. recent
-        activity is elevated, not drying up
+      - price within `near_high_low_pct` of its trailing 52-week high (for an
+        uptrend) or 52-week low (for a downtrend) -- i.e. the move has real
+        extension. Default 0.10 = within 10%.
+      - 10-day average volume >= `volume_ratio` times the 100-day average --
+        i.e. recent activity is elevated, not drying up. Default 1.0 = just
+        needs to be higher, no minimum multiple.
     Both must agree for "Strong"; otherwise it's just Uptrend/Downtrend.
+    These two thresholds are this column's OWN parameters -- independent of
+    the similarly-shaped ratios used by the Vol Trend and Tech Uptrend
+    columns (see DEFAULT_SETTINGS), so tuning one never moves the others.
 
     Using a regression slope (not a 2-point endpoint diff) for the WEMA
     direction matters for volatile movers: a violent spike-and-fade (e.g. a
@@ -330,44 +352,81 @@ def compute_trend(last_close, ema_slow_series, rs_weekly, week52_high, week52_lo
     This is still a simplified, fully mechanical read -- a genuine
     multi-factor stage/trend indicator would also weigh momentum and beta --
     so treat it as a sort/filter aid, not a precise signal. Returns
-    (None, None) if there isn't enough weekly history yet.
+    (trend_label, trend_rank, detail) where `detail` is a dict of the
+    individual condition booleans and raw numbers behind the label, meant
+    for building a "why" tooltip. Returns (None, None, None) if there isn't
+    enough weekly history yet.
     """
     n = len(ema_slow_series)
     if n < slope_lookback + 1:
-        return None, None
+        return None, None, None
     window = ema_slow_series.iloc[-(slope_lookback + 1):]
     if window.isna().any():
-        return None, None
+        return None, None, None
     x = np.arange(len(window))
     slope = np.polyfit(x, window.values, 1)[0]
     last_ma = window.iloc[-1]
 
-    votes = [1 if last_close > last_ma else -1, 1 if slope > 0 else -1]
-    if rs_weekly is not None:
-        if rs_weekly > 0:
-            votes.append(1)
-        elif rs_weekly < 0:
-            votes.append(-1)
-    direction_score = sum(votes)
+    price_above_ma = last_close > last_ma
+    slope_rising = slope > 0
+    ema_aligned = (ema_fast > last_ma) if ema_fast is not None else None
+    rs_positive = (rs_weekly > 0) if rs_weekly is not None else None
 
-    if direction_score > 0:
+    bullish = [price_above_ma, slope_rising]
+    bearish = [not price_above_ma, not slope_rising]
+    if ema_aligned is not None:
+        bullish.append(ema_aligned)
+        bearish.append(not ema_aligned)
+    if rs_positive is not None:
+        bullish.append(rs_positive)
+        bearish.append(not rs_positive)
+
+    if all(bullish):
         direction = "Uptrend"
-    elif direction_score < 0:
+    elif all(bearish):
         direction = "Downtrend"
     else:
-        direction = "Uptrend" if last_close > last_ma else "Downtrend"
+        # Mixed signals -- not unanimous either way. Conservative default:
+        # Uptrend must be fully confirmed, so anything short of that is
+        # Downtrend rather than a partial-credit guess.
+        direction = "Downtrend"
 
-    near_high = week52_high is not None and week52_high > 0 and last_close >= week52_high * 0.90
-    near_low = week52_low is not None and week52_low > 0 and last_close <= week52_low * 1.10
+    near_high = week52_high is not None and week52_high > 0 and last_close >= week52_high * (1 - near_high_low_pct)
+    near_low = week52_low is not None and week52_low > 0 and last_close <= week52_low * (1 + near_high_low_pct)
     volume_rising = (
-        avg_volume_10d is not None and avg_volume_100d is not None and avg_volume_10d > avg_volume_100d
+        avg_volume_10d is not None and avg_volume_100d is not None and avg_volume_10d >= volume_ratio * avg_volume_100d
     )
+    near_high_low_relevant = near_high if direction == "Uptrend" else near_low
 
     if direction == "Uptrend":
         strong = near_high and volume_rising
-        return ("Strong Uptrend" if strong else "Uptrend"), (4 if strong else 3)
-    strong = near_low and volume_rising
-    return ("Strong Downtrend" if strong else "Downtrend"), (1 if strong else 2)
+        label, rank = ("Strong Uptrend" if strong else "Uptrend"), (4 if strong else 3)
+    else:
+        strong = near_low and volume_rising
+        label, rank = ("Strong Downtrend" if strong else "Downtrend"), (1 if strong else 2)
+
+    detail = {
+        "direction": direction,
+        "strong": strong,
+        "last_close": last_close,
+        "last_ma": round(float(last_ma), 2),
+        "slope": round(float(slope), 4),
+        "price_above_ma": price_above_ma,
+        "slope_rising": slope_rising,
+        "ema_fast": ema_fast,
+        "ema_aligned": ema_aligned,
+        "rs_weekly": rs_weekly,
+        "rs_positive": rs_positive,
+        "week52_high": week52_high,
+        "week52_low": week52_low,
+        "near_high_low_pass": near_high_low_relevant,
+        "near_high_low_pct": near_high_low_pct,
+        "avg_volume_10d": avg_volume_10d,
+        "avg_volume_100d": avg_volume_100d,
+        "volume_rising": volume_rising,
+        "volume_ratio": volume_ratio,
+    }
+    return label, rank, detail
 
 
 def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
@@ -382,9 +441,12 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
     vstop_length = settings["vstop_length"]
     vstop_factor = settings["vstop_factor"]
     trend_slope_lookback = settings.get("trend_slope_lookback", 3)
+    trend_near_high_low_pct = settings.get("trend_near_high_low_pct", 0.10)
+    trend_volume_ratio = settings.get("trend_volume_ratio", 1.0)
     volume_explode_ratio = settings.get("volume_explode_ratio", 1.4)
     volume_decline_ratio = settings.get("volume_decline_ratio", 0.7)
     tech_uptrend_min_vstop_weeks = settings.get("tech_uptrend_min_vstop_weeks", 3)
+    tech_uptrend_volume_ratio = settings.get("tech_uptrend_volume_ratio", 1.4)
 
     if not tickers:
         return [], datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -540,15 +602,20 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
             week52_high = round(float(window_252["High"].max()), 1) if window_252["High"].notna().any() else None
             week52_low = round(float(window_252["Low"].min()), 1) if window_252["Low"].notna().any() else None
 
-            trend = trend_rank = None
+            trend = trend_rank = trend_detail = None
             if ema40_series is not None:
-                trend, trend_rank = compute_trend(
+                trend, trend_rank, trend_detail = compute_trend(
                     last_close, ema40_series, rs_weekly, week52_high, week52_low,
                     avg_volume_10d, avg_volume_100d, trend_slope_lookback,
+                    near_high_low_pct=trend_near_high_low_pct, volume_ratio=trend_volume_ratio,
+                    ema_fast=ema10,
                 )
 
             # Tech Uptrend: close > weekly VStop (in an uptrend that's held for
             # a while) + close above the slow weekly WEMA + volume surging.
+            # Uses its OWN volume ratio (tech_uptrend_volume_ratio) -- independent
+            # of Vol Trend's "Exploding" ratio above, even though both default to
+            # the same 1.4x, so tuning one column never moves the other.
             tech_uptrend = 0
             if (
                 vstop_weekly is not None
@@ -561,7 +628,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                     last_close > vstop_weekly
                     and vstop_weekly_weeks_since_change > tech_uptrend_min_vstop_weeks
                     and last_close > ema40
-                    and avg_volume_10d > volume_explode_ratio * avg_volume_100d
+                    and avg_volume_10d > tech_uptrend_volume_ratio * avg_volume_100d
                 )
 
             results.append({
@@ -578,6 +645,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 "week52_low": week52_low,
                 "trend": trend,
                 "trend_rank": trend_rank,
+                "trend_detail": trend_detail,
                 "tech_uptrend": tech_uptrend,
                 "ema10": ema10,
                 "ema20": ema20,
