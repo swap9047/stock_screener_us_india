@@ -1,49 +1,34 @@
 name: Daily Stock Alerts
 
-# *** TEMPORARILY RUNNING EVERY HOUR FOR TESTING ***
-# (previously every 15 min -- GitHub's scheduler is documented as
-# best-effort and in practice barely honored sub-hourly cron at all,
-# firing only twice in ~3 hours during testing; hourly schedules are far
-# more reliably honored by GitHub's own scheduler, so this trades a bit of
-# granularity for actually firing when expected.)
+# Runs every hour, year-round -- deliberately simple. Each alert rule
+# carries its OWN day + hour schedule (any of the 24 hours, ET -- see the
+# Alert Rules tab in the app, and alerts.ALLOWED_HOURS/is_rule_due), so this
+# workflow just needs to show up every hour and ask "is anything due right
+# now?" rather than the workflow itself needing to know which hours matter.
+# That means changing a rule's schedule in the app is a pure JSON-config
+# change (alerts_config.json, pushed via the "Push config to GitHub" button
+# on the Alert Rules tab) -- it never requires editing or re-pushing this
+# workflow file, no matter which hour(s) you pick.
 #
-# The gate's is_rule_due() check and the 12pm/9pm restriction are both
-# bypassed right now (gate forced to due=true, check job runs with
-# --force) so you can see live Discord alerts fire quickly. This burns
-# GitHub Actions minutes much faster than the normal 2x/day schedule --
-# revert to the commented-out 4-line cron + restore the real gate check +
-# drop --force once testing is done.
+# This also sidesteps GitHub Actions cron's UTC-only, no-DST-awareness
+# problem entirely: since we fire every UTC hour anyway, there's no target
+# ET time that could "drift" across a DST boundary the way a once/twice-a-
+# day fixed cron would -- is_rule_due() just checks the real
+# America/New_York wall-clock hour (via zoneinfo) at run time, which is
+# always correct regardless of season.
 #
-# Each alert rule carries its OWN day + time-of-day schedule (see the Alert
-# Rules tab in the app, and alerts.is_rule_due) -- but to keep GitHub
-# Actions usage low, every rule's time is restricted to just 2 choices:
-# 12:00 PM (noon) or 9:00 PM ET (see alerts.ALLOWED_HOURS). This workflow
-# runs at exactly those 2 ET times per day, not continuously.
-#
-# GitHub Actions cron is UTC-only and does NOT adjust for daylight saving,
-# so "noon ET" is 16:00 UTC during EDT (mid-Mar to early Nov) but 17:00 UTC
-# during EST (early Nov to mid-Mar) -- and likewise 9pm ET is 01:00 UTC
-# (next day) during EDT but 02:00 UTC during EST. A fixed single cron per
-# target time would silently drift an hour off twice a year, so instead we
-# schedule BOTH possible UTC times for BOTH ET targets (4 cron lines total)
-# and let is_rule_due() check the real America/New_York wall-clock hour at
-# run time -- the 2 firings that land on the "wrong" season for that target
-# simply find nothing due (or nothing beyond the cheap gate job) and exit.
-#
-# To avoid paying for a full dependency install (streamlit/yfinance/pandas)
-# on the "wrong season" firings (or on a real firing where nothing's due
-# that day), there's a cheap "gate" job first: it only installs `requests`
-# (the one third-party dependency alerts.py itself needs) and asks
-# is_rule_due() whether anything is due right now. The expensive "check"
-# job (which fetches live prices) only runs when the gate says yes.
+# Cost control: a cheap "gate" job runs every hour first -- it only installs
+# `requests` (the one third-party dependency alerts.py itself needs) and
+# asks is_rule_due() whether anything is actually due this hour. The
+# expensive "check" job (installs streamlit/yfinance/pandas and fetches
+# live prices) only runs when the gate says yes. In practice most hours
+# find nothing due and exit in well under a minute -- 24 cheap gate
+# runs/day plus however many real checks your rules' schedules actually
+# need comes in comfortably under GitHub's free 2,000 min/month for a
+# private repo (unlimited on a public repo).
 on:
   schedule:
-    # --- TEMPORARY: testing every hour, replace with the 4 lines below when done ---
     - cron: "0 * * * *"
-    # - cron: "0 16 * * *"   # 16:00 UTC = 12:00 PM ET during EDT
-    # - cron: "0 17 * * *"   # 17:00 UTC = 12:00 PM ET during EST
-    # - cron: "0 1 * * *"    # 01:00 UTC = 9:00 PM ET during EDT
-    # - cron: "0 2 * * *"    # 02:00 UTC = 9:00 PM ET during EST
   workflow_dispatch: {}   # run manually from the Actions tab anytime, bypasses the gate
 
 jobs:
@@ -64,15 +49,12 @@ jobs:
       - id: check
         name: Is any enabled rule due right now?
         run: |
-          # TEMPORARY: forced to always "true" while testing every hour.
-          # Restore the real is_rule_due() check (below) when done testing.
-          echo "due=true" >> "$GITHUB_OUTPUT"
-          # python - <<'EOF' >> "$GITHUB_OUTPUT"
-          # from alerts import load_rules, is_rule_due
-          # rules = load_rules()
-          # due = any(r.get("enabled", True) and r.get("conditions") and is_rule_due(r) for r in rules)
-          # print(f"due={'true' if due else 'false'}")
-          # EOF
+          python - <<'EOF' >> "$GITHUB_OUTPUT"
+          from alerts import load_rules, is_rule_due
+          rules = load_rules()
+          due = any(r.get("enabled", True) and r.get("conditions") and is_rule_due(r) for r in rules)
+          print(f"due={'true' if due else 'false'}")
+          EOF
 
   check:
     needs: gate
@@ -99,7 +81,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run alert check
-        run: python alert_check.py --force  # TEMPORARY: bypasses per-rule schedule while testing every hour
+        run: python alert_check.py
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
 

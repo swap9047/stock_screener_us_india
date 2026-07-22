@@ -4,3 +4,4 @@ pandas
 numpy
 requests
 jinja2
+streamlit-sortables

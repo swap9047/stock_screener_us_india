@@ -48,28 +48,38 @@ SCOPE_LABELS = {"ALL": "All watchlist", "US": "US watchlist", "INDIA": "India wa
 # Each rule carries a "schedule" dict: {"type": "scheduled"|"none", "days":
 # [...], "time_et": "HH:00"}. "none" means the rule is a scan-only rule --
 # never sent to Discord, but still usable as a watchlist filter (see
-# app.py's "Filter by Saved Scans / Alerts"). "time_et" can only be one of
-# ALLOWED_HOURS (12pm or 9pm ET) -- that's the cadence the GitHub Actions
-# workflow actually runs on (see daily-alerts.yml), chosen specifically to
-# keep Actions usage to 2 real checks/day instead of running every hour.
-# normalize_schedule() clamps any other hour (including old per-hour or
-# sub-hourly values from before this restriction) down to the nearest
-# allowed slot, so a stale schedule can never quietly hold up a rule.
+# app.py's "Filter by Saved Scans / Alerts").
+#
+# "time_et" can be ANY hour (0-23) -- the GitHub Actions workflow
+# (daily-alerts.yml) runs every hour year-round and relies entirely on
+# is_rule_due() (checked in a cheap "gate" job) to decide whether the
+# expensive check actually needs to run that hour, rather than the workflow
+# itself only firing at 1-2 fixed times. This means changing a rule's
+# schedule in this app is a pure JSON-config change -- it never requires
+# editing or re-pushing the workflow file, since the workflow already
+# listens every hour and just no-ops (cheaply) the other 23.
+# normalize_schedule() clamps any invalid hour to the nearest valid one
+# (0-23), so a corrupted/malformed schedule can never silently hold up a
+# rule.
 DAY_CODES = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
 DAY_LABELS = {"MON": "Mon", "TUE": "Tue", "WED": "Wed", "THU": "Thu", "FRI": "Fri", "SAT": "Sat", "SUN": "Sun"}
 DEFAULT_DAYS = ["MON", "TUE", "WED", "THU", "FRI"]
-ALLOWED_HOURS = [12, 21]  # 12:00 (noon) and 21:00 (9pm) ET -- the only 2 times the workflow runs
-HOUR_LABELS = {12: "12:00 PM (noon)", 21: "9:00 PM"}
+ALLOWED_HOURS = list(range(24))  # any hour, ET -- see comment above
+HOUR_LABELS = {
+    0: "12:00 AM (midnight)", 1: "1:00 AM", 2: "2:00 AM", 3: "3:00 AM", 4: "4:00 AM", 5: "5:00 AM",
+    6: "6:00 AM", 7: "7:00 AM", 8: "8:00 AM", 9: "9:00 AM", 10: "10:00 AM", 11: "11:00 AM",
+    12: "12:00 PM (noon)", 13: "1:00 PM", 14: "2:00 PM", 15: "3:00 PM", 16: "4:00 PM", 17: "5:00 PM",
+    18: "6:00 PM", 19: "7:00 PM", 20: "8:00 PM", 21: "9:00 PM", 22: "10:00 PM", 23: "11:00 PM",
+}
 
 
 def normalize_schedule(sched):
     """Coerce any schedule dict (missing, partial, or malformed) into a
-    valid {"type", "days", "time_et"} dict, where time_et is always one of
-    ALLOWED_HOURS. Idempotent -- also clamps any other hour (e.g. an old
-    per-hour or sub-hourly value from before the workflow moved to 2x/day)
-    to the nearest allowed slot, so a previously saved schedule that no
-    longer matches when the workflow actually runs can't silently go
-    stale -- it gets pulled to a real slot instead."""
+    valid {"type", "days", "time_et"} dict, where time_et is always a valid
+    0-23 hour. Idempotent -- any out-of-range/garbled hour gets clamped to
+    the nearest valid one, so a corrupted schedule can never silently break
+    a rule. (ALLOWED_HOURS is now all 24 hours -- the workflow listens
+    every hour, so this rarely needs to clamp anything in practice.)"""
     if not isinstance(sched, dict):
         sched = {}
 
@@ -112,9 +122,10 @@ def is_rule_due(rule, et_now=None):
     """Is this rule due to be checked right now? Compares the rule's
     schedule against `et_now` (a tz-aware America/New_York datetime;
     defaults to the current time). Matches on day-of-week plus hour only --
-    the workflow only runs at 12pm and 9pm ET (see daily-alerts.yml and
-    ALLOWED_HOURS), so any minute within the rule's chosen hour counts as
-    a match."""
+    the workflow runs every hour (see daily-alerts.yml), so any minute
+    within the rule's chosen hour counts as a match. This is the actual
+    gate that decides whether a given hourly firing does anything at all --
+    23 out of 24 hourly firings typically find nothing due and exit cheaply."""
     sched = rule.get("schedule", {})
     if sched.get("type") == "none":
         return False
