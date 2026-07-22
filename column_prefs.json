@@ -2,26 +2,19 @@
   "order": [
     "trend",
     "matched_alerts",
+    "tech_uptrend_label",
+    "volume_trend",
     "pct_change_1d",
     "week52_high",
     "week52_low",
     "data_end",
     "ema10",
-    "ema20",
     "ema40",
-    "ema10_daily",
-    "ema50",
-    "ema200",
-    "rsi14_daily",
     "rsi14_weekly",
-    "rsi14_monthly",
-    "rs_daily",
     "rs_weekly",
-    "rs_monthly",
+    "rsi14_monthly",
     "vstop_weekly",
     "vstop_weekly_direction",
-    "vstop_change",
-    "volume_trend",
-    "tech_uptrend_label"
+    "vstop_change"
   ]
 }
