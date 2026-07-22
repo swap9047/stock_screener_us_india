@@ -50,5 +50,30 @@
       ],
       "time_et": "21:00"
     }
+  },
+  {
+    "id": "9f2b2278",
+    "name": "below 10 wema",
+    "scope": "ALL",
+    "conditions": [
+      {
+        "metric_a": "last_close",
+        "operator": "<=",
+        "compare_type": "metric",
+        "logic": "AND",
+        "metric_b": "ema10"
+      }
+    ],
+    "enabled": true,
+    "schedule": {
+      "type": "scheduled",
+      "days": [
+        "MON",
+        "TUE",
+        "WED",
+        "THU"
+      ],
+      "time_et": "12:00"
+    }
   }
 ]
