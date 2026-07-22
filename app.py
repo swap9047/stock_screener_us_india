@@ -1349,15 +1349,16 @@ with tab_alerts:
         sc1, sc2 = st.columns([3, 1.2])
         dr_days_labels = sc1.multiselect("Days (ET)", options=day_options, default=default_day_labels, key="rule_sched_days")
         dr_hour = sc2.selectbox(
-            "Time (ET)", options=hours_list, index=hours_list.index("21"),
+            "Time (ET)", options=hours_list, index=hours_list.index("22"),
             format_func=lambda h: HOUR_LABELS.get(int(h), h), key="rule_sched_hour",
         )
         st.caption(
-            "The alert check runs every hour and only actually checks your ticker data during "
-            "the hour(s) you pick here — pick any hour, no extra cost either way."
+            "The GitHub Actions workflow currently only wakes up once a day at 10:00 PM ET to "
+            "save on Actions minutes — a rule scheduled for any other hour won't actually get "
+            "checked until the workflow is widened again."
         )
     else:
-        dr_days_labels, dr_hour = [], "21"
+        dr_days_labels, dr_hour = [], "22"
 
     save_col, clear_col = st.columns([1, 1])
     if save_col.button("Save rule", type="primary"):
@@ -1376,7 +1377,7 @@ with tab_alerts:
                 sched_days = [day_code_map[d] for d in dr_days_labels] if dr_days_labels else list(DEFAULT_DAYS)
                 new_schedule = {"type": "scheduled", "days": sched_days, "time_et": f"{dr_hour}:00"}
             else:
-                new_schedule = {"type": "none", "days": list(DEFAULT_DAYS), "time_et": "21:00"}
+                new_schedule = {"type": "none", "days": list(DEFAULT_DAYS), "time_et": "22:00"}
             new_rule = {
                 "id": uuid.uuid4().hex[:8],
                 "name": st.session_state.get("rule_name", "").strip(),
@@ -1487,7 +1488,7 @@ with tab_alerts:
                     st.rerun()
 
                 st.markdown("**Alert mode & schedule**")
-                curr_sched = rule.get("schedule", {"type": "scheduled", "days": DEFAULT_DAYS, "time_et": "21:00"})
+                curr_sched = rule.get("schedule", {"type": "scheduled", "days": DEFAULT_DAYS, "time_et": "22:00"})
                 es_mode_options = ["Scheduled Discord alert", "Scan only (no alert)"]
                 es_mode = st.radio(
                     "Alert mode", es_mode_options,
@@ -1496,9 +1497,9 @@ with tab_alerts:
                 )
                 curr_days_codes = curr_sched.get("days", DEFAULT_DAYS)
                 curr_days_labels = [inv_day_map[d] for d in curr_days_codes if d in inv_day_map]
-                curr_time = curr_sched.get("time_et", "21:00")
-                h_str = curr_time.split(":")[0] if ":" in curr_time else "21"
-                h_norm = f"{int(h_str):02d}" if h_str.isdigit() and int(h_str) in ALLOWED_HOURS else "21"
+                curr_time = curr_sched.get("time_et", "22:00")
+                h_str = curr_time.split(":")[0] if ":" in curr_time else "22"
+                h_norm = f"{int(h_str):02d}" if h_str.isdigit() and int(h_str) in ALLOWED_HOURS else "22"
                 h_idx = hours_list.index(h_norm)
 
                 if es_mode == "Scheduled Discord alert":
