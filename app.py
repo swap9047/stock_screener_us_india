@@ -179,16 +179,16 @@ def ema_col_labels(settings):
     }
 
 
-_SPAN_TEXT_RE = re.compile(r"^<span\b[^>]*>(.*)</span>$")
+_SUMMARY_TEXT_RE = re.compile(r"<summary\b[^>]*>(.*?)</summary>", re.DOTALL)
 
 
 def _plain_text(val):
-    """Trend/Vol Trend/Tech Uptrend cells are wrapped in <span title=...> for
-    their hover tooltip (see with_tooltip) -- unwrap back to the plain label
-    so the coloring matches below (which compare against exact label
-    strings like "Strong Uptrend") keep working."""
+    """Trend/Vol Trend/Tech Uptrend cells are wrapped in a <details><summary>
+    disclosure (see with_tooltip) -- unwrap back to the plain label so the
+    coloring logic below (which compares against exact label strings like
+    "Strong Uptrend") keeps working."""
     if isinstance(val, str):
-        m = _SPAN_TEXT_RE.match(val)
+        m = _SUMMARY_TEXT_RE.search(val)
         if m:
             return html.unescape(m.group(1))
     return val
@@ -251,16 +251,39 @@ def _mark(passed):
 
 
 def with_tooltip(display_value, tooltip_text):
-    """Wraps a cell's display text in a <span title=...> for a native
-    browser hover tooltip -- no CSS/JS needed (Streamlit's markdown renderer
-    strips <style>/<script> tags outright even with unsafe_allow_html=True,
-    so a title attribute is the only reliable hover mechanism here; see
-    sticky_header_html's docstring for the same constraint). Both the
-    visible text and the tooltip are HTML-escaped so stray quotes/special
-    characters in tooltip text can't break the attribute or the table."""
+    """Wraps a cell's display text so the cell itself stays compact (just the
+    label, e.g. "Uptrend") while the full breakdown is reachable two ways:
+    a native hover tooltip (title=...) for desktop, and a click-to-expand
+    <details>/<summary> disclosure for mobile/touch, where hover tooltips
+    don't fire at all. <details>/<summary> need no CSS/JS -- important
+    because Streamlit's markdown renderer strips <style>/<script> tags
+    outright even with unsafe_allow_html=True (see sticky_header_html's
+    docstring for the same constraint).
+
+    IMPORTANT: the title attribute uses the `&#10;` entity instead of a raw
+    "\\n" for line breaks. A literal blank line ("\\n\\n", which
+    trend_tooltip's section separator produces) embedded in raw HTML makes
+    Streamlit's/CommonMark's HTML-block parser treat the blank line as the
+    end of the raw-HTML block -- everything after it then gets dumped back
+    out as plain visible markdown text instead of staying hidden inside the
+    attribute (this was the exact bug: the "Strong also needs BOTH..." tail
+    spilling into the cell). Encoding newlines as an entity means the
+    generated markup never contains a literal blank line, so it can't
+    happen. The expandable body below uses real <br> tags instead (safe --
+    those are tag content, not an attribute value)."""
+    value_esc = html.escape(str(display_value))
     if not tooltip_text:
-        return html.escape(str(display_value))
-    return f'<span title="{html.escape(tooltip_text)}">{html.escape(str(display_value))}</span>'
+        return value_esc
+    tooltip_esc = html.escape(tooltip_text)
+    title_attr = tooltip_esc.replace("\n", "&#10;")
+    body_html = tooltip_esc.replace("\n", "<br>")
+    return (
+        f'<details style="display:inline-block" title="{title_attr}">'
+        f'<summary style="cursor:help">{value_esc}</summary>'
+        f'<div style="font-size:11px;font-weight:400;line-height:1.5;'
+        f'white-space:normal;margin-top:4px;">{body_html}</div>'
+        f'</details>'
+    )
 
 
 def trend_tooltip(row, labels):
@@ -456,16 +479,31 @@ def column_definitions(settings, labels):
 
 def add_header_tooltips(html_str, definitions):
     """Appends a small 'ⓘ' info icon next to each column header found in
-    `definitions`, with the definition as a native title= hover tooltip --
-    same technique as with_tooltip (see its docstring): Streamlit strips
-    <style>/<script> tags from markdown even with unsafe_allow_html=True, so
-    a plain HTML title attribute is the only hover mechanism that survives."""
+    `definitions`. Same <details>/<summary> technique as with_tooltip (see
+    its docstring): a native title= gives a hover tooltip on desktop, and
+    the <details> disclosure makes it tappable on mobile/touch, where hover
+    never fires -- a plain hover-only <span title=...> (the previous
+    approach) worked on desktop but had no way to reveal itself on a phone,
+    which is what made the icon look "broken" there. Newlines are encoded
+    as &#10; in the title attribute for the same reason as with_tooltip:
+    a literal blank line inside raw HTML can trick Streamlit's/CommonMark's
+    HTML-block parser into ending the block early and dumping the rest as
+    visible text."""
     def _inject(m):
         opening, label, closing = m.group(1), m.group(2), m.group(3)
         definition = definitions.get(label.strip())
         if not definition:
             return m.group(0)
-        icon = f' <span title="{html.escape(definition)}" style="cursor:help;opacity:0.55;font-size:11px;">ⓘ</span>'
+        def_esc = html.escape(definition)
+        title_attr = def_esc.replace("\n", "&#10;")
+        body_html = def_esc.replace("\n", "<br>")
+        icon = (
+            f' <details style="display:inline-block;vertical-align:middle" title="{title_attr}">'
+            f'<summary style="cursor:help;opacity:0.55;font-size:11px;">ⓘ</summary>'
+            f'<div style="font-size:11px;font-weight:400;line-height:1.5;'
+            f'white-space:normal;max-width:260px;margin-top:2px;">{body_html}</div>'
+            f'</details>'
+        )
         return f"{opening}{label}{icon}{closing}"
     return re.sub(r"(<th\b[^>]*>)([^<]*)(</th>)", _inject, html_str)
 
