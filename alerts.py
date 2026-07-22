@@ -50,27 +50,25 @@ SCOPE_LABELS = {"ALL": "All watchlist", "US": "US watchlist", "INDIA": "India wa
 # never sent to Discord, but still usable as a watchlist filter (see
 # app.py's "Filter by Saved Scans / Alerts").
 #
-# "time_et" can be ANY hour (0-23) -- the GitHub Actions workflow
-# (daily-alerts.yml) runs every hour year-round and relies entirely on
-# is_rule_due() (checked in a cheap "gate" job) to decide whether the
-# expensive check actually needs to run that hour, rather than the workflow
-# itself only firing at 1-2 fixed times. This means changing a rule's
-# schedule in this app is a pure JSON-config change -- it never requires
-# editing or re-pushing the workflow file, since the workflow already
-# listens every hour and just no-ops (cheaply) the other 23.
-# normalize_schedule() clamps any invalid hour to the nearest valid one
-# (0-23), so a corrupted/malformed schedule can never silently hold up a
-# rule.
+# ALLOWED_HOURS must always match EXACTLY which hour(s) the GitHub Actions
+# workflow (daily-alerts.yml) actually wakes up at -- currently just
+# 10:00 PM ET, once/day, to keep Actions usage minimal. It was briefly
+# widened to all 24 hours (workflow running hourly) but that decoupled the
+# picker from reality: the dropdown let you pick, say, 3:00 PM, but the
+# workflow never woke up then, so that rule would silently never fire.
+# Restricting ALLOWED_HOURS back down to exactly what the workflow supports
+# means the picker can never offer an hour that doesn't actually work --
+# if you want more/different hours later, both this list AND the workflow's
+# `on.schedule` cron lines need to change together (see daily-alerts.yml's
+# comment block for the DST-safe two-line-per-hour pattern).
+# normalize_schedule() clamps any invalid/unsupported hour to the nearest
+# allowed one, so a stale or corrupted schedule can never silently hold up
+# a rule.
 DAY_CODES = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
 DAY_LABELS = {"MON": "Mon", "TUE": "Tue", "WED": "Wed", "THU": "Thu", "FRI": "Fri", "SAT": "Sat", "SUN": "Sun"}
 DEFAULT_DAYS = ["MON", "TUE", "WED", "THU", "FRI"]
-ALLOWED_HOURS = list(range(24))  # any hour, ET -- see comment above
-HOUR_LABELS = {
-    0: "12:00 AM (midnight)", 1: "1:00 AM", 2: "2:00 AM", 3: "3:00 AM", 4: "4:00 AM", 5: "5:00 AM",
-    6: "6:00 AM", 7: "7:00 AM", 8: "8:00 AM", 9: "9:00 AM", 10: "10:00 AM", 11: "11:00 AM",
-    12: "12:00 PM (noon)", 13: "1:00 PM", 14: "2:00 PM", 15: "3:00 PM", 16: "4:00 PM", 17: "5:00 PM",
-    18: "6:00 PM", 19: "7:00 PM", 20: "8:00 PM", 21: "9:00 PM", 22: "10:00 PM", 23: "11:00 PM",
-}
+ALLOWED_HOURS = [22]  # 10:00 PM ET -- the only hour the workflow runs at
+HOUR_LABELS = {22: "10:00 PM"}
 
 
 def normalize_schedule(sched):
