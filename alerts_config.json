@@ -117,18 +117,14 @@
     "scope": "ALL",
     "conditions": [
       {
-        "metric_a": "trend_rank",
-        "operator": "==",
+        "metric_a": "trend",
+        "operator": "in",
         "compare_type": "value",
-        "logic": "AND",
-        "value": "Downtrend"
-      },
-      {
-        "metric_a": "trend_rank",
-        "operator": "==",
-        "compare_type": "value",
-        "logic": "OR",
-        "value": "Strong Downtrend"
+        "value": [
+          "Downtrend",
+          "Strong Downtrend"
+        ],
+        "logic": "AND"
       }
     ],
     "enabled": true,
