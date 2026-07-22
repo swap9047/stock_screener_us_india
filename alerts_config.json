@@ -26,16 +26,109 @@
     }
   },
   {
-    "id": "cea7878f",
-    "name": "stocks below 10w ema",
+    "id": "591b1f1f",
+    "name": "uptrending stocks",
     "scope": "ALL",
     "conditions": [
+      {
+        "metric_a": "tech_uptrend",
+        "operator": "==",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": "Yes"
+      }
+    ],
+    "enabled": true,
+    "schedule": {
+      "type": "scheduled",
+      "days": [
+        "MON",
+        "TUE",
+        "WED",
+        "THU",
+        "FRI"
+      ],
+      "time_et": "21:00"
+    }
+  },
+  {
+    "id": "222260fb",
+    "name": "uptrending stocks and below 10w ema",
+    "scope": "ALL",
+    "conditions": [
+      {
+        "metric_a": "tech_uptrend",
+        "operator": "==",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": "Yes"
+      },
       {
         "metric_a": "last_close",
         "operator": "<=",
         "compare_type": "metric",
         "logic": "AND",
-        "metric_b": "ema40"
+        "metric_b": "ema10"
+      }
+    ],
+    "enabled": true,
+    "schedule": {
+      "type": "scheduled",
+      "days": [
+        "MON",
+        "TUE",
+        "WED",
+        "THU",
+        "FRI"
+      ],
+      "time_et": "21:00"
+    }
+  },
+  {
+    "id": "1b91dbc4",
+    "name": "stocks near 52w high",
+    "scope": "ALL",
+    "conditions": [
+      {
+        "metric_a": "last_close",
+        "operator": ">=",
+        "compare_type": "metric",
+        "logic": "AND",
+        "metric_b": "week52_high",
+        "multiplier": 0.95
+      }
+    ],
+    "enabled": true,
+    "schedule": {
+      "type": "scheduled",
+      "days": [
+        "MON",
+        "TUE",
+        "WED",
+        "THU",
+        "FRI"
+      ],
+      "time_et": "21:00"
+    }
+  },
+  {
+    "id": "9a7e179b",
+    "name": "stocks in downtrend",
+    "scope": "ALL",
+    "conditions": [
+      {
+        "metric_a": "trend_rank",
+        "operator": "==",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": "Downtrend"
+      },
+      {
+        "metric_a": "trend_rank",
+        "operator": "==",
+        "compare_type": "value",
+        "logic": "OR",
+        "value": "Strong Downtrend"
       }
     ],
     "enabled": true,
