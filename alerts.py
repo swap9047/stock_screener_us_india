@@ -75,9 +75,9 @@ def normalize_schedule(sched):
     """Coerce any schedule dict (missing, partial, or malformed) into a
     valid {"type", "days", "time_et"} dict, where time_et is always a valid
     0-23 hour. Idempotent -- any out-of-range/garbled hour gets clamped to
-    the nearest valid one, so a corrupted schedule can never silently break
-    a rule. (ALLOWED_HOURS is now all 24 hours -- the workflow listens
-    every hour, so this rarely needs to clamp anything in practice.)"""
+    the nearest workflow-supported hour, so a corrupted or stale schedule can
+    never silently break a rule. ALLOWED_HOURS must match the GitHub Actions
+    cron wakeup hour(s); currently that means 10:00 PM ET only."""
     if not isinstance(sched, dict):
         sched = {}
 
@@ -120,10 +120,9 @@ def is_rule_due(rule, et_now=None):
     """Is this rule due to be checked right now? Compares the rule's
     schedule against `et_now` (a tz-aware America/New_York datetime;
     defaults to the current time). Matches on day-of-week plus hour only --
-    the workflow runs every hour (see daily-alerts.yml), so any minute
-    within the rule's chosen hour counts as a match. This is the actual
-    gate that decides whether a given hourly firing does anything at all --
-    23 out of 24 hourly firings typically find nothing due and exit cheaply."""
+    the workflow YAML owns which hour(s) actually wake up, and ALLOWED_HOURS
+    keeps the app's schedule picker aligned with those cron triggers. Any
+    minute within the scheduled hour counts as a match."""
     sched = rule.get("schedule", {})
     if sched.get("type") == "none":
         return False
