@@ -5,10 +5,23 @@ rules / watchlist / custom filters / settings edited through a DEPLOYED app
 survives a redeploy) actually land in the repo, instead of only living on
 that one instance's ephemeral filesystem until it's redeployed or restarted.
 
-Uses GitHub's REST "Contents" API (a plain HTTPS call via `requests`)
-rather than the git CLI -- Streamlit Cloud containers don't have your SSH
-keys or git configured, but they always have outbound network access and
+Uses GitHub's REST "Git Data" API (a plain HTTPS call via `requests`) rather
+than the git CLI -- Streamlit Cloud containers don't have your SSH keys or
+git configured, but they always have outbound network access and
 `requests` is already a dependency (see alerts.py's Discord webhook calls).
+
+IMPORTANT: multiple files are pushed as ONE atomic commit (blobs -> one
+tree -> one commit -> move the branch ref), not one commit per file. This
+matters specifically because Streamlit Community Cloud auto-redeploys the
+instant ANY commit lands on the branch it's watching -- pushing several
+files as separate sequential commits creates a real race: the redeploy
+triggered by the FIRST commit can tear down and restart the running
+container before the loop reaches the LAST file, silently dropping
+whatever hadn't been pushed yet (e.g. a newly-created alert rule that only
+ever existed on that container's ephemeral disk). Bundling every changed
+file into a single commit closes that race -- either everything lands
+together, or nothing does, and there's no in-between state for a redeploy
+to interrupt.
 
 One-time setup:
   1. Create a GitHub Personal Access Token scoped to just this repo, with
@@ -21,11 +34,6 @@ One-time setup:
      GITHUB_BRANCH (defaults to "main") -- these aren't secret, but the
      Streamlit secrets panel is the easiest place to set them alongside the
      token.
-
-Each push is a separate GitHub Contents API call, so pushing "all" config
-files creates one commit per file rather than a single combined commit --
-fine for small JSON files on a personal repo, just something to know if you
-go looking at the commit history.
 """
 
 import base64
@@ -68,66 +76,108 @@ def get_github_config(st_secrets=None):
     return token, repo, branch
 
 
-def push_file_to_github(filename, token, repo, branch="main", message=None):
-    """Pushes SCRIPT_DIR/filename to `repo` (owner/name) on `branch` via the
-    GitHub Contents API -- creates the file if it doesn't exist there yet,
-    updates it (using its current blob sha, which GitHub requires so a
-    stale write can't silently clobber someone else's concurrent change) if
-    it does. Returns (ok, detail_message) -- never raises for HTTP-level or
-    network failures, only for local file-read errors that shouldn't
-    happen (missing SCRIPT_DIR permissions etc.)."""
-    path = os.path.join(SCRIPT_DIR, filename)
-    if not os.path.exists(path):
-        return False, f"{filename} doesn't exist locally -- nothing to push."
-    if not token or not repo:
-        return False, "GITHUB_TOKEN / GITHUB_REPO not configured (see Settings)."
-
-    with open(path, "rb") as f:
-        content_b64 = base64.b64encode(f.read()).decode("ascii")
-
-    url = f"{GITHUB_API}/repos/{repo}/contents/{filename}"
-    headers = {
+def _headers(token):
+    return {
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
     }
 
-    sha = None
-    try:
-        get_resp = requests.get(url, headers=headers, params={"ref": branch}, timeout=15)
-        if get_resp.status_code == 200:
-            sha = get_resp.json().get("sha")
-        elif get_resp.status_code == 404:
-            pass  # file doesn't exist on that branch yet -- fine, this creates it
-        else:
-            return False, f"Couldn't check existing file ({get_resp.status_code}): {_short(get_resp)}"
-    except requests.RequestException as e:
-        return False, f"Network error checking existing file: {e}"
 
-    payload = {
-        "message": message or f"Update {filename} via app",
-        "content": content_b64,
-        "branch": branch,
-    }
-    if sha:
-        payload["sha"] = sha
-
-    try:
-        put_resp = requests.put(url, headers=headers, json=payload, timeout=15)
-    except requests.RequestException as e:
-        return False, f"Network error pushing {filename}: {e}"
-
-    if put_resp.status_code in (200, 201):
-        commit_sha = (put_resp.json().get("commit") or {}).get("sha", "")[:7]
-        return True, f"Pushed {filename}" + (f" (commit {commit_sha})" if commit_sha else "") + "."
-    return False, f"Failed to push {filename} ({put_resp.status_code}): {_short(put_resp)}"
-
-
-def push_all_config(token, repo, branch="main", filenames=None):
-    """Pushes each of `filenames` (defaults to all of SYNCABLE_FILES), one
-    commit per file. Returns a list of (filename, ok, message) in the same
-    order."""
+def push_all_config(token, repo, branch="main", filenames=None, message=None):
+    """Pushes every file in `filenames` (defaults to all of SYNCABLE_FILES)
+    as ONE atomic commit -- see module docstring for why this matters on
+    Streamlit Cloud. Returns (ok, detail_message). On any failure, nothing
+    is pushed at all (GitHub never sees a partial commit -- the ref move is
+    the last step and only happens if every prior step succeeded)."""
     targets = filenames if filenames is not None else [f for f, _ in SYNCABLE_FILES]
-    return [(f, *push_file_to_github(f, token, repo, branch)) for f in targets]
+    if not targets:
+        return False, "No files selected."
+    if not token or not repo:
+        return False, "GITHUB_TOKEN / GITHUB_REPO not configured (see Settings)."
+
+    missing = [f for f in targets if not os.path.exists(os.path.join(SCRIPT_DIR, f))]
+    if missing:
+        return False, f"These files don't exist locally -- nothing to push: {', '.join(missing)}."
+
+    headers = _headers(token)
+    base_url = f"{GITHUB_API}/repos/{repo}"
+
+    # 1. Current tip of the branch -> base commit -> base tree.
+    try:
+        ref_resp = requests.get(f"{base_url}/git/ref/heads/{branch}", headers=headers, timeout=15)
+    except requests.RequestException as e:
+        return False, f"Network error reading branch ref: {e}"
+    if ref_resp.status_code != 200:
+        return False, f"Couldn't read branch '{branch}' ({ref_resp.status_code}): {_short(ref_resp)}"
+    base_commit_sha = ref_resp.json()["object"]["sha"]
+
+    try:
+        commit_resp = requests.get(f"{base_url}/git/commits/{base_commit_sha}", headers=headers, timeout=15)
+    except requests.RequestException as e:
+        return False, f"Network error reading base commit: {e}"
+    if commit_resp.status_code != 200:
+        return False, f"Couldn't read base commit ({commit_resp.status_code}): {_short(commit_resp)}"
+    base_tree_sha = commit_resp.json()["tree"]["sha"]
+
+    # 2. One blob per file.
+    tree_entries = []
+    for filename in targets:
+        with open(os.path.join(SCRIPT_DIR, filename), "rb") as f:
+            content_b64 = base64.b64encode(f.read()).decode("ascii")
+        try:
+            blob_resp = requests.post(
+                f"{base_url}/git/blobs", headers=headers,
+                json={"content": content_b64, "encoding": "base64"}, timeout=15,
+            )
+        except requests.RequestException as e:
+            return False, f"Network error creating blob for {filename}: {e}"
+        if blob_resp.status_code != 201:
+            return False, f"Couldn't create blob for {filename} ({blob_resp.status_code}): {_short(blob_resp)}"
+        tree_entries.append({
+            "path": filename, "mode": "100644", "type": "blob",
+            "sha": blob_resp.json()["sha"],
+        })
+
+    # 3. One new tree (layered on the base tree -- untouched files are
+    # carried forward automatically, only `tree_entries` actually change).
+    try:
+        tree_resp = requests.post(
+            f"{base_url}/git/trees", headers=headers,
+            json={"base_tree": base_tree_sha, "tree": tree_entries}, timeout=15,
+        )
+    except requests.RequestException as e:
+        return False, f"Network error creating tree: {e}"
+    if tree_resp.status_code != 201:
+        return False, f"Couldn't create tree ({tree_resp.status_code}): {_short(tree_resp)}"
+    new_tree_sha = tree_resp.json()["sha"]
+
+    # 4. One new commit pointing at that tree.
+    commit_message = message or f"Update {', '.join(targets)} via app"
+    try:
+        new_commit_resp = requests.post(
+            f"{base_url}/git/commits", headers=headers,
+            json={"message": commit_message, "tree": new_tree_sha, "parents": [base_commit_sha]}, timeout=15,
+        )
+    except requests.RequestException as e:
+        return False, f"Network error creating commit: {e}"
+    if new_commit_resp.status_code != 201:
+        return False, f"Couldn't create commit ({new_commit_resp.status_code}): {_short(new_commit_resp)}"
+    new_commit_sha = new_commit_resp.json()["sha"]
+
+    # 5. Move the branch pointer -- this is the single moment the change
+    # actually becomes visible/pullable, and the only step Streamlit Cloud's
+    # watcher can react to. Everything before this was invisible staging.
+    try:
+        move_resp = requests.patch(
+            f"{base_url}/git/refs/heads/{branch}", headers=headers,
+            json={"sha": new_commit_sha}, timeout=15,
+        )
+    except requests.RequestException as e:
+        return False, f"Network error moving branch ref: {e}"
+    if move_resp.status_code != 200:
+        return False, f"Couldn't move branch ref ({move_resp.status_code}): {_short(move_resp)}"
+
+    return True, f"Pushed {len(targets)} file(s) in one commit ({new_commit_sha[:7]}): {', '.join(targets)}."
 
 
 def _short(resp):
