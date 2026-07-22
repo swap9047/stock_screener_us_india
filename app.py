@@ -41,6 +41,7 @@ from datetime import date, datetime
 
 import pandas as pd
 import streamlit as st
+from streamlit_sortables import sort_items
 
 from stock_data import (
     load_watchlists, save_watchlist, fetch_all_markets, validate_ticker, tradingview_url,
@@ -946,19 +947,24 @@ def render_shared_column_picker(labels):
         st.session_state[SHARED_ORDER_KEY] = order
 
         if order:
-            st.caption("Order (use ↑ / ↓ to move a column left/right in the table):")
-            move = None  # (index, direction)
-            for i, k in enumerate(order):
-                oc1, oc2, oc3 = st.columns([6, 1, 1])
-                oc1.write(f"{i + 1}. {label_by_key[k]}")
-                if oc2.button("↑", key=f"colup_{k}", disabled=(i == 0), width="stretch"):
-                    move = (i, -1)
-                if oc3.button("↓", key=f"coldown_{k}", disabled=(i == len(order) - 1), width="stretch"):
-                    move = (i, 1)
-            if move is not None:
-                i, d = move
-                order[i], order[i + d] = order[i + d], order[i]
-                st.session_state[SHARED_ORDER_KEY] = order
+            st.caption("Drag to reorder (top = leftmost column in the table):")
+            # Key intentionally depends on the SET of selected columns, not
+            # their order -- streamlit_sortables keeps its own internal drag
+            # state pinned to a fixed key, so pure reordering (same set,
+            # different order) needs a stable key to feel like a normal
+            # controlled widget. But if the set changes (a column added or
+            # removed via the multiselect above), we WANT a clean remount
+            # with the fresh item list rather than stale internal state, so
+            # the key is derived from the sorted set of item labels.
+            sortable_key = "shared_col_sortable_" + "|".join(sorted(order))
+            sorted_labels = sort_items(
+                [label_by_key[k] for k in order],
+                direction="vertical",
+                key=sortable_key,
+            )
+            new_order = [key_by_label[lbl] for lbl in sorted_labels if lbl in key_by_label]
+            if new_order and new_order != order:
+                st.session_state[SHARED_ORDER_KEY] = new_order
                 st.rerun()
 
     return st.session_state[SHARED_ORDER_KEY], label_by_key
@@ -1347,8 +1353,8 @@ with tab_alerts:
             format_func=lambda h: HOUR_LABELS.get(int(h), h), key="rule_sched_hour",
         )
         st.caption(
-            "The alert check only runs at 12:00 PM and 9:00 PM ET (kept to 2x/day to save on "
-            "GitHub Actions minutes) — pick whichever of those your alert should check at."
+            "The alert check runs every hour and only actually checks your ticker data during "
+            "the hour(s) you pick here — pick any hour, no extra cost either way."
         )
     else:
         dr_days_labels, dr_hour = [], "21"
