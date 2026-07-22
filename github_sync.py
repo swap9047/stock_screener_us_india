@@ -49,6 +49,7 @@ SYNCABLE_FILES = [
     ("custom_filters.json", "Custom filters (per market)"),
     ("settings.json", "Calculation settings"),
     ("alerts_config.json", "Alert / scan rules"),
+    ("column_prefs.json", "Column order / visibility"),
 ]
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))

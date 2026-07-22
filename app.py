@@ -61,6 +61,33 @@ st.set_page_config(page_title="Stock Watchlist", layout="wide")
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 AUTH_CONFIG_FILE = os.path.join(SCRIPT_DIR, "auth_config.json")
+COLUMN_PREFS_FILE = os.path.join(SCRIPT_DIR, "column_prefs.json")
+
+
+def load_column_prefs():
+    """Returns the saved column order (list of data keys, visible ones only,
+    in display order) from column_prefs.json, or None if there's no file yet
+    or it's malformed -- callers fall back to the built-in default order in
+    that case. Unlike discord_config.json/auth_config.json, this file is NOT
+    secret -- it's meant to be committed/pushed like watchlist.json etc. so
+    a column layout set once (locally or on the deployed app) is shared by
+    everyone who opens the app, not just the browser session that set it."""
+    if not os.path.exists(COLUMN_PREFS_FILE):
+        return None
+    try:
+        with open(COLUMN_PREFS_FILE) as f:
+            data = json.load(f)
+        order = data.get("order")
+        if isinstance(order, list) and all(isinstance(k, str) for k in order):
+            return order
+    except Exception:
+        pass
+    return None
+
+
+def save_column_prefs(order):
+    with open(COLUMN_PREFS_FILE, "w") as f:
+        json.dump({"order": order}, f, indent=2)
 
 # ---------- auth gate ----------
 
@@ -925,13 +952,32 @@ def render_shared_column_picker(labels):
 
     SHARED_ORDER_KEY = "shared_col_order"
     if SHARED_ORDER_KEY not in st.session_state:
-        st.session_state[SHARED_ORDER_KEY] = [key_by_label[lbl] for lbl in default_visible]
+        # Saved preference (column_prefs.json) wins if present -- this is
+        # what makes a layout chosen once, then pushed to GitHub, show up
+        # identically for anyone who opens the app (including a fresh
+        # session on the deployed instance), instead of only ever living in
+        # that one browser session's memory.
+        saved_order = load_column_prefs()
+        if saved_order:
+            st.session_state[SHARED_ORDER_KEY] = saved_order
+        else:
+            st.session_state[SHARED_ORDER_KEY] = [key_by_label[lbl] for lbl in default_visible]
+            # Write the file immediately so it always exists after the app's
+            # very first render -- push_all_config (the GitHub push button)
+            # fails the WHOLE atomic push if any targeted file is missing,
+            # so column_prefs.json can't be allowed to only appear lazily
+            # after the user first touches the picker.
+            save_column_prefs(st.session_state[SHARED_ORDER_KEY])
     # Drop any keys that no longer exist (e.g. a future app update renames
     # or removes a column) so stale saved state can't crash the lookup below.
     st.session_state[SHARED_ORDER_KEY] = [k for k in st.session_state[SHARED_ORDER_KEY] if k in label_by_key]
 
     with st.sidebar.expander("Columns to show / reorder", expanded=False):
-        st.caption("Applies to both the US and India tables. Ticker and Last always show first.")
+        st.caption(
+            "Applies to both the US and India tables. Ticker and Last always show first. "
+            "Saved to column_prefs.json -- push it via the Alert Rules tab's GitHub button "
+            "to make this layout show up on the deployed app too."
+        )
         current_labels = [label_by_key[k] for k in st.session_state[SHARED_ORDER_KEY]]
         visible_labels = st.multiselect(
             "Columns to show", options=all_labels, default=current_labels, key="shared_cols_multiselect",
@@ -944,7 +990,9 @@ def render_shared_column_picker(labels):
         for k in selected_keys:
             if k not in order:
                 order.append(k)
-        st.session_state[SHARED_ORDER_KEY] = order
+        if order != st.session_state[SHARED_ORDER_KEY]:
+            st.session_state[SHARED_ORDER_KEY] = order
+            save_column_prefs(order)
 
         if order:
             st.caption("Drag to reorder (top = leftmost column in the table):")
@@ -965,6 +1013,7 @@ def render_shared_column_picker(labels):
             new_order = [key_by_label[lbl] for lbl in sorted_labels if lbl in key_by_label]
             if new_order and new_order != order:
                 st.session_state[SHARED_ORDER_KEY] = new_order
+                save_column_prefs(new_order)
                 st.rerun()
 
     return st.session_state[SHARED_ORDER_KEY], label_by_key
