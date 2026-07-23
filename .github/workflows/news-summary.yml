@@ -26,13 +26,18 @@ jobs:
       due: ${{ steps.check.outputs.due }}
     steps:
       - id: check
-        name: Is it 7 AM ET right now?
+        name: Is it ~7 AM ET right now?
         run: |
           python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          # +/-1 hour tolerance: GitHub's scheduler is best-effort and can
+          # delay a cron trigger by well over an hour (confirmed directly on
+          # this project's daily-alerts.yml, which had the same exact-hour
+          # bug and silently missed a whole day). 6-8 AM ET all count as
+          # "due" so a delayed trigger still fires instead of being missed.
           from zoneinfo import ZoneInfo
           from datetime import datetime
           now_et = datetime.now(ZoneInfo("America/New_York"))
-          due = now_et.hour == 7
+          due = abs(now_et.hour - 7) <= 1
           print(f"due={'true' if due else 'false'}")
           EOF
 
