@@ -6,3 +6,4 @@ requests
 jinja2
 streamlit-sortables
 google-genai
+streamlit-cookies-controller

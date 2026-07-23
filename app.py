@@ -34,10 +34,12 @@ already active) -- secrets persist across redeploys, a local file doesn't.
 If no login is configured anywhere, the app is open.
 """
 
+import hashlib
+import hmac
 import html
 import re
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 import streamlit as st
@@ -113,6 +115,57 @@ def get_auth_credentials():
     return None, None
 
 
+REMEMBER_COOKIE_NAME = "swa_remember"
+REMEMBER_DAYS = 30
+
+
+def _remember_signature(username, expiry_iso, secret):
+    msg = f"{username}|{expiry_iso}".encode()
+    return hmac.new(secret.encode(), msg, hashlib.sha256).hexdigest()
+
+
+def _make_remember_token(username, secret, days=REMEMBER_DAYS):
+    """A signed, stateless 'remember me' token -- no server-side session
+    store needed. Signed with the account password itself, so rotating the
+    password automatically invalidates every outstanding 'stay signed in'
+    cookie, everywhere, without needing to track/revoke sessions."""
+    expiry_iso = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+    sig = _remember_signature(username, expiry_iso, secret)
+    return json.dumps({"u": username, "exp": expiry_iso, "sig": sig})
+
+
+def _verify_remember_token(token_value, expected_username, secret):
+    if not token_value:
+        return False
+    try:
+        data = json.loads(token_value)
+        username, expiry_iso, sig = data["u"], data["exp"], data["sig"]
+    except Exception:
+        return False
+    if username != expected_username:
+        return False
+    try:
+        expiry = datetime.fromisoformat(expiry_iso)
+    except Exception:
+        return False
+    if datetime.now(timezone.utc) > expiry:
+        return False
+    expected_sig = _remember_signature(username, expiry_iso, secret)
+    return hmac.compare_digest(sig, expected_sig)
+
+
+def get_cookie_controller():
+    """One CookieController per session -- the library caches the actual
+    browser cookie values in st.session_state internally (keyed by
+    `key='cookies'`), so re-instantiating this is cheap/idempotent, but
+    cache the object itself too so require_login() and the sidebar Log out
+    button share the exact same instance within a run."""
+    from streamlit_cookies_controller import CookieController
+    if "_cookie_controller" not in st.session_state:
+        st.session_state["_cookie_controller"] = CookieController()
+    return st.session_state["_cookie_controller"]
+
+
 def require_login():
     username, password = get_auth_credentials()
     if not username or not password:
@@ -120,19 +173,50 @@ def require_login():
     if st.session_state.get("authenticated"):
         return
 
+    controller = get_cookie_controller()
+    cookie_val = controller.get(REMEMBER_COOKIE_NAME)
+    if _verify_remember_token(cookie_val, username, password):
+        st.session_state.authenticated = True
+        return
+
     st.title("Stock Watchlist")
     st.subheader("Sign in")
     with st.form("login_form"):
         u = st.text_input("Username")
         p = st.text_input("Password", type="password")
+        remember = st.checkbox("Stay signed in on this device for 30 days", value=True)
         submitted = st.form_submit_button("Sign in", type="primary")
     if submitted:
         if u == username and p == password:
             st.session_state.authenticated = True
+            if remember:
+                token = _make_remember_token(username, password)
+                controller.set(REMEMBER_COOKIE_NAME, token, max_age=REMEMBER_DAYS * 86400, same_site="strict")
             st.rerun()
         else:
             st.error("Incorrect username or password.")
     st.stop()
+
+
+def render_logout_button():
+    """Sidebar 'Log out' -- only shown once login is actually configured
+    (get_auth_credentials returns real values), since there's nothing to
+    log out of on an open/no-auth deployment."""
+    username, password = get_auth_credentials()
+    if not username or not password:
+        return
+    if not st.session_state.get("authenticated"):
+        return
+    if st.sidebar.button("Log out", width="stretch"):
+        st.session_state.authenticated = False
+        controller = get_cookie_controller()
+        # .remove() does an internal dict .pop(name) with no default and
+        # raises KeyError if the cookie was never set (e.g. someone signed
+        # in without checking "stay signed in", then logs out) -- only
+        # attempt removal if the cookie actually exists.
+        if REMEMBER_COOKIE_NAME in controller.getAll():
+            controller.remove(REMEMBER_COOKIE_NAME)
+        st.rerun()
 
 
 require_login()
@@ -1301,6 +1385,7 @@ if sb1.button("Refresh Data", type="primary", width="stretch"):
     st.session_state.refresh_token += 1
 if sb2.button("⚙️ Settings", width="stretch"):
     settings_dialog()
+render_logout_button()
 
 settings_now = load_settings()
 watchlists_now = load_watchlists()
