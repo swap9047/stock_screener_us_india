@@ -159,15 +159,40 @@ def _verify_remember_token(token_value, expected_username, secret):
 
 
 def get_cookie_controller():
-    """One CookieController per session -- the library caches the actual
-    browser cookie values in st.session_state internally (keyed by
-    `key='cookies'`), so re-instantiating this is cheap/idempotent, but
-    cache the object itself too so require_login() and the sidebar Log out
-    button share the exact same instance within a run."""
+    """Construct a fresh CookieController on every call -- do NOT cache the
+    object itself across reruns (an earlier version did, and that was the
+    bug behind "stay signed in" not surviving a page refresh).
+
+    The library returns its `default={}` on the very first-ever component
+    round trip (the browser hasn't responded with the real cookies yet),
+    then auto-triggers a rerun once the real value arrives, storing it in
+    st.session_state['cookies']. A cached CookieController instance keeps
+    whatever `self.__cookies` it captured at construction time -- if that
+    was the {} default, `.get()` returns None FOREVER for that session,
+    even after the real cookie value has landed in session_state. The
+    library's own __init__ already re-reads st.session_state['cookies']
+    fresh (and skips the component round trip entirely once that key
+    exists), so constructing a new instance each call is cheap and
+    correct -- it just needed to not be short-circuited by our own cache."""
     from streamlit_cookies_controller import CookieController
-    if "_cookie_controller" not in st.session_state:
-        st.session_state["_cookie_controller"] = CookieController()
-    return st.session_state["_cookie_controller"]
+    return CookieController()
+
+
+def _cookie_get_all(controller):
+    """CookieController.get()/.getAll() assume their internal cookie dict
+    is always a dict, but it can genuinely be None for a run or two while
+    a fresh instance's underlying component value hasn't resolved yet
+    (confirmed directly: a CookieController constructed mid-script, e.g.
+    inside a button click handler rather than at the top of the script,
+    can see None instead of {} on the very next rerun) -- calling
+    controller.get(...) directly in that state raises a TypeError instead
+    of behaving like 'no cookies yet'. Guard here rather than patching the
+    third-party library; treat None/non-dict the same as no cookies."""
+    try:
+        all_cookies = controller.getAll()
+    except TypeError:
+        return {}
+    return all_cookies if isinstance(all_cookies, dict) else {}
 
 
 def require_login():
@@ -178,7 +203,7 @@ def require_login():
         return
 
     controller = get_cookie_controller()
-    cookie_val = controller.get(REMEMBER_COOKIE_NAME)
+    cookie_val = _cookie_get_all(controller).get(REMEMBER_COOKIE_NAME)
     if _verify_remember_token(cookie_val, username, password):
         st.session_state.authenticated = True
         return
@@ -217,8 +242,11 @@ def render_logout_button():
         # .remove() does an internal dict .pop(name) with no default and
         # raises KeyError if the cookie was never set (e.g. someone signed
         # in without checking "stay signed in", then logs out) -- only
-        # attempt removal if the cookie actually exists.
-        if REMEMBER_COOKIE_NAME in controller.getAll():
+        # attempt removal if the cookie actually exists. Go through
+        # _cookie_get_all() rather than controller.getAll() directly --
+        # `in None` would raise the same TypeError _cookie_get_all guards
+        # against elsewhere.
+        if REMEMBER_COOKIE_NAME in _cookie_get_all(controller):
             controller.remove(REMEMBER_COOKIE_NAME)
         st.rerun()
 
