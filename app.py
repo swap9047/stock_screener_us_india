@@ -54,6 +54,7 @@ from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE, 
 from filters import (get_market_filters, save_market_filters, apply_filters, describe_filter,
                      describe_chain, describe_chain_with_values, passes_filter_chain, CATEGORICAL_METRICS)
 from github_sync import get_github_config, push_all_config, SYNCABLE_FILES
+from news_summary import load_news_summary, MARKET_LABELS
 import json
 import os
 
@@ -1313,13 +1314,44 @@ st.sidebar.caption(f"US: {len(per_market.get('US', []))} · India: {len(per_mark
 
 shared_visible_keys, shared_label_by_key = render_shared_column_picker(ema_col_labels(settings_now))
 
-tab_us, tab_india, tab_alerts = st.tabs(["US Watchlist", "India Watchlist", "Alert Rules"])
+tab_us, tab_india, tab_news, tab_alerts = st.tabs(["US Watchlist", "India Watchlist", "News", "Alert Rules"])
 
 with tab_us:
     render_market_tab("US", per_market.get("US", []), settings_now, shared_visible_keys, shared_label_by_key)
 
 with tab_india:
     render_market_tab("INDIA", per_market.get("INDIA", []), settings_now, shared_visible_keys, shared_label_by_key)
+
+with tab_news:
+    st.subheader("Watchlist news digest")
+    st.caption(
+        "Major announcements, developments, and stock moves for your watchlist tickers in the "
+        "last 24 hours, summarized via Gemini (Google Search grounding). Runs once a day at "
+        "7:00 AM ET via GitHub Actions and is also sent to Discord — this tab just shows the "
+        "same result."
+    )
+    news_data = load_news_summary()
+    if not news_data:
+        st.info(
+            "No news summary yet. It's generated once a day by the scheduled GitHub Actions "
+            "workflow (`news-summary.yml`) — nothing to do here until the first scheduled run, "
+            "or trigger it manually from the repo's Actions tab."
+        )
+    else:
+        st.caption(f"As of {news_data.get('as_of', '—')}")
+        for market in ("US", "INDIA"):
+            entry = news_data.get("markets", {}).get(market)
+            if not entry:
+                continue
+            st.markdown(f"### {MARKET_LABELS.get(market, market)}")
+            st.markdown(entry.get("summary", "_No summary available._"))
+            sources = entry.get("sources") or []
+            if sources:
+                with st.expander(f"Sources ({len(sources)})"):
+                    for s in sources:
+                        title = s.get("title") or s.get("url")
+                        st.markdown(f"- [{title}]({s.get('url')})")
+            st.divider()
 
 with tab_alerts:
     st.subheader("Alert rules")
