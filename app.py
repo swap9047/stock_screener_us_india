@@ -61,6 +61,10 @@ from custom_columns import (
     load_custom_columns, save_custom_columns, validate_formula, column_key,
     FORMAT_CHOICES, CUSTOM_COLUMNS_FILE, apply_custom_columns_to_rows,
 )
+from ticker_notes import (
+    load_ticker_notes, save_ticker_notes, set_ticker_note, get_ticker_note, get_ticker_flag,
+    apply_notes_to_rows, flag_marker_html, FLAG_CHOICES, FLAG_EMOJI, TICKER_NOTES_FILE,
+)
 import json
 import os
 
@@ -398,6 +402,15 @@ def _mark(passed):
     return "✓" if passed else "✗"
 
 
+def _note_preview(text, limit=40):
+    """Short, table-cell-friendly preview of a ticker's free-text note --
+    see with_tooltip, used right after this to show the full text on
+    hover/tap when it's been truncated."""
+    if not text:
+        return "—"
+    return text if len(text) <= limit else text[:limit].rstrip() + "…"
+
+
 def with_tooltip(display_value, tooltip_text):
     """Wraps a cell's display text so the cell itself stays compact (just the
     label, e.g. "Uptrend") while the full breakdown is reachable two ways:
@@ -628,6 +641,8 @@ def column_definitions(settings, labels):
         ),
         "Vol 10D": "Average daily share volume over the last 10 trading days.",
         "Vol 100D": "Average daily share volume over the last 100 trading days.",
+        "Flag": "A colored marker you set via the sidebar 'Ticker Notes' panel -- also shown next to the ticker symbol itself.",
+        "Notes": "Your free-text note for this ticker, set via the sidebar 'Ticker Notes' panel. Hover/tap a truncated note to see the full text.",
     }
     return defs
 
@@ -1045,6 +1060,8 @@ def build_column_defs(labels, custom_columns=None):
     end, using their stable custom_<id> key (see custom_columns.py)."""
     optional_defs = [
         ("trend", "Trend"),
+        ("flag", "Flag"),
+        ("note", "Notes"),
         ("matched_alerts", "Alerts"),
         ("pct_change_1d", "% Chg"),
         ("week52_high", "52W High"),
@@ -1083,6 +1100,64 @@ def build_column_defs(labels, custom_columns=None):
     return optional_defs, label_by_key, key_by_label, all_labels, default_visible
 
 
+def apply_sort(rows, sort_field, ascending):
+    """Sorts `rows` (list of raw row dicts, BEFORE they become a DataFrame)
+    by `sort_field`. Missing values (None, "", or NaN) always sort to the
+    end regardless of direction -- the usual spreadsheet convention --
+    rather than clustering at the front on a descending sort. This is the
+    practical stand-in for 'click a column header to sort' -- see
+    render_shared_sort_control's docstring for why a literal header-click
+    isn't feasible with this table."""
+    if not sort_field:
+        return rows
+
+    def is_missing(v):
+        return v is None or v == "" or (isinstance(v, float) and pd.isna(v))
+
+    present = [r for r in rows if not is_missing(r.get(sort_field))]
+    missing = [r for r in rows if is_missing(r.get(sort_field))]
+
+    def keyfn(r):
+        v = r[sort_field]
+        return v.lower() if isinstance(v, str) else v
+
+    return sorted(present, key=keyfn, reverse=not ascending) + missing
+
+
+def render_shared_sort_control(label_by_key, key_by_label):
+    """Shared 'Sort by' control, sidebar, always visible (not tucked into
+    an expander -- used often enough to want one click, not two). Applied
+    identically to both the US and India tables, same reasoning as the
+    shared column picker above.
+
+    True click-on-column-header sorting isn't feasible with the current
+    table: it's rendered as a static HTML block (via st.markdown, needed
+    for the sticky header/frozen ticker column -- see sticky_header_html's
+    docstring) and Streamlit's markdown renderer strips <script>/<style>
+    tags outright even with unsafe_allow_html=True, so there's no way to
+    attach a client-side click handler to a <th>. This dropdown gives the
+    same practical outcome -- sort the whole table by any column -- without
+    rearchitecting the table onto a JS-executing surface (e.g. st.iframe),
+    which would mean giving up the dynamic page-filling height that took
+    real effort to get right (see 'Make watchlist tables fill page height
+    with sticky header' in the project history) since iframes need a fixed
+    height. Returns (sort_field_key_or_None, ascending)."""
+    # matched_alerts (Alerts) and vstop_change (VStop Weeks Ago) are
+    # computed AFTER filtering, inside render_market_tab -- not present on
+    # the raw row dict at sort time -- excluded rather than silently
+    # sorting wrong (or crashing on a missing key).
+    sort_labels = ["(default order)", "Ticker", "Last"] + [
+        lbl for key, lbl in label_by_key.items() if key not in ("matched_alerts", "vstop_change")
+    ]
+    sc1, sc2 = st.sidebar.columns([3, 1])
+    sort_label = sc1.selectbox("Sort by", sort_labels, key="shared_sort_field")
+    ascending = sc2.selectbox("Dir", ["↑", "↓"], key="shared_sort_dir") == "↑"
+    if sort_label == "(default order)":
+        return None, ascending
+    sort_field = {"Ticker": "ticker", "Last": "last_close"}.get(sort_label) or key_by_label.get(sort_label)
+    return sort_field, ascending
+
+
 def render_shared_column_picker(labels):
     """Single 'Columns to show / reorder' control, rendered ONCE (in the
     sidebar) and shared by both the US and India watchlist tables, so
@@ -1095,9 +1170,11 @@ def render_shared_column_picker(labels):
     THAT widget silently clobbers their pending change before the widget
     ever sees it (confirmed empirically, not just suspected). A single
     shared widget sidesteps the problem entirely rather than working around
-    it. Returns (visible_keys, label_by_key)."""
+    it. Returns (visible_keys, label_by_key, sort_field, sort_ascending)."""
     custom_columns = load_custom_columns()
     optional_defs, label_by_key, key_by_label, all_labels, default_visible = build_column_defs(labels, custom_columns)
+
+    sort_field, sort_ascending = render_shared_sort_control(label_by_key, key_by_label)
 
     SHARED_ORDER_KEY = "shared_col_order"
     if SHARED_ORDER_KEY not in st.session_state:
@@ -1166,8 +1243,9 @@ def render_shared_column_picker(labels):
                 st.rerun()
 
     render_custom_columns_manager()
+    render_ticker_notes_manager()
 
-    return st.session_state[SHARED_ORDER_KEY], label_by_key
+    return st.session_state[SHARED_ORDER_KEY], label_by_key, sort_field, sort_ascending
 
 
 def render_custom_columns_manager():
@@ -1289,7 +1367,72 @@ def render_custom_columns_manager():
             st.rerun()
 
 
-def render_market_tab(market, results, settings, visible_keys, label_by_key):
+def render_ticker_notes_manager():
+    """Sidebar 'Ticker Notes' expander -- pick any ticker from either
+    market, jot a free-text note and/or pick a flag color, save instantly
+    to ticker_notes.json. This IS the editing surface: the main watchlist
+    table is a static HTML table (needed for the sticky header/frozen
+    ticker column, see sticky_header_html), so real inline cell-editing
+    isn't practical there -- the table only ever displays the result (a
+    Notes column, plus the flag color prepended to the ticker symbol
+    itself, via flag_marker_html)."""
+    watchlists = load_watchlists()
+    all_tickers = sorted(set(watchlists.get("US", []) + watchlists.get("INDIA", [])))
+    if not all_tickers:
+        return
+
+    notes = load_ticker_notes()
+    if not os.path.exists(TICKER_NOTES_FILE):
+        # Eager-write, same reason column_prefs.json/custom_columns.json do
+        # this -- push_all_config's atomic push fails the WHOLE push if any
+        # targeted file doesn't exist yet, and ticker_notes.json is in
+        # SYNCABLE_FILES.
+        save_ticker_notes(notes)
+
+    with st.sidebar.expander("Ticker Notes", expanded=False):
+        st.caption(
+            "Jot a note and/or pick a flag color for any ticker -- the note shows up "
+            "in the Notes column, and the flag color marks the ticker symbol itself. "
+            "Saved to ticker_notes.json -- push it via the Alert Rules tab's GitHub button "
+            "to make it show up on the deployed app too."
+        )
+        picked = st.selectbox("Ticker", all_tickers, key="tn_picked_ticker")
+        current_note = get_ticker_note(notes, picked)
+        current_flag = get_ticker_flag(notes, picked)
+
+        flag_options = ["(none)"] + FLAG_CHOICES
+        current_flag_index = flag_options.index(current_flag) if current_flag in flag_options else 0
+        new_flag_choice = st.selectbox(
+            "Flag", flag_options, index=current_flag_index, key=f"tn_flag_{picked}",
+            format_func=lambda f: f"{FLAG_EMOJI[f]} {f}" if f in FLAG_EMOJI else "(none)",
+        )
+        new_flag = "" if new_flag_choice == "(none)" else new_flag_choice
+        new_note = st.text_area("Note", value=current_note, key=f"tn_note_{picked}", height=80)
+
+        scol1, scol2 = st.columns(2)
+        if scol1.button("Save", key=f"tn_save_{picked}", width="stretch"):
+            set_ticker_note(notes, picked, new_note, new_flag)
+            save_ticker_notes(notes)
+            st.rerun()
+        if scol2.button("Clear", key=f"tn_clear_{picked}", width="stretch"):
+            set_ticker_note(notes, picked, "", "")
+            save_ticker_notes(notes)
+            st.rerun()
+
+        if notes:
+            st.caption(f"{len(notes)} ticker(s) with notes/flags:")
+            for tk in sorted(notes.keys()):
+                entry = notes[tk]
+                emoji = FLAG_EMOJI.get(entry.get("flag", ""), "")
+                note_text = entry.get("note", "")
+                preview = (note_text[:60] + "…") if len(note_text) > 60 else note_text
+                line = f"{emoji} **{tk}**" if emoji else f"**{tk}**"
+                if preview:
+                    line += f" — {preview}"
+                st.markdown(line)
+
+
+def render_market_tab(market, results, settings, visible_keys, label_by_key, sort_field=None, sort_ascending=True):
     benchmarks = get_benchmarks(settings)
     bench = benchmarks[market]
     labels = ema_col_labels(settings)
@@ -1430,6 +1573,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key):
         filtered.append(row)
 
     filtered = apply_filters(filtered, active_custom_filters)
+    filtered = apply_sort(filtered, sort_field, sort_ascending)
 
     st.write(f"**Showing {len(filtered)} of {len(results)} tickers**")
 
@@ -1458,8 +1602,24 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key):
             with_tooltip("Yes" if r["tech_uptrend"] else "No", tech_uptrend_tooltip(r, settings, labels))
             for r in filtered
         ]
+        # Note text: short preview in the cell, full text on hover/tap (same
+        # with_tooltip pattern as Trend/Vol Trend above) so a long note
+        # doesn't blow out the column width.
+        raw_df["note"] = [
+            with_tooltip(_note_preview(r["note"]), r["note"] if len(r["note"]) > 40 else "")
+            for r in filtered
+        ]
+        raw_df["flag"] = [
+            f"{FLAG_EMOJI[r['flag']]} {r['flag']}" if r["flag"] in FLAG_EMOJI else "—"
+            for r in filtered
+        ]
+        # Flag color is prepended to the ticker symbol itself (per request:
+        # "flag ticker symbol within the ticker column"), in addition to the
+        # separate Flag column above -- so it's visible at a glance without
+        # needing that column shown/scrolled into view.
         raw_df["ticker_link"] = [
-            f'<a href="{tradingview_url(r["ticker"])}" target="_blank" rel="noopener noreferrer">{r["ticker"]}</a>'
+            f'{flag_marker_html(r["flag"])}<a href="{tradingview_url(r["ticker"])}" '
+            f'target="_blank" rel="noopener noreferrer">{r["ticker"]}</a>'
             for r in filtered
         ]
 
@@ -1630,22 +1790,37 @@ if not using_snapshot:
 # custom columns always reflect the CURRENT formula regardless of when the
 # snapshot was built or whether this run used it at all.
 custom_columns_now = load_custom_columns()
+ticker_notes_now = load_ticker_notes()
 for _market_rows in per_market.values():
     apply_custom_columns_to_rows(_market_rows, custom_columns_now)
+    # Notes/flags change far more often than custom columns (edited
+    # ad hoc throughout the day, not just occasionally) -- re-apply live on
+    # every run, same reasoning as custom columns above, so a note/flag you
+    # just saved shows up immediately even when serving from this morning's
+    # snapshot instead of waiting for the next refresh.
+    apply_notes_to_rows(_market_rows, ticker_notes_now)
 
 source_label = "daily snapshot" if using_snapshot else "live fetch"
 st.sidebar.caption(f"Data as of: {as_of} ({source_label})")
 st.sidebar.caption(f"US: {len(per_market.get('US', []))} · India: {len(per_market.get('INDIA', []))}")
 
-shared_visible_keys, shared_label_by_key = render_shared_column_picker(ema_col_labels(settings_now))
+shared_visible_keys, shared_label_by_key, shared_sort_field, shared_sort_ascending = render_shared_column_picker(
+    ema_col_labels(settings_now)
+)
 
 tab_us, tab_india, tab_news, tab_alerts = st.tabs(["US Watchlist", "India Watchlist", "News", "Alert Rules"])
 
 with tab_us:
-    render_market_tab("US", per_market.get("US", []), settings_now, shared_visible_keys, shared_label_by_key)
+    render_market_tab(
+        "US", per_market.get("US", []), settings_now, shared_visible_keys, shared_label_by_key,
+        shared_sort_field, shared_sort_ascending,
+    )
 
 with tab_india:
-    render_market_tab("INDIA", per_market.get("INDIA", []), settings_now, shared_visible_keys, shared_label_by_key)
+    render_market_tab(
+        "INDIA", per_market.get("INDIA", []), settings_now, shared_visible_keys, shared_label_by_key,
+        shared_sort_field, shared_sort_ascending,
+    )
 
 with tab_news:
     st.subheader("Watchlist news digest")

@@ -51,6 +51,7 @@ SYNCABLE_FILES = [
     ("alerts_config.json", "Alert / scan rules"),
     ("column_prefs.json", "Column order / visibility"),
     ("custom_columns.json", "Custom computed columns"),
+    ("ticker_notes.json", "Per-ticker notes and flags"),
 ]
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
