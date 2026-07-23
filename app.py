@@ -46,7 +46,7 @@ from streamlit_sortables import sort_items
 from stock_data import (
     load_watchlists, save_watchlist, fetch_all_markets, validate_ticker, tradingview_url,
     load_settings, save_settings, DEFAULT_SETTINGS, get_benchmarks, get_filterable_metrics,
-    MARKETS,
+    MARKETS, load_data_snapshot, snapshot_is_usable,
 )
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE, send_discord, SCOPE_LABELS,
                      build_discord_messages_for_rule, describe_schedule, DAY_CODES, DAY_LABELS,
@@ -1304,12 +1304,30 @@ if sb2.button("⚙️ Settings", width="stretch"):
 
 settings_now = load_settings()
 watchlists_now = load_watchlists()
-as_of, per_market = cached_fetch_all(
-    st.session_state.refresh_token,
-    json.dumps(watchlists_now, sort_keys=True),
-    json.dumps(settings_now, sort_keys=True),
-)
-st.sidebar.caption(f"Data as of: {as_of}")
+
+# Prefer the daily 7 AM ET snapshot (data_snapshot.json, built by
+# .github/workflows/data-refresh.yml) over a live yfinance fetch -- much
+# faster, and avoids every visitor re-fetching identical data. Only used
+# when the user hasn't clicked "Refresh Data" this session (refresh_token
+# == 0) and the snapshot actually covers the current watchlist/settings;
+# otherwise falls back to the live cached_fetch_all path exactly as before.
+using_snapshot = False
+if st.session_state.refresh_token == 0:
+    snapshot = load_data_snapshot()
+    if snapshot_is_usable(snapshot, watchlists_now, settings_now):
+        as_of = snapshot["as_of"]
+        per_market = snapshot["per_market"]
+        using_snapshot = True
+
+if not using_snapshot:
+    as_of, per_market = cached_fetch_all(
+        st.session_state.refresh_token,
+        json.dumps(watchlists_now, sort_keys=True),
+        json.dumps(settings_now, sort_keys=True),
+    )
+
+source_label = "daily snapshot" if using_snapshot else "live fetch"
+st.sidebar.caption(f"Data as of: {as_of} ({source_label})")
 st.sidebar.caption(f"US: {len(per_market.get('US', []))} · India: {len(per_market.get('INDIA', []))}")
 
 shared_visible_keys, shared_label_by_key = render_shared_column_picker(ema_col_labels(settings_now))

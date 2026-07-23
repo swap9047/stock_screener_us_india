@@ -92,7 +92,19 @@ A few things worth knowing:
 - **This workflow commits `news_summary.json` directly to the repo itself** (it needs `contents: write` permission, already set) — unlike the other config files, this one is machine-generated, not edited through the app UI, so there's nothing to push from the app's GitHub sync button for this file.
 - If the Gemini API call fails for a given day (rate limit, outage, etc.), that day's digest is simply skipped — no Discord message, no `news_summary.json` update, and the app's News tab keeps showing the last successful run until the next one succeeds.
 
-## 8. Push config changes made through the deployed app back to GitHub
+## 8. Daily data refresh (faster page loads)
+
+A third GitHub Actions workflow, `.github/workflows/data-refresh.yml`, fetches all watchlist tickers via yfinance once a day (also ~7:00 AM ET, same DST-safe pattern) and saves the result to `data_snapshot.json`. The app loads this snapshot on open instead of hitting yfinance live every session — much faster, and avoids every visitor re-fetching identical data.
+
+No new secret needed — it only needs `contents: write` (already set) to commit `data_snapshot.json` back to the repo.
+
+A few things worth knowing:
+
+- **The "Refresh Data" button in the sidebar still works exactly as before** — clicking it always fetches live data for that session, bypassing the snapshot entirely. The sidebar caption shows which one you're looking at: "(daily snapshot)" or "(live fetch)".
+- **The snapshot is skipped automatically, falling back to a live fetch, if it's stale in a way that matters**: if you've added a ticker to the watchlist since the last scheduled refresh (the snapshot won't have it yet), or changed a calc parameter in Settings (EMA lengths, thresholds, etc. — the snapshot was computed with whatever settings were live at refresh time). Either case just means one live fetch until tomorrow's 7 AM refresh catches up.
+- Same edge case as the other two workflows: GitHub's scheduler is best-effort, so a run can occasionally be delayed or skipped — the gate for this one (and the news digest) uses a ±1 hour tolerance window to absorb realistic scheduler delay, the same fix applied to the alerts workflow after it silently missed a day from an exact-hour check with zero grace period.
+
+## 9. Push config changes made through the deployed app back to GitHub
 
 Here's a gap worth knowing about: if you edit alert rules, the watchlist, custom filters, or Settings through the **deployed** app's UI, that write only lands on that Streamlit Cloud instance's local disk. It does **not** reach your GitHub repo — so the GitHub Actions workflow above (which always checks out the repo's committed version of `alerts_config.json`) won't see those edits, and a redeploy wipes them.
 
@@ -127,3 +139,4 @@ Each push creates **one combined commit** containing all selected files. That ma
 | Discord alerts (automatic, per-rule schedule) | Needs `DISCORD_WEBHOOK_URL` repo secret — GitHub Actions workflow is already committed |
 | Push config edits (made on the deployed app) back to GitHub | Needs `GITHUB_TOKEN`/`GITHUB_REPO` secrets — sidebar button already built |
 | Daily news digest (News tab + Discord, 7 AM ET) | Needs `GEMINI_API_KEY` repo secret (free at aistudio.google.com) — GitHub Actions workflow is already committed |
+| Daily data refresh (faster page loads, 7 AM ET) | No new secret needed — GitHub Actions workflow is already committed |

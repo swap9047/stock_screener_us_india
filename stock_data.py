@@ -50,6 +50,7 @@ import yfinance as yf
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 WATCHLIST_FILE = os.path.join(SCRIPT_DIR, "watchlist.json")
 SETTINGS_FILE = os.path.join(SCRIPT_DIR, "settings.json")
+DATA_SNAPSHOT_FILE = os.path.join(SCRIPT_DIR, "data_snapshot.json")
 
 MARKETS = ["US", "INDIA"]
 
@@ -712,6 +713,65 @@ def fetch_all_markets(watchlists=None, period="5y", settings=None):
 
     combined = [r for market in MARKETS for r in per_market[market]]
     return combined, as_of, per_market
+
+
+def _json_default(o):
+    """json.dump default= hook for numpy scalar types (np.bool_, np.int64,
+    np.float64, etc.) that sneak into result rows from pandas/numpy calcs --
+    the stdlib json module doesn't know how to serialize these even though
+    they look/behave like native bool/int/float."""
+    if isinstance(o, np.generic):
+        return o.item()
+    raise TypeError(f"Object of type {o.__class__.__name__} is not JSON serializable")
+
+
+def save_data_snapshot(as_of, per_market, settings=None):
+    """Persists a fetch_all_markets() result to disk so the Streamlit app
+    can load it directly instead of hitting yfinance live on every session
+    -- meant to be called once/day by the scheduled data-refresh workflow
+    (see refresh_data.py), not by the app itself. Stores the settings used
+    to compute it too, so the app can detect a settings change (EMA
+    lengths, thresholds, etc.) since the snapshot ran and fall back to a
+    live fetch instead of showing data computed with stale parameters."""
+    from datetime import timezone
+    with open(DATA_SNAPSHOT_FILE, "w") as f:
+        json.dump({
+            "as_of": as_of,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "per_market": per_market,
+            "settings": settings or {},
+        }, f, indent=2, default=_json_default)
+
+
+def load_data_snapshot():
+    if not os.path.exists(DATA_SNAPSHOT_FILE):
+        return None
+    try:
+        with open(DATA_SNAPSHOT_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def snapshot_is_usable(snapshot, watchlists, settings):
+    """True if `snapshot` can be shown as-is: it has a row for every ticker
+    currently in `watchlists` (for every market), AND it was computed with
+    the same settings as `settings`. If someone added a ticker since the
+    last scheduled refresh, or changed a calc parameter (EMA length, RSI
+    threshold, etc.) in the Settings dialog, the snapshot no longer
+    reflects reality -- the app should fall back to a live fetch rather
+    than silently show stale/incomplete data until tomorrow's 7 AM run."""
+    if not snapshot or not isinstance(snapshot.get("per_market"), dict):
+        return False
+    if snapshot.get("settings") != settings:
+        return False
+    per_market = snapshot["per_market"]
+    for market in MARKETS:
+        snap_tickers = {r.get("ticker") for r in per_market.get(market, [])}
+        wanted = set(watchlists.get(market, []))
+        if not wanted.issubset(snap_tickers):
+            return False
+    return True
 
 
 if __name__ == "__main__":
