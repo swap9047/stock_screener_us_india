@@ -157,5 +157,31 @@
       ],
       "time_et": "22:00"
     }
+  },
+  {
+    "id": "e3318705",
+    "name": "rsi monthly below 50",
+    "scope": "ALL",
+    "conditions": [
+      {
+        "metric_a": "rsi14_monthly",
+        "operator": "<=",
+        "compare_type": "value",
+        "value": 50.0,
+        "logic": "AND"
+      }
+    ],
+    "enabled": true,
+    "schedule": {
+      "type": "scheduled",
+      "days": [
+        "MON",
+        "TUE",
+        "WED",
+        "THU",
+        "FRI"
+      ],
+      "time_et": "22:00"
+    }
   }
 ]
