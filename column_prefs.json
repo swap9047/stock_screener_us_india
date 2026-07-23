@@ -15,6 +15,7 @@
     "rsi14_monthly",
     "vstop_weekly",
     "vstop_weekly_direction",
-    "vstop_change"
+    "vstop_change",
+    "custom_w52lowdist"
   ]
 }
