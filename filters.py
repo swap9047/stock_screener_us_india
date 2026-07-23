@@ -45,6 +45,8 @@ import json
 import operator as op
 import os
 
+from ticker_notes import FLAG_CHOICES
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CUSTOM_FILTERS_FILE = os.path.join(SCRIPT_DIR, "custom_filters.json")
 
@@ -69,6 +71,7 @@ CATEGORICAL_METRICS = {
     "volume_trend": ["Exploding", "In-line", "Declining"],
     "vstop_weekly_direction": ["Up", "Down"],
     "tech_uptrend": ["Yes", "No"],
+    "flag": FLAG_CHOICES,  # see ticker_notes.py -- Red/Yellow/Green/Blue
 }
 
 

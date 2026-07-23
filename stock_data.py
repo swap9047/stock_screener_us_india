@@ -146,6 +146,8 @@ def get_filterable_metrics(settings=None):
         "% Day Change": "pct_change_1d",
         "VStop Weeks Since Change": "vstop_weekly_weeks_since_change",
         "Tech Uptrend": "tech_uptrend",
+        "Flag": "flag",
+        "Notes": "note",
     }
 
 
@@ -764,6 +766,14 @@ def fetch_all_markets(watchlists=None, period="5y", settings=None):
     from custom_columns import apply_custom_columns_to_rows
     combined = [r for market in MARKETS for r in per_market[market]]
     apply_custom_columns_to_rows(combined)
+
+    # Same reasoning as custom columns above -- per-ticker notes/flags
+    # (ticker_notes.py) need to be available to alert conditions and the
+    # headless scripts too, not just the table, so attach them here at the
+    # source rather than only in app.py.
+    from ticker_notes import apply_notes_to_rows
+    apply_notes_to_rows(combined)
+
     return combined, as_of, per_market
 
 
