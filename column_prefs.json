@@ -2,10 +2,10 @@
   "order": [
     "pct_change_1d",
     "trend",
-    "matched_alerts",
     "tech_uptrend_label",
     "vstop_change",
     "volume_trend",
+    "matched_alerts",
     "vstop_weekly_direction",
     "custom_w52dist",
     "custom_w52lowdist",
