@@ -50,6 +50,7 @@ SYNCABLE_FILES = [
     ("settings.json", "Calculation settings"),
     ("alerts_config.json", "Alert / scan rules"),
     ("column_prefs.json", "Column order / visibility"),
+    ("custom_columns.json", "Custom computed columns"),
 ]
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))

@@ -754,7 +754,16 @@ def fetch_all_markets(watchlists=None, period="5y", settings=None):
             r["market"] = market
         per_market[market] = results
 
+    # Apply user-defined custom columns (custom_columns.py) here -- NOT in
+    # app.py -- so every consumer of fetch_all_markets gets them
+    # automatically: the Streamlit app, but also alert_check.py and
+    # refresh_data.py, which run headless (GitHub Actions) and never touch
+    # app.py at all. A custom column needs to be available to alert
+    # conditions, not just the table, so it has to be computed here, at the
+    # source, rather than bolted on downstream in just one consumer.
+    from custom_columns import apply_custom_columns_to_rows
     combined = [r for market in MARKETS for r in per_market[market]]
+    apply_custom_columns_to_rows(combined)
     return combined, as_of, per_market
 
 

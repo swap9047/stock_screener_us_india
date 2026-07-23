@@ -57,6 +57,10 @@ from filters import (get_market_filters, save_market_filters, apply_filters, des
                      describe_chain, describe_chain_with_values, passes_filter_chain, CATEGORICAL_METRICS)
 from github_sync import get_github_config, push_all_config, SYNCABLE_FILES
 from news_summary import load_news_summary, MARKET_LABELS
+from custom_columns import (
+    load_custom_columns, save_custom_columns, validate_formula, column_key,
+    FORMAT_CHOICES, CUSTOM_COLUMNS_FILE,
+)
 import json
 import os
 
@@ -597,6 +601,30 @@ def column_definitions(settings, labels):
     return defs
 
 
+def get_all_filterable_metrics(settings, custom_columns=None):
+    """Built-in metrics (stock_data.get_filterable_metrics) PLUS any
+    enabled user-defined custom columns, as one label->key dict -- used
+    everywhere the custom filter builder and alert condition builder pick
+    a metric, so a custom column becomes usable in filters/alerts the
+    moment it's created, with zero special-casing at those call sites."""
+    metrics = dict(get_filterable_metrics(settings))
+    for col in (custom_columns if custom_columns is not None else load_custom_columns()):
+        if col.get("enabled", True):
+            metrics[col["name"]] = column_key(col)
+    return metrics
+
+
+def custom_column_tooltips(custom_columns=None):
+    """label -> tooltip text for custom columns, merged into
+    column_definitions()'s dict so the header info-icon works for these
+    too -- just shows the formula, since that's the whole definition."""
+    tooltips = {}
+    for col in (custom_columns if custom_columns is not None else load_custom_columns()):
+        if col.get("enabled", True):
+            tooltips[col["name"]] = f"Custom column. Formula: {col.get('formula', '')}"
+    return tooltips
+
+
 def add_header_tooltips(html_str, definitions):
     """Appends a small 'ⓘ' info icon next to each column header found in
     `definitions`. Same <details>/<summary> technique as with_tooltip (see
@@ -977,12 +1005,13 @@ def render_custom_filter_builder(market, filterable_metrics):
     return active_filters
 
 
-def build_column_defs(labels):
+def build_column_defs(labels, custom_columns=None):
     """(data key, column label) for every optional (hideable) watchlist
     column, in display order, plus derived lookup dicts. Ticker/Last are
     mandatory and not included here. Shared by both market tabs (via
     render_shared_column_picker) so US and India always offer/show the
-    identical set of columns."""
+    identical set of columns. Enabled custom columns are appended at the
+    end, using their stable custom_<id> key (see custom_columns.py)."""
     optional_defs = [
         ("trend", "Trend"),
         ("matched_alerts", "Alerts"),
@@ -1010,6 +1039,9 @@ def build_column_defs(labels):
         ("avg_volume_10d", "Vol 10D"),
         ("avg_volume_100d", "Vol 100D"),
     ]
+    for col in (custom_columns if custom_columns is not None else load_custom_columns()):
+        if col.get("enabled", True):
+            optional_defs.append((column_key(col), col["name"]))
     label_by_key = dict(optional_defs)
     key_by_label = {lbl: k for k, lbl in optional_defs}
     all_labels = list(label_by_key.values())
@@ -1033,7 +1065,8 @@ def render_shared_column_picker(labels):
     ever sees it (confirmed empirically, not just suspected). A single
     shared widget sidesteps the problem entirely rather than working around
     it. Returns (visible_keys, label_by_key)."""
-    optional_defs, label_by_key, key_by_label, all_labels, default_visible = build_column_defs(labels)
+    custom_columns = load_custom_columns()
+    optional_defs, label_by_key, key_by_label, all_labels, default_visible = build_column_defs(labels, custom_columns)
 
     SHARED_ORDER_KEY = "shared_col_order"
     if SHARED_ORDER_KEY not in st.session_state:
@@ -1101,14 +1134,103 @@ def render_shared_column_picker(labels):
                 save_column_prefs(new_order)
                 st.rerun()
 
+    render_custom_columns_manager()
+
     return st.session_state[SHARED_ORDER_KEY], label_by_key
+
+
+def render_custom_columns_manager():
+    """Sidebar 'Custom Columns' expander, right below 'Columns to show /
+    reorder' -- add/edit/delete a formula-based computed column (e.g. '52W
+    Distance %' = (week52_high - last_close) / week52_high * 100). Once
+    saved here, a custom column is picked up automatically everywhere else
+    in the app: build_column_defs (so it's selectable in the picker above),
+    get_all_filterable_metrics (so it's usable in the custom filter builder
+    and alert conditions), and stock_data.fetch_all_markets (so its value
+    is actually computed for every row, including for the headless
+    alert_check.py/refresh_data.py scripts -- see custom_columns.py)."""
+    custom_columns = load_custom_columns()
+    if not os.path.exists(CUSTOM_COLUMNS_FILE):
+        # Eagerly create the file (empty list) on first render, same reason
+        # column_prefs.json does this -- push_all_config's atomic push fails
+        # the WHOLE push if any targeted file doesn't exist yet, and
+        # custom_columns.json is now in SYNCABLE_FILES.
+        save_custom_columns(custom_columns)
+    valid_names = set(get_filterable_metrics(load_settings()).values())
+
+    with st.sidebar.expander("Custom Columns", expanded=False):
+        st.caption(
+            "Define a computed column as a formula over existing metric keys -- "
+            "e.g. `(week52_high - last_close) / week52_high * 100` for '% off 52W high'. "
+            "Only + - * / ** and parentheses are allowed, no other functions. "
+            "Saved to custom_columns.json -- push it via the Alert Rules tab's GitHub button "
+            "to make it show up on the deployed app too."
+        )
+        with st.expander("Valid metric keys to use in a formula", expanded=False):
+            ref_lines = "\n".join(f"- `{k}` — {lbl}" for lbl, k in sorted(get_filterable_metrics(load_settings()).items()))
+            st.markdown(ref_lines)
+
+        if custom_columns:
+            st.caption(f"{len(custom_columns)} custom column(s):")
+            for col in list(custom_columns):
+                with st.container(border=True):
+                    st.markdown(f"**{col['name']}** {'' if col.get('enabled', True) else '_(disabled)_'}")
+                    st.code(col.get("formula", ""), language=None)
+                    cc1, cc2, cc3 = st.columns(3)
+                    new_name = cc1.text_input("Name", value=col["name"], key=f"cc_name_{col['id']}")
+                    new_format = cc2.selectbox(
+                        "Format", list(FORMAT_CHOICES.keys()),
+                        index=list(FORMAT_CHOICES.keys()).index(col.get("format", "number")),
+                        format_func=lambda k: FORMAT_CHOICES[k], key=f"cc_format_{col['id']}",
+                    )
+                    new_enabled = cc3.checkbox("Enabled", value=col.get("enabled", True), key=f"cc_enabled_{col['id']}")
+                    new_formula = st.text_input("Formula", value=col.get("formula", ""), key=f"cc_formula_{col['id']}")
+                    ok, err = validate_formula(new_formula, valid_names)
+                    if not ok:
+                        st.error(err)
+                    bcol1, bcol2 = st.columns(2)
+                    if bcol1.button("Save", key=f"cc_save_{col['id']}", disabled=not ok, width="stretch"):
+                        col["name"], col["formula"], col["format"], col["enabled"] = (
+                            new_name.strip() or col["name"], new_formula, new_format, new_enabled,
+                        )
+                        save_custom_columns(custom_columns)
+                        st.rerun()
+                    if bcol2.button("Delete", key=f"cc_del_{col['id']}", width="stretch"):
+                        custom_columns.remove(col)
+                        save_custom_columns(custom_columns)
+                        st.rerun()
+
+        st.markdown("**Add a new custom column**")
+        nc1, nc2 = st.columns(2)
+        add_name = nc1.text_input("Name", key="cc_new_name", placeholder="e.g. % off 52W High")
+        add_format = nc2.selectbox(
+            "Format", list(FORMAT_CHOICES.keys()), format_func=lambda k: FORMAT_CHOICES[k], key="cc_new_format",
+        )
+        add_formula = st.text_input(
+            "Formula", key="cc_new_formula",
+            placeholder="e.g. (week52_high - last_close) / week52_high * 100",
+        )
+        add_ok, add_err = (False, "") if not add_formula.strip() else validate_formula(add_formula, valid_names)
+        if add_formula.strip() and not add_ok:
+            st.error(add_err)
+        if st.button("＋ Add custom column", disabled=not (add_name.strip() and add_ok), width="stretch"):
+            custom_columns.append({
+                "id": uuid.uuid4().hex[:8],
+                "name": add_name.strip(),
+                "formula": add_formula,
+                "format": add_format,
+                "enabled": True,
+            })
+            save_custom_columns(custom_columns)
+            st.rerun()
 
 
 def render_market_tab(market, results, settings, visible_keys, label_by_key):
     benchmarks = get_benchmarks(settings)
     bench = benchmarks[market]
     labels = ema_col_labels(settings)
-    filterable_metrics = get_filterable_metrics(settings)
+    custom_columns = load_custom_columns()
+    filterable_metrics = get_all_filterable_metrics(settings, custom_columns)
 
     st.caption(
         f"{labels['w_fast']}/{labels['w_mid']}/{labels['w_slow']} · "
@@ -1313,17 +1435,40 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key):
         pct_cols = [c for c in PCT_COLS if c in df.columns]
         vol_cols = [c for c in VOLUME_COLS if c in df.columns]
 
+        # Custom columns pick their own display format (see FORMAT_CHOICES)
+        # at creation time -- bucket their labels the same way the built-in
+        # columns above are bucketed, so they get consistent formatting
+        # rather than pandas' raw float repr.
+        custom_price_cs, custom_pct_cs, custom_number_cs = [], [], []
+        for col in custom_columns:
+            if not col.get("enabled", True):
+                continue
+            label = col["name"]
+            if label not in df.columns:
+                continue
+            fmt = col.get("format", "number")
+            if fmt == "price":
+                custom_price_cs.append(label)
+            elif fmt == "percent":
+                custom_pct_cs.append(label)
+            else:
+                custom_number_cs.append(label)
+
         styled = (
             df.style
             .hide(axis="index")
             .apply(lambda row: style_row(row, labels), axis=1)
-            .format("{:,.0f}", subset=price_cs, na_rep="—")
+            .format("{:,.0f}", subset=price_cs + custom_price_cs, na_rep="—")
             .format("{:.1f}", subset=ratio_cs, na_rep="—")
             .format("{:,.0f}", subset=vol_cols, na_rep="—")
         )
-        if pct_cols:
-            styled = styled.format(lambda v: f"{v:+.1f}%" if pd.notna(v) else "—", subset=pct_cols)
-        table_html = add_header_tooltips(sticky_header_html(styled), column_definitions(settings, labels))
+        if custom_number_cs:
+            styled = styled.format("{:.2f}", subset=custom_number_cs, na_rep="—")
+        all_pct_cols = pct_cols + custom_pct_cs
+        if all_pct_cols:
+            styled = styled.format(lambda v: f"{v:+.1f}%" if pd.notna(v) else "—", subset=all_pct_cols)
+        header_tooltips = {**column_definitions(settings, labels), **custom_column_tooltips(custom_columns)}
+        table_html = add_header_tooltips(sticky_header_html(styled), header_tooltips)
         st.markdown(table_html, unsafe_allow_html=True)
 
         # Footer legend: spell out what each number in the Alerts column
@@ -1470,7 +1615,7 @@ with tab_alerts:
 
     combined_tickers = watchlists_now.get("US", []) + watchlists_now.get("INDIA", [])
     combined_results = per_market.get("US", []) + per_market.get("INDIA", [])
-    filterable_metrics_alert = get_filterable_metrics(settings_now)
+    filterable_metrics_alert = get_all_filterable_metrics(settings_now)
     metric_names_alert = list(filterable_metrics_alert.keys())
     metric_labels_alert = {v: k for k, v in filterable_metrics_alert.items()}
 

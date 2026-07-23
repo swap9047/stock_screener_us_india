@@ -1,0 +1,9 @@
+[
+  {
+    "id": "w52dist",
+    "name": "% Off 52W High",
+    "formula": "(week52_high - last_close) / week52_high * 100",
+    "format": "percent",
+    "enabled": true
+  }
+]
