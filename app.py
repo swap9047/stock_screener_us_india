@@ -185,7 +185,7 @@ def _set_browser_cookie(name, value, max_age_seconds):
     from urllib.parse import quote
     encoded = quote(value, safe="")
     st.iframe(
-        f'<script>document.cookie = "{name}={encoded}; path=/; max-age={max_age_seconds}; SameSite=Lax";</script>',
+        f'<script>try {{ window.parent.document.cookie = "{name}={encoded}; path=/; max-age={max_age_seconds}; SameSite=Lax"; }} catch(e) {{}} document.cookie = "{name}={encoded}; path=/; max-age={max_age_seconds}; SameSite=Lax"; setTimeout(function() {{ window.parent.location.reload(); }}, 100);</script>',
         height=1,
     )
 
@@ -195,7 +195,7 @@ def _clear_browser_cookie(name):
     _set_browser_cookie for why this doesn't use
     streamlit-cookies-controller."""
     st.iframe(
-        f'<script>document.cookie = "{name}=; path=/; max-age=0; SameSite=Lax";</script>',
+        f'<script>try {{ window.parent.document.cookie = "{name}=; path=/; max-age=0; SameSite=Lax"; }} catch(e) {{}} document.cookie = "{name}=; path=/; max-age=0; SameSite=Lax"; setTimeout(function() {{ window.parent.location.reload(); }}, 100);</script>',
         height=1,
     )
 
@@ -237,6 +237,7 @@ def require_login():
             if remember:
                 token = _make_remember_token(username, password)
                 _set_browser_cookie(REMEMBER_COOKIE_NAME, token, REMEMBER_DAYS * 86400)
+                st.stop()
             st.rerun()
         else:
             st.error("Incorrect username or password.")
@@ -255,7 +256,7 @@ def render_logout_button():
     if st.sidebar.button("Log out", width="stretch"):
         st.session_state.authenticated = False
         _clear_browser_cookie(REMEMBER_COOKIE_NAME)
-        st.rerun()
+        st.stop()
 
 
 require_login()
