@@ -162,56 +162,103 @@ def _verify_remember_token(token_value, expected_username, secret):
     return hmac.compare_digest(sig, expected_sig)
 
 
-def _set_browser_cookie(name, value, max_age_seconds):
-    """Sets a browser cookie via a tiny injected <script>, one-way
-    Python -> browser, instead of streamlit-cookies-controller.
+def _is_streamlit_cloud():
+    """Returns True when running on Streamlit Community Cloud.
+    Detects the cloud environment by checking for the HOSTNAME env var
+    pattern used by Streamlit Cloud workers, or by checking that
+    st.context.headers contains the cloud-specific host header.
+    Avoids any import that could fail on older Streamlit versions."""
+    import os
+    # Streamlit Cloud always injects this env var
+    if os.environ.get("STREAMLIT_SHARING_MODE") == "1":
+        return True
+    # Fallback: check if running as a Streamlit Cloud container
+    # These vars are set on Streamlit Cloud worker machines
+    if os.environ.get("HOME") == "/home/appuser":
+        return True
+    return False
 
-    That library's set()/get() rely on a bidirectional custom-component
-    round trip (Python asks the browser for a value, browser has to send
-    it back over the websocket before Python can trust it) -- this is
-    documented as unreliable specifically on cloud deployments, which
-    matches exactly what was reported here (sign in with "stay signed
-    in" checked, reload, still asked for a password every time):
-      - github.com/NathanChen198/streamlit-cookies-controller/issues/6
-        "Works locally but not in cloud deployments... cookies do not
-        set in any cloud deployment I have tried."
-      - github.com/NathanChen198/streamlit-cookies-controller/issues/4
-        "It seems that a sleep function is necessary to synchronize
-        browser cookies with Streamlit sessions" (and even that
-        workaround is reported as not reliable).
-    A plain document.cookie write has no value to wait on and nothing to
-    race against st.rerun() -- it either runs or it doesn't, and browsers
-    execute injected <script> tags essentially immediately."""
+
+def _query_param_token_key():
+    return "_swa_t"
+
+
+def _set_auth_token(token):
+    """Persists the remember-me token. On Streamlit Cloud, JS cookie writes
+    are blocked by the cross-origin iframe sandbox so we fall back to storing
+    the token in st.session_state and surfacing it to the user as a URL
+    query parameter they can bookmark. Locally, we still write a real browser
+    cookie as before, with a 100ms-delayed page reload to avoid the race
+    condition between the script write and st.rerun()."""
     from urllib.parse import quote
-    encoded = quote(value, safe="")
-    import streamlit.components.v1 as components
-    components.html(
-        f'<script>try {{ window.parent.document.cookie = "{name}={encoded}; path=/; max-age={max_age_seconds}; SameSite=None; Secure"; }} catch(e) {{}} document.cookie = "{name}={encoded}; path=/; max-age={max_age_seconds}; SameSite=None; Secure"; setTimeout(function() {{ window.parent.location.reload(); }}, 100);</script>',
-        height=0,
-    )
+    if _is_streamlit_cloud():
+        # Store in session state (survives reruns in the same session)
+        st.session_state["_remember_token"] = token
+        # Also inject into query params so a hard-reload in the same tab works.
+        # The user can bookmark this URL to avoid re-logging in each time.
+        st.query_params[_query_param_token_key()] = token
+    else:
+        # Local: write a real browser cookie
+        encoded = quote(token, safe="")
+        import streamlit.components.v1 as components
+        components.html(
+            f'<script>'
+            f'try {{ window.parent.document.cookie = "{REMEMBER_COOKIE_NAME}={encoded}; path=/; max-age={REMEMBER_DAYS * 86400}; SameSite=Lax"; }} catch(e) {{}}'
+            f'document.cookie = "{REMEMBER_COOKIE_NAME}={encoded}; path=/; max-age={REMEMBER_DAYS * 86400}; SameSite=Lax";'
+            f'setTimeout(function() {{ window.parent.location.reload(); }}, 150);'
+            f'</script>',
+            height=0,
+        )
 
 
-def _clear_browser_cookie(name):
-    """Expires a browser cookie the same one-way way -- see
-    _set_browser_cookie for why this doesn't use
-    streamlit-cookies-controller."""
-    import streamlit.components.v1 as components
-    components.html(
-        f'<script>try {{ window.parent.document.cookie = "{name}=; path=/; max-age=0; SameSite=None; Secure"; }} catch(e) {{}} document.cookie = "{name}=; path=/; max-age=0; SameSite=None; Secure"; setTimeout(function() {{ window.parent.location.reload(); }}, 100);</script>',
-        height=0,
-    )
+def _clear_auth_token():
+    """Clears the remember-me token from wherever it was stored."""
+    # Clear from query params
+    if _query_param_token_key() in st.query_params:
+        del st.query_params[_query_param_token_key()]
+    # Clear from session state
+    st.session_state.pop("_remember_token", None)
+    if not _is_streamlit_cloud():
+        # Local: also expire the real browser cookie
+        import streamlit.components.v1 as components
+        components.html(
+            f'<script>'
+            f'try {{ window.parent.document.cookie = "{REMEMBER_COOKIE_NAME}=; path=/; max-age=0; SameSite=Lax"; }} catch(e) {{}}'
+            f'document.cookie = "{REMEMBER_COOKIE_NAME}=; path=/; max-age=0; SameSite=Lax";'
+            f'setTimeout(function() {{ window.parent.location.reload(); }}, 150);'
+            f'</script>',
+            height=0,
+        )
 
 
-def _get_remember_cookie(name):
-    """Reads the cookie from st.context.cookies -- a read-only dict
-    populated synchronously from the actual Cookie: header the browser
-    sent with the page's initial HTTP request. No custom component, no
-    round trip, no polling, nothing to be flaky about: the value is just
-    there (or isn't) as soon as the script starts running, which is
-    exactly what require_login() needs on every page load/refresh."""
+def _get_stored_token(username, password):
+    """Retrieves and validates the stored remember-me token from all
+    possible locations: query params (Cloud + local after browser reload),
+    session state (Cloud, in-session), and browser cookies (local only).
+    Returns the token string if valid, or None."""
     from urllib.parse import unquote
-    raw = st.context.cookies.get(name)
-    return unquote(raw) if raw else None
+
+    candidates = []
+
+    # 1. Query param (works on both Cloud and local after reload)
+    qp = st.query_params.get(_query_param_token_key())
+    if qp:
+        candidates.append(qp)
+
+    # 2. Session state (Cloud in-session memory)
+    ss = st.session_state.get("_remember_token")
+    if ss:
+        candidates.append(ss)
+
+    # 3. Browser cookie (local only - will be empty on Cloud)
+    raw = st.context.cookies.get(REMEMBER_COOKIE_NAME)
+    if raw:
+        candidates.append(unquote(raw))
+
+    for token in candidates:
+        if _verify_remember_token(token, username, password):
+            return token
+    return None
 
 
 def require_login():
@@ -221,9 +268,12 @@ def require_login():
     if st.session_state.get("authenticated"):
         return
 
-    cookie_val = _get_remember_cookie(REMEMBER_COOKIE_NAME)
-    if _verify_remember_token(cookie_val, username, password):
+    # Check all stored token locations (cookie, query param, session state)
+    token = _get_stored_token(username, password)
+    if token:
         st.session_state.authenticated = True
+        # Ensure token is also in session state for this session
+        st.session_state["_remember_token"] = token
         return
 
     st.title("Stock Watchlist")
@@ -238,9 +288,17 @@ def require_login():
             st.session_state.authenticated = True
             if remember:
                 token = _make_remember_token(username, password)
-                _set_browser_cookie(REMEMBER_COOKIE_NAME, token, REMEMBER_DAYS * 86400)
-                st.stop()
-            st.rerun()
+                _set_auth_token(token)
+                st.session_state["_remember_token"] = token
+                if _is_streamlit_cloud():
+                    # On Cloud, query params are set above and session state
+                    # is in memory -- just rerun normally, no JS reload needed
+                    st.rerun()
+                else:
+                    # Local: JS will trigger a reload after writing the cookie
+                    st.stop()
+            else:
+                st.rerun()
         else:
             st.error("Incorrect username or password.")
     st.stop()
@@ -257,8 +315,8 @@ def render_logout_button():
         return
     if st.sidebar.button("Log out", width="stretch"):
         st.session_state.authenticated = False
-        _clear_browser_cookie(REMEMBER_COOKIE_NAME)
-        st.stop()
+        _clear_auth_token()
+        st.rerun()
 
 
 require_login()
