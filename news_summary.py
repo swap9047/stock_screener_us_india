@@ -79,19 +79,26 @@ def summarize_batch(client, tickers, market, as_of_date):
     single batch failing (e.g. transient rate limit) shouldn't lose the
     rest of the day's summary."""
     from google.genai import types
+    from datetime import datetime, timedelta
 
+    cutoff_date = (datetime.strptime(as_of_date, "%Y-%m-%d") - timedelta(days=2)).strftime("%Y-%m-%d")
     exchange = "NSE/BSE-listed" if market == "INDIA" else "US-listed"
     names = ", ".join(_bare_ticker(t) for t in tickers)
     prompt = (
         f"You are a financial news analyst. For each of these {exchange} stocks: {names} -- "
-        f"search for and report ONLY IMPORTANT, MAJOR news from the last 24 hours as of "
-        f"{as_of_date}: major announcements, earnings/results, regulatory or FDA/approval news, "
-        "M&A, management changes, and major stock price moves (with a stated reason). This is a "
-        "daily digest, so ignore routine/minor news and small price moves -- only include "
-        "something if it's genuinely significant. Skip a ticker entirely if there's nothing "
-        "important in the last 24 hours -- don't pad with generic/no-news filler. Organize by "
-        "ticker with a bold ticker heading. Be concise -- a few bullet points per ticker, not "
-        "paragraphs."
+        f"search for and report ONLY IMPORTANT, MAJOR news, and ONLY items dated between "
+        f"{cutoff_date} and {as_of_date} (the last 24-48 hours) -- major announcements, "
+        "earnings/results, regulatory or FDA/approval news, M&A, management changes, and major "
+        "stock price moves (with a stated reason). STRICT recency rule: every item must be about "
+        f"something that was announced, published, or happened within that {cutoff_date} to "
+        f"{as_of_date} window -- not older news you find while searching, and not a company's "
+        "full-year or quarterly financial figures unless those figures were freshly reported/"
+        "announced within that window. State the specific date of each item. If you can't "
+        "confirm an item's date falls in that window, leave it out. This is a daily digest, so "
+        "also ignore routine/minor news and small price moves -- only include something if it's "
+        "genuinely significant AND recent. Skip a ticker entirely if there's nothing that "
+        "qualifies -- don't pad with generic/no-news filler. Organize by ticker with a bold "
+        "ticker heading. Be concise -- a few bullet points per ticker, not paragraphs."
     )
     try:
         grounding_tool = types.Tool(google_search=types.GoogleSearch())
@@ -110,33 +117,45 @@ def summarize_batch(client, tickers, market, as_of_date):
         return None, str(e)
 
 
-def collate_market_summary(client, market, batch_texts):
+def collate_market_summary(client, market, batch_texts, as_of_date=None):
     """The batch step (summarize_batch) casts a wide net -- it's a search
     call, not an editor, so it tends to include borderline/routine items
     (a scheduled board meeting, an ordinary block trade, a small price
-    tick) alongside genuinely important ones. This step is where the
-    actual filtering happens: it's a strict editorial pass, Perplexity-
-    Finance-style, that keeps ONLY material items and writes them as a
-    short, scannable brief -- not an exhaustive per-ticker report. No
-    grounding needed -- it only edits text Gemini already produced (with
-    real search results) in the batch calls, it doesn't search again."""
+    tick) alongside genuinely important ones, and occasionally an item
+    that isn't actually recent (e.g. a company's FY results surfaced by
+    search even though they weren't freshly announced). This step is
+    where the actual filtering happens: it's a strict editorial pass,
+    Perplexity-Finance-style, that keeps ONLY material AND recent items
+    and writes them as a short, scannable brief -- not an exhaustive
+    per-ticker report. No grounding needed -- it only edits text Gemini
+    already produced (with real search results) in the batch calls, it
+    doesn't search again."""
     if not batch_texts:
-        return "No major news for this watchlist's tickers in the last 24 hours."
+        return "No major news for this watchlist's tickers in the last 24-48 hours."
+    from datetime import datetime, timedelta
+    if as_of_date:
+        cutoff_date = (datetime.strptime(as_of_date, "%Y-%m-%d") - timedelta(days=2)).strftime("%Y-%m-%d")
+        window_line = f"ONLY items dated between {cutoff_date} and {as_of_date} (the last 24-48 hours) qualify -- "
+    else:
+        window_line = "ONLY items from the last 24-48 hours qualify -- "
     combined = "\n\n---\n\n".join(batch_texts)
     prompt = (
         f"Below are raw notes gathered for tickers in the {MARKET_LABELS.get(market, market)} "
-        "-- some entries are genuinely important, many are routine noise that shouldn't be in a "
-        "daily briefing. Act as an editor for a daily investor briefing (think Perplexity "
-        "Finance's watchlist digest): produce a SHORT, CRISP summary containing ONLY material "
-        "items.\n\n"
+        "-- some entries are genuinely important and recent, many are routine noise or stale "
+        "info that shouldn't be in a daily briefing. Act as an editor for a daily investor "
+        "briefing (think Perplexity Finance's watchlist digest): produce a SHORT, CRISP summary "
+        "containing ONLY material, recent items.\n\n"
         "KEEP: major earnings beats/misses with concrete numbers, M&A, regulatory/FDA/approval "
         "outcomes, large stock price moves (roughly >=5%) WITH a clear stated reason, analyst "
         "rating or price-target changes from named firms, leadership changes, major contract "
-        "wins/losses, credit rating changes, and anything else genuinely market-moving.\n\n"
+        "wins/losses, credit rating changes, and anything else genuinely market-moving -- "
+        f"{window_line}if a note doesn't state a date, or its date is older than that window, "
+        "drop it even if it sounds important.\n\n"
         "DROP entirely: routine scheduled board meetings/investor calls/AGMs/EGMs where no "
         "outcome is known yet, ordinary block/bulk trades and insider option exercises unless "
         "unusually large, small price moves without a clear catalyst, generic 'no major news' "
-        "filler, and anything duplicated across entries.\n\n"
+        "filler, stale/older items outside the recency window above, and anything duplicated "
+        "across entries.\n\n"
         "Format as a flat list of short bullet points (one line each: **Ticker** -- takeaway), "
         "not per-ticker sections or headers -- most tickers won't have anything worth including, "
         "and that's fine. If NOTHING in the whole watchlist clears this bar, say so in one "
@@ -195,7 +214,7 @@ def build_news_summary(watchlists, api_key, batch_size=BATCH_SIZE):
 
         if not first_call:
             time.sleep(SECONDS_BETWEEN_CALLS)
-        collated = collate_market_summary(client, market, batch_texts)
+        collated = collate_market_summary(client, market, batch_texts, as_of_date=as_of_date)
 
         result["markets"][market] = {
             "summary": collated,

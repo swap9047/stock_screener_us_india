@@ -1326,7 +1326,7 @@ with tab_news:
     st.subheader("Watchlist news digest")
     st.caption(
         "Major announcements, developments, and stock moves for your watchlist tickers in the "
-        "last 24 hours, summarized via Gemini (Google Search grounding). Runs once a day at "
+        "last 24-48 hours, summarized via Gemini (Google Search grounding). Runs once a day at "
         "7:00 AM ET via GitHub Actions and is also sent to Discord — this tab just shows the "
         "same result."
     )
