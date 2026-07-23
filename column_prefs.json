@@ -1,12 +1,14 @@
 {
   "order": [
+    "pct_change_1d",
     "trend",
     "matched_alerts",
     "tech_uptrend_label",
     "volume_trend",
-    "pct_change_1d",
     "week52_high",
+    "custom_w52dist",
     "week52_low",
+    "custom_w52lowdist",
     "data_end",
     "ema10",
     "ema40",
@@ -15,7 +17,6 @@
     "rsi14_monthly",
     "vstop_weekly",
     "vstop_weekly_direction",
-    "vstop_change",
-    "custom_w52lowdist"
+    "vstop_change"
   ]
 }

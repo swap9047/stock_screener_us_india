@@ -2,14 +2,14 @@
   {
     "id": "w52dist",
     "name": "% Off 52W High",
-    "formula": "(week52_high - last_close) / week52_high * 100",
+    "formula": "-(week52_high - last_close) / week52_high * 100",
     "format": "percent",
     "enabled": true
   },
   {
     "id": "w52lowdist",
     "name": "% above 52W Low",
-    "formula": "(last_close - week52_low) / week52_low * 100",
+    "formula": "(last_close- week52_low)/ week52_low*100",
     "format": "percent",
     "enabled": true
   }
