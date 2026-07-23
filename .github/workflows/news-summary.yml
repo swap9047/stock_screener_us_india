@@ -1,0 +1,65 @@
+name: Daily Watchlist News Summary
+
+# Runs once/day at 7:00 AM ET (before market open), building a Gemini
+# grounded-search news digest (major announcements/developments/stock moves
+# in the last 24h) for each watchlist and sending it to Discord.
+#
+# 7:00 AM ET is 11:00 UTC during EDT (mid-Mar to early Nov) and 12:00 UTC
+# during EST (early Nov to mid-Mar) -- GitHub Actions cron is UTC-only and
+# does NOT adjust for daylight saving, so both lines are scheduled and a
+# cheap "gate" job checks the real America/New_York wall-clock hour at run
+# time so only the correct one for the current season actually proceeds
+# (mirrors the same DST pattern used in daily-alerts.yml).
+on:
+  schedule:
+    - cron: "0 11 * * *"   # 11:00 UTC = 7:00 AM ET during EDT
+    - cron: "0 12 * * *"   # 12:00 UTC = 7:00 AM ET during EST
+  workflow_dispatch: {}    # run manually from the Actions tab anytime, bypasses the gate
+
+permissions:
+  contents: write   # needed to commit news_summary.json back to the repo
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      due: ${{ steps.check.outputs.due }}
+    steps:
+      - id: check
+        name: Is it 7 AM ET right now?
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          from zoneinfo import ZoneInfo
+          from datetime import datetime
+          now_et = datetime.now(ZoneInfo("America/New_York"))
+          due = now_et.hour == 7
+          print(f"due={'true' if due else 'false'}")
+          EOF
+
+  build:
+    needs: gate
+    if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.due == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build news summary and send to Discord
+        run: python news_check.py
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+      - name: Commit updated news_summary.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add news_summary.json
+          git diff --staged --quiet && echo "No changes to commit" || git commit -m "Update news_summary.json [automated]"
+          git push

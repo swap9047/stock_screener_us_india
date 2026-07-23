@@ -72,7 +72,27 @@ On each scheduled wakeup, a cheap "gate" job installs only `requests` and asks `
 
 Rough cost: two lightweight gate runs/day (a few seconds each) plus one full check on due days, comfortably under GitHub's free 2,000 minutes/month for a private repo (or free either way on a public repo). One thing to know: GitHub auto-disables scheduled workflows after 60 days with no commits to the repo (it does email a heads-up first, sent to whoever last enabled the workflow) — a trivial commit (even just touching this README) resets that clock, so if you go quiet on the repo for ~2 months, either push something small or manually re-enable the workflow from the Actions tab. Also worth knowing: GitHub's scheduler is documented as best-effort, so scheduled runs can occasionally be delayed or skipped.
 
-## 7. Push config changes made through the deployed app back to GitHub
+## 7. News digest (Discord + News tab)
+
+A second, independent GitHub Actions workflow, `.github/workflows/news-summary.yml`, builds a daily news digest for both watchlists: for each ticker, it uses Gemini (with Google Search grounding, so it's real, cited web search — not the model's training data) to find important announcements, results, and stock moves from the last 24 hours, collates each watchlist into one summary, saves the result to `news_summary.json`, and sends both summaries to Discord. The app's **News** tab just displays that same `news_summary.json`.
+
+It runs once a day at **7:00 AM ET** (before market open), using the same two-UTC-cron-lines-plus-runtime-check pattern as the alerts workflow to handle daylight saving time correctly.
+
+To enable it, add one more repo secret (repo → Settings → Secrets and variables → Actions → New repository secret):
+
+```
+GEMINI_API_KEY = <your key from aistudio.google.com>
+```
+
+Get a free key at [Google AI Studio](https://aistudio.google.com/apikey). The workflow reuses the same `DISCORD_WEBHOOK_URL` secret as the alerts workflow.
+
+A few things worth knowing:
+
+- **Free-tier quotas are account-specific.** Check your own limits at AI Studio's Rate Limit dashboard before changing the model or batch size — this project's `gemini-2.5-flash` + 13-tickers-per-batch choice was tuned to fit comfortably under a 20-requests/day cap that's tighter than Google's generic published numbers, and the entire Gemini 3.x model family (3, 3.1, 3.5, 3.6, Lite or not) had **zero** free Search-grounding quota on the account this was built against.
+- **This workflow commits `news_summary.json` directly to the repo itself** (it needs `contents: write` permission, already set) — unlike the other config files, this one is machine-generated, not edited through the app UI, so there's nothing to push from the app's GitHub sync button for this file.
+- If the Gemini API call fails for a given day (rate limit, outage, etc.), that day's digest is simply skipped — no Discord message, no `news_summary.json` update, and the app's News tab keeps showing the last successful run until the next one succeeds.
+
+## 8. Push config changes made through the deployed app back to GitHub
 
 Here's a gap worth knowing about: if you edit alert rules, the watchlist, custom filters, or Settings through the **deployed** app's UI, that write only lands on that Streamlit Cloud instance's local disk. It does **not** reach your GitHub repo — so the GitHub Actions workflow above (which always checks out the repo's committed version of `alerts_config.json`) won't see those edits, and a redeploy wipes them.
 
@@ -106,3 +126,4 @@ Each push creates **one combined commit** containing all selected files. That ma
 | Discord alerts (manual "Send test message") | Works once webhook secret is set |
 | Discord alerts (automatic, per-rule schedule) | Needs `DISCORD_WEBHOOK_URL` repo secret — GitHub Actions workflow is already committed |
 | Push config edits (made on the deployed app) back to GitHub | Needs `GITHUB_TOKEN`/`GITHUB_REPO` secrets — sidebar button already built |
+| Daily news digest (News tab + Discord, 7 AM ET) | Needs `GEMINI_API_KEY` repo secret (free at aistudio.google.com) — GitHub Actions workflow is already committed |
