@@ -59,7 +59,7 @@ from github_sync import get_github_config, push_all_config, SYNCABLE_FILES
 from news_summary import load_news_summary, MARKET_LABELS
 from custom_columns import (
     load_custom_columns, save_custom_columns, validate_formula, column_key,
-    FORMAT_CHOICES, CUSTOM_COLUMNS_FILE,
+    FORMAT_CHOICES, CUSTOM_COLUMNS_FILE, apply_custom_columns_to_rows,
 )
 import json
 import os
@@ -1184,18 +1184,39 @@ def render_custom_columns_manager():
         # the WHOLE push if any targeted file doesn't exist yet, and
         # custom_columns.json is now in SYNCABLE_FILES.
         save_custom_columns(custom_columns)
-    valid_names = set(get_filterable_metrics(load_settings()).values())
+    metrics_by_label = get_filterable_metrics(load_settings())
+    metric_labels_sorted = sorted(metrics_by_label.keys())
+    valid_names = set(metrics_by_label.values())
+
+    def _insert_metric_row(formula_key, widget_suffix):
+        """Renders a 'pick a metric -> Insert' row that appends the chosen
+        metric's exact key to the formula text at `formula_key` (in
+        st.session_state) and reruns -- lets the user build a formula by
+        choosing columns from a dropdown instead of hand-typing metric
+        keys, which is easy to mistype (e.g. week52low vs week52_low)."""
+        ins1, ins2 = st.columns([3, 1])
+        choice = ins1.selectbox(
+            "Insert a metric", metric_labels_sorted,
+            key=f"cc_insert_choice_{widget_suffix}", label_visibility="collapsed",
+        )
+        if ins2.button("+ Insert", key=f"cc_insert_btn_{widget_suffix}", width="stretch"):
+            key_to_insert = metrics_by_label[choice]
+            current = st.session_state.get(formula_key, "")
+            sep = "" if not current or current.endswith((" ", "(")) else " "
+            st.session_state[formula_key] = f"{current}{sep}{key_to_insert}"
+            st.rerun()
 
     with st.sidebar.expander("Custom Columns", expanded=False):
         st.caption(
-            "Define a computed column as a formula over existing metric keys -- "
+            "Define a computed column as a formula over existing metrics -- "
             "e.g. `(week52_high - last_close) / week52_high * 100` for '% off 52W high'. "
-            "Only + - * / ** and parentheses are allowed, no other functions. "
+            "Use the 'Insert a metric' picker below to add exact column names without typing "
+            "them by hand. Only + - * / ** and parentheses are allowed, no other functions. "
             "Saved to custom_columns.json -- push it via the Alert Rules tab's GitHub button "
             "to make it show up on the deployed app too."
         )
-        with st.expander("Valid metric keys to use in a formula", expanded=False):
-            ref_lines = "\n".join(f"- `{k}` — {lbl}" for lbl, k in sorted(get_filterable_metrics(load_settings()).items()))
+        with st.expander("All available metric keys", expanded=False):
+            ref_lines = "\n".join(f"- `{k}` — {lbl}" for lbl, k in sorted(metrics_by_label.items()))
             st.markdown(ref_lines)
 
         if custom_columns:
@@ -1212,7 +1233,18 @@ def render_custom_columns_manager():
                         format_func=lambda k: FORMAT_CHOICES[k], key=f"cc_format_{col['id']}",
                     )
                     new_enabled = cc3.checkbox("Enabled", value=col.get("enabled", True), key=f"cc_enabled_{col['id']}")
-                    new_formula = st.text_input("Formula", value=col.get("formula", ""), key=f"cc_formula_{col['id']}")
+                    formula_key = f"cc_formula_{col['id']}"
+                    if formula_key not in st.session_state:
+                        # Seed once from the saved formula. Deliberately NOT
+                        # passing value=... on the text_input below (every
+                        # render) -- Streamlit warns/rejects that combo once
+                        # _insert_metric_row() has explicitly written to this
+                        # session_state key (the "Insert" button), since a
+                        # literal value= and a programmatic session_state
+                        # write to the same widget key conflict.
+                        st.session_state[formula_key] = col.get("formula", "")
+                    _insert_metric_row(formula_key, col["id"])
+                    new_formula = st.text_input("Formula", key=formula_key)
                     ok, err = validate_formula(new_formula, valid_names)
                     if not ok:
                         st.error(err)
@@ -1234,6 +1266,7 @@ def render_custom_columns_manager():
         add_format = nc2.selectbox(
             "Format", list(FORMAT_CHOICES.keys()), format_func=lambda k: FORMAT_CHOICES[k], key="cc_new_format",
         )
+        _insert_metric_row("cc_new_formula", "new")
         add_formula = st.text_input(
             "Formula", key="cc_new_formula",
             placeholder="e.g. (week52_high - last_close) / week52_high * 100",
@@ -1583,6 +1616,19 @@ if not using_snapshot:
         json.dumps(watchlists_now, sort_keys=True),
         json.dumps(settings_now, sort_keys=True),
     )
+
+# fetch_all_markets() already applies custom columns on the live-fetch path,
+# but the snapshot path loads raw JSON straight off disk and never touches
+# them -- if a custom column was added/edited any time after that morning's
+# snapshot was generated (data-refresh.yml only runs once/day), its key is
+# simply missing from snapshot rows. That caused a real KeyError (column
+# picker/visible_keys referenced a key that didn't exist in the dataframe).
+# Re-applying here, unconditionally, is cheap (plain arithmetic) and makes
+# custom columns always reflect the CURRENT formula regardless of when the
+# snapshot was built or whether this run used it at all.
+custom_columns_now = load_custom_columns()
+for _market_rows in per_market.values():
+    apply_custom_columns_to_rows(_market_rows, custom_columns_now)
 
 source_label = "daily snapshot" if using_snapshot else "live fetch"
 st.sidebar.caption(f"Data as of: {as_of} ({source_label})")
