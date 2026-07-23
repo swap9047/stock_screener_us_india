@@ -1,0 +1,316 @@
+{
+  "as_of": "2026-07-23",
+  "generated_at": "2026-07-23T01:59:26.793186+00:00",
+  "markets": {
+    "US": {
+      "summary": "Here's a digest of important, major news for the selected US-listed stocks from the last 24 hours as of July 23, 2026:\n\n**AMKR**\n*   On July 22, 2026, it was reported that James J. Kim, a 10% owner, exercised stock options for 450,000 shares of Amkor common stock on July 20, 2026.\n*   Amkor Technology shares gapped up in premarket trading on July 21, 2026, opening at $67.06 after closing at $62.56. This move occurred as the company had previously beaten its latest quarterly earnings estimates for Q1 2026, with a reported EPS of $0.33 versus $0.23 expected and revenue of $1.68 billion.\n\n**BE**\n*   On July 21, 2026, Bloom Energy's shares jumped 12.3% in the morning session. This surge followed JPMorgan's upgrade of its price target from $267 to $346, with an \"Overweight\" rating. The firm cited a strong long-term delivery outlook through fiscal year 2030, projecting 4.1 gigawatts in product segment deliveries, supported by existing customer agreements including an expanded partnership with Brookfield.\n\n**BNTX**\n*   BioNTech announced on July 21, 2026, that it will report its financial results for the second quarter 2026 and provide a corporate update on Tuesday, August 4, 2026.\n\n**GRID**\n*   On July 22, 2026, a significant amount of power abruptly disconnected from PJM Interconnection, the largest U.S. electric grid, causing a voltage disturbance that was felt across a wide area from Washington, D.C., to Chicago. Over 3 gigawatts of power demand went offline, highlighting concerns about managing sudden drops in demand, potentially from data centers and crypto miners.\n\n**HIMS**\n*   The FDA Pharmacy Compounding Advisory Committee is scheduled to meet on July 23-24, 2026, to evaluate several peptides for inclusion on the 503A Bulks List. Previously, FDA staff expressed insufficient evidence to support compounding of certain popular peptides and could not rule out safety concerns, which led to a stock slip overnight on July 1, 2026, for Hims & Hers.\n\n**JNJ**\n*   Johnson & Johnson announced on July 22, 2026, that the U.S. Food and Drug Administration (FDA) granted marketing authorization for its Ottava robotic surgical system. This approval allows J&J to enter the soft-tissue robotic surgery market, with a U.S. commercial launch planned for select customers.\n*   A federal judge on July 22, 2026, expressed skepticism regarding claims from approximately 69,000 plaintiffs alleging that Johnson & Johnson's talc products caused ovarian cancer. The judge indicated that plaintiffs must provide more specific evidence or face potential dismissal of their lawsuits.\n\n**META**\n*   A U.S. teenager withdrew his lawsuit against Meta on July 22, 2026, concerning social media addiction and mental health harms. This withdrawal occurred days before the case was scheduled to go to trial, making Meta the sole remaining defendant after YouTube, TikTok, and Snapchat reached confidential settlements.\n\n**NTRA**\n*   Natera announced results from a prospective, multicenter study published in JAMA Dermatology, demonstrating that its Signatera test was a stronger predictor of Merkel cell carcinoma recurrence compared to the standard Merkel cell polyomavirus antibody test (AMERK). Signatera showed 90% sensitivity versus 55% for AMERK in detecting recurrence and identified recurrence with a median lead time of 5.1 months versus 2.1 months.\n\n**ORCL**\n*   Oracle Financial Services Software (OFSS), a subsidiary of Oracle, reported strong Q1 FY27 results on July 22, 2026, with consolidated revenue increasing by 69% year-on-year and net profit surging by 121% year-on-year. Additionally, Managing Director and CEO Makarand Padalkar resigned, effective July 23, 2026, and CFO Avadhut Ketkar was appointed as the new Managing Director and CEO for a three-year term.\n\n**QURE**\n*   uniQure announced on July 22, 2026, that it will release its second-quarter 2026 financial results before the U.S. market opens on Wednesday, July 29, 2026.\n\n**RGEN**\n*   On July 22, 2026, Repligen Corporation announced a definitive agreement to acquire BioLife Solutions, Inc. for a total enterprise value of approximately $1.5 billion. BioLife stockholders are set to receive $11.25 per share in cash and 0.1442 shares of Repligen common stock, equating to a total value of $31.00 per share. The transaction, structured as a two-step merger, is expected to close in the fourth quarter of 2026.\n*   Concurrent with the acquisition announcement on July 22, 2026, Repligen provided preliminary unaudited second-quarter 2026 financial results, expecting revenue growth of approximately 12% (reported) and 13% (organic) compared to the same period in 2025, alongside strong year-over-year margin expansion.\n\n**RKLB**\n*   Rocket Lab's stock (RKLB) jumped more than 5% overnight on July 22, 2026, after the company secured a $266 million firm-fixed-price contract from the U.S. Space Force for suborbital launch services.\n\n**VSH**\n*   On July 21, 2026, Vishay Intertechnology's common stock (VSH) saw a significant price increase, rising 6.15% to $39.67. This positive movement was observed as the semiconductor sector continued to rebound, building on the company's strong first-quarter 2026 results that reported revenue above guidance and meaningful margin improvement.",
+      "sources": [
+        {
+          "title": "investing.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEN9_uoiwdPjGYSj8aquQXxn1PhpdYW2cyic4n9xOjz6rl8JdGckZV5sBTk8akXKEPA9DbrCkrk6WEfpa5JtJyXi-ZRwrvF0oZbx4UqASLf0t2tnWg8Jz28FMAyweBX6qgro8LAkIjyC6ptnnNXRlTjlTPBetyKPOOYFFH8Y7Y4rY6Tkr4Uu-lzSP8kMzDIynKEapb_gOlCOnIslq-_eAKPDdNXjU_q7yHdsApkef_WSSZ8b3cfgQ=="
+        },
+        {
+          "title": "stocktitan.net",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFqXy2FeOMg5MCZUMRmhYThxoNfPne2x9UNIa7tthmtV6VIN1GxmLg1EhwbpkbBRFvGO_wqhKypwH3h8TP0lNYlBXxnWNRuhbHfn5vhgAaZvZjzo0MW7fW_les_W4KpDyavr-gkAgzLJ4zpUdNYXBlGVYOz4G87Zdw-cXWrEJK1qO4ZF_1l_aWLpFYVAapCwUDA1gpfLDYgzETzFano4NBf8Bh-"
+        },
+        {
+          "title": "wtvbam.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGulGow0ekjxlz040ozzOdOXBTkyS6GX0cS644ain5o46Y9xj6N-pk8rYFHgWcf_A6SLtOQfTM4Tzk2GCQd-csnrBp8pApj2kwk_GYS5LU_-leFOuDvFgOHTuzhNk6tKWrU23jYa59uKIilpk1JOE8T8tQhWsgEO6gQsUBBQZkVSRmKfFKm7TJW5AHYuJ291qlzJDtM"
+        },
+        {
+          "title": "oedigital.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFtXuLDfsXiCoNExdFJGx2vCEWJRJAYIBg6oOqlLE6OoVVmGjxkaa-fMtXznPU4zymDuCDWFz04mhVLKWY_fQqvs3_0doK7i-71eVhhtq4rOvwle66JXnOYZ0jzXXcQrJ8HoefqmJSqBvALwcnqFyvgOz4RsuSSS0gsjRuJVTtA0HgLVEjjEztYVxk_Wt5bSL5syUkAywQmlMyg5TUPLPmTuRHONPSYGniHMRIp6912odu50gXCxIqndqwDwkIv"
+        },
+        {
+          "title": "tradingview.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFPLAXCNTVBJ-dkIwPPxBmIzTcd4oRm1fR4T3cR95q7ufrGj7wLtWDZOCgjNaXDvgXtKGc4Gtog_zjhAMXo8R8Kq5lpL0ZWGCpKHP6tMWu-zFhq2h2LOoVoXI4uKD5Ku7rJoLeP1sqBcNYwiiSjEtLpDb6aUmrm4bR5p3rNwXLoOsLA0k7Hw91ap7mdB_JDkMJhJja4ysxYVcVgbErGJYnVOSB5vdfkMf6mK3XSj53kFbLOFmXjFHfmb2Xfow=="
+        },
+        {
+          "title": "fxleaders.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG-9e1dqeDsr5ANuJsF6dDO0WOrB70ct6MAFzOy8mJiOGn1dT9vPuDQUlg_2a6DKP1FhEN2Ihbfc8VTKY1wb8dhwan2QrkgkNAM_6nAKOX1uGLTtXcqFQtv_DIQ4Mt1IWr9uuXvrBmdg0UbqA5lX0eRhf6KWVe7qMOfAfiqHLFLXFqXq2YFGmNyFFk0MTsZbVIk9dmkg4Gidl8nu9b96oIWxH2mfK4A9mHhHJ3mzspWi04dSXtUyW_HiHMO"
+        },
+        {
+          "title": "invezz.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEe_8BadHdOjy3VoCR2iIfHYtNk2q0DaFi_apgPKpeEsnjZetU3AjyiJUKTkbbkCv9RsfwhnFtHqJSGve0-g_6KnwESHCbSA2TMBkypy23JkxnCY5NEy6LqEddrvLn0_fg7Ze_khEcs3eGgw76pnhXg4myU8xHwju6LK6jBIZjzRO9AUwQoCeFW_OdioaZhEm9JGfPaI8vvHzVO8H42"
+        },
+        {
+          "title": "rthk.hk",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHj61zdZDnxi1tddlRVb5QZgs7ytb4lCxxh2gyoa162wONiYxLM78j3ywV6mHf386YregrtD_cpB0BMyFoISdeuCM0aW1tkMEHbZha2EdGGQWj8-n3yYmyqciPihI3nDy8pAV0D7nOxlWmw7tSrf1HZoAHmSv2EMxUS8mVrEzK5aBTgFGI9rTSkwtdqUC29BQY47Tm88v-_lOxh8yxRCHg="
+        },
+        {
+          "title": "investing.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEAAWU9-8K1RVOrjm2m8FsvSYeXNh9EtPReI4zLrtz4kLfnFGmg1uBIx4eCkHmvtdYYkyHbD0OJOyqnA7etmXf7jXlRoMiCT2HAKCj8e2NufKfELftxDuSqNFZXyP3hK8ymxyi0oTwSoImqJI-fPsrCi4McFyR0KVh7ZEUIcduzpcJoLIwKFBPqqCQwHWNSG0u19Au2JOj9IGSRKX6VZFReFgs5obErL3iwXq8j08Nu"
+        },
+        {
+          "title": "straitstimes.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFQtIP3SNYtwq0bd8a-LJ-_kkK10c35fWMZECMeRWt3RqA0ZKPMpDQn9A6Z8VUDFXjFeCG9BGrE75EHQ2VzSIkcPTNfdPhaRGDu1sP7KeKZL8F5UIGu7K3yy13eYSAkgVFkcLV0Hn2Tp24yqvT4Y0eV-xp9_hZfNBrLFH4siUs3ZYi0MFAU4CzsK-E3LvWzM-007iqJXEIS7tP8PispRMjN40ZVu4h2yRVfU9QW3Q=="
+        },
+        {
+          "title": "stocktwits.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHJdy8ed61AaENOwMDVmxYMmnf1XYvSwrS9nxzZ2vKqPuol81ARugNf-f9vTfteQYh55fjIcdR-SllWvkcLL0Fyk8DGkrfAUo5iUGhL10ZkMSy7zmP2X1fTmZbRBdAoJkMjkndF0SwXq7OWpxp4tNfTzsO6bbGex_QXUJVvdUYr67ipKCD78MEXFKtCZYAjx0JUQv3Vu3QH9sciMdn58tik2-DCB6bcopum6wAE"
+        },
+        {
+          "title": "stocktwits.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEE5D6GbU8-nsNzeDXsUyBbQ_VATIg8aeNdhrXhBUbu5J2i8gXPjyofN0bilpkp0UyHu5a6HVM3Qg74c-xghL70T00fc6syByqw0joJdefTmgYF46JRm00kCG6WyLymBABH_mFbeTUpdZ5MojL3Xrd0oFI3jeUZXYCSSspgaakhnhHK55uVt3Gfk-BkPMHBlb39hjUauKYizJY74rvLwV7AsIFgTXnfgZ5QzBIFyL-VNk40_MKrzVDG"
+        },
+        {
+          "title": "investing.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHyqyawZvpI9Y7Oa83-w9DnfyIiAJhDl-OjnfizL5o6AxwykkE2VMqvZ5ys_f8HveAejEfZL6CIw1R6XLbX4En1q3ppZ3L7TVKW3wNjbTYF5dzRosJOblXO0QvwNsNMp2k7-S74uH3Ow8C9slT-vEbLvVD8qlf1DDez3mjs05eAhU60Xs2wCcu4xfqAeF85xjTojyU0jXMpbJZ-MtNYo2ljSFsF2hHppShRwKcjFKjlmg=="
+        },
+        {
+          "title": "tradingview.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF_ex_DdVFjtgFff-At_tNrdAPwI3jpVJy5X48UQG70d2jc3Q7qBKvldk8et0PIRjJxNaFGOD4yhsaoqDoY7vmyfabNKyxoB3lwA9mU6h9V53DktenR3-07Kne28XkmOAAiOok1l4Yp5D3ePuz0a2o0bIpL0fAORT8jG-xoeLF9XoMH3J9EQDfuAsFGgxbjeQH2Hiqw0Y6A6YHoH4Kh-8HpMgdUvB6P9YQ="
+        },
+        {
+          "title": "biontech.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHiLF9_3yB3BiTQ-37ZkXZnoWUpaByqMUxof-2R0pMDAQ6M9utWXj8dBavyS2sc9Z5llPXAxQMW7f992IQSXn4dkGf4KZlQANjHeSsJZF0GU-DK_iY7_UsFwJbeMfbVvFTzuc7_Y6raJCOngptqkJLbEogqnhTfYmvGu7GQNl4c4nT-OOe-Ob9N81t226AgrlS2vFviw3I9HPbrxmhR9vnTsmRVFwqAa-VozpoBvXnRWJHLO69peUGxV2ZTydLm9pPQOMXWKEG_KuJ-z1j_MmTllWdeqE4niVjz7iyFO2htjhaw1GWIKiqq"
+        },
+        {
+          "title": "economictimes.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHnxDSp4aMQtQsDa7_3-oyCDxM0ZquQtoYd0gWL90HF7gCfORGljZtJGuKGyeLnDJh-UFM3KPuctTB1RCe7X7ddixuvpvzfPcje_JdAZ3f_iVGjaiOpeiAX59PyE8KE2zPAXNrHo6stZvVjN2ofdYiVMJmYr2zTFFALBSdV6nmfSS7u74sedoWIqKNabp88Kmm3NM5jiYGgJ2OAIIG5PekYe4TDJT01AlCnSn7alk9ySBFn2WCHLlZzmtpD_qw8a8yYGw_UDdM6tYWTQhuC7YRPyy6dgVJ4n-E="
+        },
+        {
+          "title": "jnjmedtech.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGkkLVU5KHXycWQ8T2ExepZ8pOjZlALeqJGVS_PTrTx7sdKCsr8LN_UTCI_ySuuFkggjZQz_23oqUvieDhWVAQXXBY2lz7bd4J59HaCJStVxdzmHL2GU3p30J0eYsUuAyVjhL0tBgLgehkPX1BZg6w7-wDl7GKH18NKi5isSYGHp15UIbR6EA9WrQiwBvyT_nOAbQCKFJxUELmGVhcjl183DGw2VaZk041hjwEDrbH4YRFOvcZ1Ioy3-FC076lbDUw7PPvPG4yAqz9vgj3rUmSShDgMsQ=="
+        },
+        {
+          "title": "thestar.com.my",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHSnZJPpSSRp9qqBpxPL2XjGtgkcdvUruRQyddEuQMFZIPB0Ngzg1imd_6Kx_3JJcrInR1FcUwAAXshXwbfBQ9S7jhGviMwy1m1BrEt4Oa6PJOL5Tq3EAFkwU4fc7is4wd6xxomWxTRoq7nph5rnhTdvQf0jLuULuqU-PIZSY4nL0i-7j_MTbQOA6oqCssYQNhJddsxKysUZa8hUlH7yiC4dBmlOC9CKpUS0Oa7_PTv4r3IlcDSed0xm_Fjcjo="
+        },
+        {
+          "title": "investing.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGd6zleoWJQcTAES-ypCmM1mKikNDyTipeHi-ymTpeCx_LU0_W-Z1SrvA7Iv2_AxIoYNjKFMmg98M0824j4LQJOG_LibcXf8zxYCGvBdCmzt3SDVd7EOnStaI5kZQcKrNYMTHCOuLVndIgHHVxJk08Bkfhtut0Db5RjTOwv6fiyMvfSNe38bLEKzhKIRFVtoafvK5ww1p-bNOntn4S9O09DCxQmzHzh6oLmlp9MC7ONoQp2itEm"
+        },
+        {
+          "title": "sahi.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHUlx54EnlIyvfpc5D7dgbdJOGK7hz_sepS82Ok_r2irLFeM2mUPTGi7khG4VJdpq7bbustlFjXvqniNU0p2WVKkMSFyDqcSSq42Als1sDEvpkk14z7XdmRo3qT1HKF7rCQqsFaIBdlgkqjTy24m2zouvEgJiLSCJpsw2qHTN4A7KxI59jD2o_dmJ8mJkhlbGfduiAJRnjw1s4A9y28AhfJR3M-8hKVWRtrklZso2PbAv8="
+        },
+        {
+          "title": "financialcontent.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGAiIDsV_s9qjt2jCHeNp83j3MklFpxTDWOaUDEfYm9hXj8EictKl0L9wB17JiKwti_-0fA0cHy0c656U4D01LG5UWxzGtBTGfZXeXZVPmD-i76Cfv8vfhIoeLij971akuPXgghEeJBy5iL6AyKqiJ-Rmi0pZk76SHZrUqArgZujmMafk5_LIMp6QHSFFtHKi-rrO4fcGorzj2eEn7c1UMQe1GPng=="
+        },
+        {
+          "title": "benzinga.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFFS82nFwvbNzB9vEBK5-_5A-6WyMQnkV_ENqu_kLMENyXVvEO-1sswoxl-ySLQiKPxnq84UJB2FrUjqWdzxHxJV4iKAdRU4iQEGYPL_bGkvk6EJ7D8VYiSn2DwRXoDCgZS4Henp-2udbRSRBg7ITvB3wPfHp-zBE0NKm8HNEK0GJIP4r5fzE4LmH66skLufHi6chcBPa5RVmGJ-8fFOUZfZdWEF0lU"
+        },
+        {
+          "title": "stocktitan.net",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEiSgx43vbB60lAALexB9cBtqaPiBHsTYvwYoBBmnd4Ap7bgp5xct1Qrf9mSBX1Ee4M4PqeH8CUd_aW2nWNsOnzH7E6xqin6auAJkla07IJOSekCGRsJSgSeGZDixhmb2_fnmnDIB-zPJP6UXdrJEvZ822YEA0mYSp3LhPXPr0i2yAhpdOlVUIkZr7ktOmDas36VVNCsWMfbvbgIHtqTkB_7sp-2t8TRv3sJbc="
+        },
+        {
+          "title": "marketbeat.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFZpb9LMH3PhUreBRnO7Vqhe_lxCDu4mhw8zxJ-yNXrggvKZdF7pHgCEDwYDdhaLghC4m_TyNJaE4cSpmY2xHGnVTCdvPIJly8KZSixBdKLgRVQHvQOyNU8pE9wZ_SlHt_tXAsSCfi3YGshBCnt-pkRPWvKCXt8dKmKIR3nVFLKmV79vJo0nDXLc1tQc09ISTgQdEmZ3Ci8L8XHu0hjjGA8cnE5cWxZNg=="
+        },
+        {
+          "title": "marketscreener.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG9qTn0NyoDCHLkKaah3WDs9lCzImlSixj52AB2xlSlbklbbINQZTrXB2xmdiugznUVNhrUDKKd6XQNdL6nB_ApeTU8LE2pIJUG4eKJJQ25kWLr9NZ-qjAVsrMqHCpiFV7atM2S1HT8usGd-BuxsTooczKIbKKoY7ZLpIQHzagR1W7zmOgYZNCdSQzXZW7rSmvMwJa90_AMEP8CeIymoQay5lyx0lfK-BtWh9dobKQqq3sCTxsuT0Jq70ofsAImQEp4_sz0UBWjVL6CfKzxq_XBBQ=="
+        },
+        {
+          "title": "fidelity.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEVMwcMqwe0AKsstOBXpuSNcre8eDxqye1nof70UwiSEHXDs_D4JG4TPwuRny8LvRuH2at_IC1pfDG-pAG07wUY7pYE0shcoBk1ysVlTdgiMrZA7tPbmHbbhxiyyS7bG8PuQqkCYEIdnXBdXBqQ55zLYznJG4cDmQ6LG5YPSS8Hkt7HncweFGWCYK8LW60R_QRxVR0e3TFEstlAQg=="
+        },
+        {
+          "title": "stocktitan.net",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGrwD9mSJeG2Du5SlLH3u5wNKeVuGYw3cU9ZjHCxesvpSlwYLjdje7DGDFnvIquhCnr9Le0OPoXU3GKHO-bTCN-oIGghZYRLYcw0kPC2MMOHRs21LO98ym7cNAp3RONUkx9wzDR6NHLQoOGJI0RxIDhnN8Bu9Hmvuqo5b2GFbH3PxshNWTa5oQVIa7PEVYKZ3KsgA-dbBkZnaV3CAaUf1GZUZJB4JwjSoZ-B28="
+        },
+        {
+          "title": "times-online.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFO_60K9WbIUTxZe2x-8KSt_2byqvC2N2K1D1UlBomEfgjQ2QMhK-CbgPzEej1lQhj13hPygd5jQ5ELkhCTJm4JPyBBXYISgBS2F4SmMvy6bGasUTCkC6_HJfQ2jSiV2cplM0BbMkfT5jOY0pz4Ha6a4k1fEYG0A6um_G_99R-UNuhWEoAO17M_IT8l46FeM27pQ0w="
+        }
+      ],
+      "batch_count": 2,
+      "ticker_count": 26
+    },
+    "INDIA": {
+      "summary": "Here's a digest of important, major news for the selected NSE/BSE-listed stocks from the last 24 hours as of 2026-07-23:\n\n**BAJAJHCARE**\n*   Bajaj Healthcare Ltd's share price decreased by -12.47% in the past 24 hours. No specific reason for this significant price drop was immediately available.\n\n**BHAGYANGR**\n*   An Extra Ordinary General Meeting (EGM) of the company is scheduled to be held today, July 23, 2026.\n*   An Investor Meeting/Earnings Call for Q1 FY27 is scheduled for July 28, 2026.\n\n**CARYSIL**\n*   On July 21, 2026, Carysil Ltd reported robust Q4 FY26 financial results. The company's revenue increased by 14.47% YoY and 5.01% QoQ to \u20b9233.72 crore. Net profit saw a significant rise of 45.48% YoY and 28.79% QoQ, reaching \u20b927.38 crore. Operating profit also grew by 28.91% YoY and 9.70% QoQ to \u20b945.03 crore.\n\n**CONCORDBIO**\n*   Concord Biotech experienced its toughest year as a listed company in FY26, with revenue falling 12% to \u20b91,055 crore and net profit declining 30% to \u20b9259 crore. The stock has fallen to around \u20b91,283 from a high of \u20b91,980 over the past year.\n*   The company's revenue in the latest quarter (presumably Q4 FY26, given the FY26 annual results) increased 17.39% QoQ to \u20b9326.08 crore, but declined 24.15% YoY. Net profit for the same quarter increased 39.02% QoQ to \u20b988.47 crore but declined 36.98% YoY.\n*   Concord Biotech is scheduled to release its next earnings report on August 7, 2026.\n\n**CYIENTDLM**\n*   Cyient DLM's share price surged over 10% on July 22, 2026, after reporting strong Q1 FY27 earnings.\n*   The company's revenue for Q1 FY27 grew 34.3% YoY to \u20b9373.8 crore, and net profit more than doubled to \u20b916.3 crore from \u20b97.4 crore in the corresponding quarter last year.\n*   Cyient DLM's order book reached a record \u20b92,598.9 crore, with fresh orders worth \u20b9551.9 crore received during the quarter.\n*   EBITDA margin improved to 10.5% from 9.0% in Q1 FY26, an increase of approximately 150 basis points.\n*   The stock hit a fresh 52-week high of \u20b9733.90, soaring 18% in intra-day trade on July 22, 2026.\n\n**GRAVITA**\n*   Gravita India's technical momentum has shifted from mildly bullish to a more confident bullish trend, despite a marginal dip in share price on July 22, 2026, closing at \u20b91,804.65 (down 0.28%).\n*   The company is scheduled to hold a Board of Directors meeting on July 27, 2026, to consider and approve its Unaudited Financial Results for the quarter ended June 30, 2026.\n*   Gravita India has been downgraded from a \"Buy\" to a \"Hold\" rating as of July 20, 2026, by MarketsMOJO, reflecting mixed technical signals and a cautious outlook.\n*   Institutional holdings in Gravita India decreased by 1.39% in the previous quarter, now constituting 19.08% of the company's share capital.\n\n**INTELLECT**\n*   Intellect Design Arena will host an investor earnings conference call on July 31, 2026, to discuss its Q1 FY27 results and address investor queries.\n*   Foreign Institutional Investors (FIIs) decreased their holdings in Intellect Design Arena from 25.57% to 23.51% in June 2026.\n\n**LAURUSLABS**\n*   Laurus Labs will hold a conference call on July 24, 2026, at 5:00 PM IST to discuss its financial results for Q1 FY27.\n*   On July 22, 2026, Laurus Labs saw a block trade on the NSE involving approximately 1,80,187 shares at \u20b91,382.40 per share, totaling \u20b924.91 crores, indicating continued institutional interest.\n\n**LUMAXIND**\n*   Lumax Industries reported a minor share price movement, with the stock moving up by 0.83% from its previous close of \u20b95,122.50 to \u20b95,165.00 on July 22, 2026. There was an announcement regarding a change in management on July 20, 2026.\n\n**MTARTECH**\n*   MTAR Technologies' share price rose 5.00% on July 22, 2026, trading at \u20b95,852.00, making it one of the market's notable gainers for the day. This comes after a significant decline in prior sessions.\n*   Despite the recent stock price rebound, promoter holding in MTAR Technologies declined to 29.36% from 30.44% in the previous quarter, and mutual fund ownership fell to 20.36% from 23.49% in the June 2026 quarter. However, Foreign Institutional Investors (FIIs) increased their stake to 24.80% from 17.31% in the same period.\n\n**NH**\n*   Narayana Hrudayalaya reported a QoQ revenue increase of 20.58% to \u20b92,593.81 crore and a YoY growth of 75.80% in Q4 FY26. Net Profit increased 76.66% QoQ to \u20b9223.99 crore, representing a 13.54% YoY growth.\n*   The Board of Directors recommended a final dividend of \u20b94.50 per share for FY26 and resolved to seek shareholder approval to issue Debt Securities up to \u20b91,500 crore.\n\n**PRIVISCL**\n*   Privi Speciality Chemicals Ltd. reached a fresh 52-week high of \u20b93,775.7 on July 22, 2026, extending its 53.16% rally over the past year, outperforming the Sensex despite a broader market decline.\n*   The company will hold a Board Meeting on July 30, 2026, to approve its Q1 FY27 unaudited standalone and consolidated results.\n\n**RATEGAIN**\n*   RateGain Travel Technologies reported significant quarterly results. Revenue increased 32.50% QoQ to \u20b9715.55 crore and 174.48% YoY. Net Profit rose 164.61% QoQ to \u20b969.99 crore and 27.70% YoY.\n\n**SAKAR**\n*   On July 22, 2026, Sakar Healthcare Ltd's stock price experienced a significant drop, closing down 5.42% for the day.\n\n**SAREGAMA**\n*   Saregama India appointed Abhishek Kapoor as Chief Financial Officer (CFO) effective July 15, 2026. Kuldeep Kothari was appointed as Interim CFO effective June 24, 2026, to ensure continuity in the office.\n*   A Board Meeting is scheduled for August 4, 2026, to consider and approve the Unaudited Financial Results for the quarter ended June 30, 2026.\n\n**SOLARA**\n*   On July 22, 2026, Solara Active Pharma Sciences Ltd experienced a significant intraday decline, with its stock price falling by 7.42%. This was attributed to sharp price pressure, and the stock underperformed its sector and the broader market, continuing a four-day declining streak.\n*   A board meeting is scheduled for July 23, 2026, to consider and approve the unaudited standalone and consolidated financial results for the quarter ended June 30, 2026. An investor/analyst call to discuss these results is also slated for the same day at 4:00 PM IST.\n\n**TANFACIND**\n*   Tanfac Industries' Board of Directors is scheduled to meet on July 24, 2026, to consider and approve the unaudited financial results for the quarter ended June 30, 2026 (Q1 FY27).\n\n**TDPOWERSYS**\n*   TD Power Systems share price was up 1.23% to \u20b91,176.80 as of July 22, 2026.\n*   The company has granted 24,000 Equity Settled Appreciation Rights at a 25% discount to the market price.\n*   TD Power Systems reported strong Q4 FY26 consolidated results with revenue up 69.2% YoY to \u20b9589 crore and PAT up 36.2% YoY to \u20b972.2 crore. The board recommended a final dividend of \u20b91.10 per share and approved a 1:2 stock split.\n\n**WINDLAS**\n*   The company's 25th Annual General Meeting (AGM) is scheduled to be held today, July 23, 2026.",
+      "sources": [
+        {
+          "title": "indianexpress.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEgsZ19GUUL_SxPn7DLfT4vfYlR_lXmFNzwFCLi32Tqh-hEWRynFAtLIbwZ9BSFcvFxHz2dzXOabP0gCOXsd3oZnWW46wW2iMHifOaAuaeykC9qgvCfjA89E-60A5xY5VN4_84r0GIWim3CW3Xtyyi7M9ni9njQptPLcQ0553Z88GoPWO2DeXXFnUo9k3GcCKkAgGNdpXFslKuLE0SY5c847EDi"
+        },
+        {
+          "title": "business-standard.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGwRhCl0dvbEAJQjyXzoPsvi7aPKLopMZZLm1Oo0F9q_McemOn1-gHf9O7FsPbP6oJUtmrRf5ZFqa9YpUAXwocWta0W40Cpdh6Vla0_v-PKuuyXHj6F0P_jkWwrF0lU_Mm04Wle1DNoJTaQYpV7rXZGASjT28AWiJi7hFDQz0M1gYsW6bhisy_XvQwpImuKGqKH3C-TMd3xmeWwGIT1ewe2EA=="
+        },
+        {
+          "title": "investing.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEUQ-U8xoxcSKIOvgqqXWHngcfQqC2hGES0uRUWl83IZl6wwi9ojZEZDT2_jcAMq9GrY6PblPZSpkUJYzb8jmGTvrcZBe7OHgbcrNpcQwdb5yWDJo0urpxPpYNwx5gGEDijEu-9ShgIExLg"
+        },
+        {
+          "title": "marketsmojo.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG6hp2VyuQY7ADr6Gfra6OoXZAwQRmlFx4XSayGDqwAsWBKBEXEM-7jV8KcnjpQA_rVpK3RztMy7QbKFm88szw_6ENiNQgUoFFv7QUSel2tFZ0rZL59LIbiL2FWUFzOrrToVQRaEBKgXK0QwDglaZ-OW19-xcczLhRv4jZ0Fka5Z0bIXgE3Xti4C4xzI6NVGvfRGlviaePOE6OZ_PiYIISUTu52EyjocfTNrIgFwiHYR8RUrVHRIhU="
+        },
+        {
+          "title": "tickertape.in",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGGF498e3AtMp7ptWCXpLX5wzT9JPZKLkdonNIyyF65s3EiHID4kaFzw9uKUkPIOlxN2nMwYVbCbkOwHjtzcY2P-DpPbBVJJFFmyHgZdmd_0TU6I06_hxx6wCVUiwl8yzlRMQpESkS0XyV2Yg=="
+        },
+        {
+          "title": "indiatimes.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEPO6SyvSPc7H0RQNFcsJd2GT25Z9qln16iPyk75EDc_V-1uLoTZ7u7F2VSjmt14NvYOe0MJVmedVhPBkYxy_htAvPDcz2J_5gIJXT4-x9Da_uPn5F02KdKv3YYv--Mp1w8c2A2KEA_6Fa6-asFw3ezEmUgX9fmJs8-keIH72cjOAY19I0Nug9fetp5LF398Q=="
+        },
+        {
+          "title": "marketsmojo.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEjpYJhWJpxk7cpAv00rf4XU65oECj7dkKWtNbYgPiYxDA50TSWSYXIa-MVZ5Pvlr0bJEotWyUm0XotuAYYtH3IR2KJP8bGrHfx6ceaSw2XQBl17G8CLwgdNCBDd1crw06R9JACCRz8y_67AO4jY7WX6Csx3BLVtEi45UbkOIPwHixZrSnuB5kyymDKjc173VrpI2ODY-14HvuhTYbpi1eV4Cqw8f0am90ZvXSc4nV4WAx9KH7oyOVZ9RjKLr_WHn8o9YIfoME="
+        },
+        {
+          "title": "kalkine.co.in",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE00MUSDYXujURCzrUb-mfYtO9G0rV7ZCkoYBFbe33YBNxqO3t3yrWQiFYudBICWDrcjjeTAex-UGe9rE8YYQWyk4vKbDLa3cWVdmSnlutX2QTJZHFwiEdfORDAcWqKIsRDdEybal5xczNe57uSHlHnZa8qpx8F10b0bDUHBU_8cRwhIyzHBzPGzA97RYEr09iRVF_ldmlgMoyjT62nguWMRdKVol4sv32ih9Z2r71IE6lp"
+        },
+        {
+          "title": "tipranks.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEBxjnSfmCd0VnOmelqYiPLMqQ9LJNfgiz2k3YnnnAR7nkKRfSkIIZdPkRx8ELxrRafFr5pTxuB7Ylz_cvxo4_W7eKz50hFgVkK-SGqtFGi2r9hOPerFYum-ol30qXQmw7Ov-BgRJXzxVJJ53bFv-xHZoCmIxVgMdapRh5KAfzzJRj6hbLNvMak73vXZOGnxhGZVh3QIyojsgYYOwtJU_GcTAudJgGTH7X--9PfwwLUirUr"
+        },
+        {
+          "title": "etmoney.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFdqs2CedkyboAWTlBMhZCP2SCKKkuVYV3c0LnREepXpBdeF5XBJMMoF0XDCivA8wKsX5GzT3xfMgRtxMJS1cQUFHA4YoJEEz7OoYWlngp6uXclzTmnEUqc83UTVtlJZTS4vHyafFAXWN2yzfCJSke_vTPqzBUG"
+        },
+        {
+          "title": "scanx.trade",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHh0bUh6e8wGVXu-wGMKLI9Pm55leuV9rdw14EQrVveTG4EBxs2A9d0tmbp9iT0jrWs6OWjDvZREno1CayKOGwkkVKsofspRMvAZRJf6JJuh5iUmG_DhMaPfE7P6tbxCkKwiOg0mGw="
+        },
+        {
+          "title": "trendlyne.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHMU1Pm_jEgQi2um9DUZ-_BPFfktf4kzjldxjrMcxmEMqv2aFDzttyVUcUVxyw7EtdBdpmqeuWyT4tAWJvtyHpDQPtiAfXgECT8TKW7A86p9uye91RqQssbCVpnvEViTYvoQW1uxNBugj-XvqCI5Dy56lcR83cg8eNoPw=="
+        },
+        {
+          "title": "univest.in",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEajnbPUKYtUvRxTyRv2w4dzB3VK6p8k8jKfraqNqaAroug60t0YkM78BK_IIcHyi_YkQ0ZOSvLt-BMpBBVPq2q-EIPcz7UCHnWjVW4yzgdBzUqFPHz65lqgC4Tj1rcEXAkahMnRSKFr5N6DwFX1xT16iNqAc54jFXv_ah5W01fqdyvFtTA9sSh"
+        },
+        {
+          "title": "business-standard.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHbnj7FK6v7QG-OXqfZ6AK91YmKcZTFaTvOyIyJYV-3RCZnmO_RShpSN5D0sqltWtrialk9unrtPIu2ovHpDvzHlBEFXNqpqPmefj3wAzDlxmu_3lKeVJQKtqVIpj20pVMoGwRbrhmceHvdWoGFsfRP76SwIi94mFlPvwLa9Ui00Is_ovS-sUpoQQFu_Zm2Lxp2rVswPy58BS8vFkoqvR6T5H8D38a496J79BFn1kZ7D3Rd7shKsJLL1YSNoduaK1kt22Y5"
+        },
+        {
+          "title": "economictimes.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQETK57AR2BVH2jnvQqJXA2uJfr7-YI68JuP0d_KpS7v-O-ouXx0Z1f_JgDsDsAJz4rFVdmKKhaT_p3l-Ywe-eCBkRWWyNNjFenvxJRfPqXmMWuFf9PJf2U39xd-uh2u8BzCRFKj0MDFTJvBN-j7e-DrKCvFXNhkyUl7OsPwsZ3ggTCtk-VEKr-Oz6-CxGqvUyPtZBYGyZ1xxEr4s26MrCmjAGIBmOdW_woSYXCa0k2-plE8wDhK"
+        },
+        {
+          "title": "livemint.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF0tulM10PjUymVRs99i4IJEkaqDr8PJjiByi_crJUCTXH5Q-64Ees8g4GXRume_UkSoAjKYB79xQYs_mIY8SEozaVoJR41JBiZgjthZAFyyvS6JLgQiA49Jui2Dow1MXeH_sN4sNbf3PKklstoePAw-8KIfi70hGnDm8_zgJhur61QHm9NnK2V3Qjme0YQj71gNSSP30_Y64FE"
+        },
+        {
+          "title": "business-standard.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFypfaOUxeCh4kDE_3rH2Geq5naphJ2UakLdxrjp4oEM6oq1M1E7kQ6_qeWj_HMYInz5lHCntZXcMNZG8Ab4TExejc2whaxAMIGIsiB9GbB5dzYe990oO4vFoMk-jaBlP1A3IeC14E9d9cRrBPns-JG9TiE_qCeqLVp6y2TndnkdS_1HDikjKvKuoaS36O5ZNKNqJHhv7ftFtdYSQFOjNuJK1Ejg8Xk"
+        },
+        {
+          "title": "icicidirect.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHx4yfwNo2M9J4hwRwwut-3bqfM4XSDsvpDO-m_PvqyTm1574c7SvaTG2nPEssHGphh429I9xXQ-MH8OGO6IAhZ9kLe1HOYzh7Xyxr0DnDqrNDYNwYuSW7dLNxoigVLWH39-pNohJ2VEM5pX8m-8TzwVzQHxaU2GA=="
+        },
+        {
+          "title": "marketsmojo.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHoYDQSOJqixbxl_sIC--fHTucZ2_ICDEf6cIYza8EcFRCiKzdwLh0_mjWRBWsA-hLTYtB8YD9Z4SDRKIypnIZb56oS8dc7zIMvFJjeuL7cphPQCLi1psCtyroRIoCRRoYmGp4ydwBckKDggrIBk2Zjb64w0SVkme40LjBUwyf_RvUthLkjX9ByOxYgFqn-FejSnz5ThYJRuBqQKEp-7HZoZ8Hn6OFyr2_M3v0XOw1BvDo="
+        },
+        {
+          "title": "screener.in",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGrx6ajj1s8Zekrfj6UjkU3leL7xDVquhAGIBTR_PcyodCbjfQ1E_1GIXb2texaEshKgxJzRramfmYQ3E_1uCeBch96dOVfPnoAYN9sKGHVzKO4O64lKlGaoLgZ6UrHdSJI6HxRnyjI1bReBWFe_g=="
+        },
+        {
+          "title": "indiatimes.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEa0LOvjha-CaAtxl6fRMQrvNoi8lk2ymmUpI_04A6n8xkTw-URxXhQODnjwj2J2CCcN6PR0VKEdjtMQzzyGsv4jNS64cxIenl3DmEdRl4igi7DJbJyvofBxCU0EYNglQB0AtQ3dHU36F7ZEigWGeoYiIo-SSkxVabEPg5o0kaMrTfafO6n6iourM_03T9GCd7MGm1ddg=="
+        },
+        {
+          "title": "business-standard.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFwaAEdnVClXZG2aNvusAXl9kkuniGGYPQzR9oRjuP0-LMGhHX47eY79mlKmikqKY0HinaSXzHzzTLEUPozoe68pMhvlY0LvlvwAhf98WY7P5u3cGo49Q3pKmtUfSmGMfSxgpmb7Uh5YEW3oTKxzcKdwXqzb41SHy5SiKE-jG0jIY6G656Q9-ru8epbCUWiVVM05kgWm0JY5lZNocRZzsyx3jK3YqUJwEq5WAj4lDs="
+        },
+        {
+          "title": "torusdigital.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGNiHxHIvBX79Zp4odWeLCZZ7aSJvLSDdoeDlYHPL9HY0PQQ38SSQMnkl1WZcJlQpGnEGjW9K4ehMxGmBdMnRbsQSD8d202eNKOS37RhgdhxOwoDqOALy6PFPwLHsZTUCBJIKNDEUDIV3ezAULcs9vkJpniDIj-epxoIowx"
+        },
+        {
+          "title": "tijorifinance.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHVxM7JffH9H5t-kYg3_HI3SBN-OZbRcgvseeVe71rRtjiqIG8LIB262Cj8u9jJl5cnNS-mVkU4ebB8z9xkwJfqzpuzScvE5oURYfH6JK7eSXi04OF_wPP2PIm7QFXk5lDP22nNauONk-Zoi6QGiXr0vzNqqo2Gpw=="
+        },
+        {
+          "title": "angelone.in",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHsBAKvYn_WsUlsMDc2IRVuHHXpi6CmAD20OELumPCrP-5Y2Uk1hnt5Sbj7qOBw2rOsDQaBVdpcI7CzbQu9nKImj7al2-Bc6XudHRNGAwkSCTRiKEhUrf0y0hDqI5B82TzPIRvpeakZPeMp85s5V1emH2yjL7AelapqWh3BWMBqTq-r3fpLH84Tckgc4rw52B5GmjwQ3o47hoPguNt3ktTyOt-OtrYeQZKZONqnvg9Ln315KO_3ycs="
+        },
+        {
+          "title": "kotakneo.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF18R7lr0Ev62S7t1EOk-biD92yhu2resvquH8TCS4L4W8aFXK8YccbPUZ72ckqJgRTLsNEScIK15ZVxxquT2forq60FZrPQi1B_WOtPlMXIg7fm6nd3pM3dLMufsBVw33XcmqWfWTSHblIgEAUC9HAsXjUe-nV0xZsNzzcBI08AQYUF9j2OVM4vjdlVpg7Yhw="
+        },
+        {
+          "title": "business-standard.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF6M9zsvVRPg2nnMNLD8MGf6mAhkRgQQ5qO1SMY53SJ34Q4yvRoRaZBfkObDj4-T2GFLjMSIoFkLnkEZa2yzMwUeDc3yzSP7-1v8tUzi98OClFXZN-6PuzUAmhrO_wzerJOq-o3fOWfrAeLhXDkLjzftBs_CDbeme4Y9unkD_Dxfwqrae89p7BHnRBl6kscZPtYvO6nk-74PTVrgAE-aDboo_o0NiGE-gDDmA8Ws_XPiRcibb9slhtoLL5y5layB5c="
+        },
+        {
+          "title": "tijorifinance.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEKuFu4TZIc4V7AWNyToQ5W8XHYdDcJINpTbmwPgMHG5FBSbhdRFdKn9KsgrQ1ITeL_bDN0ocxRuYqGQU6Jg3x9GSrIILPJaxxXE28sX7U36dzUgWNqOd5anlfv4jHmhIScZxL3nDzgife5LSVqaIfRAPkb8JJutA=="
+        },
+        {
+          "title": "trendlyne.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGJCIfwZbls0geIvbwxy4pFpNLz-BZ3P9W81aEXl-IxtijWG7j0BsigVSUMrBQGmNlpgYJkeiyfijat8sdmzlsEJlo_W89snBWrDMNQ3r1Qoxbh3wwphgGA4NINPwKDDbsLdbNoJ78ElIP0R40V6M096TCK7m0Zzss-WJynew=="
+        },
+        {
+          "title": "indiatimes.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEd6IbDAhW5dGBr-d-1s8wgk2Nx-TeT1nkiZSoNtRAaU9OFaDB861dP3BF2WVGRd0J6BtDuM7tFz94AkjdfekS6kKff1pa4dmnplLpt7xgu3hGNMrqskpNYKEsAT-Gz1Zm-JuUedPHIpezalQsiI6lP9pRSY7su33QThs3slJ_vAvcA74lH7Kfhsvtr7BKt3g2rWw=="
+        },
+        {
+          "title": "choiceindia.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHj1Mq4xWgEeUCu0aIJxs0lndxaItd_j8byvvndNI3KGrEDLvBxJoGWpmiSJlmFg_3Zb0CLc9ksalG2197JcwoSJD9GGAVprAfqHSln830WnZlVtcWlO6aXH6_318hii0P8KVt7F0FWgDdZUp3J88R7PpKDfm5rpuWCRg=="
+        },
+        {
+          "title": "indiatimes.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGCDSscL7xoFkQPsZdz2EX8f5gJyf2jTKUfZOQvk5MbB3GVkpoj8uB_bG0cqkUN5NXJEE2qDRAOocci4jFtKucE9nqVXnelcG6QegboxvBEFGijZrMMR2HROiCqE89YG9c_5FJL9dBD8KfL6ZXsHx2VSy65W2SMdjiHzvRdVe8bRIwwYNMI0Z9HUrhQWIYoQZmxkUZQ0g=="
+        },
+        {
+          "title": "5paisa.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEBIOGWmT1GqVRvqzmRK5Zk8OJ2UMeL8MKwsuav5FvSTJqGeek7_AqtIYXuqTBYyIoNJVQzstjDL7Umj5_qZ8BMqkRvYWsaOzdZMQw8mQpY_Weh2D3YJySFaxl_lita7-6cBtCjswRbucRvpv1h"
+        },
+        {
+          "title": "indiatimes.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQH43CAl9i83a3kGQNvfN3vCn-RQP7SLYTl4sSvMUFjFBnZSVzYYlsWNCyF8IWR8hrTXUezZSYs8y6tIl2sJG0I34TZfb6zUpAiuwVPk3w1HPqHVADHIQmLfIOzkl7rWcBSLVQAyOHRhlpsBqTswGwW1BQKz-JhvJwCaB-UbqCqttyNkpSOQTzngpOHxcPDl"
+        },
+        {
+          "title": "indiatimes.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFs4TfrE5Qogh3tNtaoEDlep3k7zcrExOK070HuuzvebOicDGD3W8T6z9RkleAe3huSNn8Luf27F0RhsrDIn0m0_l5uDPtSpuE8JHL19N1SHtwMpkluVROcD4V9-JO6OCL_vk5ShbatZ_Ve8ZNXpPmbgl3oVRoznDrBITs0Jep51w_OhSrfk-ZTaytgVRVn4YM1HAtL"
+        },
+        {
+          "title": "livemint.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEWsrr8JeRuvBRI9DtgW8qz-OqGeRlo3vAm_dGjFV6BZ2moiC-t69o2n0eSh7PkejYq5ZwPUrwnQ62mE1IM7EmGPkgYnOjLwt0yle0cF7HsLJGXQ7TQaxZT_WKZG17nIdvhRiEu4ZvieAudHXVvWnLZTFnl2wx5UBHSSepRWwOyTNHZ"
+        },
+        {
+          "title": "business-standard.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEoZWEar8Ps-3qjE92Y_oJIP010f0coFetmq-Fmsye-2tcfWcIDIi6a2a9a-nLBYTTXpkwbEnjZtt4Wxdj_TcG2QENi0XuBbdpsesduJieAJrguoZk37CEX6yq2k3Im5YpmvUPVS1FJrI8d5hQrCn70lZjdrCMLtjVmf2AQ5XyvG87wJrvk97zj-VmxdKzRpyi3DmCwQlo2GrSh"
+        },
+        {
+          "title": "marketsmojo.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFzrLnzfExWajMakbrpvS7GmPeZ8ddr_iEsEUS9xh_br-3-n4kh_2htNyfuajpxFRp5UEmbxv1D-tzFoos8P4W5Tfkvtr_LkG1m0MAmihkmEp1gsAY5Bs4Y36XIEdV2_VD2GYRtbDplMgiDugg-yqhXabXUKRD9EKrFouWm0g-5GGMI_snPEPJRfAh-T2ikLG7XFbWofHixlZtZrlglBl3iBzVWWh2lcpjTAalJhfVnSEcMoQXzjLlDsGx_jg=="
+        },
+        {
+          "title": "trendlyne.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF_L67-OVKeCGVB2s3tAa5dfXQYoDnToYWUlLCZbqNt1NvjkWMdqXJogY6WVBIFfU2OB0z8nJ72o7vhud5P2lgaBt-4io4PAMaroTu2UerxbKQKEaLamN06r8jZjEprZ_VIWR_GhvZrOmTqaHrflELVO18i_l-R0r5Xl1Rqx_gviwnZgq5biSS-qE6su4YZg2GI7iuG3oW8Tg=="
+        },
+        {
+          "title": "indiatimes.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF3cz5VjF4gd4zibVnEcrZ7OfZg2p6i-wmvQzxW6Ex2ZzO0Yp1Knnlv987IuSlu6wLWgUNT3508myh6oGSq6AHHT-JvSPLBS-hxFl6UpdiW0DoDvy3oR2L9c-OO-NT1q8-RESVBlcpNy1K19dMIAR_BnvPwNNBA6gh0j21wFZz77SALCw-X9BI3mfAMvrd2ofV1HfzrzNm7gWNyVdhL1LBwsw=="
+        },
+        {
+          "title": "trendlyne.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGv0hb1IDhBeeEMcJGHnvAb_uPvNSdXM9Ogs136nwswfiOy5jjLxIPDoihKYB93gjuMKHGFIGPXWYSm88fuv-3M8gF79rZmN5pt0Tc1e7me0PtsQ5jy-lEIL5j3E3luMMrnlXhyeoZib9NLyA7NnvzknOhoPwWiL2XzdWDvLkCW3O6f6dxgErSSIhtI"
+        },
+        {
+          "title": "google.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFFuzsrmVlwsZUGJMHeI2GLx0RZ4zp_hAdjknmZRlgMqfCPRpVg36mzOoLtynCV6a2QsKbfvXxZiI3jjzARANh3QD6r56G0YDznbdSYDHiXs7y85mLBpl-HIowDx3ohk7Lh3zmXMIR2N3tXetX2"
+        },
+        {
+          "title": "smctradeonline.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFRw_y9qnroGcma9x0_Q1DpzzQT6qmhzwQJYz5CApazziu_yMvrb9-_wSCS2Lt8yfZEwdl7PHQkMB9GeXPgOlPl6fDGEtNOeOhChvcbtwnU0AZHVNjciqw-CaBMkNVDlP-_m_NN3d1xnJjUeb12-JliUOg5FPmWI5LTB29mXa3_yWRe7iEIhQaO"
+        },
+        {
+          "title": "tradingview.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGWgYS6HnOzSVQX_XLNF7be4zfHH5sF1d195qHqXBv_eL3KvuPxnR8CHBJYe0xvW3rz3sYUhzq_e8qllshEI1R_X6otZCd7Se71mx3IWgBRBEfXJm1Hl412aQNDM6A7oo1_ktVKg8wknefzZBxa"
+        },
+        {
+          "title": "icicidirect.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFVTVouyxhhILUBxzi7p1YSkxbGzQ8YV6WZOYarbujHv2fCLlDwOendikDne3kiDFhLfs4Ab0OFRO0pdgjZT2_6rtjuWEA4sKsFIG4nu09HVFTt46AowJI-TT4iZ_uJUBqvUpAQUbB8y8EVSijIbm1cOv9fq-Det9q9fpxdy84="
+        },
+        {
+          "title": "indiatimes.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEa_RE4ANAqB91IK_ZVlB75gsA3FuKoQIqsbjMMq-THWVQaF24VxjdsveXJKtldcuZNGZ4RVLgqJBA8KSsfdydtP0hrTL-vc_qvuskmrTPsRwD6sdvOjKvwyZ3tix4WJijU3wvnep-oy6nGVj08_izMfeHDD7-dY0Jwg8qMLJwgVMOQX6kIgXV5llPQkMwFQph0MKp_vg=="
+        }
+      ],
+      "batch_count": 4,
+      "ticker_count": 47
+    }
+  }
+}
