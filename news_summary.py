@@ -111,29 +111,44 @@ def summarize_batch(client, tickers, market, as_of_date):
 
 
 def collate_market_summary(client, market, batch_texts):
-    """Synthesizes the batch summaries for one market into a single,
-    de-duplicated, well-organized digest. No grounding needed here -- it's
-    purely reformatting/merging text Gemini already produced (with real
-    search results) in the batch calls, so this call doesn't need to search
-    again."""
+    """The batch step (summarize_batch) casts a wide net -- it's a search
+    call, not an editor, so it tends to include borderline/routine items
+    (a scheduled board meeting, an ordinary block trade, a small price
+    tick) alongside genuinely important ones. This step is where the
+    actual filtering happens: it's a strict editorial pass, Perplexity-
+    Finance-style, that keeps ONLY material items and writes them as a
+    short, scannable brief -- not an exhaustive per-ticker report. No
+    grounding needed -- it only edits text Gemini already produced (with
+    real search results) in the batch calls, it doesn't search again."""
     if not batch_texts:
         return "No major news for this watchlist's tickers in the last 24 hours."
     combined = "\n\n---\n\n".join(batch_texts)
     prompt = (
-        f"Below are separately-generated news summaries for different batches of tickers in "
-        f"the same {MARKET_LABELS.get(market, market)}. Merge them into ONE single, unified "
-        "daily digest covering the important announcements, developments, and major stock "
-        "moves across all batches: keep the per-ticker bold headings, remove any "
-        "duplicate/redundant lines, fix any inconsistent formatting, and order tickers "
-        "alphabetically. Don't add commentary of your own or invent anything not already "
-        "present in the text below.\n\n"
+        f"Below are raw notes gathered for tickers in the {MARKET_LABELS.get(market, market)} "
+        "-- some entries are genuinely important, many are routine noise that shouldn't be in a "
+        "daily briefing. Act as an editor for a daily investor briefing (think Perplexity "
+        "Finance's watchlist digest): produce a SHORT, CRISP summary containing ONLY material "
+        "items.\n\n"
+        "KEEP: major earnings beats/misses with concrete numbers, M&A, regulatory/FDA/approval "
+        "outcomes, large stock price moves (roughly >=5%) WITH a clear stated reason, analyst "
+        "rating or price-target changes from named firms, leadership changes, major contract "
+        "wins/losses, credit rating changes, and anything else genuinely market-moving.\n\n"
+        "DROP entirely: routine scheduled board meetings/investor calls/AGMs/EGMs where no "
+        "outcome is known yet, ordinary block/bulk trades and insider option exercises unless "
+        "unusually large, small price moves without a clear catalyst, generic 'no major news' "
+        "filler, and anything duplicated across entries.\n\n"
+        "Format as a flat list of short bullet points (one line each: **Ticker** -- takeaway), "
+        "not per-ticker sections or headers -- most tickers won't have anything worth including, "
+        "and that's fine. If NOTHING in the whole watchlist clears this bar, say so in one "
+        "sentence instead of listing routine items. Don't invent anything not already present "
+        "in the notes below.\n\n"
         f"{combined}"
     )
     try:
         resp = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         return resp.text or combined
     except Exception:
-        # Collation failing is not fatal -- fall back to the raw concatenated
+        # Filtering failing is not fatal -- fall back to the raw concatenated
         # batch texts so a transient error doesn't lose the whole day's work.
         return combined
 
