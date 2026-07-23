@@ -204,12 +204,53 @@ def validate_ticker(ticker):
         return True
 
 
+def wilder_smooth(raw, period):
+    """Wilder's RMA smoothing (used by RSI's avg gain/loss AND ATR) with
+    the original (1978) seeding convention: the first output is a plain
+    mean of the first `period` raw values, then smoothed recursively from
+    there (avg[t] = (avg[t-1]*(p-1) + raw[t]) / p). `raw` is expected to
+    already have a leading NaN (e.g. from .diff()) at index 0. Matches
+    TradingView's convention for RSI and ATR alike.
+
+    This is NOT the same as naively running pandas' ewm(alpha=1/period,
+    adjust=False) over the whole series from its first data point -- that
+    effectively seeds the recursion from the very first available raw
+    value instead of a clean period-length average. The two converge once
+    there's ample history (the wrong seed's influence decays exponentially,
+    ~1% residual after 60 bars), but for a short series -- e.g. monthly RSI
+    on a stock with only ~2 years of history since its IPO, or ATR/VStop on
+    a recently-listed ticker with few weekly bars -- the wrong seed never
+    fully washes out and can be off by 10+ points vs TradingView. Confirmed
+    on ENTERO.NS (India, IPO'd Feb 2024, only 30 monthly bars): the old
+    ewm-from-bar-zero code gave RSI-M 44.2, correct Wilder seeding gives
+    53.6, TradingView showed 54.1.
+    """
+    if len(raw) <= period:
+        return pd.Series([np.nan] * len(raw), index=raw.index)
+
+    seed = raw.iloc[1:period + 1].mean()
+
+    # Prepend the SMA seed to the remaining raw values, then let ewm's own
+    # adjust=False recursion (y[0]=x[0], y[t]=alpha*x[t]+(1-alpha)*y[t-1])
+    # do the Wilder smoothing from that seed onward -- vectorized, no
+    # explicit per-row Python loop needed.
+    tail = pd.concat([pd.Series([seed]), raw.iloc[period + 1:]], ignore_index=True)
+    smoothed_tail = tail.ewm(alpha=1 / period, adjust=False).mean()
+
+    result = pd.Series(np.nan, index=raw.index)
+    result.iloc[period:] = smoothed_tail.values
+    return result
+
+
 def compute_rsi(series, period=14):
+    """Wilder's RSI -- see wilder_smooth() for the seeding convention."""
     delta = series.diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
-    avg_gain = gain.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
-    avg_loss = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+
+    avg_gain = wilder_smooth(gain, period)
+    avg_loss = wilder_smooth(loss, period)
+
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
@@ -241,7 +282,8 @@ def mansfield_rs(stock_close, bench_close, lookback):
 
 
 def compute_atr(ohlc_df, length=14):
-    """Wilder's ATR: RMA (alpha=1/length) of True Range."""
+    """Wilder's ATR: RMA (alpha=1/length) of True Range -- see
+    wilder_smooth() for the seeding convention (same fix as RSI)."""
     high, low, close = ohlc_df["High"], ohlc_df["Low"], ohlc_df["Close"]
     prev_close = close.shift(1)
     tr = pd.concat([
@@ -249,7 +291,8 @@ def compute_atr(ohlc_df, length=14):
         (high - prev_close).abs(),
         (low - prev_close).abs(),
     ], axis=1).max(axis=1)
-    return tr.ewm(alpha=1 / length, min_periods=length, adjust=False).mean()
+    tr.iloc[0] = np.nan  # first bar has no prev_close -- match RSI's .diff() convention
+    return wilder_smooth(tr, length)
 
 
 def compute_vstop(ohlc_df, length=VSTOP_LENGTH, factor=VSTOP_FACTOR):
