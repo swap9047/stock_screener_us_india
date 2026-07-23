@@ -1,0 +1,66 @@
+name: Daily Data Refresh
+
+# Runs once/day at ~7:00 AM ET (before market open), fetching all watchlist
+# tickers via yfinance and saving the result to data_snapshot.json. The
+# Streamlit app reads this snapshot on load instead of hitting yfinance
+# live every session -- much faster, and avoids redundant identical fetches
+# across visitors. The app's "Refresh Data" button still fetches live data
+# on demand regardless of this snapshot.
+#
+# 7:00 AM ET is 11:00 UTC during EDT and 12:00 UTC during EST -- same
+# DST-safe two-cron-line pattern as daily-alerts.yml and news-summary.yml.
+# The gate uses a +/-1hr tolerance (6-8 AM ET counts as due) since GitHub's
+# scheduler is best-effort and can delay a trigger by over an hour -- see
+# alerts.py's is_rule_due() and news-summary.yml's gate for the same fix,
+# both added after a real missed run caused by an exact-hour check with no
+# grace period.
+on:
+  schedule:
+    - cron: "0 11 * * *"   # 11:00 UTC = 7:00 AM ET during EDT
+    - cron: "0 12 * * *"   # 12:00 UTC = 7:00 AM ET during EST
+  workflow_dispatch: {}    # run manually from the Actions tab anytime, bypasses the gate
+
+permissions:
+  contents: write   # needed to commit data_snapshot.json back to the repo
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      due: ${{ steps.check.outputs.due }}
+    steps:
+      - id: check
+        name: Is it ~7 AM ET right now?
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          from zoneinfo import ZoneInfo
+          from datetime import datetime
+          now_et = datetime.now(ZoneInfo("America/New_York"))
+          due = abs(now_et.hour - 7) <= 1
+          print(f"due={'true' if due else 'false'}")
+          EOF
+
+  refresh:
+    needs: gate
+    if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.due == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Refresh data snapshot
+        run: python refresh_data.py
+
+      - name: Commit updated data_snapshot.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data_snapshot.json
+          git diff --staged --quiet && echo "No changes to commit" || git commit -m "Update data_snapshot.json [automated]"
+          git push
