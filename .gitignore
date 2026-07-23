@@ -8,3 +8,4 @@ alert_report_*.csv
 .streamlit/secrets.toml
 streamlit.log
 *.log
+.env
