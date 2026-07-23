@@ -158,41 +158,54 @@ def _verify_remember_token(token_value, expected_username, secret):
     return hmac.compare_digest(sig, expected_sig)
 
 
-def get_cookie_controller():
-    """Construct a fresh CookieController on every call -- do NOT cache the
-    object itself across reruns (an earlier version did, and that was the
-    bug behind "stay signed in" not surviving a page refresh).
+def _set_browser_cookie(name, value, max_age_seconds):
+    """Sets a browser cookie via a tiny injected <script>, one-way
+    Python -> browser, instead of streamlit-cookies-controller.
 
-    The library returns its `default={}` on the very first-ever component
-    round trip (the browser hasn't responded with the real cookies yet),
-    then auto-triggers a rerun once the real value arrives, storing it in
-    st.session_state['cookies']. A cached CookieController instance keeps
-    whatever `self.__cookies` it captured at construction time -- if that
-    was the {} default, `.get()` returns None FOREVER for that session,
-    even after the real cookie value has landed in session_state. The
-    library's own __init__ already re-reads st.session_state['cookies']
-    fresh (and skips the component round trip entirely once that key
-    exists), so constructing a new instance each call is cheap and
-    correct -- it just needed to not be short-circuited by our own cache."""
-    from streamlit_cookies_controller import CookieController
-    return CookieController()
+    That library's set()/get() rely on a bidirectional custom-component
+    round trip (Python asks the browser for a value, browser has to send
+    it back over the websocket before Python can trust it) -- this is
+    documented as unreliable specifically on cloud deployments, which
+    matches exactly what was reported here (sign in with "stay signed
+    in" checked, reload, still asked for a password every time):
+      - github.com/NathanChen198/streamlit-cookies-controller/issues/6
+        "Works locally but not in cloud deployments... cookies do not
+        set in any cloud deployment I have tried."
+      - github.com/NathanChen198/streamlit-cookies-controller/issues/4
+        "It seems that a sleep function is necessary to synchronize
+        browser cookies with Streamlit sessions" (and even that
+        workaround is reported as not reliable).
+    A plain document.cookie write has no value to wait on and nothing to
+    race against st.rerun() -- it either runs or it doesn't, and browsers
+    execute injected <script> tags essentially immediately."""
+    from urllib.parse import quote
+    encoded = quote(value, safe="")
+    st.iframe(
+        f'<script>document.cookie = "{name}={encoded}; path=/; max-age={max_age_seconds}; SameSite=Lax";</script>',
+        height=1,
+    )
 
 
-def _cookie_get_all(controller):
-    """CookieController.get()/.getAll() assume their internal cookie dict
-    is always a dict, but it can genuinely be None for a run or two while
-    a fresh instance's underlying component value hasn't resolved yet
-    (confirmed directly: a CookieController constructed mid-script, e.g.
-    inside a button click handler rather than at the top of the script,
-    can see None instead of {} on the very next rerun) -- calling
-    controller.get(...) directly in that state raises a TypeError instead
-    of behaving like 'no cookies yet'. Guard here rather than patching the
-    third-party library; treat None/non-dict the same as no cookies."""
-    try:
-        all_cookies = controller.getAll()
-    except TypeError:
-        return {}
-    return all_cookies if isinstance(all_cookies, dict) else {}
+def _clear_browser_cookie(name):
+    """Expires a browser cookie the same one-way way -- see
+    _set_browser_cookie for why this doesn't use
+    streamlit-cookies-controller."""
+    st.iframe(
+        f'<script>document.cookie = "{name}=; path=/; max-age=0; SameSite=Lax";</script>',
+        height=1,
+    )
+
+
+def _get_remember_cookie(name):
+    """Reads the cookie from st.context.cookies -- a read-only dict
+    populated synchronously from the actual Cookie: header the browser
+    sent with the page's initial HTTP request. No custom component, no
+    round trip, no polling, nothing to be flaky about: the value is just
+    there (or isn't) as soon as the script starts running, which is
+    exactly what require_login() needs on every page load/refresh."""
+    from urllib.parse import unquote
+    raw = st.context.cookies.get(name)
+    return unquote(raw) if raw else None
 
 
 def require_login():
@@ -202,8 +215,7 @@ def require_login():
     if st.session_state.get("authenticated"):
         return
 
-    controller = get_cookie_controller()
-    cookie_val = _cookie_get_all(controller).get(REMEMBER_COOKIE_NAME)
+    cookie_val = _get_remember_cookie(REMEMBER_COOKIE_NAME)
     if _verify_remember_token(cookie_val, username, password):
         st.session_state.authenticated = True
         return
@@ -220,7 +232,7 @@ def require_login():
             st.session_state.authenticated = True
             if remember:
                 token = _make_remember_token(username, password)
-                controller.set(REMEMBER_COOKIE_NAME, token, max_age=REMEMBER_DAYS * 86400, same_site="strict")
+                _set_browser_cookie(REMEMBER_COOKIE_NAME, token, REMEMBER_DAYS * 86400)
             st.rerun()
         else:
             st.error("Incorrect username or password.")
@@ -238,16 +250,7 @@ def render_logout_button():
         return
     if st.sidebar.button("Log out", width="stretch"):
         st.session_state.authenticated = False
-        controller = get_cookie_controller()
-        # .remove() does an internal dict .pop(name) with no default and
-        # raises KeyError if the cookie was never set (e.g. someone signed
-        # in without checking "stay signed in", then logs out) -- only
-        # attempt removal if the cookie actually exists. Go through
-        # _cookie_get_all() rather than controller.getAll() directly --
-        # `in None` would raise the same TypeError _cookie_get_all guards
-        # against elsewhere.
-        if REMEMBER_COOKIE_NAME in _cookie_get_all(controller):
-            controller.remove(REMEMBER_COOKIE_NAME)
+        _clear_browser_cookie(REMEMBER_COOKIE_NAME)
         st.rerun()
 
 
