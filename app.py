@@ -184,9 +184,10 @@ def _set_browser_cookie(name, value, max_age_seconds):
     execute injected <script> tags essentially immediately."""
     from urllib.parse import quote
     encoded = quote(value, safe="")
-    st.iframe(
-        f'<script>try {{ window.parent.document.cookie = "{name}={encoded}; path=/; max-age={max_age_seconds}; SameSite=Lax"; }} catch(e) {{}} document.cookie = "{name}={encoded}; path=/; max-age={max_age_seconds}; SameSite=Lax"; setTimeout(function() {{ window.parent.location.reload(); }}, 100);</script>',
-        height=1,
+    import streamlit.components.v1 as components
+    components.html(
+        f'<script>try {{ window.parent.document.cookie = "{name}={encoded}; path=/; max-age={max_age_seconds}; SameSite=None; Secure"; }} catch(e) {{}} document.cookie = "{name}={encoded}; path=/; max-age={max_age_seconds}; SameSite=None; Secure"; setTimeout(function() {{ window.parent.location.reload(); }}, 100);</script>',
+        height=0,
     )
 
 
@@ -194,9 +195,10 @@ def _clear_browser_cookie(name):
     """Expires a browser cookie the same one-way way -- see
     _set_browser_cookie for why this doesn't use
     streamlit-cookies-controller."""
-    st.iframe(
-        f'<script>try {{ window.parent.document.cookie = "{name}=; path=/; max-age=0; SameSite=Lax"; }} catch(e) {{}} document.cookie = "{name}=; path=/; max-age=0; SameSite=Lax"; setTimeout(function() {{ window.parent.location.reload(); }}, 100);</script>',
-        height=1,
+    import streamlit.components.v1 as components
+    components.html(
+        f'<script>try {{ window.parent.document.cookie = "{name}=; path=/; max-age=0; SameSite=None; Secure"; }} catch(e) {{}} document.cookie = "{name}=; path=/; max-age=0; SameSite=None; Secure"; setTimeout(function() {{ window.parent.location.reload(); }}, 100);</script>',
+        height=0,
     )
 
 
