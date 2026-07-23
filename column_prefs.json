@@ -4,19 +4,17 @@
     "trend",
     "matched_alerts",
     "tech_uptrend_label",
+    "vstop_change",
     "volume_trend",
-    "week52_high",
+    "vstop_weekly_direction",
     "custom_w52dist",
-    "week52_low",
     "custom_w52lowdist",
-    "data_end",
     "ema10",
     "ema40",
     "rsi14_weekly",
     "rs_weekly",
     "rsi14_monthly",
     "vstop_weekly",
-    "vstop_weekly_direction",
-    "vstop_change"
+    "data_end"
   ]
 }
