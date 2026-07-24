@@ -171,6 +171,62 @@
         "logic": "AND"
       }
     ],
+    "enabled": false,
+    "schedule": {
+      "type": "scheduled",
+      "days": [
+        "MON",
+        "TUE",
+        "WED",
+        "THU",
+        "FRI"
+      ],
+      "time_et": "21:00"
+    }
+  },
+  {
+    "id": "77f7a948",
+    "name": "stocks with red flag",
+    "scope": "ALL",
+    "conditions": [
+      {
+        "metric_a": "flag",
+        "operator": "in",
+        "compare_type": "value",
+        "value": [
+          "Red"
+        ],
+        "logic": "AND"
+      }
+    ],
+    "enabled": true,
+    "schedule": {
+      "type": "scheduled",
+      "days": [
+        "MON",
+        "TUE",
+        "WED",
+        "THU",
+        "FRI"
+      ],
+      "time_et": "21:00"
+    }
+  },
+  {
+    "id": "09aea890",
+    "name": "stocks with green flag",
+    "scope": "ALL",
+    "conditions": [
+      {
+        "metric_a": "flag",
+        "operator": "in",
+        "compare_type": "value",
+        "value": [
+          "Green"
+        ],
+        "logic": "AND"
+      }
+    ],
     "enabled": true,
     "schedule": {
       "type": "scheduled",
