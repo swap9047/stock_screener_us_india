@@ -130,7 +130,7 @@ DUE_TOLERANCE_HOURS = 6
 # inside the window, the second run just finds nothing new to fire.
 
 
-def is_rule_due(rule, et_now=None):
+def is_rule_due(rule, et_now=None, cron_schedule=None):
     """Is this rule due to be checked right now? Compares the rule's
     schedule against `et_now` (a tz-aware America/New_York datetime;
     defaults to the current time). Matches on day-of-week, then hour within
@@ -138,7 +138,7 @@ def is_rule_due(rule, et_now=None):
     which hour(s) actually wake up, and ALLOWED_HOURS keeps the app's
     schedule picker aligned with those cron triggers, but a scheduler delay
     of up to DUE_TOLERANCE_HOURS still counts as on-time rather than being
-    silently missed."""
+    silently missed. Rejects cron schedules that belong to the off-season."""
     sched = rule.get("schedule", {})
     if sched.get("type") == "none":
         return False
@@ -167,6 +167,15 @@ def is_rule_due(rule, et_now=None):
         rule_hour = int(time_et.split(":")[0])
     except Exception:
         rule_hour = 21
+
+    if cron_schedule:
+        try:
+            cron_utc_hour = int(cron_schedule.split()[1])
+            expected_utc_hour = int((rule_hour - (et_now.utcoffset().total_seconds() / 3600)) % 24)
+            if cron_utc_hour != expected_utc_hour:
+                return False
+        except Exception:
+            pass
 
     hour_diff = min((et_now.hour - rule_hour) % 24, (rule_hour - et_now.hour) % 24)
     return hour_diff <= DUE_TOLERANCE_HOURS

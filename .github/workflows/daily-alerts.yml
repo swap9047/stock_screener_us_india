@@ -42,11 +42,14 @@ jobs:
 
       - id: check
         name: Is any enabled rule due right now?
+        env:
+          CRON_SCHEDULE: ${{ github.event.schedule }}
         run: |
           python - <<'EOF' >> "$GITHUB_OUTPUT"
+          import os
           from alerts import load_rules, is_rule_due
           rules = load_rules()
-          due = any(r.get("enabled", True) and r.get("conditions") and is_rule_due(r) for r in rules)
+          due = any(r.get("enabled", True) and r.get("conditions") and is_rule_due(r, cron_schedule=os.environ.get("CRON_SCHEDULE")) for r in rules)
           print(f"due={'true' if due else 'false'}")
           EOF
 
