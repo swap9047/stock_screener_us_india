@@ -138,6 +138,7 @@ def get_filterable_metrics(settings=None):
         "Trend": "trend",
         "Trend Rank": "trend_rank",
         "Vol Trend": "volume_trend",
+        "Net Vol 10D": "net_volume_10d_dir",
         "VStop Dir": "vstop_weekly_direction",
         "52W High": "week52_high",
         "52W Low": "week52_low",

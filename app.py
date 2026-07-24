@@ -1144,6 +1144,7 @@ def build_column_defs(labels, custom_columns=None):
         ("vstop_weekly_direction", "VStop Dir"),
         ("vstop_change", "VStop Weeks Ago"),
         ("volume_trend", "Vol Trend"),
+        ("net_volume_10d_dir", "Net Vol 10D"),
         ("tech_uptrend_label", "Tech Uptrend"),
         ("avg_volume_10d", "Vol 10D"),
         ("avg_volume_100d", "Vol 100D"),
