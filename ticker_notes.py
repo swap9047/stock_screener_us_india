@@ -92,13 +92,12 @@ def compute_auto_flag(row):
     Rules (first match wins):
       GREEN:
         1. Trend = "Strong Uptrend"
-        2. Tech Uptrend = Yes AND Trend = "Uptrend" AND Vol != "Declining"
-           AND Net Vol 10d = "Positive"
+        2. Tech Uptrend = Yes AND Trend = "Uptrend" AND Net Vol 10d = "Positive"
         3. Trend = "Uptrend" AND Vol = "Exploding" AND VStop Dir = "Up"
            AND VStop Weeks Since Change >= 2
       RED:
         1. Trend = "Strong Downtrend" AND Tech Uptrend = No
-        2. Trend = "Downtrend" AND (Vol = "Declining" OR (Vol = "Exploding" AND Net Vol = "Negative"))
+        2. Trend = "Downtrend" AND (Vol in ["Declining", "In-line"] OR (Vol = "Exploding" AND Net Vol = "Negative"))
            AND VStop Dir = "Down" AND VStop Weeks Since Change >= 2
     """
     trend = row.get("trend", "")
@@ -114,7 +113,6 @@ def compute_auto_flag(row):
 
     if (tech_uptrend
             and trend == "Uptrend"
-            and vol_trend != "Declining"
             and net_vol_dir == "Positive"):
         return "Green", "Tech Uptrend + Uptrend + Positive Vol"
 
@@ -130,11 +128,14 @@ def compute_auto_flag(row):
         return "Red", "Strong Downtrend + No Tech Uptrend"
 
     if (trend == "Downtrend"
-            and (vol_trend == "Declining" or (vol_trend == "Exploding" and net_vol_dir == "Negative"))
+            and (vol_trend in ("Declining", "In-line") or (vol_trend == "Exploding" and net_vol_dir == "Negative"))
             and vstop_dir == "Down"
             and vstop_weeks is not None
             and vstop_weeks >= 2):
-        reason_vol = "Exploding(Neg)" if vol_trend == "Exploding" else "Declining"
+        if vol_trend == "Exploding":
+            reason_vol = "Exploding(Neg)"
+        else:
+            reason_vol = vol_trend
         return "Red", f"Downtrend + {reason_vol} volume + VStop Down ≥2w"
 
     return "", ""
