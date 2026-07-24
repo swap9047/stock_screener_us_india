@@ -1671,18 +1671,29 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             for r in filtered
         ]
         raw_df["flag"] = [
-            f"{FLAG_EMOJI[r['flag']]} {r['flag']}" if r["flag"] in FLAG_EMOJI else "—"
+            with_tooltip(
+                f"{FLAG_EMOJI[r['flag']]} {r['flag']}" if r["flag"] in FLAG_EMOJI else "—",
+                r.get("flag_reason", "") if r["flag"] else "",
+            )
             for r in filtered
         ]
         # Flag color is prepended to the ticker symbol itself (per request:
         # "flag ticker symbol within the ticker column"), in addition to the
         # separate Flag column above -- so it's visible at a glance without
         # needing that column shown/scrolled into view.
-        raw_df["ticker_link"] = [
-            f'{flag_marker_html(r["flag"])}<a href="{tradingview_url(r["ticker"])}" '
-            f'target="_blank" rel="noopener noreferrer">{r["ticker"]}</a>'
-            for r in filtered
-        ]
+        # The flag emoji also carries a tooltip showing the reason.
+        def _ticker_with_flag(r):
+            link = (f'<a href="{tradingview_url(r["ticker"])}" '
+                    f'target="_blank" rel="noopener noreferrer">{r["ticker"]}</a>')
+            flag = r.get("flag", "")
+            reason = html.escape(r.get("flag_reason", ""))
+            emoji = FLAG_EMOJI.get(flag)
+            if emoji and reason:
+                return f'<span title="{reason}">{emoji}</span> {link}'
+            elif emoji:
+                return f'{emoji} {link}'
+            return link
+        raw_df["ticker_link"] = [_ticker_with_flag(r) for r in filtered]
 
         # Which enabled alert rules is each ticker currently matching?
         # Reuses the same preview engine the Alert Rules tab's "Run preview"
