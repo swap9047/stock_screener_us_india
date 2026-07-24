@@ -67,8 +67,8 @@ SCOPE_LABELS = {"ALL": "All watchlist", "US": "US watchlist", "INDIA": "India wa
 DAY_CODES = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
 DAY_LABELS = {"MON": "Mon", "TUE": "Tue", "WED": "Wed", "THU": "Thu", "FRI": "Fri", "SAT": "Sat", "SUN": "Sun"}
 DEFAULT_DAYS = ["MON", "TUE", "WED", "THU", "FRI"]
-ALLOWED_HOURS = [22]  # 10:00 PM ET -- the only hour the workflow runs at
-HOUR_LABELS = {22: "10:00 PM"}
+ALLOWED_HOURS = [21]  # 9:00 PM ET -- the only hour the workflow runs at
+HOUR_LABELS = {21: "9:00 PM"}
 
 
 def normalize_schedule(sched):
@@ -93,8 +93,8 @@ def normalize_schedule(sched):
         if not days:
             days = list(DEFAULT_DAYS)
 
-    time_et = sched.get("time_et", "22:00")
-    hour = 22
+    time_et = sched.get("time_et", "21:00")
+    hour = 21
     if isinstance(time_et, str) and ":" in time_et:
         h, _, _m = time_et.partition(":")
         if h.isdigit() and 0 <= int(h) < 24:
@@ -112,11 +112,11 @@ def describe_schedule(rule):
         return "🔍 Scan Only"
     days = sched.get("days", DEFAULT_DAYS)
     days_str = ", ".join(DAY_LABELS.get(d, d) for d in days)
-    time_et = sched.get("time_et", "22:00")
+    time_et = sched.get("time_et", "21:00")
     return f"🔔 {days_str} @ {time_et} ET"
 
 
-DUE_TOLERANCE_HOURS = 4
+DUE_TOLERANCE_HOURS = 6
 # GitHub Actions' scheduler is documented as best-effort: a cron trigger can
 # be delayed well past its nominal time, especially during high load (we
 # saw this directly -- both of the day's cron runs landed as gate-only
@@ -162,11 +162,11 @@ def is_rule_due(rule, et_now=None):
     if day_code not in allowed_days:
         return False
 
-    time_et = sched.get("time_et", "22:00")
+    time_et = sched.get("time_et", "21:00")
     try:
         rule_hour = int(time_et.split(":")[0])
     except Exception:
-        rule_hour = 22
+        rule_hour = 21
 
     hour_diff = min((et_now.hour - rule_hour) % 24, (rule_hour - et_now.hour) % 24)
     return hour_diff <= DUE_TOLERANCE_HOURS

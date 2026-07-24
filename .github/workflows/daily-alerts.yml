@@ -21,8 +21,8 @@ name: Daily Stock Alerts
 # live prices) only runs when the gate says yes.
 on:
   schedule:
-    - cron: "15 2 * * *"   # 02:15 UTC = 10:15 PM ET during EDT
-    - cron: "15 3 * * *"   # 03:15 UTC = 10:15 PM ET during EST
+    - cron: "15 1 * * *"   # 01:15 UTC = 9:15 PM ET during EDT
+    - cron: "15 2 * * *"   # 02:15 UTC = 9:15 PM ET during EST
   workflow_dispatch: {}   # run manually from the Actions tab anytime, bypasses the gate
 
 jobs:
