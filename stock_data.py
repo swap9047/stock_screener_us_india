@@ -646,6 +646,18 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 else:
                     volume_trend = "In-line"
 
+            net_volume_10d_dir = None
+            if len(daily_close) >= 11 and len(daily_volume) >= 10:
+                last_11_closes = daily_close.tail(11)
+                last_10_volumes = daily_volume.tail(10)
+                net_vol = 0
+                for i in range(1, 11):
+                    if last_11_closes.iloc[i] > last_11_closes.iloc[i-1]:
+                        net_vol += last_10_volumes.iloc[i-1]
+                    elif last_11_closes.iloc[i] < last_11_closes.iloc[i-1]:
+                        net_vol -= last_10_volumes.iloc[i-1]
+                net_volume_10d_dir = "Positive" if net_vol > 0 else "Negative"
+
             # 52-week high/low: intraday extremes over the trailing ~252 trading days
             window_252 = df.tail(252)
             week52_high = round(float(window_252["High"].max()), 1) if window_252["High"].notna().any() else None
@@ -690,6 +702,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 "avg_volume_10d": avg_volume_10d,
                 "avg_volume_100d": avg_volume_100d,
                 "volume_trend": volume_trend,
+                "net_volume_10d_dir": net_volume_10d_dir,
                 "week52_high": week52_high,
                 "week52_low": week52_low,
                 "trend": trend,

@@ -85,14 +85,88 @@ def flag_marker_html(flag):
     return f"{emoji} " if emoji else ""
 
 
+def compute_auto_flag(row):
+    """Evaluates technical criteria to auto-assign a Green or Red flag.
+    Returns (flag_color, reason_string) or ("", "") for neutral.
+
+    Rules (first match wins):
+      GREEN:
+        1. Trend = "Strong Uptrend"
+        2. Tech Uptrend = Yes AND Trend = "Uptrend" AND Vol != "Declining"
+           AND Net Vol 10d = "Positive"
+        3. Trend = "Uptrend" AND Vol = "Exploding" AND VStop Dir = "Up"
+           AND VStop Weeks Since Change >= 2
+      RED:
+        1. Trend = "Strong Downtrend" AND Tech Uptrend = No
+        2. Trend = "Downtrend" AND (Vol = "Declining" OR (Vol = "Exploding" AND Net Vol = "Negative"))
+           AND VStop Dir = "Down" AND VStop Weeks Since Change >= 2
+    """
+    trend = row.get("trend", "")
+    tech_uptrend = row.get("tech_uptrend", False)
+    vol_trend = row.get("volume_trend", "")
+    vstop_dir = row.get("vstop_weekly_direction", "")
+    vstop_weeks = row.get("vstop_weekly_weeks_since_change")
+    net_vol_dir = row.get("net_volume_10d_dir", "")
+
+    # --- GREEN rules (first match wins) ---
+    if trend == "Strong Uptrend":
+        return "Green", "Strong Uptrend"
+
+    if (tech_uptrend
+            and trend == "Uptrend"
+            and vol_trend != "Declining"
+            and net_vol_dir == "Positive"):
+        return "Green", "Tech Uptrend + Uptrend + Positive Vol"
+
+    if (trend == "Uptrend"
+            and vol_trend == "Exploding"
+            and vstop_dir == "Up"
+            and vstop_weeks is not None
+            and vstop_weeks >= 2):
+        return "Green", "Uptrend + Exploding volume + VStop Up \u22652w"
+
+    # --- RED rules (first match wins) ---
+    if trend == "Strong Downtrend" and not tech_uptrend:
+        return "Red", "Strong Downtrend + No Tech Uptrend"
+
+    if (trend == "Downtrend"
+            and (vol_trend == "Declining" or (vol_trend == "Exploding" and net_vol_dir == "Negative"))
+            and vstop_dir == "Down"
+            and vstop_weeks is not None
+            and vstop_weeks >= 2):
+        reason_vol = "Exploding(Neg)" if vol_trend == "Exploding" else "Declining"
+        return "Red", f"Downtrend + {reason_vol} volume + VStop Down ≥2w"
+
+    return "", ""
+
+
 def apply_notes_to_rows(rows, notes=None):
-    """Attaches `note` and `flag` fields onto every row dict in place, from
-    the shared ticker_notes.json (or an already-loaded `notes` dict, to
-    avoid re-reading the file once per market)."""
+    """Attaches `note`, `flag`, and `flag_reason` fields onto every row dict
+    in place, from the shared ticker_notes.json (or an already-loaded `notes`
+    dict, to avoid re-reading the file once per market).
+
+    Flag priority:
+      1. Manual flag from ticker_notes.json -- never overridden.
+      2. Auto-computed flag from compute_auto_flag() -- applied only when
+         no manual flag is set.
+      3. No flag -- neutral.
+
+    `flag_reason` is set on every row:
+      - "Manually assigned" if a manual flag is present.
+      - The rule description (e.g. "Strong Uptrend") for auto-flags.
+      - "" if no flag at all."""
     if notes is None:
         notes = load_ticker_notes()
     for row in rows:
         ticker = row.get("ticker")
         row["note"] = get_ticker_note(notes, ticker)
-        row["flag"] = get_ticker_flag(notes, ticker)
+        manual_flag = get_ticker_flag(notes, ticker)
+        if manual_flag:
+            row["flag"] = manual_flag
+            row["flag_reason"] = "Manually assigned"
+        else:
+            auto_flag, auto_reason = compute_auto_flag(row)
+            row["flag"] = auto_flag
+            row["flag_reason"] = auto_reason
     return rows
+
