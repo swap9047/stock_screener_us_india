@@ -413,7 +413,7 @@ def style_row(row, ema_labels):
     ema_cols = set(ema_labels.values())
     for i, col in enumerate(row.index):
         val = row[col]
-        if col in ("Trend", "Vol Trend", "Tech Uptrend"):
+        if col in ("Trend", "Vol Trend", "Tech Uptrend", "Net Vol 10D"):
             val = _plain_text(val)
         if col in ema_cols and pd.notna(val):
             styles[i] = "color:#c0392b;font-weight:600" if last < val else "color:#1e8449;font-weight:600"
@@ -450,6 +450,11 @@ def style_row(row, ema_labels):
                 styles[i] = f"color:{color};font-weight:600"
         elif col == "Tech Uptrend" and val == "Yes":
             styles[i] = "color:#1e8449;font-weight:700"
+        elif col == "Net Vol 10D" and isinstance(val, str):
+            net_colors = {"Positive": "#1e8449", "Negative": "#c0392b"}
+            color = net_colors.get(val)
+            if color:
+                styles[i] = f"color:{color};font-weight:600"
         elif col == "Alerts" and isinstance(val, str) and val not in ("—", ""):
             styles[i] = "color:#8e44ad;font-weight:600"
     return styles
@@ -1678,6 +1683,28 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             )
             for r in filtered
         ]
+        raw_df["net_volume_10d_dir"] = [
+            with_tooltip(r.get("net_volume_10d_dir", "—") or "—",
+                         f"Ratio: {r.get('net_volume_10d_ratio', 0)}% of total 10d vol" if r.get("net_volume_10d_dir") else "")
+            for r in filtered
+        ]
+        
+        for ccol in custom_columns:
+            if ccol["id"] == "w52dist":
+                col_key = f"custom_{ccol['id']}"
+                raw_df[col_key] = [
+                    with_tooltip(f"{r[col_key]:+.1f}%" if pd.notna(r.get(col_key)) else "—",
+                                 f"52W High: {r.get('week52_high', 'N/A')}")
+                    for r in filtered
+                ]
+            elif ccol["id"] == "w52lowdist":
+                col_key = f"custom_{ccol['id']}"
+                raw_df[col_key] = [
+                    with_tooltip(f"{r[col_key]:+.1f}%" if pd.notna(r.get(col_key)) else "—",
+                                 f"52W Low: {r.get('week52_low', 'N/A')}")
+                    for r in filtered
+                ]
+
         # Flag color is prepended to the ticker symbol itself (per request:
         # "flag ticker symbol within the ticker column"), in addition to the
         # separate Flag column above -- so it's visible at a glance without
@@ -1747,7 +1774,8 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             if fmt == "price":
                 custom_price_cs.append(label)
             elif fmt == "percent":
-                custom_pct_cs.append(label)
+                if col["id"] not in ("w52dist", "w52lowdist"):
+                    custom_pct_cs.append(label)
             else:
                 custom_number_cs.append(label)
 
