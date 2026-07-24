@@ -1,15 +1,4 @@
 {
-  "US": [
-    {
-      "metric_a": "flag",
-      "operator": "in",
-      "compare_type": "value",
-      "value": [
-        "Green"
-      ],
-      "logic": "AND",
-      "id": "ebd4550d"
-    }
-  ],
+  "US": [],
   "INDIA": []
 }
