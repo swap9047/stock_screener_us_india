@@ -92,13 +92,14 @@ def compute_auto_flag(row):
     Rules (first match wins):
       GREEN:
         1. Trend = "Strong Uptrend"
-        2. Tech Uptrend = Yes AND Trend = "Uptrend" AND Net Vol 10d = "Positive"
-        3. Trend = "Uptrend" AND Vol = "Exploding" AND VStop Dir = "Up"
-           AND VStop Weeks Since Change >= 2 AND Net Vol = "Positive"
+        2. Trend = "Uptrend" AND Vol = "Exploding" AND Near 52w High (within 5%)
+        3. Tech Uptrend = Yes AND Trend = "Uptrend" AND Net Vol = "Positive" AND Near High (within 20%)
+        4. Trend = "Uptrend" AND Vol = "Exploding" AND VStop Dir = "Up" >= 2w AND Net Vol = "Pos" AND Near High (within 20%)
       RED:
         1. Trend = "Strong Downtrend" AND Tech Uptrend = No
-        2. Trend = "Downtrend" AND (Vol in ["Declining", "In-line"] OR (Vol = "Exploding" AND Net Vol = "Negative"))
-           AND VStop Dir = "Down" AND VStop Weeks Since Change >= 2
+        2. Deep Drawdown (>30% off high) AND Volume Drying ("Declining" or "In-line")
+        3. Trend = "Downtrend" AND Vol = "Exploding" AND Net Vol = "Negative" AND Near 52w Low (within 5%)
+        4. Trend = "Downtrend" AND Vol in ["Declining", "In-line", "Exploding(Neg)"] AND VStop Dir = "Down" >= 2w
     """
     trend = row.get("trend", "")
     tech_uptrend = row.get("tech_uptrend", False)
@@ -106,27 +107,59 @@ def compute_auto_flag(row):
     vstop_dir = row.get("vstop_weekly_direction", "")
     vstop_weeks = row.get("vstop_weekly_weeks_since_change")
     net_vol_dir = row.get("net_volume_10d_dir", "")
+    last_close = row.get("last_close")
+    week52_high = row.get("week52_high")
+    week52_low = row.get("week52_low")
+    
+    near_high_20 = False
+    near_high_5 = False
+    drawdown_30 = False
+    near_low_5 = False
+    
+    if last_close is not None and week52_high is not None and week52_high > 0:
+        near_high_20 = last_close >= week52_high * 0.80
+        near_high_5 = last_close >= week52_high * 0.95
+        drawdown_30 = last_close <= week52_high * 0.70
+        
+    if last_close is not None and week52_low is not None and week52_low > 0:
+        near_low_5 = last_close <= week52_low * 1.05
 
     # --- GREEN rules (first match wins) ---
     if trend == "Strong Uptrend":
         return "Green", "Strong Uptrend"
+        
+    if (trend == "Uptrend"
+            and vol_trend == "Exploding"
+            and near_high_5):
+        return "Green", "Uptrend + Exploding vol + Near 52w High (5%)"
 
     if (tech_uptrend
             and trend == "Uptrend"
-            and net_vol_dir == "Positive"):
-        return "Green", "Tech Uptrend + Uptrend + Positive Vol"
+            and net_vol_dir == "Positive"
+            and near_high_20):
+        return "Green", "Tech Uptrend + Uptrend + Positive Vol + Near High (20%)"
 
     if (trend == "Uptrend"
             and vol_trend == "Exploding"
             and vstop_dir == "Up"
             and vstop_weeks is not None
             and vstop_weeks >= 2
-            and net_vol_dir == "Positive"):
-        return "Green", "Uptrend + Exploding(Pos) volume + VStop Up ≥2w"
+            and net_vol_dir == "Positive"
+            and near_high_20):
+        return "Green", "Uptrend + Exploding(Pos) vol + VStop Up ≥2w + Near High (20%)"
 
     # --- RED rules (first match wins) ---
     if trend == "Strong Downtrend" and not tech_uptrend:
         return "Red", "Strong Downtrend + No Tech Uptrend"
+        
+    if drawdown_30 and vol_trend in ("Declining", "In-line"):
+        return "Red", "Deep Drawdown (>30%) + Volume Drying"
+        
+    if (trend == "Downtrend"
+            and vol_trend == "Exploding" 
+            and net_vol_dir == "Negative"
+            and near_low_5):
+        return "Red", "Downtrend + Exploding(Neg) vol + Near 52w Low (5%)"
 
     if (trend == "Downtrend"
             and (vol_trend in ("Declining", "In-line") or (vol_trend == "Exploding" and net_vol_dir == "Negative"))
