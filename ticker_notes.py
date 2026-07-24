@@ -94,7 +94,7 @@ def compute_auto_flag(row):
         1. Trend = "Strong Uptrend"
         2. Tech Uptrend = Yes AND Trend = "Uptrend" AND Net Vol 10d = "Positive"
         3. Trend = "Uptrend" AND Vol = "Exploding" AND VStop Dir = "Up"
-           AND VStop Weeks Since Change >= 2
+           AND VStop Weeks Since Change >= 2 AND Net Vol = "Positive"
       RED:
         1. Trend = "Strong Downtrend" AND Tech Uptrend = No
         2. Trend = "Downtrend" AND (Vol in ["Declining", "In-line"] OR (Vol = "Exploding" AND Net Vol = "Negative"))
@@ -120,8 +120,9 @@ def compute_auto_flag(row):
             and vol_trend == "Exploding"
             and vstop_dir == "Up"
             and vstop_weeks is not None
-            and vstop_weeks >= 2):
-        return "Green", "Uptrend + Exploding volume + VStop Up \u22652w"
+            and vstop_weeks >= 2
+            and net_vol_dir == "Positive"):
+        return "Green", "Uptrend + Exploding(Pos) volume + VStop Up ≥2w"
 
     # --- RED rules (first match wins) ---
     if trend == "Strong Downtrend" and not tech_uptrend:
