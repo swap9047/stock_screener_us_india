@@ -9,6 +9,8 @@
     "vstop_weekly_direction",
     "custom_w52dist",
     "custom_w52lowdist",
+    "net_volume_10d_dir",
+    "ema10_daily",
     "ema10",
     "ema40",
     "rsi14_weekly",
