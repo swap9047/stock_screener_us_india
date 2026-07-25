@@ -57,7 +57,7 @@ from filters import (get_market_filters, save_market_filters, apply_filters, des
                      describe_chain, describe_chain_with_values, passes_filter_chain, CATEGORICAL_METRICS)
 from github_sync import get_github_config, push_all_config, SYNCABLE_FILES
 from news_summary import load_news_summary, MARKET_LABELS, get_gemini_api_key
-from expert_views import load_expert_views, save_expert_views, analyze_single_ticker
+from expert_views import load_expert_views, save_expert_views, analyze_single_ticker, generate_expert_view
 from custom_columns import (
     load_custom_columns, save_custom_columns, validate_formula, column_key,
     FORMAT_CHOICES, CUSTOM_COLUMNS_FILE, apply_custom_columns_to_rows,
@@ -465,6 +465,8 @@ def style_row(row, ema_labels):
                 styles[i] = "color:#c0392b;font-weight:700"
             elif "Hold" in val:
                 styles[i] = "color:#d4ac0d;font-weight:700"
+            elif "Failed" in val:
+                styles[i] = "color:#e67e22;font-weight:700"
     return styles
 
 
@@ -1508,6 +1510,109 @@ def render_ticker_notes_manager():
                 st.markdown(line)
 
 
+def render_expert_analysis_control_bar(market, results):
+    expert_views = load_expert_views()
+    api_key = get_gemini_api_key(st.secrets)
+
+    all_tickers = [r["ticker"] for r in results]
+    failed_tickers = []
+    for r in results:
+        tk = r["ticker"]
+        v = expert_views.get(tk, {})
+        verdict = v.get("verdict")
+        headline = (v.get("headline") or "").lower()
+        if not verdict or verdict in ("PENDING", "FAILED") or "error" in headline or "pending" in headline:
+            failed_tickers.append(tk)
+
+    st.markdown("##### 🤖 AI Stock Expert Analysis Controls")
+    c1, c2, c3, c4 = st.columns([3.5, 1.3, 1.8, 1.4])
+
+    selected_to_reanalyze = c1.multiselect(
+        "Select tickers to re-analyze",
+        options=all_tickers,
+        key=f"ev_multisel_{market}",
+        placeholder="Choose tickers to re-analyze...",
+        label_visibility="collapsed",
+    )
+
+    if c2.button(
+        f"⚡ Re-analyze ({len(selected_to_reanalyze)})",
+        key=f"btn_re_sel_{market}",
+        disabled=not selected_to_reanalyze or not api_key,
+        width="stretch",
+    ):
+        progress_bar = st.progress(0, text="Starting selective AI re-analysis...")
+        from google import genai
+        client = genai.Client(api_key=api_key)
+        updated_views = load_expert_views()
+
+        for idx, tk in enumerate(selected_to_reanalyze):
+            row = next(r for r in results if r["ticker"] == tk)
+            progress_bar.progress(
+                (idx + 1) / len(selected_to_reanalyze),
+                text=f"Analyzing {tk} ({idx+1}/{len(selected_to_reanalyze)})...",
+            )
+            view = generate_expert_view(client, row)
+            updated_views[tk] = view
+            save_expert_views(updated_views)
+            time.sleep(0.5)
+
+        st.toast(f"✓ Re-analyzed {len(selected_to_reanalyze)} selected tickers!")
+        st.rerun()
+
+    failed_count = len(failed_tickers)
+    if c3.button(
+        f"⚠️ Retry Failed / Pending ({failed_count})",
+        key=f"btn_re_failed_{market}",
+        disabled=failed_count == 0 or not api_key,
+        type="primary" if failed_count > 0 else "secondary",
+        width="stretch",
+    ):
+        progress_bar = st.progress(0, text=f"Retrying {failed_count} failed/pending tickers...")
+        from google import genai
+        client = genai.Client(api_key=api_key)
+        updated_views = load_expert_views()
+
+        for idx, tk in enumerate(failed_tickers):
+            row = next(r for r in results if r["ticker"] == tk)
+            progress_bar.progress(
+                (idx + 1) / failed_count,
+                text=f"Retrying {tk} ({idx+1}/{failed_count})...",
+            )
+            view = generate_expert_view(client, row)
+            updated_views[tk] = view
+            save_expert_views(updated_views)
+            time.sleep(0.5)
+
+        st.toast(f"✓ Successfully re-analyzed {failed_count} tickers!")
+        st.rerun()
+
+    if c4.button(
+        f"🔄 Re-analyze All ({len(all_tickers)})",
+        key=f"btn_re_all_{market}",
+        disabled=not api_key,
+        width="stretch",
+    ):
+        progress_bar = st.progress(0, text=f"Re-analyzing all {len(all_tickers)} tickers...")
+        from google import genai
+        client = genai.Client(api_key=api_key)
+        updated_views = load_expert_views()
+
+        for idx, tk in enumerate(all_tickers):
+            row = next(r for r in results if r["ticker"] == tk)
+            progress_bar.progress(
+                (idx + 1) / len(all_tickers),
+                text=f"Analyzing {tk} ({idx+1}/{len(all_tickers)})...",
+            )
+            view = generate_expert_view(client, row)
+            updated_views[tk] = view
+            save_expert_views(updated_views)
+            time.sleep(0.5)
+
+        st.toast(f"✓ Re-analyzed all {len(all_tickers)} tickers!")
+        st.rerun()
+
+
 def render_expert_view_expander(market, filtered_rows, settings):
     expert_views = load_expert_views()
     tickers = [r["ticker"] for r in filtered_rows]
@@ -1685,6 +1790,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
     filtered = apply_filters(filtered, active_custom_filters)
     filtered = apply_sort(filtered, sort_field, sort_ascending)
 
+    render_expert_analysis_control_bar(market, results)
     st.write(f"**Showing {len(filtered)} of {len(results)} tickers**")
 
     if filtered:
@@ -1801,9 +1907,11 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
                 badge = "🟡 Hold"
             elif verdict == "CAUTION":
                 badge = "🔴 Caution"
+            elif verdict in ("FAILED", "PENDING") or "error" in headline.lower() or "pending" in headline.lower():
+                badge = "⚠️ Failed (Retry)"
             else:
                 badge = "⚪ Pending"
-            tooltip = f"{headline}\n\n{actionable}" if headline else "Expand AI Stock Expert Views below to analyze."
+            tooltip = f"{headline}\n\n{actionable}" if headline else "Click 'Retry Failed' in controls above to analyze."
             return with_tooltip(badge, tooltip)
 
         raw_df["expert_take"] = [_expert_take_cell(r["ticker"]) for r in filtered]
