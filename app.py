@@ -1579,7 +1579,7 @@ def render_expert_analysis_control_bar(market, results):
             view = generate_expert_view(client, row)
             updated_views[tk] = view
             save_expert_views(updated_views)
-            time.sleep(0.5)
+            time.sleep(4.1) # 15 RPM free tier limit
 
         sync_expert_views_to_github(f"Re-analyze selected tickers ({len(selected_to_reanalyze)}) via UI")
         st.rerun()
@@ -1606,7 +1606,7 @@ def render_expert_analysis_control_bar(market, results):
             view = generate_expert_view(client, row)
             updated_views[tk] = view
             save_expert_views(updated_views)
-            time.sleep(0.5)
+            time.sleep(4.1) # 15 RPM free tier limit
 
         sync_expert_views_to_github(f"Retry failed/pending tickers ({failed_count}) via UI")
         st.rerun()
@@ -1631,7 +1631,7 @@ def render_expert_analysis_control_bar(market, results):
             view = generate_expert_view(client, row)
             updated_views[tk] = view
             save_expert_views(updated_views)
-            time.sleep(0.5)
+            time.sleep(4.1) # 15 RPM free tier limit
 
         sync_expert_views_to_github(f"Re-analyze all tickers ({len(all_tickers)}) via UI")
         st.rerun()

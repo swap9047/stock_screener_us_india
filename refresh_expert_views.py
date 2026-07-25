@@ -47,7 +47,7 @@ def main():
         view = generate_expert_view(client, row)
         existing[ticker] = view
         updated_count += 1
-        time.sleep(1)  # small buffer
+        time.sleep(4.1)  # 15 RPM free tier limit
 
     save_expert_views(existing)
     print(f"Successfully saved {updated_count} expert views to expert_views.json.")
