@@ -12,7 +12,7 @@ from news_search import get_stock_news
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 EXPERT_VIEWS_FILE = os.path.join(SCRIPT_DIR, "expert_views.json")
 
-GEMINI_MODEL = "gemini-3.6-flash"
+GEMINI_MODEL = "gemini-3.5-flash"
 
 
 def load_expert_views():

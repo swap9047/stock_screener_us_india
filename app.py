@@ -1665,7 +1665,7 @@ def render_expert_view_expander(market, filtered_rows, settings):
             with c2:
                 api_key = get_gemini_api_key(st.secrets)
                 if st.button("⚡ Re-analyze Ticker", key=f"re_ev_{market}_{sel_ticker}", disabled=not api_key, width="stretch"):
-                    with st.spinner(f"Analyzing {sel_ticker} with gemini-3.6-flash..."):
+                    with st.spinner(f"Analyzing {sel_ticker} with gemini-3.5-flash..."):
                         new_view = analyze_single_ticker(sel_ticker, row, api_key)
                         sync_expert_views_to_github(f"Re-analyze single ticker ({sel_ticker}) via UI")
                         st.rerun()
