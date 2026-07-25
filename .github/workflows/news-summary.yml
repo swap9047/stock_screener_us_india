@@ -82,4 +82,5 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add news_summary.json
           git diff --staged --quiet && echo "No changes to commit" || git commit -m "Update news_summary.json [automated]"
+          git pull --rebase
           git push
