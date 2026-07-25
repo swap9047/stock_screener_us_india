@@ -21,7 +21,7 @@ def get_stock_news(ticker, max_results=4, timeout_sec=4):
     try:
         from duckduckgo_search import DDGS
         query = f"{bare} stock news"
-        with DDGS() as ddgs:
+        with DDGS(timeout=timeout_sec) as ddgs:
             results = list(ddgs.news(query, max_results=max_results))
             for r in results:
                 title = r.get("title")
