@@ -1,5 +1,8 @@
 name: Daily Stock Alerts
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 # *** CURRENTLY RUNNING ONCE/DAY AT 10:00 PM ET ONLY (hourly disabled) ***
 # alerts.ALLOWED_HOURS is intentionally limited to the hour(s) this YAML
 # actually wakes up for. Right now the app only offers 10:00 PM ET, matching
