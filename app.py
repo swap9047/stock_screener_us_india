@@ -1518,6 +1518,19 @@ def render_ticker_notes_manager():
                 st.markdown(line)
 
 
+def _is_valid_view(view):
+    """Returns True if a view is a real successful analysis (not a 429/error fallback)."""
+    if not view:
+        return False
+    verdict = view.get("verdict")
+    if verdict not in ("ACCUMULATE", "HOLD", "CAUTION"):
+        return False
+    headline = (view.get("headline") or "").lower()
+    if "429" in headline or "resource_exhausted" in headline or "analysis pending" in headline or "error" in headline:
+        return False
+    return True
+
+
 def sync_expert_views_to_github(message):
     token, repo, branch = get_github_config(st.secrets)
     if token and repo:
@@ -1577,8 +1590,14 @@ def render_expert_analysis_control_bar(market, results):
                 text=f"Analyzing {tk} ({idx+1}/{len(selected_to_reanalyze)})...",
             )
             view = generate_expert_view(client, row)
-            updated_views[tk] = view
-            save_expert_views(updated_views)
+            if _is_valid_view(view):
+                updated_views[tk] = view
+                save_expert_views(updated_views)
+            else:
+                progress_bar.progress(
+                    (idx + 1) / len(selected_to_reanalyze),
+                    text=f"⚠️ {tk} still rate-limited, keeping existing result.",
+                )
             time.sleep(15)
 
         sync_expert_views_to_github(f"Re-analyze selected tickers ({len(selected_to_reanalyze)}) via UI")
@@ -1604,8 +1623,14 @@ def render_expert_analysis_control_bar(market, results):
                 text=f"Retrying {tk} ({idx+1}/{failed_count})...",
             )
             view = generate_expert_view(client, row)
-            updated_views[tk] = view
-            save_expert_views(updated_views)
+            if _is_valid_view(view):
+                updated_views[tk] = view
+                save_expert_views(updated_views)
+            else:
+                progress_bar.progress(
+                    (idx + 1) / failed_count,
+                    text=f"⚠️ {tk} still rate-limited, skipping overwrite.",
+                )
             time.sleep(15)
 
         sync_expert_views_to_github(f"Retry failed/pending tickers ({failed_count}) via UI")
@@ -1628,19 +1653,25 @@ def render_expert_analysis_control_bar(market, results):
                 (idx + 1) / len(all_tickers),
                 text=f"Analyzing {tk} ({idx+1}/{len(all_tickers)})...",
             )
+            old_view = updated_views.get(tk)
             view = generate_expert_view(client, row)
-            updated_views[tk] = view
-            save_expert_views(updated_views)
+            if _is_valid_view(view):
+                updated_views[tk] = view
+                save_expert_views(updated_views)
+            elif _is_valid_view(old_view):
+                # Keep the pre-existing good result, don't overwrite with 429
+                progress_bar.progress(
+                    (idx + 1) / len(all_tickers),
+                    text=f"⚠️ {tk} rate-limited — keeping previous result.",
+                )
+            else:
+                updated_views[tk] = view  # Still a failure but save it (nothing to preserve)
+                save_expert_views(updated_views)
             if idx < len(all_tickers) - 1:
                 time.sleep(15)
 
         # Auto-retry any tickers that failed during the main pass
-        still_failed = [
-            tk for tk in all_tickers
-            if not updated_views.get(tk, {}).get("verdict")
-            or updated_views[tk].get("verdict") in ("PENDING", "FAILED")
-            or "error" in (updated_views[tk].get("headline") or "").lower()
-        ]
+        still_failed = [tk for tk in all_tickers if not _is_valid_view(updated_views.get(tk))]
         if still_failed:
             progress_bar.progress(1.0, text=f"Main pass done. Auto-retrying {len(still_failed)} failed ticker(s)...")
             time.sleep(15)  # cool-down before retry pass
@@ -1651,8 +1682,9 @@ def render_expert_analysis_control_bar(market, results):
                     text=f"Retrying failed: {tk} ({idx+1}/{len(still_failed)})...",
                 )
                 view = generate_expert_view(client, row)
-                updated_views[tk] = view
-                save_expert_views(updated_views)
+                if _is_valid_view(view):
+                    updated_views[tk] = view
+                    save_expert_views(updated_views)
                 if idx < len(still_failed) - 1:
                     time.sleep(15)
 
