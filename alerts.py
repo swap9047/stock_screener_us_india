@@ -163,12 +163,16 @@ def is_rule_due(rule, et_now=None, cron_schedule=None):
     except Exception:
         rule_hour = 21
 
-    # If an evening rule (e.g. 21:00 ET) runs shortly past midnight (e.g. 00:00 - 04:00 ET)
-    # due to GitHub Actions runner delays, the nominal scheduled day was yesterday.
+    # If an evening rule (e.g. 21:00 ET) runs on Saturday or past midnight
+    # due to GitHub Actions runner delays (even 6-23 hrs late), the nominal
+    # scheduled day was Friday (yesterday).
+    from datetime import timedelta
     effective_dt = et_now
-    if rule_hour >= 18 and et_now.hour < 6:
-        from datetime import timedelta
-        effective_dt = et_now - timedelta(days=1)
+    if rule_hour >= 18:
+        if et_now.weekday() == 5:  # Saturday (delayed Friday run)
+            effective_dt = et_now - timedelta(days=1)
+        elif et_now.hour < 6:
+            effective_dt = et_now - timedelta(days=1)
 
     day_code = DAY_CODES[effective_dt.weekday()]
     allowed_days = sched.get("days", DEFAULT_DAYS)
