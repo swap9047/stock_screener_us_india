@@ -157,16 +157,23 @@ def is_rule_due(rule, et_now=None, cron_schedule=None):
             return False
         et_now = datetime.now(et_tz)
 
-    day_code = DAY_CODES[et_now.weekday()]
-    allowed_days = sched.get("days", DEFAULT_DAYS)
-    if day_code not in allowed_days:
-        return False
-
     time_et = sched.get("time_et", "21:00")
     try:
         rule_hour = int(time_et.split(":")[0])
     except Exception:
         rule_hour = 21
+
+    # If an evening rule (e.g. 21:00 ET) runs shortly past midnight (e.g. 00:00 - 04:00 ET)
+    # due to GitHub Actions runner delays, the nominal scheduled day was yesterday.
+    effective_dt = et_now
+    if rule_hour >= 18 and et_now.hour < 6:
+        from datetime import timedelta
+        effective_dt = et_now - timedelta(days=1)
+
+    day_code = DAY_CODES[effective_dt.weekday()]
+    allowed_days = sched.get("days", DEFAULT_DAYS)
+    if day_code not in allowed_days:
+        return False
 
     if cron_schedule:
         try:
@@ -179,6 +186,7 @@ def is_rule_due(rule, et_now=None, cron_schedule=None):
 
     hour_diff = min((et_now.hour - rule_hour) % 24, (rule_hour - et_now.hour) % 24)
     return hour_diff <= DUE_TOLERANCE_HOURS
+
 
 
 def normalize_rule(rule):
