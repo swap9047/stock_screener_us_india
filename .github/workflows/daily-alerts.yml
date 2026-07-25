@@ -81,7 +81,12 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run alert check
-        run: python alert_check.py
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            python alert_check.py --force
+          else
+            python alert_check.py
+          fi
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
 

@@ -48,7 +48,7 @@ from streamlit_sortables import sort_items
 from stock_data import (
     load_watchlists, save_watchlist, fetch_all_markets, validate_ticker, tradingview_url,
     load_settings, save_settings, DEFAULT_SETTINGS, get_benchmarks, get_filterable_metrics,
-    MARKETS, load_data_snapshot, snapshot_is_usable,
+    MARKETS, load_data_snapshot, snapshot_is_usable, save_data_snapshot,
 )
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE, send_discord, SCOPE_LABELS,
                      build_discord_messages_for_rule, describe_schedule, DAY_CODES, DAY_LABELS,
@@ -1848,17 +1848,29 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
 
 if "refresh_token" not in st.session_state:
     st.session_state.refresh_token = 0
+watchlists_now = load_watchlists()
 
 st.sidebar.title("Stock Watchlist")
 sb1, sb2 = st.sidebar.columns(2)
 if sb1.button("Refresh Data", type="primary", width="stretch"):
-    st.session_state.refresh_token += 1
+    with st.spinner("Fetching latest prices & updating snapshot..."):
+        combined, as_of, per_market = fetch_all_markets(watchlists_now, settings=settings_now)
+        save_data_snapshot(as_of, per_market, settings=settings_now)
+        token, repo, branch = get_github_config(st.secrets)
+        if token and repo:
+            ok, msg = push_all_config(token, repo, branch, filenames=["data_snapshot.json"], message=f"Refresh data snapshot via UI ({as_of})")
+            if ok:
+                st.toast(f"✓ Refreshed {len(combined)} tickers & updated GitHub snapshot!")
+            else:
+                st.toast(f"✓ Refreshed live prices! (GitHub sync: {msg})")
+        else:
+            st.toast(f"✓ Refreshed live prices for {len(combined)} tickers!")
+        st.session_state.refresh_token += 1
+        st.rerun()
+
 if sb2.button("⚙️ Settings", width="stretch"):
     settings_dialog()
 render_logout_button()
-
-settings_now = load_settings()
-watchlists_now = load_watchlists()
 
 # Prefer the daily 7 AM ET snapshot (data_snapshot.json, built by
 # .github/workflows/data-refresh.yml) over a live yfinance fetch -- much
