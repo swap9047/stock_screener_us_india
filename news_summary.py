@@ -1,31 +1,20 @@
 """
 LLM-generated news/announcements summary for the watchlist -- a
-Perplexity-Finance-style digest, built via Gemini's Google Search grounding
-(the model searches the web itself and cites sources; see
-https://ai.google.dev/gemini-api/docs/google-search).
+Perplexity-Finance-style digest built with a 3-stage hybrid architecture:
 
-Model choice (gemini-2.5-flash) is NOT arbitrary -- it was picked after
-live-testing against this project's actual free-tier quota (checked via the
-AI Studio Rate Limit dashboard, which differs a lot from Google's generic
-published numbers):
-  - The entire Gemini 3.x family (3, 3.1, 3.5, 3.6, including their "Flash
-    Lite" variants) has ZERO free Search-grounding quota on this account --
-    confirmed by live 429 RESOURCE_EXHAUSTED errors on every 3.x model
-    tested, matching the dashboard's "Gemini 3 -> Search grounding: 0/0".
-  - Gemini 2.5 Flash's grounding calls DO work (tested live, successfully
-    returned cited, dated news), but the account's overall RPD (requests
-    per day) cap for that model is just 20/day -- much tighter than the
-    ~1,500/day figure Google's public docs advertise generically.
+  Stage 1 (Web Search): gemini-2.5-flash with Google Search Grounding
+     Fetches raw news & announcements for each batch of tickers.
 
-Because of that 20/day ceiling, tickers are batched at BATCH_SIZE (13, not
-5) to keep total daily calls comfortably under the cap: 26 US tickers -> 2
-batches, 47 India tickers -> 4 batches, plus one collation call per market
-= 8 calls/day total, vs a 20/day hard limit. If BATCH_SIZE is lowered back
-toward 5, recompute total calls (ceil(n_tickers/batch) per market + 1 per
-market) against whatever the live dashboard currently shows -- these quotas
-are account-specific and change, so don't assume the numbers in this
-docstring still hold without checking https://aistudio.google.com (Rate
-Limit page) again first.
+  Stage 2 (Reasoning & Filtering): gemini-3.6-flash (no search)
+     Filters raw batch notes using deep reasoning against strict recency
+     (24-48h window) and material catalyst conditions (earnings, M&A, FDA,
+     analyst rating changes, >=5% stock moves with reasons). Drops routine noise.
+
+  Stage 3 (Final Collation): gemini-3.6-flash (no search)
+     Combines filtered batch notes per market into a final, crisp, scannable brief.
+
+Batch size is set to 8 (26 US tickers -> 4 batches, 47 India tickers -> 6 batches =
+10 grounded search calls/day total, well under the 20 RPD cap for gemini-2.5-flash).
 """
 
 import json
@@ -36,10 +25,10 @@ from datetime import datetime, timezone
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 NEWS_SUMMARY_FILE = os.path.join(SCRIPT_DIR, "news_summary.json")
 
-GEMINI_MODEL = "gemini-2.5-flash"
-BATCH_SIZE = 13
-# 5 RPM on the free tier for gemini-2.5-flash (see module docstring) -- 15s
-# between calls keeps us at 4/min, a safe margin under that cap.
+SEARCH_MODEL = "gemini-2.5-flash"
+REASONING_MODEL = "gemini-3.6-flash"
+BATCH_SIZE = 8
+# 15s delay between search calls stays comfortably under 4 calls/min
 SECONDS_BETWEEN_CALLS = 15
 
 MARKET_LABELS = {"US": "US Watchlist", "INDIA": "India Watchlist"}
@@ -72,12 +61,9 @@ def batch_list(items, size):
     return [items[i:i + size] for i in range(0, len(items), size)]
 
 
-def summarize_batch(client, tickers, market, as_of_date):
-    """One grounded Gemini call covering a batch of tickers. Returns
-    (text, source_urls) on success, or (None, error_message) on failure --
-    callers should skip a failed batch (not fail the whole run) since a
-    single batch failing (e.g. transient rate limit) shouldn't lose the
-    rest of the day's summary."""
+def fetch_batch_raw_news(client, tickers, market, as_of_date):
+    """Stage 1: Grounded search call using gemini-2.5-flash. Fetches raw news
+    articles and web sources for a batch of tickers."""
     from google.genai import types
     from datetime import datetime, timedelta
 
@@ -85,25 +71,15 @@ def summarize_batch(client, tickers, market, as_of_date):
     exchange = "NSE/BSE-listed" if market == "INDIA" else "US-listed"
     names = ", ".join(_bare_ticker(t) for t in tickers)
     prompt = (
-        f"You are a financial news analyst. For each of these {exchange} stocks: {names} -- "
-        f"search for and report ONLY IMPORTANT, MAJOR news, and ONLY items dated between "
-        f"{cutoff_date} and {as_of_date} (the last 24-48 hours) -- major announcements, "
-        "earnings/results, regulatory or FDA/approval news, M&A, management changes, and major "
-        "stock price moves (with a stated reason). STRICT recency rule: every item must be about "
-        f"something that was announced, published, or happened within that {cutoff_date} to "
-        f"{as_of_date} window -- not older news you find while searching, and not a company's "
-        "full-year or quarterly financial figures unless those figures were freshly reported/"
-        "announced within that window. State the specific date of each item. If you can't "
-        "confirm an item's date falls in that window, leave it out. This is a daily digest, so "
-        "also ignore routine/minor news and small price moves -- only include something if it's "
-        "genuinely significant AND recent. Skip a ticker entirely if there's nothing that "
-        "qualifies -- don't pad with generic/no-news filler. Organize by ticker with a bold "
-        "ticker heading. Be concise -- a few bullet points per ticker, not paragraphs."
+        f"You are a financial news researcher. For each of these {exchange} stocks: {names} -- "
+        f"search for news, announcements, press releases, analyst notes, and stock moves between "
+        f"{cutoff_date} and {as_of_date} (the last 24-48 hours). Report any news items you find for "
+        "each ticker, specifying the date of each item. Be concise."
     )
     try:
         grounding_tool = types.Tool(google_search=types.GoogleSearch())
         config = types.GenerateContentConfig(tools=[grounding_tool])
-        resp = client.models.generate_content(model=GEMINI_MODEL, contents=prompt, config=config)
+        resp = client.models.generate_content(model=SEARCH_MODEL, contents=prompt, config=config)
         text = resp.text or ""
         sources = []
         gm = resp.candidates[0].grounding_metadata if resp.candidates else None
@@ -117,68 +93,74 @@ def summarize_batch(client, tickers, market, as_of_date):
         return None, str(e)
 
 
-def collate_market_summary(client, market, batch_texts, as_of_date=None):
-    """The batch step (summarize_batch) casts a wide net -- it's a search
-    call, not an editor, so it tends to include borderline/routine items
-    (a scheduled board meeting, an ordinary block trade, a small price
-    tick) alongside genuinely important ones, and occasionally an item
-    that isn't actually recent (e.g. a company's FY results surfaced by
-    search even though they weren't freshly announced). This step is
-    where the actual filtering happens: it's a strict editorial pass,
-    Perplexity-Finance-style, that keeps ONLY material AND recent items
-    and writes them as a short, scannable brief -- not an exhaustive
-    per-ticker report. No grounding needed -- it only edits text Gemini
-    already produced (with real search results) in the batch calls, it
-    doesn't search again."""
-    if not batch_texts:
-        return "No major news for this watchlist's tickers in the last 24-48 hours."
+def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date):
+    """Stage 2: Strict reasoning & condition filtering using gemini-3.6-flash.
+    Evaluates raw web notes against recency and material catalyst rules."""
+    if not raw_text:
+        return ""
     from datetime import datetime, timedelta
-    if as_of_date:
-        cutoff_date = (datetime.strptime(as_of_date, "%Y-%m-%d") - timedelta(days=2)).strftime("%Y-%m-%d")
-        window_line = f"ONLY items dated between {cutoff_date} and {as_of_date} (the last 24-48 hours) qualify -- "
-    else:
-        window_line = "ONLY items from the last 24-48 hours qualify -- "
-    combined = "\n\n---\n\n".join(batch_texts)
+
+    cutoff_date = (datetime.strptime(as_of_date, "%Y-%m-%d") - timedelta(days=2)).strftime("%Y-%m-%d")
+    names = ", ".join(_bare_ticker(t) for t in tickers)
+
     prompt = (
-        f"Below are raw notes gathered for tickers in the {MARKET_LABELS.get(market, market)} "
-        "-- some entries are genuinely important and recent, many are routine noise or stale "
-        "info that shouldn't be in a daily briefing. Act as an editor for a daily investor "
-        "briefing (think Perplexity Finance's watchlist digest): produce a SHORT, CRISP summary "
-        "containing ONLY material, recent items.\n\n"
-        "KEEP: major earnings beats/misses with concrete numbers, M&A, regulatory/FDA/approval "
-        "outcomes, large stock price moves (roughly >=5%) WITH a clear stated reason, analyst "
-        "rating or price-target changes from named firms, leadership changes, major contract "
-        "wins/losses, credit rating changes, and anything else genuinely market-moving -- "
-        f"{window_line}if a note doesn't state a date, or its date is older than that window, "
-        "drop it even if it sounds important.\n\n"
-        "DROP entirely: routine scheduled board meetings/investor calls/AGMs/EGMs where no "
-        "outcome is known yet, ordinary block/bulk trades and insider option exercises unless "
-        "unusually large, small price moves without a clear catalyst, generic 'no major news' "
-        "filler, stale/older items outside the recency window above, and anything duplicated "
-        "across entries.\n\n"
-        "Format as a flat list of short bullet points (one line each: **Ticker** -- takeaway), "
-        "not per-ticker sections or headers -- most tickers won't have anything worth including, "
-        "and that's fine. If NOTHING in the whole watchlist clears this bar, say so in one "
-        "sentence instead of listing routine items. Don't invent anything not already present "
-        "in the notes below.\n\n"
-        f"{combined}"
+        f"You are a senior financial analyst. Below is raw news text gathered for tickers: {names}.\n\n"
+        f"STRICT RECENCY RULE: Evaluate each news item. Keep ONLY items dated between {cutoff_date} and "
+        f"{as_of_date} (the last 24-48 hours). Drop anything dated before {cutoff_date} or undated.\n\n"
+        "STRICT MATERIALITY RULE:\n"
+        "- KEEP: quarterly/annual earnings reports, M&A/acquisitions, FDA/regulatory approvals, "
+        "major leadership/CEO changes, analyst upgrades/downgrades/price-target changes, major "
+        "contract wins/losses, credit rating changes, and large stock moves (>= 5%) with stated catalyst.\n"
+        "- DROP ENTIRELY: routine scheduled board meetings/AGMs/EGMs with no outcome yet, ordinary "
+        "insider option exercises, routine block trades, minor price fluctuations, and generic no-news filler.\n\n"
+        "For items that pass both rules, write short, clear bullet points under bold ticker headers. "
+        "If a ticker has no qualifying items, omit it completely.\n\n"
+        f"RAW TEXT:\n{raw_text}"
     )
     try:
-        resp = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+        resp = client.models.generate_content(model=REASONING_MODEL, contents=prompt)
+        return resp.text or raw_text
+    except Exception:
+        return raw_text
+
+
+def collate_market_summary(client, market, batch_texts, as_of_date=None):
+    """Stage 3: Final market collation using gemini-3.6-flash. Combines filtered
+    batch summaries into a short, scannable daily brief (Perplexity Finance style)."""
+    if not batch_texts or not any(t.strip() for t in batch_texts):
+        return "No major news for this watchlist's tickers in the last 24-48 hours."
+    from datetime import datetime, timedelta
+
+    if as_of_date:
+        cutoff_date = (datetime.strptime(as_of_date, "%Y-%m-%d") - timedelta(days=2)).strftime("%Y-%m-%d")
+        window_line = f"ONLY items dated between {cutoff_date} and {as_of_date} (last 24-48 hours) qualify -- "
+    else:
+        window_line = "ONLY items from the last 24-48 hours qualify -- "
+
+    combined = "\n\n---\n\n".join(t for t in batch_texts if t.strip())
+    if not combined.strip():
+        return "No major news for this watchlist's tickers in the last 24-48 hours."
+
+    prompt = (
+        f"Below are filtered news notes gathered for the {MARKET_LABELS.get(market, market)}.\n\n"
+        "Act as an editor for a daily investor briefing (like Perplexity Finance's watchlist digest). "
+        "Produce a SHORT, CRISP summary containing ONLY material, recent items.\n\n"
+        f"{window_line}drop any note if its date falls outside this window or is unconfirmed.\n\n"
+        "Format as a flat list of short bullet points (one line each: **Ticker** -- takeaway), "
+        "not per-ticker sections or headers. Most tickers won't have anything worth including, "
+        "and that's fine. If NOTHING in the whole watchlist clears this bar, say 'No major news for this watchlist's tickers in the last 24-48 hours.' in one sentence.\n\n"
+        f"NOTES:\n{combined}"
+    )
+    try:
+        resp = client.models.generate_content(model=REASONING_MODEL, contents=prompt)
         return resp.text or combined
     except Exception:
-        # Filtering failing is not fatal -- fall back to the raw concatenated
-        # batch texts so a transient error doesn't lose the whole day's work.
         return combined
 
 
 def build_news_summary(watchlists, api_key, batch_size=BATCH_SIZE):
-    """Runs the full pipeline for both markets. Returns a dict:
-    {"as_of": ISO date, "generated_at": ISO datetime, "markets": {"US": {...}, "INDIA": {...}}}
-    Each market entry: {"summary": text, "sources": [...], "batch_count": n, "ticker_count": n}.
-    Paces calls SECONDS_BETWEEN_CALLS apart to respect the free-tier RPM cap
-    -- this function is meant to be run headless (GitHub Actions), so a few
-    minutes of runtime is fine."""
+    """Runs the 3-stage pipeline for both markets. Returns a dict:
+    {"as_of": ISO date, "generated_at": ISO datetime, "markets": {"US": {...}, "INDIA": {...}}}"""
     from google import genai
 
     client = genai.Client(api_key=api_key)
@@ -199,22 +181,28 @@ def build_news_summary(watchlists, api_key, batch_size=BATCH_SIZE):
             continue
 
         batches = batch_list(tickers, batch_size)
-        batch_texts = []
+        filtered_batch_texts = []
         all_sources = []
+
         for batch in batches:
             if not first_call:
                 time.sleep(SECONDS_BETWEEN_CALLS)
             first_call = False
-            text, sources_or_err = summarize_batch(client, batch, market, as_of_date)
-            if text is not None:
-                batch_texts.append(text)
-                all_sources.extend(sources_or_err)
-            else:
-                print(f"  Batch {batch} failed: {sources_or_err}")
 
-        if not first_call:
-            time.sleep(SECONDS_BETWEEN_CALLS)
-        collated = collate_market_summary(client, market, batch_texts, as_of_date=as_of_date)
+            # Stage 1: Grounded web search with gemini-2.5-flash
+            raw_text, sources_or_err = fetch_batch_raw_news(client, batch, market, as_of_date)
+            if raw_text:
+                all_sources.extend(sources_or_err)
+
+                # Stage 2: Reasoning & strict filtering with gemini-3.6-flash
+                clean_text = filter_batch_with_reasoning(client, raw_text, batch, market, as_of_date)
+                if clean_text:
+                    filtered_batch_texts.append(clean_text)
+            else:
+                print(f"  Batch {batch} search failed: {sources_or_err}")
+
+        # Stage 3: Final market collation with gemini-3.6-flash
+        collated = collate_market_summary(client, market, filtered_batch_texts, as_of_date=as_of_date)
 
         result["markets"][market] = {
             "summary": collated,
@@ -227,12 +215,7 @@ def build_news_summary(watchlists, api_key, batch_size=BATCH_SIZE):
 
 
 def build_discord_messages(news_data, limit=1900):
-    """Turns a news_summary.json-shaped dict into a list of Discord-ready
-    message strings, one market at a time, splitting a market's summary
-    across multiple messages if it exceeds Discord's ~2000-char limit
-    (mirrors alerts.build_discord_messages_for_rule's chunking approach,
-    but splits on lines/paragraphs instead of table rows since this is
-    prose, not a table)."""
+    """Turns a news_summary.json-shaped dict into a list of Discord-ready message strings."""
     messages = []
     as_of = news_data.get("as_of", "")
     for market in ("US", "INDIA"):
@@ -245,8 +228,6 @@ def build_discord_messages(news_data, limit=1900):
         if not summary:
             continue
 
-        # Split into paragraph-ish chunks (blank-line separated) so we never
-        # cut a bullet point/ticker section in half if it can be avoided.
         parts = summary.split("\n\n")
         chunks, current, part_num = [], "", 1
 
