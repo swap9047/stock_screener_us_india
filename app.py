@@ -1579,7 +1579,7 @@ def render_expert_analysis_control_bar(market, results):
             view = generate_expert_view(client, row)
             updated_views[tk] = view
             save_expert_views(updated_views)
-            time.sleep(6.1) # 10 RPM (User Request)
+            time.sleep(15)
 
         sync_expert_views_to_github(f"Re-analyze selected tickers ({len(selected_to_reanalyze)}) via UI")
         st.rerun()
@@ -1606,7 +1606,7 @@ def render_expert_analysis_control_bar(market, results):
             view = generate_expert_view(client, row)
             updated_views[tk] = view
             save_expert_views(updated_views)
-            time.sleep(6.1) # 10 RPM (User Request)
+            time.sleep(15)
 
         sync_expert_views_to_github(f"Retry failed/pending tickers ({failed_count}) via UI")
         st.rerun()
@@ -1631,9 +1631,32 @@ def render_expert_analysis_control_bar(market, results):
             view = generate_expert_view(client, row)
             updated_views[tk] = view
             save_expert_views(updated_views)
-            time.sleep(6.1) # 10 RPM (User Request)
+            if idx < len(all_tickers) - 1:
+                time.sleep(15)
 
-        sync_expert_views_to_github(f"Re-analyze all tickers ({len(all_tickers)}) via UI")
+        # Auto-retry any tickers that failed during the main pass
+        still_failed = [
+            tk for tk in all_tickers
+            if not updated_views.get(tk, {}).get("verdict")
+            or updated_views[tk].get("verdict") in ("PENDING", "FAILED")
+            or "error" in (updated_views[tk].get("headline") or "").lower()
+        ]
+        if still_failed:
+            progress_bar.progress(1.0, text=f"Main pass done. Auto-retrying {len(still_failed)} failed ticker(s)...")
+            time.sleep(15)  # cool-down before retry pass
+            for idx, tk in enumerate(still_failed):
+                row = next(r for r in results if r["ticker"] == tk)
+                progress_bar.progress(
+                    (idx + 1) / len(still_failed),
+                    text=f"Retrying failed: {tk} ({idx+1}/{len(still_failed)})...",
+                )
+                view = generate_expert_view(client, row)
+                updated_views[tk] = view
+                save_expert_views(updated_views)
+                if idx < len(still_failed) - 1:
+                    time.sleep(15)
+
+        sync_expert_views_to_github(f"Re-analyze all tickers ({len(all_tickers)}) + auto-retry via UI")
         st.rerun()
 
 
