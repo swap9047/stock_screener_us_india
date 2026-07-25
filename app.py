@@ -43,6 +43,9 @@ from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 import streamlit as st
+from dotenv import load_dotenv
+
+load_dotenv(".env")
 from streamlit_sortables import sort_items
 
 from stock_data import (
