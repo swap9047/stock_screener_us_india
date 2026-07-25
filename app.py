@@ -1513,6 +1513,22 @@ def render_ticker_notes_manager():
                 st.markdown(line)
 
 
+def sync_expert_views_to_github(message):
+    token, repo, branch = get_github_config(st.secrets)
+    if token and repo:
+        ok, msg = push_all_config(
+            token, repo, branch,
+            filenames=["expert_views.json"],
+            message=message
+        )
+        if ok:
+            st.toast("✓ Saved & committed updated AI Expert Views to GitHub!")
+        else:
+            st.toast(f"✓ Saved locally! (GitHub sync: {msg})")
+    else:
+        st.toast("✓ Saved updated AI Expert Views!")
+
+
 def render_expert_analysis_control_bar(market, results):
     expert_views = load_expert_views()
     api_key = get_gemini_api_key(st.secrets)
@@ -1560,7 +1576,7 @@ def render_expert_analysis_control_bar(market, results):
             save_expert_views(updated_views)
             time.sleep(0.5)
 
-        st.toast(f"✓ Re-analyzed {len(selected_to_reanalyze)} selected tickers!")
+        sync_expert_views_to_github(f"Re-analyze selected tickers ({len(selected_to_reanalyze)}) via UI")
         st.rerun()
 
     failed_count = len(failed_tickers)
@@ -1587,7 +1603,7 @@ def render_expert_analysis_control_bar(market, results):
             save_expert_views(updated_views)
             time.sleep(0.5)
 
-        st.toast(f"✓ Successfully re-analyzed {failed_count} tickers!")
+        sync_expert_views_to_github(f"Retry failed/pending tickers ({failed_count}) via UI")
         st.rerun()
 
     if c4.button(
@@ -1612,7 +1628,7 @@ def render_expert_analysis_control_bar(market, results):
             save_expert_views(updated_views)
             time.sleep(0.5)
 
-        st.toast(f"✓ Re-analyzed all {len(all_tickers)} tickers!")
+        sync_expert_views_to_github(f"Re-analyze all tickers ({len(all_tickers)}) via UI")
         st.rerun()
 
 
@@ -1646,7 +1662,7 @@ def render_expert_view_expander(market, filtered_rows, settings):
                 if st.button("⚡ Re-analyze Ticker", key=f"re_ev_{market}_{sel_ticker}", disabled=not api_key, width="stretch"):
                     with st.spinner(f"Analyzing {sel_ticker} with gemini-3.6-flash..."):
                         new_view = analyze_single_ticker(sel_ticker, row, api_key)
-                        st.toast(f"✓ Generated fresh AI Expert Take for {sel_ticker}!")
+                        sync_expert_views_to_github(f"Re-analyze single ticker ({sel_ticker}) via UI")
                         st.rerun()
 
 
