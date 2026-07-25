@@ -2,6 +2,7 @@
   "order": [
     "pct_change_1d",
     "trend",
+    "expert_take",
     "tech_uptrend_label",
     "vstop_change",
     "volume_trend",

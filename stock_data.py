@@ -148,6 +148,7 @@ def get_filterable_metrics(settings=None):
         "Tech Uptrend": "tech_uptrend",
         "Flag": "flag",
         "Notes": "note",
+        "Expert Take": "expert_take",
     }
 
 

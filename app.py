@@ -56,7 +56,8 @@ from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE, 
 from filters import (get_market_filters, save_market_filters, apply_filters, describe_filter,
                      describe_chain, describe_chain_with_values, passes_filter_chain, CATEGORICAL_METRICS)
 from github_sync import get_github_config, push_all_config, SYNCABLE_FILES
-from news_summary import load_news_summary, MARKET_LABELS
+from news_summary import load_news_summary, MARKET_LABELS, get_gemini_api_key
+from expert_views import load_expert_views, save_expert_views, analyze_single_ticker
 from custom_columns import (
     load_custom_columns, save_custom_columns, validate_formula, column_key,
     FORMAT_CHOICES, CUSTOM_COLUMNS_FILE, apply_custom_columns_to_rows,
@@ -457,6 +458,13 @@ def style_row(row, ema_labels):
                 styles[i] = f"color:{color};font-weight:600"
         elif col == "Alerts" and isinstance(val, str) and val not in ("—", ""):
             styles[i] = "color:#8e44ad;font-weight:600"
+        elif col == "Expert Take" and isinstance(val, str):
+            if "Accumulate" in val:
+                styles[i] = "color:#1e8449;font-weight:700"
+            elif "Caution" in val:
+                styles[i] = "color:#c0392b;font-weight:700"
+            elif "Hold" in val:
+                styles[i] = "color:#d4ac0d;font-weight:700"
     return styles
 
 
@@ -1125,6 +1133,7 @@ def build_column_defs(labels, custom_columns=None):
     identical set of columns. Enabled custom columns are appended at the
     end, using their stable custom_<id> key (see custom_columns.py)."""
     optional_defs = [
+        ("expert_take", "Expert Take"),
         ("trend", "Trend"),
         ("flag", "Flag"),
         ("note", "Notes"),
@@ -1499,6 +1508,40 @@ def render_ticker_notes_manager():
                 st.markdown(line)
 
 
+def render_expert_view_expander(market, filtered_rows, settings):
+    expert_views = load_expert_views()
+    tickers = [r["ticker"] for r in filtered_rows]
+    if not tickers:
+        return
+    with st.expander(f"🤖 AI Stock Expert Views ({market} — {len(tickers)} tickers)", expanded=False):
+        sel_ticker = st.selectbox(f"Select ticker for AI Expert Rationale", tickers, key=f"ev_sel_{market}")
+        if sel_ticker:
+            row = next(r for r in filtered_rows if r["ticker"] == sel_ticker)
+            view = expert_views.get(sel_ticker)
+            
+            c1, c2 = st.columns([4, 1])
+            with c1:
+                if view:
+                    v_badge = {"ACCUMULATE": "🟢 ACCUMULATE / ADD", "HOLD": "🟡 HOLD / WATCH", "CAUTION": "🔴 CAUTION / EXIT"}.get(view.get("verdict"), "⚪ PENDING")
+                    st.markdown(f"### {sel_ticker} — {v_badge}")
+                    if view.get("headline"):
+                        st.markdown(f"**Headline:** {view.get('headline')}")
+                    st.markdown(f"**📊 Quantitative & Volume Rationale:**\n{view.get('technical_summary', 'N/A')}")
+                    st.markdown(f"**📰 News & Catalyst Findings:**\n{view.get('catalyst_summary', 'N/A')}")
+                    st.info(f"**💡 Investor Take & Action Plan:**\n{view.get('actionable_take', 'N/A')}")
+                    st.caption(f"Analysis generated: {view.get('as_of', 'Recent')}")
+                else:
+                    st.info(f"No AI Expert View stored yet for {sel_ticker}. Click 'Re-analyze Ticker' to generate.")
+            
+            with c2:
+                api_key = get_gemini_api_key(st.secrets)
+                if st.button("⚡ Re-analyze Ticker", key=f"re_ev_{market}_{sel_ticker}", disabled=not api_key, width="stretch"):
+                    with st.spinner(f"Analyzing {sel_ticker} with gemini-3.6-flash..."):
+                        new_view = analyze_single_ticker(sel_ticker, row, api_key)
+                        st.toast(f"✓ Generated fresh AI Expert Take for {sel_ticker}!")
+                        st.rerun()
+
+
 def render_market_tab(market, results, settings, visible_keys, label_by_key, sort_field=None, sort_ascending=True):
     benchmarks = get_benchmarks(settings)
     bench = benchmarks[market]
@@ -1746,6 +1789,25 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             ", ".join(str(n) for n in sorted(alert_matches.get(r["ticker"], []))) or "—" for r in filtered
         ]
 
+        expert_views = load_expert_views()
+        def _expert_take_cell(ticker):
+            v = expert_views.get(ticker, {})
+            verdict = v.get("verdict")
+            headline = v.get("headline", "")
+            actionable = v.get("actionable_take", "")
+            if verdict == "ACCUMULATE":
+                badge = "🟢 Accumulate"
+            elif verdict == "HOLD":
+                badge = "🟡 Hold"
+            elif verdict == "CAUTION":
+                badge = "🔴 Caution"
+            else:
+                badge = "⚪ Pending"
+            tooltip = f"{headline}\n\n{actionable}" if headline else "Expand AI Stock Expert Views below to analyze."
+            return with_tooltip(badge, tooltip)
+
+        raw_df["expert_take"] = [_expert_take_cell(r["ticker"]) for r in filtered]
+
         # Column visibility/order is chosen ONCE via the shared sidebar
         # picker (render_shared_column_picker) and passed in, so US and
         # India always show identical columns in identical order.
@@ -1812,6 +1874,8 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
                 st.caption("Alert legend: " + " · ".join(legend_bits))
     else:
         st.info("No tickers match the current filters.")
+
+    render_expert_view_expander(market, filtered, settings)
 
     st.caption(
         f"Mansfield RS = ((price/{bench} ratio today ÷ SMA of that ratio, n) − 1) × 100. "
