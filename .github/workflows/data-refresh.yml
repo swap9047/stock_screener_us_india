@@ -1,5 +1,8 @@
 name: Daily Data Refresh
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 # Runs once/day at ~7:00 AM ET (before market open), fetching all watchlist
 # tickers via yfinance and saving the result to data_snapshot.json. The
 # Streamlit app reads this snapshot on load instead of hitting yfinance
@@ -54,7 +57,7 @@ jobs:
                   pass
                   
           hour_diff = min((now_et.hour - rule_hour) % 24, (rule_hour - now_et.hour) % 24)
-          due = is_valid_cron and (hour_diff <= 6)
+          due = is_valid_cron and (hour_diff <= 23)
           
           print(f"due={'true' if due else 'false'}")
           EOF

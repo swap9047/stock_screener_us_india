@@ -116,7 +116,7 @@ def describe_schedule(rule):
     return f"🔔 {days_str} @ {time_et} ET"
 
 
-DUE_TOLERANCE_HOURS = 6
+DUE_TOLERANCE_HOURS = 23
 # GitHub Actions' scheduler is documented as best-effort: a cron trigger can
 # be delayed well past its nominal time, especially during high load (we
 # saw this directly -- both of the day's cron runs landed as gate-only
