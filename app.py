@@ -1552,14 +1552,20 @@ def render_expert_analysis_control_bar(market, results):
     api_key = get_gemini_api_key(st.secrets)
 
     all_tickers = [r["ticker"] for r in results]
-    failed_tickers = []
-    for r in results:
-        tk = r["ticker"]
-        v = expert_views.get(tk, {})
-        verdict = v.get("verdict")
-        headline = (v.get("headline") or "").lower()
-        if not verdict or verdict in ("PENDING", "FAILED") or "error" in headline or "pending" in headline:
-            failed_tickers.append(tk)
+
+    # --- Auto-cleanup: remove stale tickers no longer in watchlist ---
+    stale_keys = [tk for tk in expert_views if tk not in all_tickers]
+    if stale_keys:
+        for tk in stale_keys:
+            del expert_views[tk]
+        save_expert_views(expert_views)
+        sync_expert_views_to_github(f"Auto-cleanup: removed {len(stale_keys)} deleted ticker(s) from expert_views")
+
+    # --- Detect failed/pending tickers (includes newly added ones with no entry) ---
+    failed_tickers = [
+        tk for tk in all_tickers
+        if not _is_valid_view(expert_views.get(tk))
+    ]
 
     st.markdown("##### 🤖 AI Stock Expert Analysis Controls")
     c1, c2, c3, c4 = st.columns([3.5, 1.3, 1.8, 1.4])
@@ -1720,7 +1726,7 @@ def render_expert_view_expander(market, filtered_rows, settings):
             with c2:
                 api_key = get_gemini_api_key(st.secrets)
                 if st.button("⚡ Re-analyze Ticker", key=f"re_ev_{market}_{sel_ticker}", disabled=not api_key, width="stretch"):
-                    with st.spinner(f"Analyzing {sel_ticker} with gemini-3.5-flash..."):
+                    with st.spinner(f"Analyzing {sel_ticker} with gemini-3.5-flash-lite..."):
                         new_view = analyze_single_ticker(sel_ticker, row, api_key)
                         sync_expert_views_to_github(f"Re-analyze single ticker ({sel_ticker}) via UI")
                         st.rerun()
