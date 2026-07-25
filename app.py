@@ -1849,6 +1849,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
 if "refresh_token" not in st.session_state:
     st.session_state.refresh_token = 0
 watchlists_now = load_watchlists()
+settings_now = load_settings()
 
 st.sidebar.title("Stock Watchlist")
 sb1, sb2 = st.sidebar.columns(2)
