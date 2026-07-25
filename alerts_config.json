@@ -86,7 +86,8 @@
         "operator": "<=",
         "compare_type": "metric",
         "metric_b": "ema10",
-        "logic": "AND"
+        "logic": "AND",
+        "multiplier": 1.03
       }
     ],
     "enabled": true,
@@ -117,61 +118,6 @@
       }
     ],
     "enabled": true,
-    "schedule": {
-      "type": "scheduled",
-      "days": [
-        "MON",
-        "TUE",
-        "WED",
-        "THU",
-        "FRI"
-      ],
-      "time_et": "21:00"
-    }
-  },
-  {
-    "id": "9a7e179b",
-    "name": "stocks in downtrend",
-    "scope": "ALL",
-    "conditions": [
-      {
-        "metric_a": "trend",
-        "operator": "in",
-        "compare_type": "value",
-        "value": [
-          "Downtrend",
-          "Strong Downtrend"
-        ],
-        "logic": "AND"
-      }
-    ],
-    "enabled": true,
-    "schedule": {
-      "type": "scheduled",
-      "days": [
-        "MON",
-        "TUE",
-        "WED",
-        "THU",
-        "FRI"
-      ],
-      "time_et": "21:00"
-    }
-  },
-  {
-    "id": "e3318705",
-    "name": "rsi monthly below 50",
-    "scope": "ALL",
-    "conditions": [
-      {
-        "metric_a": "rsi14_monthly",
-        "operator": "<=",
-        "compare_type": "value",
-        "value": 50.0,
-        "logic": "AND"
-      }
-    ],
-    "enabled": false,
     "schedule": {
       "type": "scheduled",
       "days": [
