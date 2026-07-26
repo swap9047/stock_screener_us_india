@@ -1719,7 +1719,8 @@ def render_expert_view_expander(market, filtered_rows, settings):
                     st.markdown(f"**📊 Quantitative & Volume Rationale:**\n{view.get('technical_summary', 'N/A')}")
                     st.markdown(f"**📰 News & Catalyst Findings:**\n{view.get('catalyst_summary', 'N/A')}")
                     st.info(f"**💡 Investor Take & Action Plan:**\n{view.get('actionable_take', 'N/A')}")
-                    st.caption(f"Analysis generated: {view.get('as_of', 'Recent')}")
+                    news_source = view.get("news_source", "")
+                    st.caption(f"Analysis generated: {view.get('as_of', 'Recent')} · News source: {news_source if news_source else '⚪ Unknown'}")
                 else:
                     st.info(f"No AI Expert View stored yet for {sel_ticker}. Click 'Re-analyze Ticker' to generate.")
             

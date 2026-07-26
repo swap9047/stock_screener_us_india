@@ -125,12 +125,14 @@ Return ONLY a valid JSON object matching this schema:
     return prompt
 
 
-def generate_expert_view(client, row_data, news_text=None, active_alerts_text=None):
+def generate_expert_view(client, row_data, news_text=None, news_source=None, active_alerts_text=None):
     from google.genai import types
 
     ticker = row_data.get("ticker", "UNKNOWN")
+    market = row_data.get("market", "US")
+
     if news_text is None:
-        news_text = get_stock_news(ticker)
+        news_text, news_source = get_stock_news(ticker, market=market)
 
     prompt = build_expert_prompt(row_data, news_text, active_alerts_text)
     try:
@@ -139,6 +141,7 @@ def generate_expert_view(client, row_data, news_text=None, active_alerts_text=No
         data = json.loads(resp.text)
         data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         data["news_used"] = news_text
+        data["news_source"] = news_source or "⚪ Unknown"
         return data
     except Exception as e:
         print(f"  [expert_view error] {ticker}: {e}")
@@ -149,6 +152,7 @@ def generate_expert_view(client, row_data, news_text=None, active_alerts_text=No
             "catalyst_summary": news_text,
             "actionable_take": "Review technical indicators in table.",
             "as_of": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+            "news_source": news_source or "⚪ Unknown",
         }
 
 
