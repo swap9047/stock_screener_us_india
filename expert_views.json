@@ -1,13 +1,1 @@
-{
-  "TWST": {
-    "verdict": "HOLD",
-    "headline": "Uptrend intact but near-term weakness and distribution suggest waiting for better entry.",
-    "technical_summary": "Price above key weekly EMAs (10,20,40) and VStop rising, but below 10 DEMA (92.3) with neutral daily RSI (51.4) and negative net volume (-20.1%). Volume trend is in-line but below the 1.4x threshold for a confirmed tech uptrend.",
-    "catalyst_summary": "Recent positive price jumps (7.7%, 8%) driven by strong results and AI drug demand, offset by an insider sale in late 2024. No major new catalysts in the last 24-48 hours.",
-    "actionable_take": "Hold existing positions. Consider adding on a pullback to the 20 WEMA near $72 or if price reclaims the 10 DEMA with above-average volume. Maintain a trailing stop at the VStop level of $82.6.",
-    "as_of": "2026-07-26 01:34",
-    "news_used": "- [2022-06-27] Twist Bioscience (TWST) Stock Jumps 7.7%: Will It Continue to Soar? (Source: Nasdaq)\n- [2024-12-30] Insider Sale: Director at $TWST (TWST) Sells 709 Shares (Source: Nasdaq)\n- [2026-07-24] Twist Bioscience (TWST) Surged on Strong Results and AI Drug Discovery Demand (Source: Insider Monkey)\n- [2026-02-02] TWST shares rise 8% \u2014 what's driving the rally? (Source: MSN)",
-    "news_source": "\ud83e\udd86 DuckDuckGo",
-    "model_used": "deepseek-v4-flash"
-  }
-}
+{}
