@@ -1,12 +1,262 @@
 {
   "TWST": {
-    "verdict": "ACCUMULATE",
-    "headline": "TWST exhibits strong Stage 2 momentum and relative strength despite a short-term volume consolidation pause.",
-    "technical_summary": "Price remains firmly above rising weekly and daily moving averages (40 WEMA at 59.6, 50 DEMA at 82.1), supported by robust Mansfield Relative Strength and a weekly VStop level at 82.6. Although 10-day volume is slightly below average with a negative near-term net volume ratio, the broader structural uptrend remains intact.",
-    "catalyst_summary": "No major fundamental news or announcements have been reported in the past 48 hours, leaving the stock driven primarily by its ongoing technical uptrend and institutional sponsorship.",
-    "actionable_take": "Consider accumulating shares on a pullback toward the rising 10 DEMA around 92.00 or closer to the weekly VStop / 50 DEMA support zone near 82.00\u201383.00. Maintain a strict trailing stop loss below the 82.60 VStop level to protect capital against trend failure.",
-    "as_of": "2026-07-26 00:58",
+    "verdict": "HOLD",
+    "headline": "TWST maintains a strong medium-term uptrend but exhibits short-term consolidation and negative volume pressure.",
+    "technical_summary": "Price trades comfortably above rising weekly and daily EMAs with strong Mansfield Relative Strength, but technical uptrend criteria fail due to below-average short-term volume (10D vs 100D) and negative 10-day net volume accumulation (-20.1%).",
+    "catalyst_summary": "No major news or announcements reported in the last 48 hours, leaving the stock driven primarily by underlying technical momentum and broader market conditions.",
+    "actionable_take": "Maintain current positions while utilizing the volatility stop at 82.6 as a trailing risk-control level. Look for a pullback toward the 82-84 support zone or an expansion in volume before adding fresh capital.",
+    "as_of": "2026-07-26 00:59",
     "news_used": "No recent major news or announcements found in the last 48 hours.",
     "news_source": "\u26aa No Source"
+  },
+  "KRYS": {
+    "verdict": "HOLD",
+    "headline": "KRYS maintains a solid structural uptrend despite short-term distribution and consolidation below highs.",
+    "technical_summary": "The stock trades in a confirmed Stage 2 uptrend with price above rising 40-week and 200-day EMAs, backed by positive Mansfield Relative Strength and a VStop level at 328.1. However, short-term volume shows an exploding trend with a negative net volume ratio (-62.6%) and daily RSI at 45.4, indicating ongoing digestion and institutional distribution near current levels.",
+    "catalyst_summary": "No major news or announcements have been reported in the past 48 hours, suggesting the current price action is driven by technical rotation and sector dynamics rather than fresh fundamental catalysts.",
+    "actionable_take": "Investors should hold current positions while monitoring the 328.1 VStop and 20 WEMA (313.7) support zones. Look for a contraction in volume and a return to positive net accumulation before deploying new capital or adding to existing shares.",
+    "as_of": "2026-07-26 00:59",
+    "news_used": "No recent major news or announcements found in the last 48 hours.",
+    "news_source": "\u26aa No Source"
+  },
+  "NTRA": {
+    "verdict": "ACCUMULATE",
+    "headline": "NTRA exhibits strong Stage 2 continuation with positive relative strength and ongoing accumulation.",
+    "technical_summary": "Price remains firmly above key moving averages with a rising 40-week EMA, solid Mansfield Relative Strength, and positive 10-day net volume accumulation, despite near-term volume cooling.",
+    "catalyst_summary": "No direct company-specific fundamental news headlines reported in the recent window, allowing technical trend persistence to drive momentum.",
+    "actionable_take": "Consider accumulating on pullbacks toward the 10-day or 50-day daily EMAs (around $246-$266). Maintain a strict trailing stop below the weekly volatility stop level at $235.10 to protect capital against trend reversals.",
+    "as_of": "2026-07-26 00:59",
+    "news_used": "*   **ORCL** -- Awarded a 10-year, potentially $6.99 billion contract by the U.S. Department of War on July 23, 2026, leading to a stock jump after hours.",
+    "news_source": "\ud83d\udd0d Google Search (News Summary)"
+  },
+  "QURE": {
+    "verdict": "HOLD",
+    "headline": "QURE consolidates recent gains above rising EMAs amid declining near-term volume.",
+    "technical_summary": "The stock remains in a medium-term uptrend with price above rising 40-week and 200-day EMAs, backed by positive Mansfield Relative Strength. However, volume is currently declining and 10-day net volume shows negative accumulation, while the technical uptrend criteria are not fully met due to soft short-term volume ratios.",
+    "catalyst_summary": "No major news or significant catalysts have been reported in the past 24-48 hours.",
+    "actionable_take": "Maintain current positions while monitoring support near the 10 WEMA (36.7) and the Volatility Stop level at 35.2. Wait for a pickup in accumulation volume before adding new capital, and use a strict stop below the 35.2 VStop level to manage downside risk.",
+    "as_of": "2026-07-26 01:00",
+    "news_used": "No recent major news or announcements found in the last 48 hours.",
+    "news_source": "\u26aa No Source"
+  },
+  "GRID": {
+    "verdict": "CAUTION",
+    "headline": "GRID exhibits short-term distribution and negative relative strength despite holding above the rising 40-week moving average.",
+    "technical_summary": "The stock is in a short-term downtrend with a negative Volatility Stop (VStop at 193.4) and negative Mansfield Relative Strength across daily, weekly, and monthly timeframes. Volume is declining with a net negative 10-day volume ratio (-22.3%), signaling distribution rather than accumulation.",
+    "catalyst_summary": "No major news or fundamental catalysts were reported in the last 48 hours to drive immediate buying interest.",
+    "actionable_take": "Investors should avoid new long entries while momentum remains weak and relative strength is negative. Wait for the stock to reclaim its fast EMAs, reverse the VStop direction, and show positive accumulation volume before considering any exposure.",
+    "as_of": "2026-07-26 01:00",
+    "news_used": "No recent major news or announcements found in the last 48 hours.",
+    "news_source": "\u26aa No Source"
+  },
+  "RKLB": {
+    "verdict": "CAUTION",
+    "headline": "RKLB struggles in a defined Stage 4 downtrend with negative net volume accumulation.",
+    "technical_summary": "The stock trades below its 40 WEMA and 50 DEMA with a negative Mansfield Relative Strength and a triggered downward Volatility Stop at 96.0. Daily RSI is weak at 31.3, and 10-day net volume shows ongoing distribution.",
+    "catalyst_summary": "No major company-specific news or announcements were reported in the last 48 hours to alter the prevailing technical trend.",
+    "actionable_take": "Avoid new long entries while the stock remains in a confirmed downtrend and below major moving averages. Current holders should respect strict stop-loss protocols, as any bounce toward the 71-78 resistance zone serves as a potential risk-mitigation exit area.",
+    "as_of": "2026-07-26 01:00",
+    "news_used": "No recent major news or announcements found in the last 48 hours.",
+    "news_source": "\u26aa No Source"
+  },
+  "META": {
+    "verdict": "CAUTION",
+    "headline": "META faces downward momentum pressure with negative relative strength and distribution.",
+    "technical_summary": "The stock is in a defined downtrend trading below its key 40-week and 200-day EMAs, accompanied by negative Mansfield Relative Strength and heavy 10-day net distribution (-52.7%).",
+    "catalyst_summary": "Recent news includes a US teen withdrawing a social media addiction lawsuit against Meta Platforms, which is a minor legal development with limited fundamental impact.",
+    "actionable_take": "Avoid initiating new long positions while the stock remains under its major moving averages and exhibits negative relative strength. Maintain a strict trailing stop near the weekly volatility stop level of 566.8 if holding existing shares, and wait for a clear reclaiming of the 40-week moving average and positive volume accumulation before considering re-entry.",
+    "as_of": "2026-07-26 01:01",
+    "news_used": "*   **META** -- A US teen withdrew a social media addiction lawsuit against Meta Platforms on July 23, 2026.",
+    "news_source": "\ud83d\udd0d Google Search (News Summary)"
+  },
+  "IAU": {
+    "verdict": "CAUTION",
+    "headline": "IAU remains in a structural downtrend with negative relative strength and declining volume.",
+    "technical_summary": "The stock trades below its key 40-week and 200-day EMAs, with negative Mansfield Relative Strength across all timeframes and a bearish Volatility Stop triggered at 83.6. Although the 10-day net volume ratio shows minor positive accumulation, overall volume trend is declining and momentum RSI sits below neutral at 44.8.",
+    "catalyst_summary": "No major fundamental news or announcements were found in the recent cycle, leaving the asset driven purely by broader macroeconomic and technical factors.",
+    "actionable_take": "Avoid initiating new long positions while the stock remains below its major moving averages and downtrend rank. Use any counter-trend bounces toward resistance as an exit opportunity or maintain strict trailing stops if holding existing inventory.",
+    "as_of": "2026-07-26 01:01",
+    "news_used": "No recent major news or announcements found in the last 48 hours.",
+    "news_source": "\u26aa No Source"
+  },
+  "HIMS": {
+    "verdict": "CAUTION",
+    "headline": "HIMS remains under pressure in a short-term downtrend with declining volume and negative net accumulation.",
+    "technical_summary": "The stock trades below its key weekly and daily moving averages (10, 20, 40 WEMA and 50, 200 DEMA), registering a negative Mansfield Relative Strength daily (-5.4) and monthly (-20.7). Volume trends are declining with a negative 10-day net volume ratio (-4.1%), indicating ongoing distribution rather than accumulation.",
+    "catalyst_summary": "No major company-specific news or fundamental catalysts have been reported in the past 48 hours to alter the current technical setup.",
+    "actionable_take": "Avoid initiating new long positions while the stock remains below its major moving averages and volume trend stays negative. Protect existing positions using the weekly volatility stop at $25.4, and wait for a clear base-building phase and return of institutional accumulation before re-evaluating.",
+    "as_of": "2026-07-26 01:01",
+    "news_used": "No recent major news or announcements found in the last 48 hours.",
+    "news_source": "\u26aa No Source"
+  },
+  "ZS": {
+    "verdict": "CAUTION",
+    "headline": "ZS remains locked in a clear institutional downtrend with negative relative strength and distribution.",
+    "technical_summary": "The stock trades below its falling 40-week and 200-day moving averages with a negative Mansfield RS (-8.3 weekly) and declining volume trend, failing all key Weinstein stage analysis criteria.",
+    "catalyst_summary": "No major fundamental news or catalysts were reported in the last 48 hours to alter the prevailing negative price momentum.",
+    "actionable_take": "Avoid establishing new long positions while the stock remains below its major moving averages and volatility stop at 168.6. Existing holders should maintain strict risk controls or exit to prevent further capital erosion.",
+    "as_of": "2026-07-26 01:01",
+    "news_used": "No recent major news or announcements found in the last 48 hours.",
+    "news_source": "\u26aa No Source"
+  },
+  "BNTX": {
+    "verdict": "CAUTION",
+    "headline": "BioNTech faces sustained technical downtrend despite strategic pivot toward oncology.",
+    "technical_summary": "BNTX is in a clear Stage 4 downtrend, trading below all key daily and weekly EMAs with negative Mansfield Relative Strength and declining volume trend.",
+    "catalyst_summary": "BioNTech announced a strategic pivot on July 23, 2026, to focus heavily on the oncology market, though fundamental market impact remains to be seen.",
+    "actionable_take": "Avoid establishing new long positions while the stock remains below its key moving averages and relative strength is negative. If holding, respect the weekly volatility stop at 87.3 as a strict downside exit trigger.",
+    "as_of": "2026-07-26 01:02",
+    "news_used": "*   **BNTX** -- BioNTech announced a strategic pivot on July 23, 2026, to focus on the oncology market.",
+    "news_source": "\ud83d\udd0d Google Search (News Summary)"
+  },
+  "JNJ": {
+    "verdict": "ACCUMULATE",
+    "headline": "Strong momentum and positive earnings catalyst support continuation of the primary uptrend.",
+    "technical_summary": "JNJ trades firmly above all key daily and weekly moving averages with a rising 40-week EMA, a positive Mansfield Relative Strength of +5.5 weekly, and constructive 10-day net accumulation volume.",
+    "catalyst_summary": "Solid Q2 2026 earnings reported 5.7% sales growth to $25.3 billion alongside a positive European Medicines Agency panel opinion for the plaque psoriasis pill Icotyde.",
+    "actionable_take": "Look to add to positions on minor pullbacks toward the 10-day or 50-day moving averages in the $248-$255 zone. Maintain a disciplined trailing stop just below the weekly Volatility Stop level at $242.50.",
+    "as_of": "2026-07-26 01:02",
+    "news_used": "*   **JNJ** -- Plaque psoriasis pill Icotyde received a positive opinion from the European Medicines Agency's expert panel on July 24, 2026.\n*   **JNJ** -- Reported Q2 2026 adjusted sales grew 5.7% to $25.3 billion with adjusted earnings of $2.90 per share.",
+    "news_source": "\ud83d\udd0d Google Search (News Summary)"
+  },
+  "ORCL": {
+    "verdict": "CAUTION",
+    "headline": "ORCL remains locked in a severe downtrend despite a major new defense contract catalyst.",
+    "technical_summary": "The stock is trading near its 52-week low at 115.0, well below all major moving averages (200 DEMA at 177.7, 40 WEMA at 175.0) with an active downward VStop at 161.0. Mansfield Relative Strength is deeply negative (-33.4 daily) and 10-day net volume shows heavy distribution (-44.1%), indicating persistent institutional selling despite oversold RSI levels.",
+    "catalyst_summary": "Oracle was recently awarded a 10-year, potentially $6.99 billion contract by the U.S. Department of War on July 23, 2026, causing a temporary after-hours price jump.",
+    "actionable_take": "Despite the massive multi-billion dollar government contract, the technical damage and heavy distribution outweigh the fundamental catalyst. Investors should avoid attempting to catch a falling knife and wait for a multi-week base formation, positive relative strength shift, and a reclaimed 40-week moving average before considering new capital allocation.",
+    "as_of": "2026-07-26 01:02",
+    "news_used": "*   **ORCL** -- Awarded a 10-year, potentially $6.99 billion contract by the U.S. Department of War on July 23, 2026, leading to a stock jump after hours.",
+    "news_source": "\ud83d\udd0d Google Search (News Summary)"
+  },
+  "ASX": {
+    "verdict": "HOLD",
+    "headline": "ASX consolidating gains above rising moving averages amid short-term volume distribution.",
+    "technical_summary": "The stock remains in a broader structural uptrend with price above key weekly and daily moving averages (20/40 WEMA, 200 DEMA) and strong weekly/monthly relative strength. However, short-term momentum has cooled with a daily RSI of 43.8, and 10-day net volume shows negative distribution (-48.1%), keeping it out of a strict technical breakout status.",
+    "catalyst_summary": "No major company-specific news or announcements have been reported in the last 48 hours, leaving the stock to trade purely on technical price action and prevailing market trends.",
+    "actionable_take": "Maintain current positions while utilizing the weekly volatility stop near 36.2 as a trailing risk threshold. Look to add only upon a decisive breakout above short-term resistance accompanied by a surge in buying volume.",
+    "as_of": "2026-07-26 01:03",
+    "news_used": "No recent major news or announcements found in the last 48 hours.",
+    "news_source": "\u26aa No Source"
+  },
+  "BE": {
+    "verdict": "CAUTION",
+    "headline": "BE trades below major moving averages under persistent distribution and negative relative strength.",
+    "technical_summary": "The stock is in a defined downtrend, trading below the 40-week and 50/200-day EMAs with negative Mansfield Relative Strength and a negative 10-day net volume accumulation ratio (-37.4%). Volatility stop points downward at 275.1, highlighting significant overhead pressure.",
+    "catalyst_summary": "No specific fundamental catalysts or major company news were reported for BE in the recent timeframe, leaving the stock vulnerable to technical momentum and broader market sentiment.",
+    "actionable_take": "Avoid new long exposure given the prevailing downtrend and heavy distribution patterns. Wait for a confirmed structural shift above key moving averages and a positive reversal in net volume before considering an entry.",
+    "as_of": "2026-07-26 01:03",
+    "news_used": "Here's a digest of important, major news for the requested US-listed stocks, dated between 2026-07-23 and 2026-07-25:\n*   **SNDK** -- Bernstein SocGen Group raised its price target to $3,000 from $1,700 on July 23, 2026, maintaining an Outperform rating.",
+    "news_source": "\ud83d\udd0d Google Search (News Summary)"
+  },
+  "MRAAY": {
+    "verdict": "HOLD",
+    "headline": "MRAAY consolidates above rising moving averages amid short-term distribution.",
+    "technical_summary": "The stock remains in a broader structural uptrend with price above the rising 40 WEMA and positive medium-to-long term Mansfield Relative Strength, but short-term momentum has softened (Daily RSI 40.6) and 10-day net volume shows negative distribution (-23.4%) with the VStop currently triggered downward.",
+    "catalyst_summary": "No major news or fundamental catalysts have been reported in the last 48 hours, suggesting the current price action is driven strictly by technical digestion.",
+    "actionable_take": "Investors should hold current positions and wait for volume to shift back to accumulation and price to reclaim the 10 DEMA and 50 DEMA near 26.0-26.9. Use a disciplined stop-loss below the rising 20 WEMA (23.4) to protect capital during this consolidation phase.",
+    "as_of": "2026-07-26 01:03",
+    "news_used": "No recent major news or announcements found in the last 48 hours.",
+    "news_source": "\u26aa No Source"
+  },
+  "AMKR": {
+    "verdict": "HOLD",
+    "headline": "AMKR surges on a major NVIDIA partnership, but near-term technical consolidation and negative short-term volume require a cautious entry approach.",
+    "technical_summary": "The stock trades near 65.0, sitting just above the rising 40 WEMA (56.3) and 200 DEMA (56.0), though it remains capped below its 50 DEMA (70.6) and 10 WEMA (69.6). Short-term net volume is currently negative (-48.8% ratio) despite recent after-hours momentum, and the Volatility Stop remains in a downtrend.",
+    "catalyst_summary": "Amkor announced a major multi-year strategic partnership with NVIDIA for advanced packaging on July 23, 2026, triggering a 17% after-hours surge and providing a powerful fundamental catalyst for future growth.",
+    "actionable_take": "Avoid chasing the initial gap-up and instead wait for a consolidation or pullback toward the 20 WEMA (65.0) or support near the 40 WEMA to establish long positions. Set a protective trailing stop below the recent consolidation base to manage downside volatility while allowing the NVIDIA catalyst to unfold.",
+    "as_of": "2026-07-26 01:03",
+    "news_used": "*   **AMKR** -- Announced a multi-year strategic partnership with NVIDIA on July 23, 2026, for advanced packaging, causing shares to surge 17% after hours.",
+    "news_source": "\ud83d\udd0d Google Search (News Summary)"
+  },
+  "AKAM": {
+    "verdict": "CAUTION",
+    "headline": "AKAM exhibits weak momentum and negative accumulation despite trading above the 40-week moving average.",
+    "technical_summary": "AKAM is in a short-term downtrend (Rank 2) with daily RSI at 40.3 and negative Mansfield Relative Strength across daily and weekly timeframes. Volume is declining with a negative 10-day net volume ratio (-4.8%), and the weekly volatility stop is positioned overhead at 137.7.",
+    "catalyst_summary": "No major company-specific news or catalysts were found in recent web searches, leaving the stock driven by its prevailing technical weakness.",
+    "actionable_take": "Avoid initiating new long positions while the stock remains in a downtrend with negative relative strength. Wait for price to reclaim key daily moving averages, establish positive volume accumulation, and shift its volatility stop before considering any entry.",
+    "as_of": "2026-07-26 01:04",
+    "news_used": "No recent major news or announcements found in the last 48 hours.",
+    "news_source": "\u26aa No Source"
+  },
+  "Q": {
+    "verdict": "CAUTION",
+    "headline": "Stock Q trades below key moving averages with negative net volume and persistent relative weakness.",
+    "technical_summary": "Price at 135.1 sits below the 20 WEMA (137.8) and 50 DEMA (145.0) with a bearish VStop-W at 164.3. Mansfield Relative Strength is negative across daily (-9.8) and weekly (-2.1) timeframes, accompanied by negative net volume (-34.9% ratio over 10 days) indicating ongoing distribution.",
+    "catalyst_summary": "No direct fundamental catalysts or company-specific news found for ticker Q in the recent reporting period.",
+    "actionable_take": "Avoid new long commitments until the stock stabilizes, reclaims its intermediate moving averages, and demonstrates positive accumulation. Existing positions should be tightly managed with strict risk controls given the ongoing downtrend and underperformance.",
+    "as_of": "2026-07-26 01:04",
+    "news_used": "Here's a digest of important, major news for the requested US-listed stocks, dated between 2026-07-23 and 2026-07-25:\n*   **JNJ** -- Plaque psoriasis pill Icotyde received a positive opinion from the European Medicines Agency's expert panel on July 24, 2026.\n*   **JNJ** -- Reported Q2 2026 adjusted sales grew 5.7% to $25.3 billion with adjusted earnings of $2.90 per share.",
+    "news_source": "\ud83d\udd0d Google Search (News Summary)"
+  },
+  "KXIAY": {
+    "verdict": "HOLD",
+    "headline": "KXIAY displays exploding volume and a rising long-term trend, but near-term distribution and a downward volatility stop dictate caution.",
+    "technical_summary": "Price remains above the rising 40-week EMA (25.9) and 200-day EMA (25.7), indicating a broader structural uptrend, though short-term moving averages show a pullback. Volume is exploding (Vol 10D 2.55M vs 100D 1.37M), but Net Volume is heavily negative (-43.8%), pointing to aggressive near-term distribution. The weekly VStop is currently down at 46.0, reflecting recent downward volatility.",
+    "catalyst_summary": "No major fundamental news or catalysts were found in recent web searches over the last 48 hours, leaving the stock driven primarily by technical momentum and volume churn.",
+    "actionable_take": "Investors should hold current positions and wait for the net volume distribution pressure to subside and the daily RSI to recover from oversold levels. Avoid new commitments until the price reclaims the 10-week and 50-day EMAs, utilizing a strict stop below the 40-week moving average support zone.",
+    "as_of": "2026-07-26 01:04",
+    "news_used": "No recent major news or announcements found in the last 48 hours.",
+    "news_source": "\u26aa No Source"
+  },
+  "VSH": {
+    "verdict": "HOLD",
+    "headline": "VSH consolidates above rising 40-week moving average amid short-term distribution.",
+    "technical_summary": "Price at 38.2 sits below the 20 WEMA (39.3) and 10 WEMA (44.2) but remains safely above the rising 40 WEMA (31.7), confirming a broader Stage 2 context. Daily RSI is soft at 37.1 and 10-day net volume shows negative accumulation (-21.8%), indicating a short-term correction within the larger uptrend.",
+    "catalyst_summary": "No major company-specific news or announcements reported over the past 24-48 hours.",
+    "actionable_take": "Maintain a HOLD posture while the stock works through its current consolidation and negative short-term volume trend. Look for a reclaim of the 20 WEMA and neutral-to-positive volume accumulation before considering fresh entry, utilizing the rising 40 WEMA or structural support near the 200 DEMA as a broader risk boundary.",
+    "as_of": "2026-07-26 01:05",
+    "news_used": "No recent major news or announcements found in the last 48 hours.",
+    "news_source": "\u26aa No Source"
+  },
+  "ROBO": {
+    "verdict": "CAUTION",
+    "headline": "ROBO exhibits a fragile technical posture with negative volume accumulation and relative weakness.",
+    "technical_summary": "The stock trades at 77.8, sitting below its 50-day and 10-day EMAs while maintaining a downward VStop direction at 86.4. Mansfield Relative Strength is negative across all timeframes (Daily -6.8, Weekly -5.2), and 10-day volume is declining with a negative net volume distribution ratio of -32.0%.",
+    "catalyst_summary": "No major recent news or fundamental announcements were found in the last 48 hours to drive immediate buying interest.",
+    "actionable_take": "Investors should exercise caution and avoid new long positions while the stock remains under institutional distribution and negative relative strength. A safer entry or add zone requires a reclaim of the 50 DEMA alongside positive volume accumulation, while current positions should respect strict risk management stops below the 200 DEMA at 75.7.",
+    "as_of": "2026-07-26 01:05",
+    "news_used": "No recent major news or announcements found in the last 48 hours.",
+    "news_source": "\u26aa No Source"
+  },
+  "WOLF": {
+    "verdict": "CAUTION",
+    "headline": "WOLF remains mired in a severe cyclical downtrend with negative accumulation and deep relative weakness.",
+    "technical_summary": "The stock trades significantly below its declining 40-week and 50-day moving averages, registering a weak daily RSI of 29.7 and heavily negative Mansfield Relative Strength (-31.4 weekly). Volume trend is declining with negative 10-day net volume (-53.3%), while the weekly volatility stop sits far overhead at 43.8.",
+    "catalyst_summary": "No major positive catalysts or recent news announcements have emerged to alter the prevailing negative sentiment or supply/demand imbalance.",
+    "actionable_take": "Avoid new long positions given the clear structural downtrend and lack of accumulation. Current holders should maintain strict stop-losses or look to exit on any counter-trend relief rallies, as the stock offers poor risk-reward until a proper Stage 1 base and positive relative strength emerge.",
+    "as_of": "2026-07-26 01:05",
+    "news_used": "No recent major news or announcements found in the last 48 hours.",
+    "news_source": "\u26aa No Source"
+  },
+  "SNDK": {
+    "verdict": "HOLD",
+    "headline": "SNDK trades in a consolidation phase above its rising 40-week moving average backed by a massive bullish price target hike.",
+    "technical_summary": "Price sits above the rising 40 WEMA (1027.6) and 200 DEMA (995.5), but short-term momentum is cooling with a daily RSI of 42.1 and negative 10-day net volume (-17.0%). Volatility stop remains in a short-term downtrend state.",
+    "catalyst_summary": "Bernstein SocGen Group significantly raised its price target to $3,000 from $1,700 while maintaining an Outperform rating, signaling strong long-term fundamental conviction.",
+    "actionable_take": "With mixed short-term volume accumulation and a triggered VStop downside signal, investors should wait for a stabilization near the 20 WEMA (1390.0) support zone or a break above daily resistance before adding exposure. Maintain a strict trailing stop below the major 40 WEMA trend baseline.",
+    "as_of": "2026-07-26 01:05",
+    "news_used": "*   **SNDK** -- Bernstein SocGen Group raised its price target to $3,000 from $1,700 on July 23, 2026, maintaining an Outperform rating.",
+    "news_source": "\ud83d\udd0d Google Search (News Summary)"
+  },
+  "RGEN": {
+    "verdict": "CAUTION",
+    "headline": "RGEN trades under key moving averages with negative volume accumulation and mixed momentum.",
+    "technical_summary": "The stock is in a defined downtrend (Rank 2) with price sitting below the 40-week moving average (133.9) and a negative net 10-day volume ratio (-17.6%). Daily and weekly RS metrics remain weak or negative relative to the S&P 500, signaling ongoing underperformance despite a rising 40-week slope.",
+    "catalyst_summary": "No major news or announcements have been reported in the last 48 hours, leaving the stock devoid of fresh fundamental catalysts to drive an immediate re-rating.",
+    "actionable_take": "Investors should exercise caution and avoid establishing fresh long positions until the stock reclaims its key moving averages and demonstrates positive volume accumulation. Use the weekly volatility stop at 119.1 as a strict risk threshold for any legacy positions.",
+    "as_of": "2026-07-26 01:06",
+    "news_used": "No recent major news or announcements found in the last 48 hours.",
+    "news_source": "\u26aa No Source"
+  },
+  "CYRX": {
+    "verdict": "ACCUMULATE",
+    "headline": "CYRX shows robust Stage 2 momentum backed by rising institutional accumulation and analyst target upgrades.",
+    "technical_summary": "The stock is in a confirmed Stage 2 uptrend with price comfortably above rising EMAs and strong relative strength outperformance (Weekly RS at 26.3). Volume is in-line with positive 10-day net accumulation.",
+    "catalyst_summary": "BTIG analyst David Larsen raised the price target to $25.00 from $17.00 while maintaining a 'Buy' rating, validating strong fundamental backing.",
+    "actionable_take": "Ideal buy zones exist near the rising 10 DEMA ($16.0) or on pullbacks toward the 20 WEMA ($13.5). Utilize the Volatility Stop at $13.9 as the baseline trailing stop level to protect capital against trend failure.",
+    "as_of": "2026-07-26 01:06",
+    "news_used": "*   **CYRX** -- BTIG analyst David Larsen raised the price target to $25.00 from $17.00 on July 24, 2026, maintaining a 'Buy' rating.",
+    "news_source": "\ud83d\udd0d Google Search (News Summary)"
   }
 }
