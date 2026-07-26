@@ -33,9 +33,18 @@ def _try_google_summary_news(ticker, market):
         with open(summary_path) as f:
             summary_data = json.load(f)
 
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        if summary_data.get("as_of") != today:
-            return None, None  # Stale data — don't reuse
+        from datetime import timedelta
+        # Check freshness using generated_at timestamp (allow up to 24 hours old)
+        gen_at_str = summary_data.get("generated_at")
+        if not gen_at_str:
+            return None, None
+            
+        try:
+            gen_time = datetime.fromisoformat(gen_at_str)
+            if datetime.now(timezone.utc) - gen_time > timedelta(hours=24):
+                return None, None  # Stale data — don't reuse
+        except Exception:
+            return None, None
 
         market_summary = summary_data.get("markets", {}).get(market, {}).get("summary", "")
         if not market_summary:
