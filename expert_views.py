@@ -125,8 +125,10 @@ Return ONLY a valid JSON object matching this schema:
     return prompt
 
 
-def generate_expert_view(client, row_data, news_text=None, news_source=None, active_alerts_text=None):
+def generate_expert_view(client, row_data, news_text=None, news_source=None, active_alerts_text=None, nvidia_api_key=None):
     from google.genai import types
+    import json
+    from datetime import datetime, timezone
 
     ticker = row_data.get("ticker", "UNKNOWN")
     market = row_data.get("market", "US")
@@ -135,6 +137,42 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
         news_text, news_source = get_stock_news(ticker, market=market)
 
     prompt = build_expert_prompt(row_data, news_text, active_alerts_text)
+    
+    # 1. Try DeepSeek V4 Flash via NVIDIA API if configured
+    if nvidia_api_key:
+        try:
+            from openai import OpenAI
+            nv_client = OpenAI(
+                base_url="https://integrate.api.nvidia.com/v1",
+                api_key=nvidia_api_key
+            )
+            completion = nv_client.chat.completions.create(
+                model="deepseek-ai/deepseek-v4-flash",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2, # Low temp for structured JSON
+                top_p=0.95,
+                max_tokens=1024,
+                response_format={"type": "json_object"},
+                extra_body={"chat_template_kwargs": {"thinking": True, "reasoning_effort": "low"}},
+                stream=False
+            )
+            raw_text = completion.choices[0].message.content.strip()
+            if raw_text.startswith("```json"):
+                raw_text = raw_text.split("```json", 1)[1]
+            elif raw_text.startswith("```"):
+                raw_text = raw_text.split("```", 1)[1]
+            if raw_text.endswith("```"):
+                raw_text = raw_text.rsplit("```", 1)[0]
+            raw_text = raw_text.strip()
+            data = json.loads(raw_text)
+            data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+            data["news_used"] = news_text
+            data["news_source"] = news_source or "⚪ Unknown"
+            return data
+        except Exception as e:
+            print(f"  [deepseek fallback] {ticker}: {e} -> Falling back to Gemini")
+
+    # 2. Fallback to Gemini 3.5 Flash Lite
     try:
         config = types.GenerateContentConfig(response_mime_type="application/json")
         resp = client.models.generate_content(model=GEMINI_MODEL, contents=prompt, config=config)
@@ -156,11 +194,11 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
         }
 
 
-def analyze_single_ticker(ticker, row_data, api_key, active_alerts_text=None):
+def analyze_single_ticker(ticker, row_data, api_key, active_alerts_text=None, nvidia_api_key=None):
     from google import genai
 
     client = genai.Client(api_key=api_key)
-    view = generate_expert_view(client, row_data, active_alerts_text=active_alerts_text)
+    view = generate_expert_view(client, row_data, active_alerts_text=active_alerts_text, nvidia_api_key=nvidia_api_key)
     all_views = load_expert_views()
     all_views[ticker] = view
     save_expert_views(all_views)

@@ -49,6 +49,17 @@ def get_gemini_api_key(st_secrets=None):
     return os.environ.get("GEMINI_API_KEY")
 
 
+def get_nvidia_api_key(st_secrets=None):
+    """Returns the NVIDIA API key for DeepSeek/Llama NIM endpoints."""
+    if st_secrets is not None:
+        try:
+            if "NVIDIA_API_KEY" in st_secrets:
+                return st_secrets["NVIDIA_API_KEY"]
+        except Exception:
+            pass
+    return os.environ.get("NVIDIA_API_KEY")
+
+
 def _bare_ticker(ticker):
     """Strips the .NS/.BO exchange suffix so the search prompt reads
     naturally (e.g. "RELIANCE" instead of "RELIANCE.NS")."""

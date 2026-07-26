@@ -64,7 +64,7 @@ from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE, 
 from filters import (get_market_filters, save_market_filters, apply_filters, describe_filter,
                      describe_chain, describe_chain_with_values, passes_filter_chain, CATEGORICAL_METRICS)
 from github_sync import get_github_config, push_all_config, SYNCABLE_FILES
-from news_summary import load_news_summary, MARKET_LABELS, get_gemini_api_key
+from news_summary import load_news_summary, MARKET_LABELS, get_gemini_api_key, get_nvidia_api_key
 from expert_views import load_expert_views, save_expert_views, analyze_single_ticker, generate_expert_view
 from custom_columns import (
     load_custom_columns, save_custom_columns, validate_formula, column_key,
@@ -1550,6 +1550,7 @@ def sync_expert_views_to_github(message):
 def render_expert_analysis_control_bar(market, results):
     expert_views = load_expert_views()
     api_key = get_gemini_api_key(st.secrets)
+    nvidia_api_key = get_nvidia_api_key(st.secrets)
 
     all_tickers = [r["ticker"] for r in results]
 
@@ -1595,7 +1596,7 @@ def render_expert_analysis_control_bar(market, results):
                 (idx + 1) / len(selected_to_reanalyze),
                 text=f"Analyzing {tk} ({idx+1}/{len(selected_to_reanalyze)})...",
             )
-            view = generate_expert_view(client, row)
+            view = generate_expert_view(client, row, nvidia_api_key=nvidia_api_key)
             if _is_valid_view(view):
                 updated_views[tk] = view
                 save_expert_views(updated_views)
@@ -1628,7 +1629,7 @@ def render_expert_analysis_control_bar(market, results):
                 (idx + 1) / failed_count,
                 text=f"Retrying {tk} ({idx+1}/{failed_count})...",
             )
-            view = generate_expert_view(client, row)
+            view = generate_expert_view(client, row, nvidia_api_key=nvidia_api_key)
             if _is_valid_view(view):
                 updated_views[tk] = view
                 save_expert_views(updated_views)
@@ -1660,7 +1661,7 @@ def render_expert_analysis_control_bar(market, results):
                 text=f"Analyzing {tk} ({idx+1}/{len(all_tickers)})...",
             )
             old_view = updated_views.get(tk)
-            view = generate_expert_view(client, row)
+            view = generate_expert_view(client, row, nvidia_api_key=nvidia_api_key)
             if _is_valid_view(view):
                 updated_views[tk] = view
                 save_expert_views(updated_views)
@@ -1760,8 +1761,8 @@ def render_expert_view_expander(market, filtered_rows, settings):
             # Per-ticker re-analyze button
             if api_key:
                 if st.button(f"⚡ Re-analyze {ticker}", key=f"re_ev_{market}_{ticker}", use_container_width=False):
-                    with st.spinner(f"Analyzing {ticker} with gemini-3.5-flash-lite..."):
-                        analyze_single_ticker(ticker, row, api_key)
+                    with st.spinner(f"Analyzing {ticker} with deepseek-v4-flash..."):
+                        analyze_single_ticker(ticker, row, api_key, nvidia_api_key=nvidia_api_key)
                         sync_expert_views_to_github(f"Re-analyze single ticker ({ticker}) via UI")
                         st.rerun()
 
