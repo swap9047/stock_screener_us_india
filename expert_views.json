@@ -801,5 +801,16 @@
     "news_used": "No recent major news or announcements found in the last 48 hours.",
     "news_source": "\u26aa No Source",
     "model_used": "gemini-3.5-flash-lite"
+  },
+  "TIMETECHNO.NS": {
+    "verdict": "ACCUMULATE",
+    "headline": "Time Technoplast shows strong volume accumulation and relative outperformance with an active technical uptrend.",
+    "technical_summary": "Price trades above key moving averages with an active technical uptrend, rising VStop at 174.1, and exploding volume. Net volume accumulation is positive alongside solid positive Mansfield Relative Strength.",
+    "catalyst_summary": "No recent major news or fundamental announcements found in the past 48 hours; price action is driven purely by technical momentum and strong volume expansion.",
+    "actionable_take": "Consider accumulating positions on minor pullbacks toward the 185-188 support band near the 50 DEMA. Set a trailing stop-loss below the VStop level of 174.1 to effectively manage downside risk.",
+    "as_of": "2026-07-26 04:27",
+    "news_used": "No recent major news or announcements found in the last 48 hours.",
+    "news_source": "\u26aa No Source",
+    "model_used": "gemini-3.5-flash-lite"
   }
 }
