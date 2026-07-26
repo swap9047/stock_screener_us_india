@@ -1703,34 +1703,69 @@ def render_expert_view_expander(market, filtered_rows, settings):
     tickers = [r["ticker"] for r in filtered_rows]
     if not tickers:
         return
+
+    v_colors = {"ACCUMULATE": "#1a7a3a", "HOLD": "#7a6a00", "CAUTION": "#7a1a1a"}
+    v_badges = {"ACCUMULATE": "🟢 ACCUMULATE / ADD", "HOLD": "🟡 HOLD / WATCH", "CAUTION": "🔴 CAUTION / EXIT"}
+    api_key = get_gemini_api_key(st.secrets)
+
     with st.expander(f"🤖 AI Stock Expert Views ({market} — {len(tickers)} tickers)", expanded=False):
-        sel_ticker = st.selectbox(f"Select ticker for AI Expert Rationale", tickers, key=f"ev_sel_{market}")
-        if sel_ticker:
-            row = next(r for r in filtered_rows if r["ticker"] == sel_ticker)
-            view = expert_views.get(sel_ticker)
-            
-            c1, c2 = st.columns([4, 1])
-            with c1:
-                if view:
-                    v_badge = {"ACCUMULATE": "🟢 ACCUMULATE / ADD", "HOLD": "🟡 HOLD / WATCH", "CAUTION": "🔴 CAUTION / EXIT"}.get(view.get("verdict"), "⚪ PENDING")
-                    st.markdown(f"### {sel_ticker} — {v_badge}")
-                    if view.get("headline"):
-                        st.markdown(f"**Headline:** {view.get('headline')}")
-                    st.markdown(f"**📊 Quantitative & Volume Rationale:**\n{view.get('technical_summary', 'N/A')}")
-                    st.markdown(f"**📰 News & Catalyst Findings:**\n{view.get('catalyst_summary', 'N/A')}")
-                    st.info(f"**💡 Investor Take & Action Plan:**\n{view.get('actionable_take', 'N/A')}")
-                    news_source = view.get("news_source", "")
-                    st.caption(f"Analysis generated: {view.get('as_of', 'Recent')} · News source: {news_source if news_source else '⚪ Unknown'}")
-                else:
-                    st.info(f"No AI Expert View stored yet for {sel_ticker}. Click 'Re-analyze Ticker' to generate.")
-            
-            with c2:
-                api_key = get_gemini_api_key(st.secrets)
-                if st.button("⚡ Re-analyze Ticker", key=f"re_ev_{market}_{sel_ticker}", disabled=not api_key, width="stretch"):
-                    with st.spinner(f"Analyzing {sel_ticker} with gemini-3.5-flash-lite..."):
-                        new_view = analyze_single_ticker(sel_ticker, row, api_key)
-                        sync_expert_views_to_github(f"Re-analyze single ticker ({sel_ticker}) via UI")
+        # Scrollable container for all ticker cards
+        scroll_html_open = (
+            "<div style='max-height:680px; overflow-y:auto; padding-right:6px; "
+            "border:1px solid rgba(128,128,128,0.2); border-radius:8px; padding:12px;'>"
+        )
+        st.markdown(scroll_html_open, unsafe_allow_html=True)
+
+        for ticker in tickers:
+            view = expert_views.get(ticker)
+            row = next(r for r in filtered_rows if r["ticker"] == ticker)
+
+            if not view or not _is_valid_view(view):
+                # Compact pending card
+                st.markdown(
+                    f"<div style='padding:10px 14px; margin-bottom:8px; border-radius:8px; "
+                    f"border:1px solid rgba(128,128,128,0.25); background:rgba(128,128,128,0.05);'>"
+                    f"<b>{ticker}</b> &nbsp;⚪ Pending — no AI analysis yet.</div>",
+                    unsafe_allow_html=True,
+                )
+                continue
+
+            verdict = view.get("verdict", "")
+            badge = v_badges.get(verdict, "⚪ PENDING")
+            color = v_colors.get(verdict, "#555")
+            news_source = view.get("news_source", "")
+            as_of = view.get("as_of", "")
+
+            card_html = (
+                f"<div style='padding:14px 16px; margin-bottom:10px; border-radius:10px; "
+                f"border-left:4px solid {color}; border:1px solid rgba(128,128,128,0.2); "
+                f"background:rgba(0,0,0,0.03);'>"
+                f"<div style='font-size:1.05em; font-weight:700; margin-bottom:4px;'>"
+                f"{ticker} &nbsp; <span style='color:{color}'>{badge}</span></div>"
+                f"<div style='font-size:0.9em; margin-bottom:6px; opacity:0.85;'>"
+                f"<b>Headline:</b> {view.get('headline', '')}</div>"
+                f"<div style='font-size:0.85em; margin-bottom:4px;'>"
+                f"<b>📊 Technical:</b> {view.get('technical_summary', '')}</div>"
+                f"<div style='font-size:0.85em; margin-bottom:4px;'>"
+                f"<b>📰 Catalyst:</b> {view.get('catalyst_summary', '')}</div>"
+                f"<div style='font-size:0.85em; background:rgba(0,100,255,0.06); "
+                f"border-radius:6px; padding:6px 10px; margin-bottom:6px;'>"
+                f"<b>💡 Action:</b> {view.get('actionable_take', '')}</div>"
+                f"<div style='font-size:0.75em; opacity:0.55;'>"
+                f"Generated: {as_of} · News: {news_source}</div>"
+                f"</div>"
+            )
+            st.markdown(card_html, unsafe_allow_html=True)
+
+            # Per-ticker re-analyze button
+            if api_key:
+                if st.button(f"⚡ Re-analyze {ticker}", key=f"re_ev_{market}_{ticker}", use_container_width=False):
+                    with st.spinner(f"Analyzing {ticker} with gemini-3.5-flash-lite..."):
+                        analyze_single_ticker(ticker, row, api_key)
+                        sync_expert_views_to_github(f"Re-analyze single ticker ({ticker}) via UI")
                         st.rerun()
+
+        st.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_market_tab(market, results, settings, visible_keys, label_by_key, sort_field=None, sort_ascending=True):
@@ -1789,7 +1824,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
     f_rs_w = c11.slider("RS Weekly", -150, 150, (-150, 150), key=f"f_rsw_{market}")
     f_rs_m = c12.slider("RS Monthly", -150, 150, (-150, 150), key=f"f_rsm_{market}")
 
-    src1, src2, src3, src4 = st.columns([3, 1.3, 1.3, 1])
+    src1, src2, src3, src4, src5 = st.columns([2.5, 1.2, 1.2, 1.3, 0.8])
     search = src1.text_input("Ticker search", "", key=f"search_{market}").strip().upper()
     f_trend = src2.selectbox(
         "Trend", ["Any", "Strong Uptrend", "Uptrend", "Downtrend", "Strong Downtrend"],
@@ -1798,7 +1833,11 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
     f_vol_trend = src3.selectbox(
         "Vol Trend", ["Any", "Exploding", "In-line", "Declining"], key=f"f_voltrend_{market}",
     )
-    f_tech_only = src4.checkbox("Tech Uptrend only", key=f"f_tech_{market}")
+    f_expert_take = src4.selectbox(
+        "Expert Take", ["Any", "🟢 Accumulate", "🟡 Hold", "🔴 Caution", "⚪ Pending"],
+        key=f"f_expert_{market}",
+    )
+    f_tech_only = src5.checkbox("Tech Uptrend only", key=f"f_tech_{market}")
 
     with st.expander("Custom filters (metric vs metric, or metric vs fixed value; chain with AND/OR)", expanded=False):
         active_custom_filters = render_custom_filter_builder(market, filterable_metrics)
@@ -1871,6 +1910,20 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             continue
         if selected_scans and not all(passes_filter_chain(row, sr.get("conditions", [])) for sr in selected_scans):
             continue
+        # Expert Take filter — resolved against live expert_views
+        if f_expert_take != "Any":
+            ev = load_expert_views().get(row["ticker"], {})
+            verdict = ev.get("verdict", "")
+            headline = (ev.get("headline") or "").lower()
+            is_pending = not verdict or verdict in ("PENDING", "FAILED") or "429" in headline or "analysis pending" in headline
+            if f_expert_take == "🟢 Accumulate" and verdict != "ACCUMULATE":
+                continue
+            elif f_expert_take == "🟡 Hold" and verdict != "HOLD":
+                continue
+            elif f_expert_take == "🔴 Caution" and verdict != "CAUTION":
+                continue
+            elif f_expert_take == "⚪ Pending" and not is_pending:
+                continue
         filtered.append(row)
 
     filtered = apply_filters(filtered, active_custom_filters)
