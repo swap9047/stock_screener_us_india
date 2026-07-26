@@ -1753,7 +1753,7 @@ def render_expert_view_expander(market, filtered_rows, settings):
                 f"border-radius:6px; padding:6px 10px; margin-bottom:6px;'>"
                 f"<b>💡 Action:</b> {view.get('actionable_take', '')}</div>"
                 f"<div style='font-size:0.75em; opacity:0.55;'>"
-                f"Generated: {as_of} · News: {news_source}</div>"
+                f"Generated: {as_of} · News: {news_source} · Model: {view.get('model_used', 'gemini-3.5-flash-lite')}</div>"
                 f"</div>"
             )
             st.markdown(card_html, unsafe_allow_html=True)
