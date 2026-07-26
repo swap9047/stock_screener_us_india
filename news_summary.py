@@ -129,7 +129,10 @@ def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date):
         f"RAW TEXT:\n{raw_text}"
     )
     try:
-        resp = client.models.generate_content(model=REASONING_MODEL, contents=prompt)
+        config = types.GenerateContentConfig(
+            thinking_config=types.ThinkingConfig(thinking_budget=1024)
+        )
+        resp = client.models.generate_content(model=REASONING_MODEL, contents=prompt, config=config)
         return resp.text or raw_text
     except Exception:
         return raw_text
@@ -163,7 +166,10 @@ def collate_market_summary(client, market, batch_texts, as_of_date=None):
         f"NOTES:\n{combined}"
     )
     try:
-        resp = client.models.generate_content(model=REASONING_MODEL, contents=prompt)
+        config = types.GenerateContentConfig(
+            thinking_config=types.ThinkingConfig(thinking_budget=1024)
+        )
+        resp = client.models.generate_content(model=REASONING_MODEL, contents=prompt, config=config)
         return resp.text or combined
     except Exception:
         return combined
