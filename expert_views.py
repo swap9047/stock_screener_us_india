@@ -138,7 +138,23 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
 
     prompt = build_expert_prompt(row_data, news_text, active_alerts_text)
     
-    # 1. Try DeepSeek V4 Flash via NVIDIA API if configured
+    # 1. Try Gemini 3.5 Flash Lite (Primary) with High Thinking
+    try:
+        config = types.GenerateContentConfig(
+            response_mime_type="application/json",
+            thinking_config=types.ThinkingConfig(thinking_budget=1024)
+        )
+        resp = client.models.generate_content(model=GEMINI_MODEL, contents=prompt, config=config)
+        data = json.loads(resp.text)
+        data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+        data["news_used"] = news_text
+        data["news_source"] = news_source or "⚪ Unknown"
+        data["model_used"] = GEMINI_MODEL
+        return data
+    except Exception as e:
+        print(f"  [gemini fallback] {ticker}: {e} -> Falling back to DeepSeek/Error")
+
+    # 2. Fallback to DeepSeek V4 Flash via NVIDIA API if configured
     if nvidia_api_key:
         try:
             from openai import OpenAI
@@ -171,20 +187,7 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
             data["model_used"] = "deepseek-v4-flash"
             return data
         except Exception as e:
-            print(f"  [deepseek fallback] {ticker}: {e} -> Falling back to Gemini")
-
-    # 2. Fallback to Gemini 3.5 Flash Lite
-    try:
-        config = types.GenerateContentConfig(response_mime_type="application/json")
-        resp = client.models.generate_content(model=GEMINI_MODEL, contents=prompt, config=config)
-        data = json.loads(resp.text)
-        data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
-        data["news_used"] = news_text
-        data["news_source"] = news_source or "⚪ Unknown"
-        data["model_used"] = GEMINI_MODEL
-        return data
-    except Exception as e:
-        print(f"  [expert_view error] {ticker}: {e}")
+            print(f"  [deepseek error] {ticker}: {e}")
         return {
             "verdict": "HOLD",
             "headline": f"Analysis pending -- {e}",
