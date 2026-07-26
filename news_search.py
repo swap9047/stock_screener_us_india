@@ -63,7 +63,7 @@ def _try_google_summary_news(ticker, market):
     return None, None
 
 
-def get_stock_news(ticker, market=None, max_results=4, timeout_sec=4):
+def get_stock_news(ticker, market=None, max_results=4, timeout_sec=4, company_name=None):
     """
     Fetches recent news for a ticker using (in priority order):
       1. Google Search grounding from news_summary.json (if today's data exists)
@@ -87,7 +87,8 @@ def get_stock_news(ticker, market=None, max_results=4, timeout_sec=4):
     # Priority 2: DuckDuckGo News Search
     try:
         from duckduckgo_search import DDGS
-        query = f"{bare} stock news"
+        search_term = f"{company_name} {bare}" if company_name and company_name != ticker else bare
+        query = f"{search_term} stock news"
         with DDGS(timeout=timeout_sec) as ddgs:
             results = list(ddgs.news(query, max_results=max_results))
             for r in results:

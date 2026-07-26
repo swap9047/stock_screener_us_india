@@ -513,6 +513,13 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
     results = []
 
     for t in tickers:
+        company_name = t
+        try:
+            info = yf.Ticker(t).info
+            company_name = info.get("longName") or info.get("shortName") or t
+        except Exception as e:
+            print(f"  [{t}] Could not fetch company name: {e}")
+
         try:
             df = raw[t].dropna(how="all")
             if df.empty or len(df) < 60:
@@ -701,6 +708,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
 
             results.append({
                 "ticker": t,
+                "company_name": company_name,
                 "last_close": round(last_close, 1),
                 "pct_change_1d": pct_change_1d,
                 "data_start": data_start,

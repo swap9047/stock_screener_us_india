@@ -72,7 +72,7 @@ def batch_list(items, size):
     return [items[i:i + size] for i in range(0, len(items), size)]
 
 
-def fetch_batch_raw_news(client, tickers, market, as_of_date):
+def fetch_batch_raw_news(client, tickers, market, as_of_date, ticker_names=None):
     """Stage 1: Grounded search call using gemini-2.5-flash. Fetches raw news
     articles and web sources for a batch of tickers."""
     from google.genai import types
@@ -80,7 +80,14 @@ def fetch_batch_raw_news(client, tickers, market, as_of_date):
 
     cutoff_date = (datetime.strptime(as_of_date, "%Y-%m-%d") - timedelta(days=2)).strftime("%Y-%m-%d")
     exchange = "NSE/BSE-listed" if market == "INDIA" else "US-listed"
-    names = ", ".join(_bare_ticker(t) for t in tickers)
+    
+    ticker_names = ticker_names or {}
+    def _format_name(t):
+        bare = _bare_ticker(t)
+        company = ticker_names.get(t)
+        return f"{company} ({bare})" if company and company != t else bare
+
+    names = ", ".join(_format_name(t) for t in tickers)
     prompt = (
         f"You are a financial news researcher. For each of these {exchange} stocks: {names} -- "
         f"search for news, announcements, press releases, analyst notes, and stock moves between "
@@ -189,6 +196,16 @@ def build_news_summary(watchlists, api_key, batch_size=BATCH_SIZE):
     }
 
     first_call = True
+    
+    from stock_data import load_data_snapshot
+    snapshot = load_data_snapshot()
+    ticker_names = {}
+    if snapshot and "markets" in snapshot:
+        for mkt_data in snapshot["markets"].values():
+            for row in mkt_data:
+                if "company_name" in row:
+                    ticker_names[row["ticker"]] = row["company_name"]
+
     for market in ("US", "INDIA"):
         tickers = watchlists.get(market, [])
         if not tickers:
@@ -207,7 +224,7 @@ def build_news_summary(watchlists, api_key, batch_size=BATCH_SIZE):
             first_call = False
 
             # Stage 1: Grounded web search with gemini-2.5-flash
-            raw_text, sources_or_err = fetch_batch_raw_news(client, batch, market, as_of_date)
+            raw_text, sources_or_err = fetch_batch_raw_news(client, batch, market, as_of_date, ticker_names=ticker_names)
             if raw_text:
                 all_sources.extend(sources_or_err)
 

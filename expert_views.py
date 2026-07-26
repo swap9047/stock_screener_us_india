@@ -32,6 +32,7 @@ def save_expert_views(data):
 
 def build_expert_prompt(row_data, news_text, active_alerts_text="None"):
     ticker = row_data.get("ticker", "UNKNOWN")
+    company_name = row_data.get("company_name", ticker)
     market = row_data.get("market", "US")
     last_close = row_data.get("last_close", "N/A")
     ema10 = row_data.get("ema10", "N/A")
@@ -63,11 +64,11 @@ def build_expert_prompt(row_data, news_text, active_alerts_text="None"):
     flag = row_data.get("flag", "None")
     note = row_data.get("note", "None")
     bench = "S&P 500 (SPY)" if market == "US" else "Nifty 500 (^CRSLDX)"
-
+    
     prompt = f"""You are an elite equity portfolio manager combining Stan Weinstein stage analysis, trend momentum, 
 volume accumulation/distribution analysis, and fundamental catalyst evaluation.
 
-Analyze the stock ticker {ticker} ({market} market) using the structured quantitative metrics and 
+Analyze the stock {company_name} (Ticker: {ticker}) ({market} market) using the structured quantitative metrics and 
 recent web news findings provided below.
 
 ======================================================================
@@ -132,9 +133,10 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
 
     ticker = row_data.get("ticker", "UNKNOWN")
     market = row_data.get("market", "US")
+    company_name = row_data.get("company_name", ticker)
 
     if news_text is None:
-        news_text, news_source = get_stock_news(ticker, market=market)
+        news_text, news_source = get_stock_news(ticker, market=market, company_name=company_name)
 
     prompt = build_expert_prompt(row_data, news_text, active_alerts_text)
     
