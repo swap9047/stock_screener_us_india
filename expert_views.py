@@ -168,6 +168,7 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
             data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
             data["news_used"] = news_text
             data["news_source"] = news_source or "⚪ Unknown"
+            data["model_used"] = "deepseek-v4-flash"
             return data
         except Exception as e:
             print(f"  [deepseek fallback] {ticker}: {e} -> Falling back to Gemini")
@@ -180,6 +181,7 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
         data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         data["news_used"] = news_text
         data["news_source"] = news_source or "⚪ Unknown"
+        data["model_used"] = GEMINI_MODEL
         return data
     except Exception as e:
         print(f"  [expert_view error] {ticker}: {e}")
@@ -191,6 +193,7 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
             "actionable_take": "Review technical indicators in table.",
             "as_of": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
             "news_source": news_source or "⚪ Unknown",
+            "model_used": "Error"
         }
 
 
