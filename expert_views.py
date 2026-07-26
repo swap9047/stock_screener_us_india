@@ -28,6 +28,19 @@ def save_expert_views(data):
         json.dump(data, f, indent=2)
 
 
+def _is_valid_view(view):
+    """Returns True if a view is a real successful analysis (not a 429/error fallback)."""
+    if not view:
+        return False
+    verdict = view.get("verdict")
+    if verdict not in ("ACCUMULATE", "HOLD", "CAUTION"):
+        return False
+    headline = (view.get("headline") or "").lower()
+    if "429" in headline or "resource_exhausted" in headline or "analysis pending" in headline or "error" in headline:
+        return False
+    return True
+
+
 def build_expert_prompt(row_data, news_text, active_alerts_text="None"):
     ticker = row_data.get("ticker", "UNKNOWN")
     company_name = row_data.get("company_name", ticker)

@@ -65,7 +65,7 @@ from filters import (get_market_filters, save_market_filters, apply_filters, des
                      describe_chain, describe_chain_with_values, passes_filter_chain, CATEGORICAL_METRICS)
 from github_sync import get_github_config, push_all_config, SYNCABLE_FILES
 from news_summary import load_news_summary, MARKET_LABELS, get_gemini_api_key, get_nvidia_api_key
-from expert_views import load_expert_views, save_expert_views, analyze_single_ticker, generate_expert_view
+from expert_views import load_expert_views, save_expert_views, analyze_single_ticker, generate_expert_view, _is_valid_view
 from custom_columns import (
     load_custom_columns, save_custom_columns, validate_formula, column_key,
     FORMAT_CHOICES, CUSTOM_COLUMNS_FILE, apply_custom_columns_to_rows,
@@ -1516,19 +1516,6 @@ def render_ticker_notes_manager():
                 if preview:
                     line += f" — {preview}"
                 st.markdown(line)
-
-
-def _is_valid_view(view):
-    """Returns True if a view is a real successful analysis (not a 429/error fallback)."""
-    if not view:
-        return False
-    verdict = view.get("verdict")
-    if verdict not in ("ACCUMULATE", "HOLD", "CAUTION"):
-        return False
-    headline = (view.get("headline") or "").lower()
-    if "429" in headline or "resource_exhausted" in headline or "analysis pending" in headline or "error" in headline:
-        return False
-    return True
 
 
 def sync_expert_views_to_github(message):
