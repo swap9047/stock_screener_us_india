@@ -20,7 +20,9 @@
         "TUE",
         "WED",
         "THU",
-        "FRI"
+        "FRI",
+        "SAT",
+        "SUN"
       ],
       "time_et": "21:00"
     }
@@ -55,7 +57,9 @@
         "TUE",
         "WED",
         "THU",
-        "FRI"
+        "FRI",
+        "SAT",
+        "SUN"
       ],
       "time_et": "21:00"
     }
@@ -98,7 +102,9 @@
         "TUE",
         "WED",
         "THU",
-        "FRI"
+        "FRI",
+        "SAT",
+        "SUN"
       ],
       "time_et": "21:00"
     }
@@ -125,7 +131,9 @@
         "TUE",
         "WED",
         "THU",
-        "FRI"
+        "FRI",
+        "SAT",
+        "SUN"
       ],
       "time_et": "21:00"
     }
@@ -153,7 +161,9 @@
         "TUE",
         "WED",
         "THU",
-        "FRI"
+        "FRI",
+        "SAT",
+        "SUN"
       ],
       "time_et": "21:00"
     }
@@ -181,7 +191,9 @@
         "TUE",
         "WED",
         "THU",
-        "FRI"
+        "FRI",
+        "SAT",
+        "SUN"
       ],
       "time_et": "21:00"
     }
