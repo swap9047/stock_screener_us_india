@@ -1592,9 +1592,10 @@ def render_expert_analysis_control_bar(market, results):
 
         for idx, tk in enumerate(selected_to_reanalyze):
             row = next(r for r in results if r["ticker"] == tk)
+            company_name = row.get("company_name", tk)
             progress_bar.progress(
                 (idx + 1) / len(selected_to_reanalyze),
-                text=f"Analyzing {tk} ({idx+1}/{len(selected_to_reanalyze)})...",
+                text=f"Analyzing {company_name} ({idx+1}/{len(selected_to_reanalyze)})...",
             )
             view = generate_expert_view(client, row, nvidia_api_key=nvidia_api_key)
             if _is_valid_view(view):
@@ -1625,9 +1626,10 @@ def render_expert_analysis_control_bar(market, results):
 
         for idx, tk in enumerate(failed_tickers):
             row = next(r for r in results if r["ticker"] == tk)
+            company_name = row.get("company_name", tk)
             progress_bar.progress(
                 (idx + 1) / failed_count,
-                text=f"Retrying {tk} ({idx+1}/{failed_count})...",
+                text=f"Re-analyzing {company_name} ({idx+1}/{failed_count})...",
             )
             view = generate_expert_view(client, row, nvidia_api_key=nvidia_api_key)
             if _is_valid_view(view):
@@ -1656,9 +1658,10 @@ def render_expert_analysis_control_bar(market, results):
 
         for idx, tk in enumerate(all_tickers):
             row = next(r for r in results if r["ticker"] == tk)
+            company_name = row.get("company_name", tk)
             progress_bar.progress(
                 (idx + 1) / len(all_tickers),
-                text=f"Analyzing {tk} ({idx+1}/{len(all_tickers)})...",
+                text=f"Analyzing {company_name} ({idx+1}/{len(all_tickers)})...",
             )
             old_view = updated_views.get(tk)
             view = generate_expert_view(client, row, nvidia_api_key=nvidia_api_key)
@@ -1684,9 +1687,10 @@ def render_expert_analysis_control_bar(market, results):
             time.sleep(5)  # cool-down before retry pass
             for idx, tk in enumerate(still_failed):
                 row = next(r for r in results if r["ticker"] == tk)
+                company_name = row.get("company_name", tk)
                 progress_bar.progress(
                     (idx + 1) / len(still_failed),
-                    text=f"Retrying failed: {tk} ({idx+1}/{len(still_failed)})...",
+                    text=f"Auto-retry: {company_name} ({idx+1}/{len(still_failed)})...",
                 )
                 view = generate_expert_view(client, row)
                 if _is_valid_view(view):
@@ -2011,6 +2015,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
                 return f'{emoji} {link}'
             return link
         raw_df["ticker_link"] = [_ticker_with_flag(r) for r in filtered]
+        raw_df["company_name"] = [r.get("company_name", "—") for r in filtered]
 
         # Which enabled alert rules is each ticker currently matching?
         # Reuses the same preview engine the Alert Rules tab's "Run preview"
@@ -2059,8 +2064,8 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         # Column visibility/order is chosen ONCE via the shared sidebar
         # picker (render_shared_column_picker) and passed in, so US and
         # India always show identical columns in identical order.
-        df = raw_df[["ticker_link", "last_close"] + visible_keys].copy()
-        df.columns = ["Ticker", "Last"] + [label_by_key[k] for k in visible_keys]
+        df = raw_df[["ticker_link", "company_name", "last_close"] + visible_keys].copy()
+        df.columns = ["Ticker", "Company Name", "Last"] + [label_by_key[k] for k in visible_keys]
         if "Trend" in df.columns:
             df["Trend"] = df["Trend"].fillna("—")
 
