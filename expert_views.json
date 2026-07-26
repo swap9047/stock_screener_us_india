@@ -1,13 +1,1 @@
-{
-  "JNJ": {
-    "verdict": "ACCUMULATE",
-    "headline": "JNJ in strong uptrend with positive EMA alignment and accumulation, supported by EMA approval and solid earnings.",
-    "technical_summary": "Price above all key EMAs (weekly and daily) with rising slopes. RSI bullish across timeframes. Mansfield RS positive, indicating outperformance. Volume in-line but net volume positive (accumulation). VStop up for 6 weeks, providing a trailing stop at 242.5.",
-    "catalyst_summary": "Positive EMA panel opinion for plaque psoriasis pill Icotyde and solid Q2 earnings with 5.7% sales growth and EPS beat.",
-    "actionable_take": "Consider accumulating on pullbacks near the 10 DEMA (255.8) or VStop level (242.5). Use a trailing stop at VStop (currently 242.5) to protect gains. Exit if price closes below VStop or if weekly RSI turns down from overbought.",
-    "as_of": "2026-07-26 01:37",
-    "news_used": "*   **JNJ** -- Plaque psoriasis pill Icotyde received a positive opinion from the European Medicines Agency's expert panel on July 24, 2026.\n*   **JNJ** -- Reported Q2 2026 adjusted sales grew 5.7% to $25.3 billion with adjusted earnings of $2.90 per share.",
-    "news_source": "\ud83d\udd0d Google Search (News Summary)",
-    "model_used": "deepseek-v4-flash"
-  }
-}
+{}
