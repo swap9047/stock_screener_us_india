@@ -142,7 +142,7 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
     try:
         config = types.GenerateContentConfig(
             response_mime_type="application/json",
-            thinking_config=types.ThinkingConfig(thinking_budget=1024)
+            thinking_config=types.ThinkingConfig(thinking_budget=4096)
         )
         resp = client.models.generate_content(model=GEMINI_MODEL, contents=prompt, config=config)
         data = json.loads(resp.text)
