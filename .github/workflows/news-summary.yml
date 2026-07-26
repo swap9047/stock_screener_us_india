@@ -34,7 +34,7 @@ jobs:
           CRON_SCHEDULE: ${{ github.event.schedule }}
         run: |
           python3 - <<'EOF' >> "$GITHUB_OUTPUT"
-          # 6 hour tolerance for GitHub's scheduler delays.
+          # 22 hour tolerance for GitHub's scheduler delays.
           import os
           from zoneinfo import ZoneInfo
           from datetime import datetime
