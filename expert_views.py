@@ -138,39 +138,23 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
 
     prompt = build_expert_prompt(row_data, news_text, active_alerts_text)
     
-    # 1. Try Gemini 3.6 Flash (Primary) with High Thinking
+    # 1. Try Gemini 3.5 Flash Lite (Primary) with High Thinking
     try:
         config = types.GenerateContentConfig(
             response_mime_type="application/json",
             thinking_config=types.ThinkingConfig(thinking_budget=4096)
         )
-        resp = client.models.generate_content(model="gemini-3.6-flash", contents=prompt, config=config)
+        resp = client.models.generate_content(model="gemini-3.5-flash-lite", contents=prompt, config=config)
         data = json.loads(resp.text)
         data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         data["news_used"] = news_text
         data["news_source"] = news_source or "⚪ Unknown"
-        data["model_used"] = "gemini-3.6-flash"
+        data["model_used"] = "gemini-3.5-flash-lite"
         return data
     except Exception as e:
-        print(f"  [gemini 3.6 fallback] {ticker}: {e} -> Trying Gemini 3.5 Flash")
+        print(f"  [gemini fallback] {ticker}: {e} -> Falling back to DeepSeek/Error")
 
-    # 2. Try Gemini 3.5 Flash (Secondary) with High Thinking
-    try:
-        config = types.GenerateContentConfig(
-            response_mime_type="application/json",
-            thinking_config=types.ThinkingConfig(thinking_budget=4096)
-        )
-        resp = client.models.generate_content(model="gemini-3.5-flash", contents=prompt, config=config)
-        data = json.loads(resp.text)
-        data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
-        data["news_used"] = news_text
-        data["news_source"] = news_source or "⚪ Unknown"
-        data["model_used"] = "gemini-3.5-flash"
-        return data
-    except Exception as e:
-        print(f"  [gemini 3.5 fallback] {ticker}: {e} -> Falling back to DeepSeek/Error")
-
-    # 3. Fallback to DeepSeek V4 Flash via NVIDIA API if configured
+    # 2. Fallback to DeepSeek V4 Flash via NVIDIA API if configured
     if nvidia_api_key:
         try:
             from openai import OpenAI

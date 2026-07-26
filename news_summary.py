@@ -26,7 +26,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 NEWS_SUMMARY_FILE = os.path.join(SCRIPT_DIR, "news_summary.json")
 
 SEARCH_MODEL = "gemini-2.5-flash"
-REASONING_MODEL = "gemini-3.6-flash"
+REASONING_MODEL = "gemini-3.5-flash-lite"
 BATCH_SIZE = 8
 # 15s delay between search calls stays comfortably under 4 calls/min
 SECONDS_BETWEEN_CALLS = 15
@@ -144,7 +144,7 @@ def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date, t
     )
     try:
         config = types.GenerateContentConfig(
-            thinking_config=types.ThinkingConfig(thinking_budget=4096)
+            thinking_config=types.ThinkingConfig(thinking_budget=2048)
         )
         resp = client.models.generate_content(model=REASONING_MODEL, contents=prompt, config=config)
         return resp.text or raw_text
@@ -184,7 +184,7 @@ def collate_market_summary(client, market, batch_texts, as_of_date=None):
         config = types.GenerateContentConfig(
             # Using 1024 thinking budget per user request: gives the model just enough
             # reasoning room to execute the formatting rules without hallucinating filler.
-            thinking_config=types.ThinkingConfig(thinking_budget=1024)
+            thinking_config=types.ThinkingConfig(thinking_budget=2048)
         )
         resp = client.models.generate_content(model=REASONING_MODEL, contents=prompt, config=config)
         return resp.text or combined
