@@ -54,7 +54,7 @@ jobs:
                   pass
                   
           hour_diff = min((now_et.hour - rule_hour) % 24, (rule_hour - now_et.hour) % 24)
-          due = is_valid_cron and (hour_diff <= 6)
+          due = is_valid_cron and (hour_diff <= 22)
           
           print(f"due={'true' if due else 'false'}")
           EOF
