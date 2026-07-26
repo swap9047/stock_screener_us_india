@@ -130,7 +130,7 @@ def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date):
     )
     try:
         config = types.GenerateContentConfig(
-            thinking_config=types.ThinkingConfig(thinking_budget=1024)
+            thinking_config=types.ThinkingConfig(thinking_budget=4096)
         )
         resp = client.models.generate_content(model=REASONING_MODEL, contents=prompt, config=config)
         return resp.text or raw_text
@@ -167,7 +167,7 @@ def collate_market_summary(client, market, batch_texts, as_of_date=None):
     )
     try:
         config = types.GenerateContentConfig(
-            thinking_config=types.ThinkingConfig(thinking_budget=1024)
+            thinking_config=types.ThinkingConfig(thinking_budget=4096)
         )
         resp = client.models.generate_content(model=REASONING_MODEL, contents=prompt, config=config)
         return resp.text or combined
