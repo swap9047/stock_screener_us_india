@@ -197,5 +197,35 @@
       ],
       "time_et": "21:00"
     }
+  },
+  {
+    "id": "8eb6f206",
+    "name": "accumalate position",
+    "scope": "ALL",
+    "conditions": [
+      {
+        "metric_a": "expert_take",
+        "operator": "in",
+        "compare_type": "value",
+        "value": [
+          "Accumulate"
+        ],
+        "logic": "AND"
+      }
+    ],
+    "enabled": true,
+    "schedule": {
+      "type": "scheduled",
+      "days": [
+        "MON",
+        "TUE",
+        "WED",
+        "THU",
+        "FRI",
+        "SAT",
+        "SUN"
+      ],
+      "time_et": "21:00"
+    }
   }
 ]
