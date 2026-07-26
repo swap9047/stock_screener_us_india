@@ -1,57 +1,87 @@
-#!/usr/bin/env python3
 """
-Scheduled background script for pre-computing AI Expert Views (gemini-3.6-flash)
-across both US and India watchlists. Runs alongside refresh_data.py in GitHub Actions.
-Saves results to expert_views.json.
+Background script to automatically generate AI Expert Takes for all
+watchlisted tickers. Intended to run via GitHub Actions at 1:00 PM ET daily.
+It uses data_snapshot.json and automatically pulls news from news_summary.json.
 """
 
 import os
 import time
-from datetime import datetime, timezone, timedelta
-from dotenv import load_dotenv
-
-load_dotenv(".env")
-
-from stock_data import load_watchlists, load_settings, fetch_all_markets
-from news_summary import get_gemini_api_key
-from expert_views import load_expert_views, save_expert_views, generate_expert_view
-
+from google import genai
+from stock_data import load_data_snapshot, load_watchlists
+from expert_views import load_expert_views, save_expert_views, generate_expert_view, _is_valid_view
+from news_summary import get_gemini_api_key, get_nvidia_api_key
 
 def main():
     api_key = get_gemini_api_key()
+    nvidia_api_key = get_nvidia_api_key()
+
     if not api_key:
-        print("GEMINI_API_KEY not configured. Skipping expert views refresh.")
+        print("Error: GEMINI_API_KEY not found. Skipping expert views refresh.")
         return
 
-    from google import genai
     client = genai.Client(api_key=api_key)
-
-    settings = load_settings()
-    watchlists = load_watchlists()
-    combined, as_of, per_market = fetch_all_markets(watchlists=watchlists, settings=settings)
-
-    if not combined:
-        print("No tickers found. Skipping expert views refresh.")
+    
+    # Load data snapshot (generated at 7 AM ET)
+    snapshot = load_data_snapshot()
+    if not snapshot or "markets" not in snapshot:
+        print("Error: Invalid or missing data_snapshot.json. Run refresh_data.py first.")
         return
 
-    print(f"Refreshing AI Expert Views for {len(combined)} tickers...")
-    existing = load_expert_views()
-    updated_count = 0
+    # Load global watchlist to know exactly what to process
+    watchlists = load_watchlists()
+    expert_views = load_expert_views()
 
-    for row in combined:
-        ticker = row.get("ticker")
-        if not ticker:
+    total_processed = 0
+    total_failed = 0
+
+    # Process each market
+    for market, mkt_tickers in watchlists.items():
+        if market not in snapshot["markets"]:
             continue
+            
+        print(f"\nProcessing {market} Watchlist ({len(mkt_tickers)} tickers)...")
+        results = snapshot["markets"][market]
         
-        print(f"  Analyzing {ticker}...")
-        view = generate_expert_view(client, row)
-        existing[ticker] = view
-        updated_count += 1
-        time.sleep(15)
+        for idx, tk in enumerate(mkt_tickers):
+            try:
+                row = next((r for r in results if r["ticker"] == tk), None)
+            except Exception:
+                row = None
+                
+            if not row:
+                print(f"  [{idx+1}/{len(mkt_tickers)}] Skipping {tk} (No data in snapshot)")
+                continue
 
-    save_expert_views(existing)
-    print(f"Successfully saved {updated_count} expert views to expert_views.json.")
+            company_name = row.get("company_name", tk)
+            print(f"  [{idx+1}/{len(mkt_tickers)}] Analyzing {company_name} ({tk})...")
+            
+            old_view = expert_views.get(tk)
+            
+            try:
+                view = generate_expert_view(client, row, nvidia_api_key=nvidia_api_key)
+                
+                if _is_valid_view(view):
+                    expert_views[tk] = view
+                    print(f"    ✓ Success: {view.get('verdict')}")
+                elif _is_valid_view(old_view):
+                    print(f"    ⚠️ Rate-limited/Failed: Keeping previous result.")
+                else:
+                    expert_views[tk] = view
+                    print(f"    ❌ Failed: {view.get('headline')}")
+                    total_failed += 1
+            except Exception as e:
+                print(f"    ❌ Exception: {e}")
+                total_failed += 1
+                
+            # Save incrementally in case the script times out or crashes
+            save_expert_views(expert_views)
+            total_processed += 1
+            
+            # Sleep to strictly respect Gemini RPM (Requests Per Minute) limits
+            if idx < len(mkt_tickers) - 1:
+                time.sleep(5)
 
+    print(f"\nDone. Processed {total_processed} tickers. {total_failed} failures.")
 
 if __name__ == "__main__":
     main()
