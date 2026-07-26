@@ -1919,10 +1919,13 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             continue
         if selected_scans and not all(passes_filter_chain(row, sr.get("conditions", [])) for sr in selected_scans):
             continue
+        # Attach expert_take string to row dict so custom filters can access it directly
+        ev = load_expert_views().get(row["ticker"], {})
+        verdict = ev.get("verdict", "")
+        row["expert_take"] = verdict.title() if verdict in ("ACCUMULATE", "HOLD", "CAUTION") else "Pending"
+
         # Expert Take filter — resolved against live expert_views
         if f_expert_take != "Any":
-            ev = load_expert_views().get(row["ticker"], {})
-            verdict = ev.get("verdict", "")
             headline = (ev.get("headline") or "").lower()
             is_pending = not verdict or verdict in ("PENDING", "FAILED") or "429" in headline or "analysis pending" in headline
             if f_expert_take == "🟢 Accumulate" and verdict != "ACCUMULATE":

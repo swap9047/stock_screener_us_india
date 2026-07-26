@@ -72,6 +72,7 @@ CATEGORICAL_METRICS = {
     "vstop_weekly_direction": ["Up", "Down"],
     "tech_uptrend": ["Yes", "No"],
     "flag": FLAG_CHOICES,  # see ticker_notes.py -- Red/Yellow/Green/Blue
+    "expert_take": ["Accumulate", "Hold", "Caution", "Pending"],
 }
 
 
@@ -174,10 +175,25 @@ def _resolve_metric_b(row, filt):
     return _coerce_fixed_value(row.get(filt["metric_a"]), filt["value"])
 
 
+def _get_metric_val(row, metric_key):
+    val = row.get(metric_key)
+    if val is None and metric_key == "expert_take":
+        try:
+            from expert_views import load_expert_views
+            ev = load_expert_views().get(row.get("ticker", ""), {})
+            verdict = ev.get("verdict", "").title()
+            if not verdict or verdict in ("Pending", "Failed"):
+                verdict = "Pending"
+            return verdict
+        except Exception:
+            return "Pending"
+    return val
+
+
 def passes_filter(row, filt):
     """Returns True/False for a single condition against one row. A missing
     value (metric not computed for this ticker) fails the condition."""
-    a = row.get(filt["metric_a"])
+    a = _get_metric_val(row, filt["metric_a"])
     if a is None:
         return False
     b = _resolve_metric_b(row, filt)
@@ -281,7 +297,7 @@ def describe_chain_with_values(row, conditions, metric_labels):
     for i, cond in enumerate(conditions):
         prefix = "" if i == 0 else f" {cond.get('logic', 'AND')} "
         label_a = metric_labels.get(cond["metric_a"], cond["metric_a"])
-        val_a = row.get(cond["metric_a"])
+        val_a = _get_metric_val(row, cond["metric_a"])
         val_a_str = f"{val_a:.1f}" if isinstance(val_a, float) else str(val_a)
         expr_b = _metric_b_expr(cond, metric_labels)
         if cond.get("operator") == "in":
