@@ -1555,7 +1555,11 @@ def render_expert_analysis_control_bar(market, results):
     all_tickers = [r["ticker"] for r in results]
 
     # --- Auto-cleanup: remove stale tickers no longer in watchlist ---
-    stale_keys = [tk for tk in expert_views if tk not in all_tickers]
+    from stock_data import load_watchlists
+    global_watchlists = load_watchlists()
+    global_all_tickers = [tk for mkt_tks in global_watchlists.values() for tk in mkt_tks]
+
+    stale_keys = [tk for tk in expert_views if tk not in global_all_tickers]
     if stale_keys:
         for tk in stale_keys:
             del expert_views[tk]
