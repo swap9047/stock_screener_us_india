@@ -26,7 +26,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 NEWS_SUMMARY_FILE = os.path.join(SCRIPT_DIR, "news_summary.json")
 
 SEARCH_MODEL = "gemini-2.5-flash"
-REASONING_MODEL = "gemini-3.5-flash-lite"
+REASONING_MODEL = "gemini-3.6-flash"
 BATCH_SIZE = 8
 # 15s delay between search calls stays comfortably under 4 calls/min
 SECONDS_BETWEEN_CALLS = 15
