@@ -135,7 +135,7 @@ def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date, t
         "STRICT MATERIALITY RULE:\n"
         "- KEEP ONLY: earnings released in the last 2 days, M&A/acquisitions, FDA/regulatory approvals, "
         "important board announcements (EXCLUDING dividend and generic day-to-day announcements), analyst coverage and important stock targets, "
-        "major contract wins/losses, big institutional and promoter activity, and significant stock movements (+-2.5%).\n"
+        "major contract wins/losses, big institutional and promoter activity, and significant stock movements (+-3%).\n"
         "- DROP ENTIRELY: routine scheduled board meetings/AGMs/EGMs with no outcome yet, ordinary "
         "insider option exercises, routine block trades, minor price fluctuations, dividend announcements, and generic no-news filler.\n\n"
         "For items that pass both rules, write short, clear bullet points under bold ticker headers. "
@@ -182,9 +182,9 @@ def collate_market_summary(client, market, batch_texts, as_of_date=None):
     )
     try:
         config = types.GenerateContentConfig(
-            # Using standard gemini-3.6-flash without extra thinking budget to ensure verbosity 
-            # is strictly constrained to the prompt's instructions (crisp, no filler).
-            thinking_config=None
+            # Using 1024 thinking budget per user request: gives the model just enough
+            # reasoning room to execute the formatting rules without hallucinating filler.
+            thinking_config=types.ThinkingConfig(thinking_budget=1024)
         )
         resp = client.models.generate_content(model=REASONING_MODEL, contents=prompt, config=config)
         return resp.text or combined
