@@ -91,8 +91,8 @@ def fetch_batch_raw_news(client, tickers, market, as_of_date, ticker_names=None)
     prompt = (
         f"You are a financial news researcher. For each of these {exchange} stocks: {names} -- "
         f"search for news, announcements, press releases, analyst notes, and stock moves between "
-        f"{cutoff_date} and {as_of_date} (the last 24-48 hours). Report any news items you find for "
-        "each ticker, specifying the date of each item. Be concise."
+        f"{cutoff_date} and {as_of_date} (the last 36 hours). Report any news items you find for "
+        "each ticker, specifying the exact date of each item. Be extremely concise. If a ticker has no news, skip it."
     )
     try:
         grounding_tool = types.Tool(google_search=types.GoogleSearch())
@@ -111,7 +111,7 @@ def fetch_batch_raw_news(client, tickers, market, as_of_date, ticker_names=None)
         return None, str(e)
 
 
-def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date):
+def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date, ticker_names=None):
     """Stage 2: Strict reasoning & condition filtering using gemini-3.6-flash.
     Evaluates raw web notes against recency and material catalyst rules."""
     if not raw_text:
@@ -119,20 +119,27 @@ def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date):
     from datetime import datetime, timedelta
 
     cutoff_date = (datetime.strptime(as_of_date, "%Y-%m-%d") - timedelta(days=2)).strftime("%Y-%m-%d")
-    names = ", ".join(_bare_ticker(t) for t in tickers)
+    
+    ticker_names = ticker_names or {}
+    def _format_name(t):
+        bare = _bare_ticker(t)
+        company = ticker_names.get(t)
+        return f"{company} ({bare})" if company and company != t else bare
+        
+    names = ", ".join(_format_name(t) for t in tickers)
 
     prompt = (
-        f"You are a senior financial analyst. Below is raw news text gathered for tickers: {names}.\n\n"
-        f"STRICT RECENCY RULE: Evaluate each news item. Keep ONLY items dated between {cutoff_date} and "
-        f"{as_of_date} (the last 24-48 hours). Drop anything dated before {cutoff_date} or undated.\n\n"
+        f"You are a senior financial analyst. Below is raw news text gathered for these tickers: {names}.\n\n"
+        f"STRICT RECENCY RULE: Evaluate each news item. Keep ONLY items from the last 36 hours. "
+        f"Drop anything older or undated.\n\n"
         "STRICT MATERIALITY RULE:\n"
-        "- KEEP: quarterly/annual earnings reports, M&A/acquisitions, FDA/regulatory approvals, "
-        "major leadership/CEO changes, analyst upgrades/downgrades/price-target changes, major "
-        "contract wins/losses, credit rating changes, and large stock moves (>= 5%) with stated catalyst.\n"
+        "- KEEP ONLY: earnings released in the last 2 days, M&A/acquisitions, FDA/regulatory approvals, "
+        "important board announcements (EXCLUDING dividend and generic day-to-day announcements), analyst coverage and important stock targets, "
+        "major contract wins/losses, big institutional and promoter activity, and significant stock movements (+-2.5%).\n"
         "- DROP ENTIRELY: routine scheduled board meetings/AGMs/EGMs with no outcome yet, ordinary "
-        "insider option exercises, routine block trades, minor price fluctuations, and generic no-news filler.\n\n"
+        "insider option exercises, routine block trades, minor price fluctuations, dividend announcements, and generic no-news filler.\n\n"
         "For items that pass both rules, write short, clear bullet points under bold ticker headers. "
-        "If a ticker has no qualifying items, omit it completely.\n\n"
+        "If a ticker has no qualifying items, omit it completely. DO NOT write 'no significant news', just skip the ticker entirely.\n\n"
         f"RAW TEXT:\n{raw_text}"
     )
     try:
@@ -154,27 +161,30 @@ def collate_market_summary(client, market, batch_texts, as_of_date=None):
 
     if as_of_date:
         cutoff_date = (datetime.strptime(as_of_date, "%Y-%m-%d") - timedelta(days=2)).strftime("%Y-%m-%d")
-        window_line = f"ONLY items dated between {cutoff_date} and {as_of_date} (last 24-48 hours) qualify -- "
+        window_line = f"ONLY items from the last 36 hours qualify -- "
     else:
-        window_line = "ONLY items from the last 24-48 hours qualify -- "
+        window_line = "ONLY items from the last 36 hours qualify -- "
 
     combined = "\n\n---\n\n".join(t for t in batch_texts if t.strip())
     if not combined.strip():
-        return "No major news for this watchlist's tickers in the last 24-48 hours."
+        return "No major news for this watchlist's tickers in the last 36 hours."
 
     prompt = (
         f"Below are filtered news notes gathered for the {MARKET_LABELS.get(market, market)}.\n\n"
         "Act as an editor for a daily investor briefing (like Perplexity Finance's watchlist digest). "
-        "Produce a SHORT, CRISP summary containing ONLY material, recent items.\n\n"
-        f"{window_line}drop any note if its date falls outside this window or is unconfirmed.\n\n"
-        "Format as a flat list of short bullet points (one line each: **Ticker** -- takeaway), "
-        "not per-ticker sections or headers. Most tickers won't have anything worth including, "
-        "and that's fine. If NOTHING in the whole watchlist clears this bar, say 'No major news for this watchlist's tickers in the last 24-48 hours.' in one sentence.\n\n"
+        "Produce an EXTREMELY CRISP summary (under 500 words, max 1 pager) containing ONLY material, recent items.\n\n"
+        f"{window_line}drop any note if it's older than 36 hours.\n\n"
+        "Format as a flat list of short bullet points (one line each: **Company Name (Ticker)** - takeaway). "
+        "Use the EXACT company name and ticker provided in the notes. Do not hallucinate names. "
+        "CRITICAL: If a ticker does not have significant news, SKIP IT ENTIRELY. Do NOT write 'no significant news' or mention it. "
+        "If NOTHING in the whole watchlist clears this bar, output EXACTLY ONE SENTENCE: 'No major news for this watchlist's tickers in the last 36 hours.'\n\n"
         f"NOTES:\n{combined}"
     )
     try:
         config = types.GenerateContentConfig(
-            thinking_config=types.ThinkingConfig(thinking_budget=4096)
+            # Using standard gemini-3.6-flash without extra thinking budget to ensure verbosity 
+            # is strictly constrained to the prompt's instructions (crisp, no filler).
+            thinking_config=None
         )
         resp = client.models.generate_content(model=REASONING_MODEL, contents=prompt, config=config)
         return resp.text or combined
@@ -229,7 +239,7 @@ def build_news_summary(watchlists, api_key, batch_size=BATCH_SIZE):
                 all_sources.extend(sources_or_err)
 
                 # Stage 2: Reasoning & strict filtering with gemini-3.6-flash
-                clean_text = filter_batch_with_reasoning(client, raw_text, batch, market, as_of_date)
+                clean_text = filter_batch_with_reasoning(client, raw_text, batch, market, as_of_date, ticker_names=ticker_names)
                 if clean_text:
                     filtered_batch_texts.append(clean_text)
             else:
