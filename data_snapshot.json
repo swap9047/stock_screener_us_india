@@ -1,10 +1,11 @@
 {
-  "as_of": "2026-07-25 16:48",
-  "generated_at": "2026-07-25T20:48:07.680199+00:00",
+  "as_of": "2026-07-25 22:58",
+  "generated_at": "2026-07-26T02:58:59.240791+00:00",
   "per_market": {
     "US": [
       {
         "ticker": "TWST",
+        "company_name": "Twist Bioscience Corporation",
         "last_close": 90.3,
         "pct_change_1d": -2.35,
         "data_start": "2021-07-26",
@@ -83,6 +84,7 @@
       },
       {
         "ticker": "KRYS",
+        "company_name": "Krystal Biotech, Inc.",
         "last_close": 335.2,
         "pct_change_1d": 2.35,
         "data_start": "2021-07-26",
@@ -161,6 +163,7 @@
       },
       {
         "ticker": "NTRA",
+        "company_name": "Natera, Inc.",
         "last_close": 262.0,
         "pct_change_1d": -1.02,
         "data_start": "2021-07-26",
@@ -239,6 +242,7 @@
       },
       {
         "ticker": "QURE",
+        "company_name": "uniQure N.V.",
         "last_close": 39.0,
         "pct_change_1d": -1.17,
         "data_start": "2021-07-26",
@@ -317,6 +321,7 @@
       },
       {
         "ticker": "GRID",
+        "company_name": "First Trust NASDAQ Clean Edge Smart Grid Infrastructure Index Fund",
         "last_close": 177.4,
         "pct_change_1d": -1.33,
         "data_start": "2021-07-26",
@@ -395,6 +400,7 @@
       },
       {
         "ticker": "RKLB",
+        "company_name": "Rocket Lab Corporation",
         "last_close": 63.9,
         "pct_change_1d": -8.69,
         "data_start": "2021-07-26",
@@ -473,6 +479,7 @@
       },
       {
         "ticker": "META",
+        "company_name": "Meta Platforms, Inc.",
         "last_close": 595.2,
         "pct_change_1d": -1.8,
         "data_start": "2021-07-26",
@@ -551,6 +558,7 @@
       },
       {
         "ticker": "IAU",
+        "company_name": "iShares Gold Trust",
         "last_close": 76.2,
         "pct_change_1d": 0.11,
         "data_start": "2021-07-26",
@@ -629,6 +637,7 @@
       },
       {
         "ticker": "HIMS",
+        "company_name": "Hims & Hers Health, Inc.",
         "last_close": 28.1,
         "pct_change_1d": -14.2,
         "data_start": "2021-07-26",
@@ -707,6 +716,7 @@
       },
       {
         "ticker": "ZS",
+        "company_name": "Zscaler, Inc.",
         "last_close": 142.3,
         "pct_change_1d": 1.88,
         "data_start": "2021-07-26",
@@ -785,6 +795,7 @@
       },
       {
         "ticker": "BNTX",
+        "company_name": "BioNTech SE",
         "last_close": 89.3,
         "pct_change_1d": -2.97,
         "data_start": "2021-07-26",
@@ -863,6 +874,7 @@
       },
       {
         "ticker": "JNJ",
+        "company_name": "Johnson & Johnson",
         "last_close": 263.4,
         "pct_change_1d": 1.59,
         "data_start": "2021-07-26",
@@ -941,6 +953,7 @@
       },
       {
         "ticker": "ORCL",
+        "company_name": "Oracle Corporation",
         "last_close": 115.0,
         "pct_change_1d": -4.21,
         "data_start": "2021-07-26",
@@ -1019,6 +1032,7 @@
       },
       {
         "ticker": "ASX",
+        "company_name": "ASE Technology Holding Co., Ltd.",
         "last_close": 36.8,
         "pct_change_1d": -6.64,
         "data_start": "2021-07-26",
@@ -1097,6 +1111,7 @@
       },
       {
         "ticker": "BE",
+        "company_name": "Bloom Energy Corporation",
         "last_close": 184.9,
         "pct_change_1d": -14.91,
         "data_start": "2021-07-26",
@@ -1175,6 +1190,7 @@
       },
       {
         "ticker": "MRAAY",
+        "company_name": "Murata Manufacturing Co., Ltd.",
         "last_close": 25.0,
         "pct_change_1d": -2.08,
         "data_start": "2021-07-26",
@@ -1253,6 +1269,7 @@
       },
       {
         "ticker": "AMKR",
+        "company_name": "Amkor Technology, Inc.",
         "last_close": 65.0,
         "pct_change_1d": -0.57,
         "data_start": "2021-07-26",
@@ -1331,6 +1348,7 @@
       },
       {
         "ticker": "AKAM",
+        "company_name": "Akamai Technologies, Inc.",
         "last_close": 115.4,
         "pct_change_1d": -1.7,
         "data_start": "2021-07-26",
@@ -1409,6 +1427,7 @@
       },
       {
         "ticker": "Q",
+        "company_name": "Qnity Electronics, Inc.",
         "last_close": 135.1,
         "pct_change_1d": -2.6,
         "data_start": "2025-10-27",
@@ -1467,6 +1486,7 @@
       },
       {
         "ticker": "KXIAY",
+        "company_name": "KIOXIA HLDGS CORP",
         "last_close": 32.8,
         "pct_change_1d": -14.05,
         "data_start": "2025-10-06",
@@ -1545,6 +1565,7 @@
       },
       {
         "ticker": "VSH",
+        "company_name": "Vishay Intertechnology, Inc.",
         "last_close": 38.2,
         "pct_change_1d": -6.35,
         "data_start": "2021-07-26",
@@ -1623,6 +1644,7 @@
       },
       {
         "ticker": "ROBO",
+        "company_name": "Robo Global Robotics and Automation Index ETF",
         "last_close": 77.8,
         "pct_change_1d": -0.63,
         "data_start": "2021-07-26",
@@ -1701,6 +1723,7 @@
       },
       {
         "ticker": "WOLF",
+        "company_name": "Wolfspeed, Inc.",
         "last_close": 23.1,
         "pct_change_1d": -11.06,
         "data_start": "2025-09-29",
@@ -1779,6 +1802,7 @@
       },
       {
         "ticker": "SNDK",
+        "company_name": "Sandisk Corporation",
         "last_close": 1436.6,
         "pct_change_1d": -10.79,
         "data_start": "2025-02-13",
@@ -1857,6 +1881,7 @@
       },
       {
         "ticker": "RGEN",
+        "company_name": "Repligen Corporation",
         "last_close": 132.0,
         "pct_change_1d": -4.1,
         "data_start": "2021-07-26",
@@ -1935,6 +1960,7 @@
       },
       {
         "ticker": "CYRX",
+        "company_name": "Cryoport, Inc.",
         "last_close": 15.4,
         "pct_change_1d": -4.12,
         "data_start": "2021-07-26",
@@ -2015,6 +2041,7 @@
     "INDIA": [
       {
         "ticker": "LAURUSLABS.NS",
+        "company_name": "Laurus Labs Limited",
         "last_close": 1601.2,
         "pct_change_1d": 2.1,
         "data_start": "2021-07-26",
@@ -2093,6 +2120,7 @@
       },
       {
         "ticker": "NH.NS",
+        "company_name": "Narayana Hrudayalaya Limited",
         "last_close": 1961.5,
         "pct_change_1d": -1.06,
         "data_start": "2021-07-26",
@@ -2171,6 +2199,7 @@
       },
       {
         "ticker": "SAILIFE.NS",
+        "company_name": "SAI LIFE SCIENCES LIMITED",
         "last_close": 1232.9,
         "pct_change_1d": -0.6,
         "data_start": "2024-12-18",
@@ -2249,6 +2278,7 @@
       },
       {
         "ticker": "SANSERA.NS",
+        "company_name": "Sansera Engineering Limited",
         "last_close": 3184.7,
         "pct_change_1d": -0.13,
         "data_start": "2021-09-24",
@@ -2327,6 +2357,7 @@
       },
       {
         "ticker": "TDPOWERSYS.NS",
+        "company_name": "TD Power Systems Limited",
         "last_close": 1113.6,
         "pct_change_1d": -2.26,
         "data_start": "2021-07-26",
@@ -2405,6 +2436,7 @@
       },
       {
         "ticker": "MTARTECH.NS",
+        "company_name": "MTAR Technologies Limited",
         "last_close": 5805.0,
         "pct_change_1d": -1.19,
         "data_start": "2021-07-26",
@@ -2483,6 +2515,7 @@
       },
       {
         "ticker": "PRIVISCL.NS",
+        "company_name": "Privi Speciality Chemicals Limited",
         "last_close": 3595.2,
         "pct_change_1d": 0.26,
         "data_start": "2021-07-26",
@@ -2561,6 +2594,7 @@
       },
       {
         "ticker": "CONCORDBIO.NS",
+        "company_name": "Concord Biotech Limited",
         "last_close": 1248.5,
         "pct_change_1d": -0.99,
         "data_start": "2023-08-18",
@@ -2639,6 +2673,7 @@
       },
       {
         "ticker": "GRAVITA.NS",
+        "company_name": "Gravita India Limited",
         "last_close": 1775.7,
         "pct_change_1d": 1.14,
         "data_start": "2021-07-26",
@@ -2717,6 +2752,7 @@
       },
       {
         "ticker": "SHILPAMED.NS",
+        "company_name": "Shilpa Medicare Limited",
         "last_close": 606.2,
         "pct_change_1d": 0.43,
         "data_start": "2021-07-26",
@@ -2795,6 +2831,7 @@
       },
       {
         "ticker": "JMFINANCIL.NS",
+        "company_name": "JM Financial Limited",
         "last_close": 122.1,
         "pct_change_1d": -0.11,
         "data_start": "2021-07-26",
@@ -2873,6 +2910,7 @@
       },
       {
         "ticker": "RATEGAIN.NS",
+        "company_name": "RateGain Travel Technologies Limited",
         "last_close": 900.4,
         "pct_change_1d": 2.64,
         "data_start": "2021-12-17",
@@ -2951,6 +2989,7 @@
       },
       {
         "ticker": "INTELLECT.BO",
+        "company_name": "Intellect Design Arena Limited",
         "last_close": 732.8,
         "pct_change_1d": 0.9,
         "data_start": "2021-07-26",
@@ -3029,6 +3068,7 @@
       },
       {
         "ticker": "SAREGAMA.NS",
+        "company_name": "Saregama India Limited",
         "last_close": 496.5,
         "pct_change_1d": 1.59,
         "data_start": "2021-07-26",
@@ -3107,6 +3147,7 @@
       },
       {
         "ticker": "QPOWER.NS",
+        "company_name": "QUALITY POWER ELEC EQUP L",
         "last_close": 1105.4,
         "pct_change_1d": 0.41,
         "data_start": "2025-02-24",
@@ -3185,6 +3226,7 @@
       },
       {
         "ticker": "SFL.NS",
+        "company_name": "Sheela Foam Limited",
         "last_close": 762.0,
         "pct_change_1d": 1.36,
         "data_start": "2021-07-26",
@@ -3263,6 +3305,7 @@
       },
       {
         "ticker": "SJS.NS",
+        "company_name": "S.J.S. Enterprises Limited",
         "last_close": 2335.6,
         "pct_change_1d": 2.65,
         "data_start": "2021-11-15",
@@ -3341,6 +3384,7 @@
       },
       {
         "ticker": "EBGNG.NS",
+        "company_name": "GNG ELECTRONICS LIMITED",
         "last_close": 572.3,
         "pct_change_1d": 5.0,
         "data_start": "2025-07-30",
@@ -3419,6 +3463,7 @@
       },
       {
         "ticker": "AARTIPHARM.NS",
+        "company_name": "Aarti Pharmalabs Limited",
         "last_close": 673.8,
         "pct_change_1d": 2.12,
         "data_start": "2023-01-30",
@@ -3497,6 +3542,7 @@
       },
       {
         "ticker": "KMEW.BO",
+        "company_name": "Knowledge Marine & Engineering Works Limited",
         "last_close": 2433.4,
         "pct_change_1d": 3.98,
         "data_start": "2021-07-26",
@@ -3575,6 +3621,7 @@
       },
       {
         "ticker": "TANFACIND.BO",
+        "company_name": "Tanfac Industries Limited",
         "last_close": 2702.4,
         "pct_change_1d": 0.51,
         "data_start": "2021-07-26",
@@ -3653,6 +3700,7 @@
       },
       {
         "ticker": "INNOVACAP.NS",
+        "company_name": "Innova Captab Limited",
         "last_close": 950.5,
         "pct_change_1d": -1.81,
         "data_start": "2023-12-29",
@@ -3731,6 +3779,7 @@
       },
       {
         "ticker": "ENTERO.NS",
+        "company_name": "Entero Healthcare Solutions Limited",
         "last_close": 1229.6,
         "pct_change_1d": 1.9,
         "data_start": "2024-02-16",
@@ -3809,6 +3858,7 @@
       },
       {
         "ticker": "LUMAXIND.NS",
+        "company_name": "Lumax Industries Limited",
         "last_close": 5142.0,
         "pct_change_1d": 0.95,
         "data_start": "2021-07-26",
@@ -3887,6 +3937,7 @@
       },
       {
         "ticker": "CYIENTDLM.NS",
+        "company_name": "Cyient DLM Limited",
         "last_close": 670.5,
         "pct_change_1d": 0.8,
         "data_start": "2023-07-10",
@@ -3965,6 +4016,7 @@
       },
       {
         "ticker": "VISHNU.NS",
+        "company_name": "Vishnu Chemicals Limited",
         "last_close": 632.4,
         "pct_change_1d": 1.88,
         "data_start": "2021-07-26",
@@ -4043,6 +4095,7 @@
       },
       {
         "ticker": "SBCL.NS",
+        "company_name": "Shivalik Bimetal Controls Limited",
         "last_close": 755.7,
         "pct_change_1d": 0.34,
         "data_start": "2021-07-26",
@@ -4121,6 +4174,7 @@
       },
       {
         "ticker": "AYE.NS",
+        "company_name": "AYE FINANCE LIMITED",
         "last_close": 172.0,
         "pct_change_1d": 0.73,
         "data_start": "2026-02-16",
@@ -4179,6 +4233,7 @@
       },
       {
         "ticker": "ROSSTECH.NS",
+        "company_name": "Rossell Techsys Limited",
         "last_close": 983.3,
         "pct_change_1d": 0.91,
         "data_start": "2024-12-10",
@@ -4257,6 +4312,7 @@
       },
       {
         "ticker": "ADVENZYMES.NS",
+        "company_name": "Advanced Enzyme Technologies Limited",
         "last_close": 317.4,
         "pct_change_1d": 1.42,
         "data_start": "2021-07-26",
@@ -4335,6 +4391,7 @@
       },
       {
         "ticker": "VENUSPIPES.NS",
+        "company_name": "Venus Pipes and Tubes Limited",
         "last_close": 1700.1,
         "pct_change_1d": 1.0,
         "data_start": "2022-05-24",
@@ -4413,6 +4470,7 @@
       },
       {
         "ticker": "CARYSIL.NS",
+        "company_name": "Carysil Limited",
         "last_close": 1125.7,
         "pct_change_1d": 0.82,
         "data_start": "2021-07-26",
@@ -4491,6 +4549,7 @@
       },
       {
         "ticker": "INTERARCH.NS",
+        "company_name": "Interarch Building Solutions Limited",
         "last_close": 1799.3,
         "pct_change_1d": -0.62,
         "data_start": "2024-08-26",
@@ -4569,6 +4628,7 @@
       },
       {
         "ticker": "STEELCAS.NS",
+        "company_name": "Steelcast Limited",
         "last_close": 306.6,
         "pct_change_1d": -1.05,
         "data_start": "2021-11-23",
@@ -4647,6 +4707,7 @@
       },
       {
         "ticker": "SOLARA.NS",
+        "company_name": "Solara Active Pharma Sciences Limited",
         "last_close": 492.0,
         "pct_change_1d": -6.07,
         "data_start": "2021-07-26",
@@ -4725,6 +4786,7 @@
       },
       {
         "ticker": "UFBL.NS",
+        "company_name": "UNITED FOODBRANDS LIMITED",
         "last_close": 674.8,
         "pct_change_1d": 2.55,
         "data_start": "2021-07-26",
@@ -4803,6 +4865,7 @@
       },
       {
         "ticker": "EPACKPEB.NS",
+        "company_name": "EPACK PREFAB TECHN LTD",
         "last_close": 251.9,
         "pct_change_1d": 3.64,
         "data_start": "2025-10-06",
@@ -4881,6 +4944,7 @@
       },
       {
         "ticker": "BETA.NS",
+        "company_name": "BETA DRUGS LIMITED",
         "last_close": 2315.6,
         "pct_change_1d": 1.69,
         "data_start": "2021-07-26",
@@ -4959,6 +5023,7 @@
       },
       {
         "ticker": "SAKAR.NS",
+        "company_name": "Sakar Healthcare Limited",
         "last_close": 802.2,
         "pct_change_1d": -3.07,
         "data_start": "2021-07-26",
@@ -5037,6 +5102,7 @@
       },
       {
         "ticker": "KRISHNADEF.NS",
+        "company_name": "KRISHNA DEF AND ALD IND L",
         "last_close": 1316.8,
         "pct_change_1d": 0.57,
         "data_start": "2022-04-22",
@@ -5115,6 +5181,7 @@
       },
       {
         "ticker": "WINDLAS.NS",
+        "company_name": "Windlas Biotech Limited",
         "last_close": 858.0,
         "pct_change_1d": -0.41,
         "data_start": "2021-08-16",
@@ -5193,6 +5260,7 @@
       },
       {
         "ticker": "DSSL.NS",
+        "company_name": "Dynacons Systems & Solutions Limited",
         "last_close": 1240.6,
         "pct_change_1d": 4.99,
         "data_start": "2021-07-26",
@@ -5271,6 +5339,7 @@
       },
       {
         "ticker": "BAJAJHCARE.NS",
+        "company_name": "Bajaj HealthCare Limited",
         "last_close": 323.4,
         "pct_change_1d": 1.78,
         "data_start": "2021-11-25",
@@ -5349,6 +5418,7 @@
       },
       {
         "ticker": "SHREEREF.BO",
+        "company_name": "SHREE REFRIGERATIONS LIMITED",
         "last_close": 339.1,
         "pct_change_1d": -1.11,
         "data_start": "2025-08-01",
@@ -5427,6 +5497,7 @@
       },
       {
         "ticker": "BHAGYANGR.NS",
+        "company_name": "Bhagyanagar India Limited",
         "last_close": 410.9,
         "pct_change_1d": 1.81,
         "data_start": "2021-07-26",
@@ -5505,6 +5576,7 @@
       },
       {
         "ticker": "MAMATA.NS",
+        "company_name": "MAMATA MACHINERY LIMITED",
         "last_close": 395.5,
         "pct_change_1d": -0.43,
         "data_start": "2024-12-27",
@@ -5583,6 +5655,7 @@
       },
       {
         "ticker": "ANLON.NS",
+        "company_name": "ANLON.NS,0P0001QAIM,6000",
         "last_close": 632.0,
         "pct_change_1d": -0.15,
         "data_start": "2023-01-10",
