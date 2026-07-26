@@ -41,7 +41,7 @@ def _try_google_summary_news(ticker, market):
             
         try:
             gen_time = datetime.fromisoformat(gen_at_str)
-            if datetime.now(timezone.utc) - gen_time > timedelta(hours=24):
+            if datetime.now(timezone.utc) - gen_time > timedelta(hours=48):
                 return None, None  # Stale data — don't reuse
         except Exception:
             return None, None
@@ -73,15 +73,16 @@ def get_stock_news(ticker, market=None, max_results=4, timeout_sec=4):
     Returns:
         (text: str, source: str) — formatted news string and the source label used.
     """
-    # Priority 1: Reuse Google Search news from news_summary.json
+    google_text, google_source = None, None
     if market:
         google_text, google_source = _try_google_summary_news(ticker, market)
-        if google_text:
-            return google_text, google_source
 
     bare = _bare_ticker(ticker)
     news_items = []
     sources_used = []
+
+    if google_text:
+        sources_used.append(google_source)
 
     # Priority 2: DuckDuckGo News Search
     try:
@@ -127,13 +128,17 @@ def get_stock_news(ticker, market=None, max_results=4, timeout_sec=4):
         except Exception as e:
             print(f"  [yf news warning] {ticker}: {e}")
 
-    if not news_items:
+    if not news_items and not google_text:
         return "No recent major news or announcements found in the last 48 hours.", "⚪ No Source"
 
-    formatted = [
-        f"- [{item['date']}] {item['title']} (Source: {item['source']})"
-        for item in news_items[:max_results]
-    ]
+    formatted = []
+    if google_text:
+        formatted.append(google_text)
+
+    if news_items:
+        for item in news_items[:max_results]:
+            formatted.append(f"- [{item['date']}] {item['title']} (Source: {item['source']})")
+
     source_label = " + ".join(sources_used) if sources_used else "⚪ Unknown"
     return "\n".join(formatted), source_label
 
