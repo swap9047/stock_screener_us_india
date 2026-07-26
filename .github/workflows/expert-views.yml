@@ -1,0 +1,84 @@
+name: Daily Expert Views Generation
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+# Runs once/day at 1:00 PM ET to automatically generate AI Expert Takes
+# for all tickers across all watchlists. It uses the data_snapshot.json
+# (fetched at 7 AM ET) and news_summary.json (generated at 7 AM ET) to
+# drastically speed up the generation and avoid redundant API calls.
+#
+# 1:00 PM ET is 17:00 UTC during EDT and 18:00 UTC during EST.
+on:
+  schedule:
+    - cron: "15 17 * * *"   # 17:15 UTC = 1:15 PM ET during EDT
+    - cron: "15 18 * * *"   # 18:15 UTC = 1:15 PM ET during EST
+  workflow_dispatch: {}    # run manually from the Actions tab anytime, bypasses the gate
+
+permissions:
+  contents: write   # needed to commit expert_views.json back to the repo
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      due: ${{ steps.check.outputs.due }}
+    steps:
+      - id: check
+        name: Is it ~1 PM ET right now?
+        env:
+          CRON_SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          # 22 hour tolerance for GitHub's scheduler delays.
+          import os
+          from zoneinfo import ZoneInfo
+          from datetime import datetime
+          now_et = datetime.now(ZoneInfo("America/New_York"))
+          
+          rule_hour = 13
+          cron = os.environ.get("CRON_SCHEDULE")
+          
+          is_valid_cron = True
+          if cron:
+              try:
+                  cron_utc_hour = int(cron.split()[1])
+                  expected_utc_hour = int((rule_hour - (now_et.utcoffset().total_seconds() / 3600)) % 24)
+                  if cron_utc_hour != expected_utc_hour:
+                      is_valid_cron = False
+              except Exception:
+                  pass
+                  
+          hour_diff = min((now_et.hour - rule_hour) % 24, (rule_hour - now_et.hour) % 24)
+          due = is_valid_cron and (hour_diff <= 22)
+          
+          print(f"due={'true' if due else 'false'}")
+          EOF
+
+  build:
+    needs: gate
+    if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.due == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate AI Expert Views
+        run: python refresh_expert_views.py
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+      - name: Commit updated expert_views.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add expert_views.json
+          git diff --staged --quiet && echo "No changes to commit" || git commit -m "Update expert_views.json [automated]"
+          git pull --rebase origin main
+          git push origin main
