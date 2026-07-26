@@ -77,7 +77,7 @@ def normalize_schedule(sched):
     0-23 hour. Idempotent -- any out-of-range/garbled hour gets clamped to
     the nearest workflow-supported hour, so a corrupted or stale schedule can
     never silently break a rule. ALLOWED_HOURS must match the GitHub Actions
-    cron wakeup hour(s); currently that means 10:00 PM ET only."""
+    cron wakeup hour(s); currently that means 9:00 PM ET only."""
     if not isinstance(sched, dict):
         sched = {}
 

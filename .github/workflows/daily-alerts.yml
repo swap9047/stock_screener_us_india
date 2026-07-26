@@ -3,15 +3,15 @@ name: Daily Stock Alerts
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
-# *** CURRENTLY RUNNING ONCE/DAY AT 10:00 PM ET ONLY (hourly disabled) ***
+# *** CURRENTLY RUNNING ONCE/DAY AT 9:00 PM ET ONLY (hourly disabled) ***
 # alerts.ALLOWED_HOURS is intentionally limited to the hour(s) this YAML
-# actually wakes up for. Right now the app only offers 10:00 PM ET, matching
+# actually wakes up for. Right now the app only offers 9:00 PM ET, matching
 # the two cron lines below. To support additional alert times, add the
 # corresponding UTC cron trigger(s) here and add those ET hours to
 # alerts.ALLOWED_HOURS / HOUR_LABELS.
 #
-# 10:00 PM ET is 02:00 UTC (next day) during EDT (mid-Mar to early Nov) and
-# 03:00 UTC (next day) during EST (early Nov to mid-Mar) -- GitHub Actions
+# 9:00 PM ET is 01:00 UTC (next day) during EDT (mid-Mar to early Nov) and
+# 02:00 UTC (next day) during EST (early Nov to mid-Mar) -- GitHub Actions
 # cron is UTC-only and does NOT adjust for daylight saving, so both lines
 # are scheduled and is_rule_due() checks the real America/New_York
 # wall-clock hour at run time to only actually act on the correct one for
