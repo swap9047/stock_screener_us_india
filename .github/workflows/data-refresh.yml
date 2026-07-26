@@ -12,8 +12,8 @@ env:
 #
 # 7:00 AM ET is 11:00 UTC during EDT and 12:00 UTC during EST -- same
 # DST-safe two-cron-line pattern as daily-alerts.yml and news-summary.yml.
-# The gate uses a +/-1hr tolerance (6-8 AM ET counts as due) since GitHub's
-# scheduler is best-effort and can delay a trigger by over an hour -- see
+# The gate uses a 22-hour tolerance since GitHub's
+# scheduler is best-effort and can delay a trigger -- see
 # alerts.py's is_rule_due() and news-summary.yml's gate for the same fix,
 # both added after a real missed run caused by an exact-hour check with no
 # grace period.
