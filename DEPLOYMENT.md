@@ -54,14 +54,14 @@ For **local runs**, the equivalent is a `.streamlit/secrets.toml` file (same for
 
 Streamlit Cloud only runs the interactive web app — it can't run `alert_check.py` on a timer. Free fix: a **GitHub Actions** workflow, already committed at `.github/workflows/daily-alerts.yml`.
 
-The alert trigger cadence is managed by the GitHub Actions YAML, not by Streamlit. The current workflow wakes up only around **10:00 PM ET**, using two UTC cron lines so daylight saving time is handled safely:
+The alert trigger cadence is managed by the GitHub Actions YAML, not by Streamlit. The current workflow wakes up only around **9:00 PM ET**, using two UTC cron lines so daylight saving time is handled safely:
 
 ```yaml
-- cron: "0 2 * * *"   # 10:00 PM ET during EDT
-- cron: "0 3 * * *"   # 10:00 PM ET during EST
+- cron: "15 1 * * *"   # 9:15 PM ET during EDT
+- cron: "15 2 * * *"   # 9:15 PM ET during EST
 ```
 
-The app's Alert Rules tab lets you choose which **days** a scheduled rule should run. The hour picker is intentionally limited to the one hour the workflow actually supports: **10:00 PM ET**. If you ever want alerts at more times, update both places together:
+The app's Alert Rules tab lets you choose which **days** a scheduled rule should run. The hour picker is intentionally limited to the one hour the workflow actually supports: **9:00 PM ET**. If you ever want alerts at more times, update both places together:
 
 1. Add the additional UTC cron trigger(s) in `.github/workflows/daily-alerts.yml`.
 2. Add the corresponding ET hour(s) to `ALLOWED_HOURS` / `HOUR_LABELS` in `alerts.py`.
@@ -102,7 +102,7 @@ A few things worth knowing:
 
 - **The "Refresh Data" button in the sidebar still works exactly as before** — clicking it always fetches live data for that session, bypassing the snapshot entirely. The sidebar caption shows which one you're looking at: "(daily snapshot)" or "(live fetch)".
 - **The snapshot is skipped automatically, falling back to a live fetch, if it's stale in a way that matters**: if you've added a ticker to the watchlist since the last scheduled refresh (the snapshot won't have it yet), or changed a calc parameter in Settings (EMA lengths, thresholds, etc. — the snapshot was computed with whatever settings were live at refresh time). Either case just means one live fetch until tomorrow's 7 AM refresh catches up.
-- Same edge case as the other two workflows: GitHub's scheduler is best-effort, so a run can occasionally be delayed or skipped — the gate for this one (and the news digest) uses a ±1 hour tolerance window to absorb realistic scheduler delay, the same fix applied to the alerts workflow after it silently missed a day from an exact-hour check with zero grace period.
+- Same edge case as the other two workflows: GitHub's scheduler is best-effort, so a run can occasionally be delayed or skipped — the gate for this one (and the news digest) uses a 22-hour tolerance window to absorb realistic scheduler delay, the same fix applied to the alerts workflow after it silently missed a day from an exact-hour check with zero grace period.
 
 ## 9. Push config changes made through the deployed app back to GitHub
 
