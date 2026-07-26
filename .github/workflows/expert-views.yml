@@ -73,6 +73,7 @@ jobs:
         run: python refresh_expert_views.py
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
 
       - name: Commit updated expert_views.json
         run: |
