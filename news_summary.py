@@ -253,7 +253,7 @@ def build_news_summary(watchlists, api_key, batch_size=BATCH_SIZE):
         result["markets"][market] = {
             "summary": collated,
             "sources": all_sources,
-            "batch_count": len(batches),
+            "batch_count": len(tickers),
             "ticker_count": len(tickers),
         }
 
