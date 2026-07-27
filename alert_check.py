@@ -52,9 +52,23 @@ def main():
     metric_labels = {v: k for k, v in get_filterable_metrics(settings).items()}
     state = load_state()
     messages, new_state = evaluate_and_fire(due_rules, combined, state, metric_labels=metric_labels)
-    save_state(new_state)
+
+    # Every rule x ticker key that just flipped false->true this run (i.e. a
+    # newly-triggered occurrence) -- derived by diffing new_state against the
+    # state we loaded, which is exactly the same "was_active and not
+    # prev.was_active" test evaluate_and_fire uses internally. We don't
+    # persist these as "fired" until a Discord send has actually been
+    # attempted -- otherwise a missing webhook or a failed send would mark
+    # the occurrence as delivered when it never reached Discord, silently
+    # losing it forever (edge-triggered logic never re-fires a state that's
+    # already "active").
+    newly_triggered_keys = [
+        k for k, v in new_state.items()
+        if v.get("was_active") and not state.get(k, {}).get("was_active")
+    ]
 
     if not messages:
+        save_state(new_state)
         print("No new alerts triggered.")
         return
 
@@ -64,6 +78,12 @@ def main():
 
     webhook = load_discord_webhook()
     if not webhook:
+        # Nothing was sent anywhere -- roll back the newly-triggered keys so
+        # next run's edge-trigger check sees them as not-yet-fired and
+        # retries, instead of saving them as delivered.
+        for k in newly_triggered_keys:
+            new_state[k] = {"was_active": False, "last_triggered_date": state.get(k, {}).get("last_triggered_date")}
+        save_state(new_state)
         print("\nNo discord_config.json / webhook_url set — alerts were NOT sent anywhere.")
         return
 
@@ -75,7 +95,18 @@ def main():
     ok = send_discord(webhook, f"**Stock Alert Check — {as_of}**")
     for m in messages:
         ok = send_discord(webhook, m) and ok
-    print("Sent to Discord." if ok else "Failed to send one or more messages to Discord.")
+
+    if not ok:
+        # At least one message failed to reach Discord. We can't tell from
+        # send_discord's aggregate bool which specific rule's message failed,
+        # so conservatively roll back ALL newly-triggered keys -- worst case
+        # a ticker that DID send successfully gets re-notified next run,
+        # which is a minor duplicate rather than a silently dropped alert.
+        for k in newly_triggered_keys:
+            new_state[k] = {"was_active": False, "last_triggered_date": state.get(k, {}).get("last_triggered_date")}
+
+    save_state(new_state)
+    print("Sent to Discord." if ok else "Failed to send one or more messages to Discord -- will retry next run.")
 
 
 if __name__ == "__main__":

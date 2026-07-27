@@ -206,7 +206,11 @@ def apply_custom_columns(row, columns):
     custom columns' results -- see the module docstring for why."""
     if not columns:
         return row
-    variables = row
+    # A snapshot copy, not the same dict as `row` -- formulas must only see
+    # the row's original built-in metrics, never another custom column's
+    # result (which would silently reintroduce the exact dependency-order/
+    # cycle problem this module's docstring says it avoids by design).
+    variables = dict(row)
     for col in columns:
         if not col.get("enabled", True):
             continue
