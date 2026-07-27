@@ -23,7 +23,7 @@ def main():
     
     # Load data snapshot (generated at 7 AM ET)
     snapshot = load_data_snapshot()
-    if not snapshot or "markets" not in snapshot:
+    if not snapshot or "per_market" not in snapshot:
         print("Error: Invalid or missing data_snapshot.json. Run refresh_data.py first.")
         return
 
@@ -36,11 +36,11 @@ def main():
 
     # Process each market
     for market, mkt_tickers in watchlists.items():
-        if market not in snapshot["markets"]:
+        if market not in snapshot["per_market"]:
             continue
             
         print(f"\nProcessing {market} Watchlist ({len(mkt_tickers)} tickers)...")
-        results = snapshot["markets"][market]
+        results = snapshot["per_market"][market]
         
         for idx, tk in enumerate(mkt_tickers):
             try:
