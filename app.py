@@ -1611,12 +1611,18 @@ def render_expert_analysis_control_bar(market, results):
         width="stretch",
     ):
         try:
-            from github_sync import trigger_github_workflow
-            msg = trigger_github_workflow("expert-views.yml")
-            st.success(f"Expert Views refresh triggered in background: {msg}")
+            from github_sync import trigger_github_workflow, get_github_config
+            token, repo, _ = get_github_config(getattr(st, "secrets", None))
+            if not token or not repo:
+                st.error("GitHub credentials not found.")
+            else:
+                ok, msg = trigger_github_workflow(token, repo, "expert-views.yml")
+                if ok:
+                    st.success(f"Expert Views refresh triggered in background: {msg}")
+                else:
+                    st.error(f"Failed: {msg}")
         except Exception as e:
             st.error(f"Failed to start refresh: {e}")
-        st.rerun()
 
     if c4.button(
         f"🔄 Re-analyze All ({len(all_tickers)})",
@@ -1625,12 +1631,18 @@ def render_expert_analysis_control_bar(market, results):
         width="stretch",
     ):
         try:
-            from github_sync import trigger_github_workflow
-            msg = trigger_github_workflow("expert-views.yml")
-            st.success(f"Expert Views refresh triggered in background: {msg}")
+            from github_sync import trigger_github_workflow, get_github_config
+            token, repo, _ = get_github_config(getattr(st, "secrets", None))
+            if not token or not repo:
+                st.error("GitHub credentials not found.")
+            else:
+                ok, msg = trigger_github_workflow(token, repo, "expert-views.yml")
+                if ok:
+                    st.success(f"Expert Views refresh triggered in background: {msg}")
+                else:
+                    st.error(f"Failed: {msg}")
         except Exception as e:
             st.error(f"Failed to start refresh: {e}")
-        st.rerun()
 
 
 def render_expert_view_expander(market, filtered_rows, settings):
