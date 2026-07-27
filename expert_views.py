@@ -222,3 +222,5 @@ def analyze_single_ticker(ticker, row_data, api_key, active_alerts_text=None, nv
     all_views[ticker] = view
     save_expert_views(all_views)
     return view
+
+# Trigger Streamlit Cloud hot-reload
