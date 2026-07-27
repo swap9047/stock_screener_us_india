@@ -63,7 +63,7 @@ from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE, 
                      DEFAULT_DAYS, ALLOWED_HOURS, HOUR_LABELS)
 from filters import (get_market_filters, save_market_filters, apply_filters, describe_filter,
                      describe_chain, describe_chain_with_values, passes_filter_chain, CATEGORICAL_METRICS)
-from github_sync import get_github_config, push_all_config, SYNCABLE_FILES
+from github_sync import get_github_config, push_all_config, trigger_github_workflow, SYNCABLE_FILES
 from news_summary import load_news_summary, MARKET_LABELS, get_gemini_api_key, get_nvidia_api_key
 from expert_views import load_expert_views, save_expert_views, analyze_single_ticker, generate_expert_view, _is_valid_view
 from custom_columns import (
@@ -2256,11 +2256,25 @@ with tab_news:
         "same result."
     )
     news_data = load_news_summary()
+    
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        if st.button("🔄 Refresh News"):
+            token, repo, _ = get_github_config(st.secrets)
+            if token and repo:
+                ok, msg = trigger_github_workflow(token, repo, "news-summary.yml")
+                if ok:
+                    st.success("News refresh started in background! Check back in 15 mins.")
+                else:
+                    st.error(f"Failed to start refresh: {msg}")
+            else:
+                st.error("Missing GITHUB_TOKEN or GITHUB_REPO in secrets.")
+
     if not news_data:
         st.info(
             "No news summary yet. It's generated once a day by the scheduled GitHub Actions "
             "workflow (`news-summary.yml`) — nothing to do here until the first scheduled run, "
-            "or trigger it manually from the repo's Actions tab."
+            "or trigger it manually using the button above."
         )
     else:
         st.caption(f"As of {news_data.get('as_of', '—')}")
