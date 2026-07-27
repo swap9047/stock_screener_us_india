@@ -6,11 +6,40 @@ and free web news catalysts to produce actionable investor takes.
 
 import json
 import os
-from datetime import datetime, timezone
-from news_search import get_stock_news
+from datetime import datetime, timedelta, timezone
+from google.genai import types
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 EXPERT_VIEWS_FILE = os.path.join(SCRIPT_DIR, "expert_views.json")
+
+def fetch_gemma_expert_news(client, ticker, market, company_name):
+    """Fetches news specifically for Expert Views using gemma-4-31b-it and Google Search.
+    No fallbacks to DuckDuckGo or yfinance are used."""
+    as_of_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    cutoff_date = (datetime.now(timezone.utc) - timedelta(days=2)).strftime("%Y-%m-%d")
+    exchange = "NSE/BSE-listed" if market == "INDIA" else "US-listed"
+    
+    bare = ticker.rsplit(".", 1)[0] if ticker.endswith(".NS") or ticker.endswith(".BO") else ticker
+    name = f"{company_name} ({bare})" if company_name and company_name != ticker else bare
+
+    prompt = (
+        f"You are a financial news researcher. For the {exchange} stock {name} -- "
+        f"search for news, announcements, press releases, analyst notes, and stock moves between "
+        f"{cutoff_date} and {as_of_date} (the last 36 hours). Report any news items you find, "
+        "specifying the exact date of each item. Be extremely concise. If there is no news, output nothing."
+    )
+    
+    try:
+        grounding_tool = types.Tool(google_search=types.GoogleSearch())
+        config = types.GenerateContentConfig(tools=[grounding_tool])
+        resp = client.models.generate_content(model="models/gemma-4-31b-it", contents=prompt, config=config)
+        text = resp.text or ""
+        if not text.strip():
+            return "No recent news found.", "⚪ No Source"
+        return text, "🔍 Gemma-4-31B (Google Search)"
+    except Exception as e:
+        print(f"  [expert gemma search failed] {ticker}: {e}")
+        return "No recent news found.", "⚪ No Source"
 
 
 def load_expert_views():
@@ -147,7 +176,7 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
     company_name = row_data.get("company_name", ticker)
 
     if news_text is None:
-        news_text, news_source = get_stock_news(ticker, market=market, company_name=company_name)
+        news_text, news_source = fetch_gemma_expert_news(client, ticker, market, company_name)
 
     prompt = build_expert_prompt(row_data, news_text, active_alerts_text)
     
