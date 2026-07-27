@@ -25,8 +25,8 @@ to interrupt.
 
 One-time setup:
   1. Create a GitHub Personal Access Token scoped to just this repo, with
-     "Contents: Read and write" permission (GitHub -> Settings -> Developer
-     settings -> Personal access tokens -> Fine-grained tokens).
+     "Contents: Read and write" AND "Actions: Read and write" permissions 
+     (GitHub -> Settings -> Developer settings -> Personal access tokens -> Fine-grained tokens).
   2. Set it as a Streamlit secret named GITHUB_TOKEN. Never paste a token
      into a text box on a public deployment -- same rule this app already
      follows for the Discord webhook.
