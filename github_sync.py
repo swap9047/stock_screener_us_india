@@ -190,3 +190,20 @@ def _short(resp):
         return resp.json().get("message", resp.text[:200])
     except Exception:
         return resp.text[:200]
+
+
+def trigger_github_workflow(token, repo, workflow_file="news-summary.yml", ref="main"):
+    """
+    Triggers a workflow_dispatch event for the given workflow file using the GitHub API.
+    """
+    url = f"{GITHUB_API}/repos/{repo}/actions/workflows/{workflow_file}/dispatches"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github.v3+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    payload = {"ref": ref}
+    resp = requests.post(url, headers=headers, json=payload)
+    if resp.status_code == 204:
+        return True, "Workflow triggered successfully."
+    return False, f"Failed to trigger workflow ({resp.status_code}): {resp.text}"

@@ -26,11 +26,11 @@ from google.genai import types
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 NEWS_SUMMARY_FILE = os.path.join(SCRIPT_DIR, "news_summary.json")
 
-SEARCH_MODEL = "gemini-2.5-flash"
+SEARCH_MODEL = "models/gemma-4-31b-it"
 REASONING_MODEL = "gemini-3.5-flash-lite"
 BATCH_SIZE = 8
-# 15s delay between search calls stays comfortably under 4 calls/min
-SECONDS_BETWEEN_CALLS = 15
+# 2s delay between search calls as requested by user
+SECONDS_BETWEEN_CALLS = 2
 
 MARKET_LABELS = {"US": "US Watchlist", "INDIA": "India Watchlist"}
 
@@ -73,26 +73,25 @@ def batch_list(items, size):
     return [items[i:i + size] for i in range(0, len(items), size)]
 
 
-def fetch_batch_raw_news(client, tickers, market, as_of_date, ticker_names=None):
-    """Stage 1: Grounded search call using gemini-2.5-flash. Fetches raw news
-    articles and web sources for a batch of tickers."""
+def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None):
+    """Stage 1: Grounded search call using gemma-4-31b-it. Fetches raw news
+    articles and web sources for a single ticker."""
     from datetime import datetime, timedelta
+    from news_search import fetch_free_news
 
     cutoff_date = (datetime.strptime(as_of_date, "%Y-%m-%d") - timedelta(days=2)).strftime("%Y-%m-%d")
     exchange = "NSE/BSE-listed" if market == "INDIA" else "US-listed"
     
     ticker_names = ticker_names or {}
-    def _format_name(t):
-        bare = _bare_ticker(t)
-        company = ticker_names.get(t)
-        return f"{company} ({bare})" if company and company != t else bare
+    bare = _bare_ticker(ticker)
+    company = ticker_names.get(ticker)
+    name = f"{company} ({bare})" if company and company != ticker else bare
 
-    names = ", ".join(_format_name(t) for t in tickers)
     prompt = (
-        f"You are a financial news researcher. For each of these {exchange} stocks: {names} -- "
+        f"You are a financial news researcher. For the {exchange} stock {name} -- "
         f"search for news, announcements, press releases, analyst notes, and stock moves between "
-        f"{cutoff_date} and {as_of_date} (the last 36 hours). Report any news items you find for "
-        "each ticker, specifying the exact date of each item. Be extremely concise. If a ticker has no news, skip it."
+        f"{cutoff_date} and {as_of_date} (the last 36 hours). Report any news items you find, "
+        "specifying the exact date of each item. Be extremely concise. If there is no news, output nothing."
     )
     try:
         grounding_tool = types.Tool(google_search=types.GoogleSearch())
@@ -106,9 +105,12 @@ def fetch_batch_raw_news(client, tickers, market, as_of_date, ticker_names=None)
                 web = getattr(chunk, "web", None)
                 if web and web.uri:
                     sources.append({"title": web.title, "url": web.uri})
-        return text, sources
+        return f"**{name}**:\n{text}", sources
     except Exception as e:
-        return None, str(e)
+        print(f"  [gemma search failed] {ticker}: {e} -> Falling back to DuckDuckGo/yfinance")
+        fallback_text, fallback_source = fetch_free_news(ticker, market)
+        source_dict = [{"title": fallback_source, "url": ""}]
+        return f"**{name}**:\n{fallback_text}", source_dict
 
 
 def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date, ticker_names=None):
@@ -224,26 +226,26 @@ def build_news_summary(watchlists, api_key, batch_size=BATCH_SIZE):
             }
             continue
 
-        batches = batch_list(tickers, batch_size)
+        # Process Stage 1 and Stage 2 per-ticker
         filtered_batch_texts = []
         all_sources = []
-
-        for batch in batches:
+        for ticker in tickers:
             if not first_call:
                 time.sleep(SECONDS_BETWEEN_CALLS)
             first_call = False
 
-            # Stage 1: Grounded web search with gemini-2.5-flash
-            raw_text, sources_or_err = fetch_batch_raw_news(client, batch, market, as_of_date, ticker_names=ticker_names)
+            # Stage 1: Grounded web search with gemma-4-31b-it (or fallback)
+            raw_text, sources_or_err = fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=ticker_names)
             if raw_text:
                 all_sources.extend(sources_or_err)
-
-                # Stage 2: Reasoning & strict filtering with gemini-3.6-flash
-                clean_text = filter_batch_with_reasoning(client, raw_text, batch, market, as_of_date, ticker_names=ticker_names)
+                
+                # Stage 2: Reasoning & strict filtering per-ticker with gemini-3.5-flash-lite
+                # Pass the single raw_text, but feed an empty list for tickers since the text is already bolded with the ticker name
+                clean_text = filter_batch_with_reasoning(client, raw_text, [], market, as_of_date, ticker_names=ticker_names)
                 if clean_text:
                     filtered_batch_texts.append(clean_text)
             else:
-                print(f"  Batch {batch} search failed: {sources_or_err}")
+                print(f"  Search failed for {ticker}: {sources_or_err}")
 
         # Stage 3: Final market collation with gemini-3.6-flash
         collated = collate_market_summary(client, market, filtered_batch_texts, as_of_date=as_of_date)
