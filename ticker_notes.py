@@ -85,21 +85,28 @@ def flag_marker_html(flag):
     return f"{emoji} " if emoji else ""
 
 
-def compute_auto_flag(row):
+def compute_auto_flag(row, min_vstop_weeks=3):
     """Evaluates technical criteria to auto-assign a Green or Red flag.
     Returns (flag_color, reason_string) or ("", "") for neutral.
+
+    `min_vstop_weeks` is the "has this trend held long enough" threshold for
+    the VStop-direction rules below -- sourced from the SAME
+    settings.json["tech_uptrend_min_vstop_weeks"] value stock_data.py uses
+    for the Tech Uptrend column (default 3), so tuning that one setting
+    consistently affects both Tech Uptrend AND these auto-flag rules,
+    instead of the auto-flag rules using their own hardcoded number.
 
     Rules (first match wins):
       GREEN:
         1. Trend = "Strong Uptrend"
         2. Trend = "Uptrend" AND Vol = "Exploding" AND Near 52w High (within 5%)
         3. Tech Uptrend = Yes AND Trend = "Uptrend" AND Net Vol = "Positive" AND Near High (within 20%)
-        4. Trend = "Uptrend" AND Vol = "Exploding" AND VStop Dir = "Up" >= 2w AND Net Vol = "Pos" AND Near High (within 20%)
+        4. Trend = "Uptrend" AND Vol = "Exploding" AND VStop Dir = "Up" >= min_vstop_weeks AND Net Vol = "Pos" AND Near High (within 20%)
       RED:
         1. Trend = "Strong Downtrend" AND Tech Uptrend = No
         2. Deep Drawdown (>30% off high) AND Volume Drying ("Declining" or "In-line")
         3. Trend = "Downtrend" AND Vol = "Exploding" AND Net Vol = "Negative" AND Near 52w Low (within 5%)
-        4. Trend = "Downtrend" AND Vol in ["Declining", "In-line", "Exploding(Neg)"] AND VStop Dir = "Down" >= 2w
+        4. Trend = "Downtrend" AND Vol in ["Declining", "In-line", "Exploding(Neg)"] AND VStop Dir = "Down" >= min_vstop_weeks
     """
     trend = row.get("trend", "")
     tech_uptrend = row.get("tech_uptrend", False)
@@ -143,7 +150,7 @@ def compute_auto_flag(row):
             and vol_trend == "Exploding"
             and vstop_dir == "Up"
             and vstop_weeks is not None
-            and vstop_weeks >= 2
+            and vstop_weeks >= min_vstop_weeks
             and net_vol_dir == "Positive"
             and near_high_20):
         return "Green", "Uptrend + Exploding(Pos) vol + VStop Up ≥2w + Near High (20%)"
@@ -165,7 +172,7 @@ def compute_auto_flag(row):
             and (vol_trend in ("Declining", "In-line") or (vol_trend == "Exploding" and net_vol_dir == "Negative"))
             and vstop_dir == "Down"
             and vstop_weeks is not None
-            and vstop_weeks >= 2):
+            and vstop_weeks >= min_vstop_weeks):
         if vol_trend == "Exploding":
             reason_vol = "Exploding(Neg)"
         else:
@@ -175,10 +182,17 @@ def compute_auto_flag(row):
     return "", ""
 
 
-def apply_notes_to_rows(rows, notes=None):
+def apply_notes_to_rows(rows, notes=None, min_vstop_weeks=3):
     """Attaches `note`, `flag`, and `flag_reason` fields onto every row dict
     in place, from the shared ticker_notes.json (or an already-loaded `notes`
     dict, to avoid re-reading the file once per market).
+
+    `min_vstop_weeks` is forwarded to compute_auto_flag() -- pass
+    settings.json's "tech_uptrend_min_vstop_weeks" here (same value
+    stock_data.py uses for the Tech Uptrend column) so the auto-flag rules
+    stay consistent with that setting instead of using their own hardcoded
+    number. Defaults to 3 (the same default stock_data.py falls back to)
+    when the caller doesn't have settings handy.
 
     Flag priority:
       1. Manual flag from ticker_notes.json -- never overridden.
@@ -200,7 +214,7 @@ def apply_notes_to_rows(rows, notes=None):
             row["flag"] = manual_flag
             row["flag_reason"] = "Manually assigned"
         else:
-            auto_flag, auto_reason = compute_auto_flag(row)
+            auto_flag, auto_reason = compute_auto_flag(row, min_vstop_weeks=min_vstop_weeks)
             row["flag"] = auto_flag
             row["flag_reason"] = auto_reason
     return rows

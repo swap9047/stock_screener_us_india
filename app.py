@@ -1683,7 +1683,7 @@ def render_expert_analysis_control_bar(market, results):
                     (idx + 1) / len(still_failed),
                     text=f"Auto-retry: {company_name} ({idx+1}/{len(still_failed)})...",
                 )
-                view = generate_expert_view(client, row)
+                view = generate_expert_view(client, row, nvidia_api_key=nvidia_api_key)
                 if _is_valid_view(view):
                     updated_views[tk] = view
                     save_expert_views(updated_views)
@@ -2223,7 +2223,7 @@ for _market_rows in per_market.values():
     # every run, same reasoning as custom columns above, so a note/flag you
     # just saved shows up immediately even when serving from this morning's
     # snapshot instead of waiting for the next refresh.
-    apply_notes_to_rows(_market_rows, ticker_notes_now)
+    apply_notes_to_rows(_market_rows, ticker_notes_now, min_vstop_weeks=settings_now.get("tech_uptrend_min_vstop_weeks", 3))
 
 source_label = "daily snapshot" if using_snapshot else "live fetch"
 st.sidebar.caption(f"Data as of: {as_of} ({source_label})")

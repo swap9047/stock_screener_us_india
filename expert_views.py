@@ -165,7 +165,24 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
         data["model_used"] = "gemini-3.5-flash-lite"
         return data
     except Exception as e:
-        print(f"  [gemini fallback] {ticker}: {e} -> Falling back to DeepSeek/Error")
+        gemini_error = str(e)
+        print(f"  [gemini fallback] {ticker}: {gemini_error} -> Falling back to DeepSeek/Error")
+
+    def _pending_fallback(reason):
+        """Shared 'analysis pending' fallback dict -- used whether the
+        NVIDIA fallback isn't configured at all, or it was tried and also
+        failed. Always returns a valid dict so callers never have to
+        handle None."""
+        return {
+            "verdict": "HOLD",
+            "headline": f"Analysis pending -- {reason}",
+            "technical_summary": "Technical data available in table.",
+            "catalyst_summary": news_text,
+            "actionable_take": "Review technical indicators in table.",
+            "as_of": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+            "news_source": news_source or "⚪ Unknown",
+            "model_used": "Error",
+        }
 
     # 2. Fallback to DeepSeek V4 Flash via NVIDIA API if configured
     if nvidia_api_key:
@@ -201,16 +218,12 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
             return data
         except Exception as e:
             print(f"  [deepseek error] {ticker}: {e}")
-        return {
-            "verdict": "HOLD",
-            "headline": f"Analysis pending -- {e}",
-            "technical_summary": "Technical data available in table.",
-            "catalyst_summary": news_text,
-            "actionable_take": "Review technical indicators in table.",
-            "as_of": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
-            "news_source": news_source or "⚪ Unknown",
-            "model_used": "Error"
-        }
+            return _pending_fallback(str(e))
+
+    # No NVIDIA fallback configured -- surface the original Gemini error
+    # instead of silently returning None (the old behavior, which crashed
+    # every caller that assumed a dict was always returned).
+    return _pending_fallback(gemini_error)
 
 
 def analyze_single_ticker(ticker, row_data, api_key, active_alerts_text=None, nvidia_api_key=None):

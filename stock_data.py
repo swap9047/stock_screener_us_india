@@ -801,7 +801,7 @@ def fetch_all_markets(watchlists=None, period="5y", settings=None):
     # headless scripts too, not just the table, so attach them here at the
     # source rather than only in app.py.
     from ticker_notes import apply_notes_to_rows
-    apply_notes_to_rows(combined)
+    apply_notes_to_rows(combined, min_vstop_weeks=settings.get("tech_uptrend_min_vstop_weeks", 3))
 
     return combined, as_of, per_market
 

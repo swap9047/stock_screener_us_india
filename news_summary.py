@@ -21,6 +21,7 @@ import json
 import os
 import time
 from datetime import datetime, timezone
+from google.genai import types
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 NEWS_SUMMARY_FILE = os.path.join(SCRIPT_DIR, "news_summary.json")
@@ -75,7 +76,6 @@ def batch_list(items, size):
 def fetch_batch_raw_news(client, tickers, market, as_of_date, ticker_names=None):
     """Stage 1: Grounded search call using gemini-2.5-flash. Fetches raw news
     articles and web sources for a batch of tickers."""
-    from google.genai import types
     from datetime import datetime, timedelta
 
     cutoff_date = (datetime.strptime(as_of_date, "%Y-%m-%d") - timedelta(days=2)).strftime("%Y-%m-%d")
