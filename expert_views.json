@@ -801,16 +801,5 @@
     "news_used": "No news items were found for WINDLAS, MAMATA, and ANLON within the specified date range.",
     "news_source": "\ud83d\udd0d Google Search (News Summary)",
     "model_used": "gemini-3.5-flash-lite"
-  },
-  "LANDMARK.NS": {
-    "verdict": "ACCUMULATE",
-    "headline": "Landmark Cars exhibits explosive volume accumulation and robust relative strength within a solid Stage 2 uptrend.",
-    "technical_summary": "The stock trades comfortably above rising moving averages with a daily RSI of 68.5 and strong Mansfield RS (26.2 weekly). Most notably, 10-day volume is exploding at over 8x its 100-day average with a 78.6% positive net volume accumulation ratio.",
-    "catalyst_summary": "No major news or announcements reported in the last 48 hours; price action is driven entirely by strong technical momentum and heavy institutional accumulation.",
-    "actionable_take": "Consider accumulating on minor intraday pullbacks toward the 508-520 support zone. Set a trailing stop loss strictly below the Volatility Stop level at 444.6 to manage downside risk.",
-    "as_of": "2026-07-27 14:36",
-    "news_used": "No recent major news or announcements found in the last 48 hours.",
-    "news_source": "\u26aa No Source",
-    "model_used": "gemini-3.5-flash-lite"
   }
 }
