@@ -1610,30 +1610,12 @@ def render_expert_analysis_control_bar(market, results):
         type="primary" if failed_count > 0 else "secondary",
         width="stretch",
     ):
-        progress_bar = st.progress(0, text=f"Retrying {failed_count} failed/pending tickers...")
-        from google import genai
-        client = genai.Client(api_key=api_key)
-        updated_views = load_expert_views()
-
-        for idx, tk in enumerate(failed_tickers):
-            row = next(r for r in results if r["ticker"] == tk)
-            company_name = row.get("company_name", tk)
-            progress_bar.progress(
-                (idx + 1) / failed_count,
-                text=f"Re-analyzing {company_name} ({idx+1}/{failed_count})...",
-            )
-            view = generate_expert_view(client, row, nvidia_api_key=nvidia_api_key)
-            if _is_valid_view(view):
-                updated_views[tk] = view
-                save_expert_views(updated_views)
-            else:
-                progress_bar.progress(
-                    (idx + 1) / failed_count,
-                    text=f"⚠️ {tk} still rate-limited, skipping overwrite.",
-                )
-            time.sleep(5)
-
-        sync_expert_views_to_github(f"Retry failed/pending tickers ({failed_count}) via UI")
+        try:
+            from github_sync import trigger_github_workflow
+            msg = trigger_github_workflow("expert-views.yml")
+            st.success(f"Expert Views refresh triggered in background: {msg}")
+        except Exception as e:
+            st.error(f"Failed to start refresh: {e}")
         st.rerun()
 
     if c4.button(
@@ -1642,55 +1624,12 @@ def render_expert_analysis_control_bar(market, results):
         disabled=not api_key,
         width="stretch",
     ):
-        progress_bar = st.progress(0, text=f"Re-analyzing all {len(all_tickers)} tickers...")
-        from google import genai
-        client = genai.Client(api_key=api_key)
-        updated_views = load_expert_views()
-
-        for idx, tk in enumerate(all_tickers):
-            row = next(r for r in results if r["ticker"] == tk)
-            company_name = row.get("company_name", tk)
-            progress_bar.progress(
-                (idx + 1) / len(all_tickers),
-                text=f"Analyzing {company_name} ({idx+1}/{len(all_tickers)})...",
-            )
-            old_view = updated_views.get(tk)
-            view = generate_expert_view(client, row, nvidia_api_key=nvidia_api_key)
-            if _is_valid_view(view):
-                updated_views[tk] = view
-                save_expert_views(updated_views)
-            elif _is_valid_view(old_view):
-                # Keep the pre-existing good result, don't overwrite with 429
-                progress_bar.progress(
-                    (idx + 1) / len(all_tickers),
-                    text=f"⚠️ {tk} rate-limited — keeping previous result.",
-                )
-            else:
-                updated_views[tk] = view  # Still a failure but save it (nothing to preserve)
-                save_expert_views(updated_views)
-            if idx < len(all_tickers) - 1:
-                time.sleep(5)
-
-        # Auto-retry any tickers that failed during the main pass
-        still_failed = [tk for tk in all_tickers if not _is_valid_view(updated_views.get(tk))]
-        if still_failed:
-            progress_bar.progress(1.0, text=f"Main pass done. Auto-retrying {len(still_failed)} failed ticker(s)...")
-            time.sleep(5)  # cool-down before retry pass
-            for idx, tk in enumerate(still_failed):
-                row = next(r for r in results if r["ticker"] == tk)
-                company_name = row.get("company_name", tk)
-                progress_bar.progress(
-                    (idx + 1) / len(still_failed),
-                    text=f"Auto-retry: {company_name} ({idx+1}/{len(still_failed)})...",
-                )
-                view = generate_expert_view(client, row, nvidia_api_key=nvidia_api_key)
-                if _is_valid_view(view):
-                    updated_views[tk] = view
-                    save_expert_views(updated_views)
-                if idx < len(still_failed) - 1:
-                    time.sleep(5)
-
-        sync_expert_views_to_github(f"Re-analyze all tickers ({len(all_tickers)}) + auto-retry via UI")
+        try:
+            from github_sync import trigger_github_workflow
+            msg = trigger_github_workflow("expert-views.yml")
+            st.success(f"Expert Views refresh triggered in background: {msg}")
+        except Exception as e:
+            st.error(f"Failed to start refresh: {e}")
         st.rerun()
 
 
