@@ -77,7 +77,7 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None)
     """Stage 1: Grounded search call using gemma-4-31b-it. Fetches raw news
     articles and web sources for a single ticker."""
     from datetime import datetime, timedelta
-    from news_search import fetch_free_news
+    from news_search import get_stock_news
 
     cutoff_date = (datetime.strptime(as_of_date, "%Y-%m-%d") - timedelta(days=2)).strftime("%Y-%m-%d")
     exchange = "NSE/BSE-listed" if market == "INDIA" else "US-listed"
@@ -108,7 +108,7 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None)
         return f"**{name}**:\n{text}", sources
     except Exception as e:
         print(f"  [gemma search failed] {ticker}: {e} -> Falling back to DuckDuckGo/yfinance")
-        fallback_text, fallback_source = fetch_free_news(ticker, market)
+        fallback_text, fallback_source = get_stock_news(ticker, market=market)
         source_dict = [{"title": fallback_source, "url": ""}]
         return f"**{name}**:\n{fallback_text}", source_dict
 
