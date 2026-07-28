@@ -28,7 +28,7 @@ NEWS_SUMMARY_FILE = os.path.join(SCRIPT_DIR, "news_summary.json")
 
 SEARCH_MODEL = "models/gemma-4-31b-it"
 REASONING_MODEL = "gemini-3.5-flash-lite"
-BATCH_SIZE = 8
+BATCH_SIZE = 5
 # 2s delay between search calls as requested by user
 SECONDS_BETWEEN_CALLS = 2
 
