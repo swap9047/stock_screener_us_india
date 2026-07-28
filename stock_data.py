@@ -90,6 +90,10 @@ DEFAULT_SETTINGS = {
     "news_search_model": "models/gemma-4-26b-a4b-it",
     "news_reasoning_model": "models/gemini-3.5-flash-lite",
     "news_reasoning_budget": 4096,
+    
+    # -- Expert Pipeline Defaults --
+    "expert_reasoning_model": "models/gemini-3.5-flash-lite",
+    "expert_thinking_budget": 8192,
 }
 
 
