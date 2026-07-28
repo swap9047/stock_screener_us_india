@@ -1560,6 +1560,62 @@ def render_expert_analysis_control_bar(market, results):
     ]
 
     st.markdown("##### 🤖 AI Stock Expert Analysis Controls")
+    
+    from stock_data import load_settings, save_settings
+    settings_now = load_settings()
+    
+    col1, col2, col3 = st.columns([4, 3, 3])
+    with col1:
+        st.caption("Search is powered by gemma-4-26b-a4b-it")
+    with col2:
+        reason_choices = ["models/gemini-3.5-flash-lite", "models/gemma-4-31b-it", "models/gemma-4-26b-a4b-it"]
+        current_reason = settings_now.get("expert_reasoning_model", "models/gemini-3.5-flash-lite")
+        if current_reason == "gemini-3.5-flash-lite":
+            current_reason = "models/gemini-3.5-flash-lite"
+        new_reason = st.selectbox(
+            "Reasoning Model", reason_choices,
+            index=reason_choices.index(current_reason) if current_reason in reason_choices else 0,
+            key=f"expert_reasoning_model_select_{market}"
+        )
+        saved_reason = settings_now.get("expert_reasoning_model", "models/gemini-3.5-flash-lite")
+        if saved_reason == "gemini-3.5-flash-lite":
+            saved_reason = "models/gemini-3.5-flash-lite"
+        if new_reason != saved_reason:
+            settings_now["expert_reasoning_model"] = new_reason
+            save_settings(settings_now)
+            st.rerun()
+            
+    with col3:
+        is_gemma = "gemma" in settings_now.get("expert_reasoning_model", "")
+        if is_gemma:
+            budget_choices = ["LOW", "MEDIUM", "HIGH"]
+            default_val = "HIGH"
+        else:
+            budget_choices = [1024, 2048, 4096, 8192]
+            default_val = 8192
+            
+        current_val = settings_now.get("expert_thinking_budget", default_val)
+        
+        if is_gemma and current_val not in budget_choices:
+            current_val = default_val
+        elif not is_gemma:
+            try:
+                current_val = int(current_val)
+            except (ValueError, TypeError):
+                current_val = default_val
+            if current_val not in budget_choices:
+                current_val = default_val
+                
+        new_budget = st.selectbox(
+            "Thinking Budget / Level", budget_choices,
+            index=budget_choices.index(current_val),
+            key=f"expert_reasoning_budget_select_{market}"
+        )
+        if new_budget != current_val:
+            settings_now["expert_thinking_budget"] = new_budget
+            save_settings(settings_now)
+            st.rerun()
+
     c1, c2, c3, c4 = st.columns([3.5, 1.3, 1.8, 1.4])
 
     selected_to_reanalyze = c1.multiselect(

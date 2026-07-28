@@ -12,9 +12,9 @@ from google.genai import types
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 EXPERT_VIEWS_FILE = os.path.join(SCRIPT_DIR, "expert_views.json")
 
-def fetch_gemma_expert_news(client, ticker, market, company_name):
-    """Fetches news specifically for Expert Views using gemma-4-31b-it and Google Search.
-    No fallbacks to DuckDuckGo or yfinance are used."""
+def fetch_gemma_expert_news(client, ticker, market, company_name, news_text_fallback=None):
+    """Fetches news specifically for Expert Views using gemma-4-26b-a4b-it with Google Search.
+    Falls back to 31b, then to news_summary corpus if provided."""
     as_of_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     cutoff_date = (datetime.now(timezone.utc) - timedelta(days=2)).strftime("%Y-%m-%d")
     exchange = "NSE/BSE-listed" if market == "INDIA" else "US-listed"
@@ -24,22 +24,35 @@ def fetch_gemma_expert_news(client, ticker, market, company_name):
 
     prompt = (
         f"You are a financial news researcher. For the {exchange} stock {name} -- "
-        f"search for news, announcements, press releases, analyst notes, and stock moves between "
-        f"{cutoff_date} and {as_of_date} (the last 36 hours). Report any news items you find, "
-        "specifying the exact date of each item. Be extremely concise. If there is no news, output nothing."
+        f"search for recent institutional analyst ratings, upgrades/downgrades, press releases, "
+        f"and major upcoming catalysts (e.g., earnings, product launches) between "
+        f"{cutoff_date} and {as_of_date} (the last 36 hours for news, next 3-4 days for events). "
+        "Report any material items you find, specifying the exact date of each item. Be extremely concise. "
+        "If there is no material news, output nothing."
     )
     
+    grounding_tool = types.Tool(google_search=types.GoogleSearch())
+    config = types.GenerateContentConfig(tools=[grounding_tool])
+    
     try:
-        grounding_tool = types.Tool(google_search=types.GoogleSearch())
-        config = types.GenerateContentConfig(tools=[grounding_tool])
-        resp = client.models.generate_content(model="models/gemma-4-31b-it", contents=prompt, config=config)
+        resp = client.models.generate_content(model="models/gemma-4-26b-a4b-it", contents=prompt, config=config)
         text = resp.text or ""
         if not text.strip():
-            return "No recent news found.", "⚪ No Source"
-        return text, "🔍 Gemma-4-31B (Google Search)"
+            return "No recent news found.", "🔍 Gemma-4-26B (Google Search)"
+        return text, "🔍 Gemma-4-26B (Google Search)"
     except Exception as e:
-        print(f"  [expert gemma search failed] {ticker}: {e}")
-        return "No recent news found.", "⚪ No Source"
+        print(f"  [expert gemma 26b search failed] {ticker}: {e} -> Falling back to 31b")
+        try:
+            resp = client.models.generate_content(model="models/gemma-4-31b-it", contents=prompt, config=config)
+            text = resp.text or ""
+            if not text.strip():
+                return "No recent news found.", "🔍 Gemma-4-31B (Google Search)"
+            return text, "🔍 Gemma-4-31B (Google Search)"
+        except Exception as e2:
+            print(f"  [expert gemma 31b search failed] {ticker}: {e2} -> Falling back to corpus")
+            if news_text_fallback:
+                return news_text_fallback, "⚪ news_summary.json (Corpus Reuse)"
+            return "No recent news found.", "⚪ No Source"
 
 
 def load_expert_views():
@@ -166,42 +179,26 @@ Return ONLY a valid JSON object matching this schema:
     return prompt
 
 
-def generate_expert_view(client, row_data, news_text=None, news_source=None, active_alerts_text=None, nvidia_api_key=None):
+def generate_expert_view(client, row_data, news_text=None, news_source=None, active_alerts_text=None, nvidia_api_key=None, news_text_fallback=None):
     from google.genai import types
     import json
     from datetime import datetime, timezone
+    from stock_data import load_settings
 
     ticker = row_data.get("ticker", "UNKNOWN")
     market = row_data.get("market", "US")
     company_name = row_data.get("company_name", ticker)
 
     if news_text is None:
-        news_text, news_source = fetch_gemma_expert_news(client, ticker, market, company_name)
+        news_text, news_source = fetch_gemma_expert_news(client, ticker, market, company_name, news_text_fallback)
 
     prompt = build_expert_prompt(row_data, news_text, active_alerts_text)
     
-    # 1. Try Gemini 3.5 Flash Lite (Primary) with High Thinking
-    try:
-        config = types.GenerateContentConfig(
-            response_mime_type="application/json",
-            thinking_config=types.ThinkingConfig(thinking_budget=4096)
-        )
-        resp = client.models.generate_content(model="gemini-3.5-flash-lite", contents=prompt, config=config)
-        data = json.loads(resp.text)
-        data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
-        data["news_used"] = news_text
-        data["news_source"] = news_source or "⚪ Unknown"
-        data["model_used"] = "gemini-3.5-flash-lite"
-        return data
-    except Exception as e:
-        gemini_error = str(e)
-        print(f"  [gemini fallback] {ticker}: {gemini_error} -> Falling back to DeepSeek/Error")
+    settings = load_settings()
+    model = settings.get("expert_reasoning_model", "models/gemini-3.5-flash-lite")
+    budget = settings.get("expert_thinking_budget", 8192)
 
-    def _pending_fallback(reason):
-        """Shared 'analysis pending' fallback dict -- used whether the
-        NVIDIA fallback isn't configured at all, or it was tried and also
-        failed. Always returns a valid dict so callers never have to
-        handle None."""
+    def _pending_fallback(reason, used_model="Error"):
         return {
             "verdict": "HOLD",
             "headline": f"Analysis pending -- {reason}",
@@ -210,49 +207,55 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
             "actionable_take": "Review technical indicators in table.",
             "as_of": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
             "news_source": news_source or "⚪ Unknown",
-            "model_used": "Error",
+            "model_used": used_model,
         }
 
-    # 2. Fallback to DeepSeek V4 Flash via NVIDIA API if configured
-    if nvidia_api_key:
-        try:
-            from openai import OpenAI
-            nv_client = OpenAI(
-                base_url="https://integrate.api.nvidia.com/v1",
-                api_key=nvidia_api_key
-            )
-            completion = nv_client.chat.completions.create(
-                model="deepseek-ai/deepseek-v4-flash",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2, # Low temp for structured JSON
-                top_p=0.95,
-                max_tokens=1024,
-                response_format={"type": "json_object"},
-                extra_body={"chat_template_kwargs": {"thinking": True, "reasoning_effort": "low"}},
-                stream=False
-            )
-            raw_text = completion.choices[0].message.content.strip()
-            if raw_text.startswith("```json"):
-                raw_text = raw_text.split("```json", 1)[1]
-            elif raw_text.startswith("```"):
-                raw_text = raw_text.split("```", 1)[1]
-            if raw_text.endswith("```"):
-                raw_text = raw_text.rsplit("```", 1)[0]
-            raw_text = raw_text.strip()
-            data = json.loads(raw_text)
-            data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
-            data["news_used"] = news_text
-            data["news_source"] = news_source or "⚪ Unknown"
-            data["model_used"] = "deepseek-v4-flash"
-            return data
-        except Exception as e:
-            print(f"  [deepseek error] {ticker}: {e}")
-            return _pending_fallback(str(e))
+    # 1. Primary Reasoning Model
+    try:
+        config_kwargs = {"response_mime_type": "application/json"}
+        if "gemma" not in model:
+            if isinstance(budget, str):
+                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=budget)
+            else:
+                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
+        
+        config = types.GenerateContentConfig(**config_kwargs)
+        resp = client.models.generate_content(model=model, contents=prompt, config=config)
+        data = json.loads(resp.text)
+        data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+        data["news_used"] = news_text
+        data["news_source"] = news_source or "⚪ Unknown"
+        data["model_used"] = model.split("/")[-1]
+        return data
+    except Exception as e:
+        print(f"  [{model} reasoning failed] {ticker}: {e} -> Falling back to 31b")
 
-    # No NVIDIA fallback configured -- surface the original Gemini error
-    # instead of silently returning None (the old behavior, which crashed
-    # every caller that assumed a dict was always returned).
-    return _pending_fallback(gemini_error)
+    # 2. Fallback to 31b
+    try:
+        config = types.GenerateContentConfig(response_mime_type="application/json")
+        resp = client.models.generate_content(model="models/gemma-4-31b-it", contents=prompt, config=config)
+        data = json.loads(resp.text)
+        data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+        data["news_used"] = news_text
+        data["news_source"] = news_source or "⚪ Unknown"
+        data["model_used"] = "gemma-4-31b-it (Fallback)"
+        return data
+    except Exception as e2:
+        print(f"  [31b reasoning failed] {ticker}: {e2} -> Falling back to 26b")
+        
+    # 3. Fallback to 26b
+    try:
+        config = types.GenerateContentConfig(response_mime_type="application/json")
+        resp = client.models.generate_content(model="models/gemma-4-26b-a4b-it", contents=prompt, config=config)
+        data = json.loads(resp.text)
+        data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+        data["news_used"] = news_text
+        data["news_source"] = news_source or "⚪ Unknown"
+        data["model_used"] = "gemma-4-26b-a4b-it (Fallback)"
+        return data
+    except Exception as e3:
+        print(f"  [26b reasoning failed] {ticker}: {e3} -> Giving up")
+        return _pending_fallback(str(e3))
 
 
 def analyze_single_ticker(ticker, row_data, api_key, active_alerts_text=None, nvidia_api_key=None):
