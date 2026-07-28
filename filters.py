@@ -147,11 +147,11 @@ def _coerce_fixed_value(a, value):
     except ValueError:
         pass
     lowered = stripped.lower()
-    if isinstance(a, (int, float)) and not isinstance(a, bool):
+    if isinstance(a, (int, float, bool)):
         if lowered in _BOOL_TRUE_WORDS:
-            return 1
+            return 1 if not isinstance(a, bool) else True
         if lowered in _BOOL_FALSE_WORDS:
-            return 0
+            return 0 if not isinstance(a, bool) else False
     return stripped
 
 
