@@ -2594,6 +2594,6 @@ with tab_alerts:
             if st.button("Push to GitHub", width="stretch"):
                 targets = [fname for fname, label in SYNCABLE_FILES]
                 ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=targets)
-                    (st.success if ok else st.error)(msg)
-                    if ok:
-                        st.caption("Your app may restart shortly since Streamlit Cloud watches this repo.")
+                (st.success if ok else st.error)(msg)
+                if ok:
+                    st.caption("Your app may restart shortly since Streamlit Cloud watches this repo.")
