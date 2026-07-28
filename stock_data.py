@@ -87,7 +87,7 @@ DEFAULT_SETTINGS = {
     "tech_uptrend_volume_ratio": 1.4,   # avg_volume_10d / avg_volume_100d must be >= this
     
     # -- News Pipeline Defaults --
-    "news_search_model": "models/gemma-4-31b-it",
+    "news_search_model": "models/gemma-4-26b-a4b-it",
     "news_reasoning_model": "models/gemini-3.5-flash-lite",
     "news_reasoning_budget": 4096,
 }
