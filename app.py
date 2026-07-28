@@ -2146,7 +2146,12 @@ if st.session_state.refresh_token == 0:
     snapshot = load_data_snapshot()
     if snapshot_is_usable(snapshot, watchlists_now, settings_now):
         as_of = snapshot["as_of"]
-        per_market = snapshot["per_market"]
+        # Filter the snapshot to only include the tickers currently in the watchlist
+        filtered_per_market = {}
+        for mkt in MARKETS:
+            wl = set(watchlists_now.get(mkt, []))
+            filtered_per_market[mkt] = [r for r in snapshot["per_market"].get(mkt, []) if r.get("ticker") in wl]
+        per_market = filtered_per_market
         using_snapshot = True
 
 if not using_snapshot:
