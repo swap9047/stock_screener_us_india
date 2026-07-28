@@ -1,80 +1,64 @@
 {
   "as_of": "2026-07-28",
-  "generated_at": "2026-07-28T16:06:02.060591+00:00",
+  "generated_at": "2026-07-28T16:51:23.036848+00:00",
   "markets": {
     "US": {
-      "summary": "No major news for this watchlist's tickers in the last 36 hours.",
+      "summary": "* **TWST** - Shares fell 4.13% following the rollout of the new Complex Genes launch.\n* **KRYS** - Dimensional Fund Advisors sold shares as the stock price increased 2.35%.",
       "sources": [
         {
-          "title": "kalkinemedia.com",
-          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEfb2Z8q_7E7VSeNX9l6UHYqxL_mcA0EJs3_skP0PO7qIIMHoeAl8P79zVbVgR-Xv69sqE9Xy2366F2yDO_18k36Emt2xXaQLQvUtGR3HjGK8WQwFxNQiN-u6uVpc-qpSBHEKMFBc3a3I7wKadSRPbb4fSUU-DEB0WLoEtoaIMU0El3kGbW66AkTC9UqpQmdU-F9zHCecRQq9viF9pdyHPYwPk_bhZy4s7B6qd9MxWVoAxdf6XsDWYnGsw3VNd2SzIRKEyo8nHoIUcFtV6H_jwV3UT4sqw="
+          "title": "simplywall.st",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGf_CgZl0HZ0YFfVMFlMP14-qeTIkhkb6dm93J5DNt4iu0u3OZvzB_xu365bChV9RlclsctuMAKzPS1g-kCDxmw91Uu5uPgNPergTsLC5W2bOPUgHZK43zha2N4n_IqSMndbc_VDw9YHtQCo5okPLT2DZOsoZGQYZs8SQ6EMIHn5UiuTPLRR0LGiq6pbhH6-Z0ZFdtB31o9TD5EJAo35qhqZSLS3g5TuWGO4ZNHHe0JR0SZ5F1wI259yKd2vZ0oGVUEWJO5-GCmBDJZS0Q="
+        },
+        {
+          "title": "twistbioscience.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGHi70F22A4gXnR0yhBq8sQms_BvV-odVQ8SlfLwHomsWPPEMn73Qxy8k73ff8nF4fTZzFi-zmF7LGbgiIP3hoKsZBSbxahwc7OqAbwjAcDnGx-J0TmmiJMnygnB1p9FJcr8bO3qHRMyVxD7gn6ne_EDWsd"
         },
         {
           "title": "marketbeat.com",
-          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF04c3mg5Dwf4roeRGSJW6LEAwbD8NQeb4z2jpjNNCupbKhbB8PHPkLExwaOhWUcz0TqNipD9MriM2T413dRaSBvM_5-EBcWqSEwjKPavz-2C6hdq6bLvSLDlT5LiZ23IBtrGk4AFOGNKgtFdgMhIDVAaWMUbRaFwf0g-wupmQKXasF9bor0rjC4a1zYOdC-8Kly_zDfXu-q_Plslnu1GTnoHSOnpcy_luMqesJ8HY="
-        },
-        {
-          "title": "benzinga.com",
-          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGWcCc4TPjH5qFQ_xHDvMUHb63vekEHZDSKcAnYizcQaXBBOESmcf59QR28JGSA-jBhfgvNAIjHaY9xnA6msMRvQCHCIz3FXnwJR5kgU3MdCZZAAgz8lBTq"
-        },
-        {
-          "title": "zacks.com",
-          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGH70zdvmqwI5SD4YXlwMOJoOy-MvxZ60bNU6QAu0TjzbqczUluDn8ibw2m5iMxG8UyLBvAqyD7V_7twTsetNrAPXcJ7BBD_VzAEvWZ_1IG_6eQZtOTkCEqtFMpOMOWGAkcu20ouCZii7FvuCl64x4D3NSejRRD9ovDWPuUj6-HTJpwFj9VE6RRRqTeFOk19jZUmruix5OMEvsio9Te4GG4"
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHBK_zasK2U_nzqcUL29mDD7baKYDE8do0I0SjlIERi2OC4YgrJ5lRYQ8Ap16qEBmaFzY-QtEJfl2ZzqMiI1wTumPd3tylW-NNvWKvPVivv7nYejvAM3WKvFGrJTf0YVbWn1bWpzq_aqWK_Q-U6J4KS2m265q2w8YUrBRpuRXz-3sTu023ueNPjZIEXxHhipkcQIJaM8wONtYspHPdfLDUkA8H5N-KMmFdB8hiPwng="
         },
         {
           "title": "marketbeat.com",
-          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEKh9x7ywaDV-OvR0nCU4GEubBe_Lc3DUWco7wI3H_KnuNwdTu7faZvY0z4N-4uzhWcftVFVtl7cZi-KQELJMlmlTG6UAOZwySYr-m4kt4_SiFcn86qhIBWhSXDCbX_RaZ9rqo-m-FZ6ems6wEsL4PIgq8mqNFfyi8RhOvsaLkKpYeUkXfFVSx_422916yRVReDt0O8Mtydw8i4gcvnskfdCzb7vIyWoIEG7ceEz0mn4kJRYldQwEQX"
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHBK_zasK2U_nzqcUL29mDD7baKYDE8do0I0SjlIERi2OC4YgrJ5lRYQ8Ap16qEBmaFzY-QtEJfl2ZzqMiI1wTumPd3tylW-NNvWKvPVivv7nYejvAM3WKvFGrJTf0YVbWn1bWpzq_aqWK_Q-U6J4KS2m265q2w8YUrBRpuRXz-3sTu023ueNPjZIEXxHhipkcQIJaM8wONtYspHPdfLDUkA8H5N-KMmFdB8hiPwng="
+        },
+        {
+          "title": "investing.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQENK4xbnLkdlQ-u-4rgfTluxhGBQkN6AJrk6GpKbVQJrka05X6FsXko1M-71TVDXAEKGMqo4PeE4ouQymDYG8DObeLv2jj15EEIu4HwgPW9S9JOXQyqQz0z8-Iymi_0gVnq0mBxMPh8H8DDMw-05xuq1R6Dro_BJP4="
+        },
+        {
+          "title": "tipranks.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHcc8RnnfHohV5qnDHT8RsuW5tGdlRRVsPTruSM9DvLXx4spHPOa1VKoTdWREDRJBil9T7y56SWj7NadCHDW1gm27X02ZegT1Ru3p0zliotAZXXSvRrqagoprnqwUYmLu5G_prpf8W0HVUd-j9aQ3XBVuc="
         }
       ],
       "batch_count": 2,
       "ticker_count": 2
     },
     "INDIA": {
-      "summary": "* **LAURUSLABS (LAURUSLABS)** - Shares surged ~5% intraday to new highs driven by a 126% jump in Q1FY27 net profit and strong CDMO growth.\n* **Narayana Hrudayalaya Limited (NH)** - Announced a July 31 board meeting and August 3 conference call to discuss Q1 FY2027 results.",
+      "summary": "* **LAURUSLABS** - Reported strong Q1 FY27 results (Revenue: \u20b92,026 Cr, EBITDA: \u20b9644 Cr), driving a 4\u20135% stock surge to a new 52-week high of \u20b91,746.",
       "sources": [
         {
-          "title": "scanx.trade",
-          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFWmeqc084pAboQC2wi-j-LumrtlenLohPKhTDL1Y8Y-Bil4kYn3qCpQtexg1AKK16vs8m6RTEB2d1gNHspvF4yvf-r818nakQbnMpdruAWE3NvtCcohO018ulTZcAmgy0-ecxE4_8JBX-7bWOY0rYNjv0iV7YV9aavPDpUVlz-C7B5zomiLe18-_6FoJFm-DfYe-2wGuzK6DfyBCXPAAC0LsU="
-        },
-        {
-          "title": "mstock.com",
-          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEUpXPpq2Blz9AyRBPS2AwIyCwdmtKCHeDpYgz3hLB8jZ4LHz8CAhQmyTht_KJzPxSDcUsAK_AOqOjcdEvCGZ1Arpydk5vqjdYVQHQ0-OargLE-vVs4Drf4qGiBkzyTuq2DAeg6OxEwJlpWkb32fg0cOXc="
-        },
-        {
           "title": "simplywall.st",
-          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE0fcbTkqAUKC_JsKmHdG0mZjpwP3z8-yzs93mxTWhfBW5Xs4PovVdE-f5JVYbG0oWUYlAThxMQhz-866JqAlsbNqjTG6Ss38d61SdZhZmNeDU4hQP5K_zVzpVcTd7adsTmjiwg6LBNTWF9_KgT2rJG2E0EAzaYgJ-252tCEG8V6YLkfn5oQT_6LkGsUjBKZqHd1vDA-UosX2EN"
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGwCQeK9BrxrO-nzX6AZorqfmkN1WU_zt1QusaOpHhqTWDPmbWWt1eX3F4ocFkq25xCUInklM-y_dtzXU3_au15u5pGlCAp_wUATXBub-GHM2bVbTsY1tG52e-YomvO5trWiXCyuq-8i6V_w2j8et-ZPeZ_b1MvSz2Id78YfXzs_jf7HLH_mdP9T-VR6zX6ud2T323CszE="
         },
         {
-          "title": "ndtv.com",
-          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHCSF0ozbxTKvfR3Hbxtc8uBkfoEaEndL6cgeCEn-XqyYQbveGLBcXl7g8pFo6DfRSo2uv3PLF7hkUZUUenQbz1U67Qgsjnh2tJVY6GNeDsTrhqdZaSz_BWmYdo7LwaP9to7sdilw=="
+          "title": "concall.in",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFfEwQBgugaArM-bSNBL_gjyIdb4eVd8BEBTl5T-zLsVqBlDN37G19FjMP3hpRNGANqh-SNY2cCH6PlvWyY_am--50eMEX0RTjauWgFBcJpJkkSxVQ-WzCfcWAlPAm-yI_o4QduLVpA1wMcG7cJ"
         },
         {
-          "title": "scanx.trade",
-          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHOsKvEN3AwQWbsaVqMGXMwf8albaCGu9nvIHBtryMpP4vNIvqREZTZzjusJOY2QjpW3sWEuAQS9X0bjOPBOkhxZV0RnAOKsh-z0M19q5mzT1sTHO-pqjp93TY0WSHwW8-xww_MmUdLXiHIHj24yomxsWgrMnX1K8NXnsb2n7CrPLKM50GqMISXrDea6XrV6m_Cz5s81W5qh6ANaWpHSIQLlBUh"
+          "title": "lauruslabs.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEaGUwi1XDjk4W1GL_UlCCOrhRfg8alu_sum-8alQvAcCoi4pKieHMt3YRDByy5BtC-weTBOjIiq3HnUx75Zf1Lx6sQeXpSsJ-rANZbXsao8YV32NsuuSCuq_5OfMoFDALPeSEFmDs1_aFVtz7fBSOAbYRMwEwCAsbdii1KiWawi0TZMtPUXyzuiCWKQMQMPfdG"
         },
         {
-          "title": "indiatimes.com",
-          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG_9n1mPjO9R4D-F_l2raoA4rQfYpxsrfGroRlgCA-lZPuovnjAg-lmfgE-SBsJhpGXRQ71xIaTH026hbXSppdwgIoXQckwhVKE00XLF9c2zV2pUNpScOOQEvlKQijZdxrE1BjMfbqjJ0qM1kxEJOpppP3I-C7JvslmagEkBD5PYL15Z5Q2"
+          "title": "investing.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFNE_t5WU2TyyF8vmVkMBZrgxnc52QoMJJfoPVfZtD0ZrDmG-WqBIwLerO612dktKYH--ZPHPdDTNfSIw6pbmK2xAGmTUSsQbCVPXvnIv-EqRR-IGYJ17Md0ocgC5Qyiuh3OpjoBG3FzvBv0YtB7doiwRImcE4kZjA="
         },
         {
-          "title": "indiatimes.com",
-          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG56ZIfyRZjUM6S4eoUFmxx2gN5Gl__p6a2TjQzadkpk-OflRsoYafOzYJOZjAF4mLwUKLAEOmxubAoUWMAzraPaofrtPkhZjBZriEHKh_QREWl91S9bDYBwsMC7tunsyGOl0uj_gcjO6itccUupIYOePpL_ukkXoUnj8XVJcmBiZN-DkA8xDWu0cV9"
+          "title": "marketsmojo.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEn253F_bc8AILFmPT2449qhlV9_mtstRvetvx0B20lYdujewyIKoWVcLw7n9efQPg7R0KJFNrhrByOTl_dPosjVqcHbt-NR370YjVnim5d70t3PWVgBvn3925gZp0krq7XeWtL0QD5HCC-d2Hx2ntU3x1GzajmgH_dFDMlHYj1QySHC1yQCjUFKFrXQ0_XebYCMCSE72MPhhXMvADZH5YWop0yhD9Szng--1b5WSU="
         },
         {
-          "title": "scanx.trade",
-          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGnLiFtXQLvjaAjeO0k20cBXRsBq_Sddj2bLeezgO0BHeJMTxvxj1qyVXM5lBzZmva7k4c0qccXwzEMnlif_hwroey40gdHqIdgYZgjtOM1SrGq_tMXUKgNrAQ3FqcgyUvGNvfv"
-        },
-        {
-          "title": "stockanalysis.com",
-          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGYqUQHDBIUvyHP0DG7qKPpVuLc0tu8d969EeJz6-_4PlmYLcBhcyf8GroX4mV_wytOKJSIvqXu9VweivnOpVTD9hUBizsF1BwJggwuoyaAvWs7CKfjfYkA2LjwNg=="
-        },
-        {
-          "title": "trendlyne.com",
-          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEiPZBtmQ_H8PkfDGDKTLF9rBIdCuBuica9SUUbjBKWBW8QoosNBUUtpPNy1OwefwUs-Yqiknj_fBa71V6bk5UXQQAHRNDqGLINp8uiNchOX1jzFDIJBLoiA25_tEjUOo-c_Ze7iLsQft6dYSdQgolLqUBvpBBro-4ddUNPX9wntQmdn2XUnT6Bc-Q="
-        },
-        {
-          "title": "trendlyne.com",
-          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE0IXEZuzN5E8trrdsw7DQOyCZxA9Uzu13xeRkkoPa_1AHsMamzaZwqUV7l9kZR0xAnC1dgpV0lp3Ov5j6nFUUup9BAtnCQZyXv6G9e__JDPKKwNQclNMVIwH_d19_qA8gr5gW3TpefhbxlZnhD6iaUv1cL"
+          "title": "sahi.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHr74h_rFd_DKNmNj8gAxI0HJGjgaA3SUFZJfP0QfO2SJ9U4dgia_Emxb3vEabwrvVTJXCrkuSbBlfySOvRgo2yCajf20cz1fSxdwd7wh7Pu5bs4r19gJcp5X7oTkwzkNZpumtUhUwPrbNM0zbu39DoU3clcwGh9s0L1KTHpc7zuTULpNMVbwlFk3Ej39qw12X6PgklnL_5zsKhv0EH3Q=="
         }
       ],
       "batch_count": 2,
