@@ -90,7 +90,7 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None,
     prompt = (
         f"You are a financial news researcher. For the {exchange} stock {name} -- "
         f"search for news, announcements, press releases, analyst notes, and stock moves between "
-        f"{cutoff_date} and {as_of_date} (the last 36 hours). Report any news items you find, "
+        f"{cutoff_date} and {as_of_date} (the last 36 hours), AND any major upcoming scheduled events in the next 3-4 days (e.g. earnings, launches). Report any news items you find, "
         "specifying the exact date of each item. Be extremely concise. If there is no news, output nothing."
     )
     try:
@@ -107,10 +107,23 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None,
                     sources.append({"title": web.title, "url": web.uri})
         return f"**{name}**:\n{text}", sources
     except Exception as e:
-        print(f"  [gemma search failed] {ticker}: {e} -> Falling back to DuckDuckGo/yfinance")
-        fallback_text, fallback_source = get_stock_news(ticker, market=market)
-        source_dict = [{"title": fallback_source, "url": ""}]
-        return f"**{name}**:\n{fallback_text}", source_dict
+        print(f"  [gemma search failed] {ticker}: {e} -> Falling back to dense 31b model")
+        try:
+            resp = client.models.generate_content(model="models/gemma-4-31b-it", contents=prompt, config=config)
+            text = resp.text or ""
+            sources = []
+            gm = resp.candidates[0].grounding_metadata if resp.candidates else None
+            if gm and gm.grounding_chunks:
+                for chunk in gm.grounding_chunks:
+                    web = getattr(chunk, "web", None)
+                    if web and web.uri:
+                        sources.append({"title": web.title, "url": web.uri})
+            return f"**{name}**:\n{text}", sources
+        except Exception as e2:
+            print(f"  [gemma 31b fallback failed] {ticker}: {e2} -> Falling back to DuckDuckGo/yfinance")
+            fallback_text, fallback_source = get_stock_news(ticker, market=market)
+            source_dict = [{"title": fallback_source, "url": ""}]
+            return f"**{name}**:\n{fallback_text}", source_dict
 
 
 def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date, ticker_names=None, model=REASONING_MODEL, budget=4096):
@@ -132,10 +145,10 @@ def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date, t
 
     prompt = (
         f"You are a senior financial analyst. Below is raw news text gathered for these tickers: {names}.\n\n"
-        f"STRICT RECENCY RULE: Evaluate each news item. Keep ONLY items from the last 36 hours. "
+        f"STRICT RECENCY RULE: Evaluate each news item. Keep ONLY items from the last 36 hours, OR major upcoming scheduled events in the next 3-4 days. "
         f"Drop anything older or undated.\n\n"
         "STRICT MATERIALITY RULE:\n"
-        "- KEEP ONLY: earnings released in the last 2 days, M&A/acquisitions, FDA/regulatory approvals, "
+        "- KEEP ONLY: earnings released in the last 2 days, upcoming earnings/events in the next 3-4 days, M&A/acquisitions, FDA/regulatory approvals, "
         "important board announcements (EXCLUDING dividend and generic day-to-day announcements), analyst coverage and important stock targets, "
         "major contract wins/losses, big institutional and promoter activity, and significant stock movements (+-3%).\n"
         "- DROP ENTIRELY: routine scheduled board meetings/AGMs/EGMs with no outcome yet, ordinary "
@@ -146,15 +159,22 @@ def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date, t
     )
     try:
         config_kwargs = {}
-        if isinstance(budget, str):
-            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=budget)
-        else:
-            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
+        if "gemma" not in model:
+            if isinstance(budget, str):
+                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=budget)
+            else:
+                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
         config = types.GenerateContentConfig(**config_kwargs)
         resp = client.models.generate_content(model=model, contents=prompt, config=config)
         return resp.text or raw_text
-    except Exception:
-        return raw_text
+    except Exception as e:
+        print(f"  [gemini reasoning failed] {e} -> Falling back to gemma-4-26b-a4b-it")
+        try:
+            resp = client.models.generate_content(model="models/gemma-4-26b-a4b-it", contents=prompt)
+            return resp.text or raw_text
+        except Exception as e2:
+            print(f"  [gemma reasoning fallback failed] {e2} -> Returning raw text")
+            return raw_text
 
 
 def collate_market_summary(client, market, batch_texts, as_of_date=None, model=REASONING_MODEL, budget=4096):
@@ -187,15 +207,22 @@ def collate_market_summary(client, market, batch_texts, as_of_date=None, model=R
     )
     try:
         config_kwargs = {}
-        if isinstance(budget, str):
-            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=budget)
-        else:
-            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
+        if "gemma" not in model:
+            if isinstance(budget, str):
+                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=budget)
+            else:
+                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
         config = types.GenerateContentConfig(**config_kwargs)
         resp = client.models.generate_content(model=model, contents=prompt, config=config)
         return resp.text or combined
-    except Exception:
-        return combined
+    except Exception as e:
+        print(f"  [gemini collate failed] {e} -> Falling back to gemma-4-26b-a4b-it")
+        try:
+            resp = client.models.generate_content(model="models/gemma-4-26b-a4b-it", contents=prompt)
+            return resp.text or combined
+        except Exception as e2:
+            print(f"  [gemma collate fallback failed] {e2} -> Returning raw combined text")
+            return combined
 
 
 def build_news_summary(watchlists, api_key, batch_size=BATCH_SIZE):
