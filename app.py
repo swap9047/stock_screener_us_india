@@ -2586,22 +2586,14 @@ with tab_alerts:
             )
         else:
             st.caption(f"Target: `{gh_repo}` @ `{gh_branch}`")
-            file_labels = {label: fname for fname, label in SYNCABLE_FILES}
-            selected_labels = st.multiselect(
-                "Files to push", options=list(file_labels.keys()),
-                default=list(file_labels.keys()), key="gh_push_files",
-            )
             st.caption(
-                "Pushes everything selected as one combined commit -- important on Streamlit Cloud, "
-                "which auto-redeploys the instant any commit lands, so separate per-file commits risk "
-                "the redeploy interrupting the push before later files go through."
+                "Pushes all configuration files (watchlists, filters, settings, alerts) "
+                "as one combined commit -- important on Streamlit Cloud, "
+                "which auto-redeploys the instant any commit lands."
             )
-            if st.button("Push selected to GitHub", width="stretch"):
-                if not selected_labels:
-                    st.warning("Select at least one file.")
-                else:
-                    targets = [file_labels[lbl] for lbl in selected_labels]
-                    ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=targets)
+            if st.button("Push to GitHub", width="stretch"):
+                targets = [fname for fname, label in SYNCABLE_FILES]
+                ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=targets)
                     (st.success if ok else st.error)(msg)
                     if ok:
                         st.caption("Your app may restart shortly since Streamlit Cloud watches this repo.")
