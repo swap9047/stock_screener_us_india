@@ -801,16 +801,5 @@
     "news_used": "No recent news found.",
     "news_source": "\u26aa No Source",
     "model_used": "gemini-3.5-flash-lite"
-  },
-  "NEOGEN.NS": {
-    "verdict": "ACCUMULATE",
-    "headline": "Robust Q1 earnings growth and a solid Stage 2 uptrend favor accumulation on pullbacks.",
-    "technical_summary": "The stock maintains a structural Stage 2 uptrend trading well above its rising 40 WEMA with strong Mansfield Relative Strength, although short-term net volume shows mild distribution (-4.6%) and requires volume expansion to trigger a formal technical breakout.",
-    "catalyst_summary": "Outstanding Q1 FY27 financial results show consolidated revenue up 34% YoY and PAT surging 67% YoY, significantly driven by rapid scaling in the battery chemicals subsidiary, Neogen Ionics.",
-    "actionable_take": "Consider accumulating on pullbacks toward the rising 50 DEMA or near the 1950 support zone. Maintain a disciplined trailing stop just below the VStop level of 1827 to manage risk while participating in the fundamental growth trajectory.",
-    "as_of": "2026-07-28 00:23",
-    "news_used": "**July 26, 2026**\n* **Financial Results:** Released Q1 FY27 results; consolidated revenue rose 34% YoY to \u20b9250 crore, PAT surged 67% YoY to \u20b917 crore, and EBITDA increased 53% YoY to \u20b948 crore.\n\n**July 27, 2026**\n* **Earnings Call:** Conducted analysts and investors conference call at 4:00 PM IST; audio recording released per SEBI Regulation 30.\n* **Operational Highlight:** Reports noted strong growth in the battery chemicals subsidiary, Neogen Ionics, with revenue reaching \u20b919 crore (up from \u20b95 crore YoY).\n* **Stock Move:** Shares traded at ~\u20b92,064.1, up 0.06% from the previous close.",
-    "news_source": "\ud83d\udd0d Gemma-4-31B (Google Search)",
-    "model_used": "gemini-3.5-flash-lite"
   }
 }
