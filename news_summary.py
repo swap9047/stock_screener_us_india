@@ -73,7 +73,7 @@ def batch_list(items, size):
     return [items[i:i + size] for i in range(0, len(items), size)]
 
 
-def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None):
+def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None, model=SEARCH_MODEL):
     """Stage 1: Grounded search call using gemma-4-31b-it. Fetches raw news
     articles and web sources for a single ticker."""
     from datetime import datetime, timedelta
@@ -96,7 +96,7 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None)
     try:
         grounding_tool = types.Tool(google_search=types.GoogleSearch())
         config = types.GenerateContentConfig(tools=[grounding_tool])
-        resp = client.models.generate_content(model=SEARCH_MODEL, contents=prompt, config=config)
+        resp = client.models.generate_content(model=model, contents=prompt, config=config)
         text = resp.text or ""
         sources = []
         gm = resp.candidates[0].grounding_metadata if resp.candidates else None
@@ -113,7 +113,7 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None)
         return f"**{name}**:\n{fallback_text}", source_dict
 
 
-def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date, ticker_names=None):
+def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date, ticker_names=None, model=REASONING_MODEL, budget=4096):
     """Stage 2: Strict reasoning & condition filtering using gemini-3.6-flash.
     Evaluates raw web notes against recency and material catalyst rules."""
     if not raw_text:
@@ -145,16 +145,19 @@ def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date, t
         f"RAW TEXT:\n{raw_text}"
     )
     try:
-        config = types.GenerateContentConfig(
-            thinking_config=types.ThinkingConfig(thinking_budget=2048)
-        )
-        resp = client.models.generate_content(model=REASONING_MODEL, contents=prompt, config=config)
+        config_kwargs = {}
+        if isinstance(budget, str):
+            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=budget)
+        else:
+            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
+        config = types.GenerateContentConfig(**config_kwargs)
+        resp = client.models.generate_content(model=model, contents=prompt, config=config)
         return resp.text or raw_text
     except Exception:
         return raw_text
 
 
-def collate_market_summary(client, market, batch_texts, as_of_date=None):
+def collate_market_summary(client, market, batch_texts, as_of_date=None, model=REASONING_MODEL, budget=4096):
     """Stage 3: Final market collation using gemini-3.6-flash. Combines filtered
     batch summaries into a short, scannable daily brief (Perplexity Finance style)."""
     if not batch_texts or not any(t.strip() for t in batch_texts):
@@ -183,12 +186,13 @@ def collate_market_summary(client, market, batch_texts, as_of_date=None):
         f"NOTES:\n{combined}"
     )
     try:
-        config = types.GenerateContentConfig(
-            # Using 1024 thinking budget per user request: gives the model just enough
-            # reasoning room to execute the formatting rules without hallucinating filler.
-            thinking_config=types.ThinkingConfig(thinking_budget=2048)
-        )
-        resp = client.models.generate_content(model=REASONING_MODEL, contents=prompt, config=config)
+        config_kwargs = {}
+        if isinstance(budget, str):
+            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=budget)
+        else:
+            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
+        config = types.GenerateContentConfig(**config_kwargs)
+        resp = client.models.generate_content(model=model, contents=prompt, config=config)
         return resp.text or combined
     except Exception:
         return combined
@@ -198,6 +202,19 @@ def build_news_summary(watchlists, api_key, batch_size=BATCH_SIZE):
     """Runs the 3-stage pipeline for both markets. Returns a dict:
     {"as_of": ISO date, "generated_at": ISO datetime, "markets": {"US": {...}, "INDIA": {...}}}"""
     from google import genai
+    from stock_data import load_settings
+    
+    settings = load_settings()
+    search_model = settings.get("news_search_model", SEARCH_MODEL)
+    reasoning_model = settings.get("news_reasoning_model", REASONING_MODEL)
+    if reasoning_model == "gemini-3.5-flash-lite":
+        reasoning_model = "models/gemini-3.5-flash-lite"
+        
+    raw_budget = settings.get("news_reasoning_budget", 4096)
+    if isinstance(raw_budget, str) and raw_budget.isdigit():
+        thinking_budget = int(raw_budget)
+    else:
+        thinking_budget = raw_budget
 
     client = genai.Client(api_key=api_key)
     as_of_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -234,21 +251,20 @@ def build_news_summary(watchlists, api_key, batch_size=BATCH_SIZE):
                 time.sleep(SECONDS_BETWEEN_CALLS)
             first_call = False
 
-            # Stage 1: Grounded web search with gemma-4-31b-it (or fallback)
-            raw_text, sources_or_err = fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=ticker_names)
+            # Stage 1: Grounded web search with chosen model
+            raw_text, sources_or_err = fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=ticker_names, model=search_model)
             if raw_text:
                 all_sources.extend(sources_or_err)
                 
-                # Stage 2: Reasoning & strict filtering per-ticker with gemini-3.5-flash-lite
-                # Pass the single raw_text, but feed an empty list for tickers since the text is already bolded with the ticker name
-                clean_text = filter_batch_with_reasoning(client, raw_text, [], market, as_of_date, ticker_names=ticker_names)
+                # Stage 2: Reasoning & strict filtering per-ticker with chosen model
+                clean_text = filter_batch_with_reasoning(client, raw_text, [], market, as_of_date, ticker_names=ticker_names, model=reasoning_model, budget=thinking_budget)
                 if clean_text:
                     filtered_batch_texts.append(clean_text)
             else:
                 print(f"  Search failed for {ticker}: {sources_or_err}")
 
-        # Stage 3: Final market collation with gemini-3.6-flash
-        collated = collate_market_summary(client, market, filtered_batch_texts, as_of_date=as_of_date)
+        # Stage 3: Final market collation with chosen model
+        collated = collate_market_summary(client, market, filtered_batch_texts, as_of_date=as_of_date, model=reasoning_model, budget=thinking_budget)
 
         result["markets"][market] = {
             "summary": collated,

@@ -2150,10 +2150,14 @@ if st.session_state.refresh_token == 0:
         using_snapshot = True
 
 if not using_snapshot:
+    # Filter out pipeline settings so changing a news model doesn't bust
+    # the cache and trigger a live fetch when refresh_token > 0
+    calc_settings = {k: v for k, v in settings_now.items() if not k.startswith(("news_", "expert_"))}
+    
     as_of, per_market = cached_fetch_all(
         st.session_state.refresh_token,
         json.dumps(watchlists_now, sort_keys=True),
-        json.dumps(settings_now, sort_keys=True),
+        json.dumps(calc_settings, sort_keys=True),
     )
 
 # fetch_all_markets() already applies custom columns on the live-fetch path,
@@ -2208,9 +2212,9 @@ with tab_news:
     )
     news_data = load_news_summary()
     
-    col1, col2 = st.columns([1, 4])
+    col1, col2, col3, col4 = st.columns([2, 3, 3, 3])
     with col1:
-        if st.button("🔄 Refresh News"):
+        if st.button("🔄 Refresh News", use_container_width=True):
             token, repo, _ = get_github_config(st.secrets)
             if token and repo:
                 ok, msg = trigger_github_workflow(token, repo, "news-summary.yml")
@@ -2220,6 +2224,69 @@ with tab_news:
                     st.error(f"Failed to start refresh: {msg}")
             else:
                 st.error("Missing GITHUB_TOKEN or GITHUB_REPO in secrets.")
+                
+    with col2:
+        search_choices = ["models/gemma-4-31b-it", "models/gemma-4-26b-a4b-it"]
+        new_search = st.selectbox(
+            "Search Model", search_choices,
+            index=search_choices.index(settings_now.get("news_search_model", search_choices[0])) if settings_now.get("news_search_model") in search_choices else 0,
+            key="news_search_model_select"
+        )
+        if new_search != settings_now.get("news_search_model"):
+            settings_now["news_search_model"] = new_search
+            save_settings(settings_now)
+            st.rerun()
+
+    with col3:
+        reason_choices = ["models/gemini-3.5-flash-lite", "models/gemma-4-31b-it", "models/gemma-4-26b-a4b-it"]
+        current_reason = settings_now.get("news_reasoning_model", "models/gemini-3.5-flash-lite")
+        if current_reason == "gemini-3.5-flash-lite":
+            current_reason = "models/gemini-3.5-flash-lite"
+        new_reason = st.selectbox(
+            "Reasoning Model", reason_choices,
+            index=reason_choices.index(current_reason) if current_reason in reason_choices else 0,
+            key="news_reasoning_model_select"
+        )
+        # Normalize comparison
+        saved_reason = settings_now.get("news_reasoning_model", "models/gemini-3.5-flash-lite")
+        if saved_reason == "gemini-3.5-flash-lite":
+            saved_reason = "models/gemini-3.5-flash-lite"
+        if new_reason != saved_reason:
+            settings_now["news_reasoning_model"] = new_reason
+            save_settings(settings_now)
+            st.rerun()
+            
+    with col4:
+        is_gemma = "gemma" in settings_now.get("news_reasoning_model", "")
+        if is_gemma:
+            budget_choices = ["LOW", "MEDIUM", "HIGH"]
+            default_val = "HIGH"
+        else:
+            budget_choices = [1024, 2048, 4096, 8192]
+            default_val = 4096
+            
+        current_val = settings_now.get("news_reasoning_budget", default_val)
+        
+        # Type safety for transitioning between models
+        if is_gemma and current_val not in budget_choices:
+            current_val = default_val
+        elif not is_gemma:
+            try:
+                current_val = int(current_val)
+            except (ValueError, TypeError):
+                current_val = default_val
+            if current_val not in budget_choices:
+                current_val = default_val
+                
+        new_budget = st.selectbox(
+            "Thinking Budget / Level", budget_choices,
+            index=budget_choices.index(current_val),
+            key="news_reasoning_budget_select"
+        )
+        if new_budget != current_val:
+            settings_now["news_reasoning_budget"] = new_budget
+            save_settings(settings_now)
+            st.rerun()
 
     if not news_data:
         st.info(
