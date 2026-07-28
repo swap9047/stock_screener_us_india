@@ -85,6 +85,11 @@ DEFAULT_SETTINGS = {
     # -- Tech Uptrend column (boolean) -- independent of Vol Trend's ratio above --
     "tech_uptrend_min_vstop_weeks": 3,   # weeks since last VStop flip required for Tech Uptrend
     "tech_uptrend_volume_ratio": 1.4,   # avg_volume_10d / avg_volume_100d must be >= this
+    
+    # -- News Pipeline Defaults --
+    "news_search_model": "models/gemma-4-31b-it",
+    "news_reasoning_model": "models/gemini-3.5-flash-lite",
+    "news_reasoning_budget": 4096,
 }
 
 
@@ -854,8 +859,15 @@ def snapshot_is_usable(snapshot, watchlists, settings):
     than silently show stale/incomplete data until tomorrow's 7 AM run."""
     if not snapshot or not isinstance(snapshot.get("per_market"), dict):
         return False
-    if snapshot.get("settings") != settings:
+        
+    # Only compare calculation settings, ignoring pipeline/model choices
+    # so changing a news model doesn't invalidate the price snapshot!
+    snap_calc = {k: v for k, v in snapshot.get("settings", {}).items() if not k.startswith(("news_", "expert_"))}
+    curr_calc = {k: v for k, v in settings.items() if not k.startswith(("news_", "expert_"))}
+    
+    if snap_calc != curr_calc:
         return False
+        
     per_market = snapshot["per_market"]
     for market in MARKETS:
         snap_tickers = {r.get("ticker") for r in per_market.get(market, [])}
