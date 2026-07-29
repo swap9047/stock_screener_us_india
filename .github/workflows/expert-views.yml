@@ -22,7 +22,6 @@ permissions:
 jobs:
   gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
     outputs:
       due: ${{ steps.check.outputs.due }}
     steps:
@@ -61,7 +60,6 @@ jobs:
     needs: gate
     if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.due == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
