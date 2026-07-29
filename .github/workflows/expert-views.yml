@@ -3,17 +3,18 @@ name: Daily Expert Views Generation
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
-# Runs once/day at 3:15 AM ET to automatically generate AI Expert Takes
-# for all tickers across all watchlists. It uses the data_snapshot.json
-# (fetched at 7 AM ET) and news_summary.json (generated at 7 AM ET) to
-# drastically speed up the generation and avoid redundant API calls.
+# Runs once/day at 7:15 AM ET. First refreshes data_snapshot.json (replaces
+# the standalone data-refresh workflow), then generates AI Expert Takes for
+# all tickers. Running data refresh here ensures expert views always work
+# from same-day price data. News Summary runs in parallel at the same time
+# (independent -- no shared dependency).
 #
-# 3:15 AM ET is 07:15 UTC during EDT (mid-Mar to early Nov) and 08:15 UTC
+# 7:15 AM ET is 11:15 UTC during EDT (mid-Mar to early Nov) and 12:15 UTC
 # during EST (early Nov to mid-Mar).
 on:
   schedule:
-    - cron: "15 7 * * *"    # 07:15 UTC = 3:15 AM ET during EDT
-    - cron: "15 8 * * *"    # 08:15 UTC = 3:15 AM ET during EST
+    - cron: "15 11 * * *"   # 11:15 UTC = 7:15 AM ET during EDT
+    - cron: "15 12 * * *"   # 12:15 UTC = 7:15 AM ET during EST
   workflow_dispatch: {}    # run manually from the Actions tab anytime, bypasses the gate
 
 permissions:
@@ -26,7 +27,7 @@ jobs:
       due: ${{ steps.check.outputs.due }}
     steps:
       - id: check
-        name: Is it ~3 AM ET right now?
+        name: Is it ~7 AM ET right now?
         env:
           CRON_SCHEDULE: ${{ github.event.schedule }}
         run: |
@@ -37,7 +38,7 @@ jobs:
           from datetime import datetime
           now_et = datetime.now(ZoneInfo("America/New_York"))
           
-          rule_hour = 3
+          rule_hour = 7
           cron = os.environ.get("CRON_SCHEDULE")
           
           is_valid_cron = True
@@ -70,17 +71,20 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Refresh data snapshot
+        run: python refresh_data.py
+
       - name: Generate AI Expert Views
         run: python refresh_expert_views.py
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
 
-      - name: Commit updated expert_views.json
+      - name: Commit updated data_snapshot.json and expert_views.json
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add expert_views.json
-          git diff --staged --quiet && echo "No changes to commit" || git commit -m "Update expert_views.json [automated]"
+          git add data_snapshot.json expert_views.json
+          git diff --staged --quiet && echo "No changes to commit" || git commit -m "Update data_snapshot.json + expert_views.json [automated]"
           git pull --rebase origin main
           git push origin main

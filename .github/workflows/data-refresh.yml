@@ -18,10 +18,9 @@ env:
 # both added after a real missed run caused by an exact-hour check with no
 # grace period.
 on:
-  schedule:
-    - cron: "15 11 * * *"   # 11:15 UTC = 7:15 AM ET during EDT
-    - cron: "15 12 * * *"   # 12:15 UTC = 7:15 AM ET during EST
-  workflow_dispatch: {}    # run manually from the Actions tab anytime, bypasses the gate
+  # Schedule disabled -- data refresh is now the first step in expert-views.yml
+  # which runs daily at 7:15 AM ET. Keep workflow_dispatch for manual on-demand runs.
+  workflow_dispatch: {}    # run manually from the Actions tab anytime
 
 permissions:
   contents: write   # needed to commit data_snapshot.json back to the repo
