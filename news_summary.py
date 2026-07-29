@@ -108,8 +108,8 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None,
     config = types.GenerateContentConfig(tools=[grounding_tool])
     
     try:
-        # User requested 26b -> 31b logic
-        resp = _generate_with_timeout(client, "models/gemma-4-26b-a4b-it", prompt, config, timeout=120)
+        # Use dynamic model (defaults to 26b or user selection)
+        resp = _generate_with_timeout(client, model, prompt, config, timeout=120)
         text = resp.text or ""
         sources = []
         gm = resp.candidates[0].grounding_metadata if resp.candidates else None
