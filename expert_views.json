@@ -42,16 +42,5 @@
     "news_used": "As of July 28, 2026, no material institutional analyst ratings, upgrades/downgrades, press releases, or upcoming catalysts (within the next 3\u20134 days) were found for KRYS in the specified period.",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
-  },
-  "NEOGEN.NS": {
-    "verdict": "ACCUMULATE",
-    "headline": "Strong Stage 2 uptrend remains intact with robust relative strength despite short-term volume churn.",
-    "technical_summary": "The stock is firmly in a Stage 2 uptrend, trading above rising weekly and daily EMAs with a valid VStop at 1827.5 and positive Mansfield RS. While 10-day volume is exploding, net volume is mildly negative (-30.3%), reflecting routine consolidation/churn near highs.",
-    "catalyst_summary": "No recent news or fundamental catalysts reported; price action and relative outperformance are driving the current market structure.",
-    "actionable_take": "Accumulate positions on pullbacks toward the 10 DEMA or deeper support near the 20 WEMA (1812). Use a trailing stop anchored below the VStop level of 1827 to manage risk while riding the primary uptrend.",
-    "as_of": "2026-07-29 05:21",
-    "news_used": "No recent news found.",
-    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
-    "model_used": "gemini-3.5-flash-lite"
   }
 }
