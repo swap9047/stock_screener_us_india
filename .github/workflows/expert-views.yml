@@ -3,16 +3,17 @@ name: Daily Expert Views Generation
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
-# Runs once/day at 1:00 PM ET to automatically generate AI Expert Takes
+# Runs once/day at 5:00 AM ET to automatically generate AI Expert Takes
 # for all tickers across all watchlists. It uses the data_snapshot.json
 # (fetched at 7 AM ET) and news_summary.json (generated at 7 AM ET) to
 # drastically speed up the generation and avoid redundant API calls.
 #
-# 1:00 PM ET is 17:00 UTC during EDT and 18:00 UTC during EST.
+# 5:00 AM ET is 09:00 UTC during EDT (mid-Mar to early Nov) and 10:00 UTC
+# during EST (early Nov to mid-Mar).
 on:
   schedule:
-    - cron: "15 17 * * *"   # 17:15 UTC = 1:15 PM ET during EDT
-    - cron: "15 18 * * *"   # 18:15 UTC = 1:15 PM ET during EST
+    - cron: "15 9 * * *"    # 09:15 UTC = 5:15 AM ET during EDT
+    - cron: "15 10 * * *"   # 10:15 UTC = 5:15 AM ET during EST
   workflow_dispatch: {}    # run manually from the Actions tab anytime, bypasses the gate
 
 permissions:
@@ -25,7 +26,7 @@ jobs:
       due: ${{ steps.check.outputs.due }}
     steps:
       - id: check
-        name: Is it ~1 PM ET right now?
+        name: Is it ~5 AM ET right now?
         env:
           CRON_SCHEDULE: ${{ github.event.schedule }}
         run: |
@@ -36,7 +37,7 @@ jobs:
           from datetime import datetime
           now_et = datetime.now(ZoneInfo("America/New_York"))
           
-          rule_hour = 13
+          rule_hour = 5
           cron = os.environ.get("CRON_SCHEDULE")
           
           is_valid_cron = True
