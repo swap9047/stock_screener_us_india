@@ -252,12 +252,12 @@ def build_news_summary(watchlists, api_key, batch_size=BATCH_SIZE):
     }
 
     first_call = True
-    
+
     from stock_data import load_data_snapshot
     snapshot = load_data_snapshot()
     ticker_names = {}
-    if snapshot and "markets" in snapshot:
-        for mkt_data in snapshot["markets"].values():
+    if snapshot and "per_market" in snapshot:
+        for mkt_data in snapshot["per_market"].values():
             for row in mkt_data:
                 if "company_name" in row:
                     ticker_names[row["ticker"]] = row["company_name"]
@@ -270,28 +270,48 @@ def build_news_summary(watchlists, api_key, batch_size=BATCH_SIZE):
             }
             continue
 
+        print(f"\n[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] === {market} market: {len(tickers)} tickers ===")
+
         # Process Stage 1 and Stage 2 per-ticker
         filtered_batch_texts = []
         all_sources = []
-        for ticker in tickers:
+        for i, ticker in enumerate(tickers):
             if not first_call:
                 time.sleep(SECONDS_BETWEEN_CALLS)
             first_call = False
 
+            ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+            print(f"[{ts}] [{market}] [{i+1}/{len(tickers)}] {ticker} - Stage1 search starting...")
+
             # Stage 1: Grounded web search with chosen model
+            t0 = time.time()
             raw_text, sources_or_err = fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=ticker_names, model=search_model)
+            elapsed1 = time.time() - t0
+
             if raw_text:
                 all_sources.extend(sources_or_err)
-                
+                ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+                print(f"[{ts}] [{market}] [{i+1}/{len(tickers)}] {ticker} - Stage1 done ({elapsed1:.1f}s), Stage2 filter starting...")
+
                 # Stage 2: Reasoning & strict filtering per-ticker with chosen model
+                t0 = time.time()
                 clean_text = filter_batch_with_reasoning(client, raw_text, [], market, as_of_date, ticker_names=ticker_names, model=reasoning_model, budget=thinking_budget)
+                elapsed2 = time.time() - t0
+                ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
                 if clean_text:
                     filtered_batch_texts.append(clean_text)
+                    print(f"[{ts}] [{market}] [{i+1}/{len(tickers)}] {ticker} - done (search {elapsed1:.1f}s + filter {elapsed2:.1f}s = {elapsed1+elapsed2:.1f}s total)")
+                else:
+                    print(f"[{ts}] [{market}] [{i+1}/{len(tickers)}] {ticker} - filtered to empty ({elapsed1:.1f}s + {elapsed2:.1f}s)")
             else:
-                print(f"  Search failed for {ticker}: {sources_or_err}")
+                ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+                print(f"[{ts}] [{market}] [{i+1}/{len(tickers)}] {ticker} - Stage1 FAILED ({elapsed1:.1f}s): {sources_or_err}")
 
         # Stage 3: Final market collation with chosen model
+        print(f"\n[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] [{market}] Stage3 collation starting ({len(filtered_batch_texts)} filtered results)...")
+        t0 = time.time()
         collated = collate_market_summary(client, market, filtered_batch_texts, as_of_date=as_of_date, model=reasoning_model, budget=thinking_budget)
+        print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] [{market}] Stage3 done ({time.time()-t0:.1f}s)")
 
         result["markets"][market] = {
             "summary": collated,
