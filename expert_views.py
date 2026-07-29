@@ -12,7 +12,17 @@ from google.genai import types
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 EXPERT_VIEWS_FILE = os.path.join(SCRIPT_DIR, "expert_views.json")
 
-def fetch_gemma_expert_news(client, ticker, market, company_name, news_text_fallback=None):
+import concurrent.futures
+
+def _generate_with_timeout(client, model, contents, config, timeout=120):
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(client.models.generate_content, model=model, contents=contents, config=config)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            raise TimeoutError(f"API call to {model} timed out after {timeout}s")
+
+def fetch_gemma_expert_news(client, ticker, market, company_name, news_text_fallback=None, is_retry=False):
     """Fetches news specifically for Expert Views using gemma-4-26b-a4b-it with Google Search.
     Falls back to 31b, then to news_summary corpus if provided."""
     as_of_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -35,21 +45,24 @@ def fetch_gemma_expert_news(client, ticker, market, company_name, news_text_fall
     config = types.GenerateContentConfig(tools=[grounding_tool])
     
     try:
-        resp = client.models.generate_content(model="models/gemma-4-26b-a4b-it", contents=prompt, config=config)
+        resp = _generate_with_timeout(client, "models/gemma-4-26b-a4b-it", prompt, config, timeout=120)
         text = resp.text or ""
         if not text.strip():
             return "No recent news found.", "🔍 Gemma-4-26B (Google Search)"
         return text, "🔍 Gemma-4-26B (Google Search)"
     except Exception as e:
-        print(f"  [expert gemma 26b search failed] {ticker}: {e} -> Falling back to 31b")
+        print(f"  [expert gemma 26b search failed/timeout] {ticker}: {e} -> Falling back to 31b")
         try:
-            resp = client.models.generate_content(model="models/gemma-4-31b-it", contents=prompt, config=config)
+            resp = _generate_with_timeout(client, "models/gemma-4-31b-it", prompt, config, timeout=120)
             text = resp.text or ""
             if not text.strip():
                 return "No recent news found.", "🔍 Gemma-4-31B (Google Search)"
             return text, "🔍 Gemma-4-31B (Google Search)"
         except Exception as e2:
-            print(f"  [expert gemma 31b search failed] {ticker}: {e2} -> Falling back to corpus")
+            print(f"  [expert gemma 31b search failed/timeout] {ticker}: {e2}")
+            if not is_retry:
+                raise TimeoutError("Search timed out. Add to retry queue.")
+            print(f"  [expert search final fallback] {ticker} -> Falling back to corpus")
             if news_text_fallback:
                 return news_text_fallback, "⚪ news_summary.json (Corpus Reuse)"
             return "No recent news found.", "⚪ No Source"
@@ -179,7 +192,7 @@ Return ONLY a valid JSON object matching this schema:
     return prompt
 
 
-def generate_expert_view(client, row_data, news_text=None, news_source=None, active_alerts_text=None, nvidia_api_key=None, news_text_fallback=None):
+def generate_expert_view(client, row_data, news_text=None, news_source=None, active_alerts_text=None, nvidia_api_key=None, news_text_fallback=None, is_retry=False):
     from google.genai import types
     import json
     from datetime import datetime, timezone
@@ -190,7 +203,7 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
     company_name = row_data.get("company_name", ticker)
 
     if news_text is None:
-        news_text, news_source = fetch_gemma_expert_news(client, ticker, market, company_name, news_text_fallback)
+        news_text, news_source = fetch_gemma_expert_news(client, ticker, market, company_name, news_text_fallback=news_text_fallback, is_retry=is_retry)
 
     prompt = build_expert_prompt(row_data, news_text, active_alerts_text)
     

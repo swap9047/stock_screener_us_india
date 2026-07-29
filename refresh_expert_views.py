@@ -39,6 +39,8 @@ def main():
 
     total_processed = 0
     total_failed = 0
+    total_fallback_used = 0
+    retry_queue = []
 
     # Process each market
     for market, mkt_tickers in watchlists.items():
@@ -76,12 +78,15 @@ def main():
                     client,
                     row,
                     nvidia_api_key=nvidia_api_key,
-                    news_text_fallback=ticker_news_fallback
+                    news_text_fallback=ticker_news_fallback,
+                    is_retry=False
                 )
                 elapsed = time.time() - t0
 
                 if _is_valid_view(view):
                     expert_views[tk] = view
+                    if "⚪" in view.get("news_source", ""):
+                        total_fallback_used += 1
                     print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - OK ({elapsed:.1f}s) verdict={view.get('verdict')}")
                 elif _is_valid_view(old_view):
                     print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - FAILED ({elapsed:.1f}s), keeping prior result")
@@ -89,6 +94,9 @@ def main():
                     expert_views[tk] = view
                     print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - FAILED ({elapsed:.1f}s): {view.get('headline')}")
                     total_failed += 1
+            except TimeoutError as e:
+                print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - TIMEOUT: {e}. Added to retry queue.")
+                retry_queue.append((market, tk, row, ticker_news_fallback, old_view))
             except Exception as e:
                 print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - EXCEPTION: {e}")
                 total_failed += 1
@@ -100,8 +108,47 @@ def main():
             # Sleep to strictly respect Gemini RPM (Requests Per Minute) limits
             if idx < len(mkt_tickers) - 1:
                 time.sleep(5)
+                
+    # Process retry queue
+    if retry_queue:
+        print(f"\n[{_ts()}] === Processing Retry Queue ({len(retry_queue)} tickers) ===")
+        for idx, (market, tk, row, ticker_news_fallback, old_view) in enumerate(retry_queue):
+            company_name = row.get("company_name", tk)
+            print(f"[{_ts()}] [RETRY] [{market}] [{idx+1}/{len(retry_queue)}] {tk} ({company_name}) - starting...")
+            try:
+                t0 = time.time()
+                view = generate_expert_view(
+                    client,
+                    row,
+                    nvidia_api_key=nvidia_api_key,
+                    news_text_fallback=ticker_news_fallback,
+                    is_retry=True
+                )
+                elapsed = time.time() - t0
 
-    print(f"\nDone. Processed {total_processed} tickers. {total_failed} failures.")
+                if _is_valid_view(view):
+                    expert_views[tk] = view
+                    if "⚪" in view.get("news_source", ""):
+                        total_fallback_used += 1
+                    print(f"[{_ts()}] [RETRY] [{market}] [{idx+1}/{len(retry_queue)}] {tk} - OK ({elapsed:.1f}s) verdict={view.get('verdict')}")
+                elif _is_valid_view(old_view):
+                    print(f"[{_ts()}] [RETRY] [{market}] [{idx+1}/{len(retry_queue)}] {tk} - FAILED ({elapsed:.1f}s), keeping prior result")
+                else:
+                    expert_views[tk] = view
+                    print(f"[{_ts()}] [RETRY] [{market}] [{idx+1}/{len(retry_queue)}] {tk} - FAILED ({elapsed:.1f}s): {view.get('headline')}")
+                    total_failed += 1
+            except Exception as e:
+                print(f"[{_ts()}] [RETRY] [{market}] [{idx+1}/{len(retry_queue)}] {tk} - EXCEPTION: {e}")
+                total_failed += 1
+                
+            save_expert_views(expert_views)
+            
+            if idx < len(retry_queue) - 1:
+                time.sleep(5)
+
+    print(f"\nDone. Processed {total_processed} initial tickers and {len(retry_queue)} retries.")
+    print(f"Offline Corpus Fallbacks Used: {total_fallback_used} times.")
+    print(f"Final failures: {total_failed}.")
 
 if __name__ == "__main__":
     main()
