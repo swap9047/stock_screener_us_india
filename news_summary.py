@@ -73,8 +73,18 @@ def batch_list(items, size):
     return [items[i:i + size] for i in range(0, len(items), size)]
 
 
-def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None, model=SEARCH_MODEL):
-    """Stage 1: Grounded search call using gemma-4-31b-it. Fetches raw news
+import concurrent.futures
+
+def _generate_with_timeout(client, model, contents, config, timeout=120):
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(client.models.generate_content, model=model, contents=contents, config=config)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            raise TimeoutError(f"API call to {model} timed out after {timeout}s")
+
+def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None, model=SEARCH_MODEL, is_retry=False):
+    """Stage 1: Grounded search call. Fetches raw news
     articles and web sources for a single ticker."""
     from datetime import datetime, timedelta
     from news_search import get_stock_news
@@ -93,10 +103,13 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None,
         f"{cutoff_date} and {as_of_date} (the last 36 hours), AND any major upcoming scheduled events in the next 3-4 days (e.g. earnings, launches). Report any news items you find, "
         "specifying the exact date of each item. Be extremely concise. If there is no news, output nothing."
     )
+    
+    grounding_tool = types.Tool(google_search=types.GoogleSearch())
+    config = types.GenerateContentConfig(tools=[grounding_tool])
+    
     try:
-        grounding_tool = types.Tool(google_search=types.GoogleSearch())
-        config = types.GenerateContentConfig(tools=[grounding_tool])
-        resp = client.models.generate_content(model=model, contents=prompt, config=config)
+        # User requested 26b -> 31b logic
+        resp = _generate_with_timeout(client, "models/gemma-4-26b-a4b-it", prompt, config, timeout=120)
         text = resp.text or ""
         sources = []
         gm = resp.candidates[0].grounding_metadata if resp.candidates else None
@@ -107,9 +120,9 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None,
                     sources.append({"title": web.title, "url": web.uri})
         return f"**{name}**:\n{text}", sources
     except Exception as e:
-        print(f"  [gemma search failed] {ticker}: {e} -> Falling back to dense 31b model")
+        print(f"  [gemma 26b search failed/timeout] {ticker}: {e} -> Falling back to 31b model")
         try:
-            resp = client.models.generate_content(model="models/gemma-4-31b-it", contents=prompt, config=config)
+            resp = _generate_with_timeout(client, "models/gemma-4-31b-it", prompt, config, timeout=120)
             text = resp.text or ""
             sources = []
             gm = resp.candidates[0].grounding_metadata if resp.candidates else None
@@ -120,9 +133,12 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None,
                         sources.append({"title": web.title, "url": web.uri})
             return f"**{name}**:\n{text}", sources
         except Exception as e2:
-            print(f"  [gemma 31b fallback failed] {ticker}: {e2} -> Falling back to DuckDuckGo/yfinance")
+            print(f"  [gemma 31b fallback failed/timeout] {ticker}: {e2}")
+            if not is_retry:
+                raise TimeoutError("Search timed out. Add to retry queue.")
+            print(f"  [gemma search final fallback] {ticker} -> Falling back to DuckDuckGo/yfinance")
             fallback_text, fallback_source = get_stock_news(ticker, market=market)
-            source_dict = [{"title": fallback_source, "url": ""}]
+            source_dict = [{"title": fallback_source, "url": "fallback"}]
             return f"**{name}**:\n{fallback_text}", source_dict
 
 
@@ -275,6 +291,9 @@ def build_news_summary(watchlists, api_key, batch_size=BATCH_SIZE):
         # Process Stage 1 and Stage 2 per-ticker
         filtered_batch_texts = []
         all_sources = []
+        retry_queue = []
+        total_fallback_used = 0
+        
         for i, ticker in enumerate(tickers):
             if not first_call:
                 time.sleep(SECONDS_BETWEEN_CALLS)
@@ -285,27 +304,72 @@ def build_news_summary(watchlists, api_key, batch_size=BATCH_SIZE):
 
             # Stage 1: Grounded web search with chosen model
             t0 = time.time()
-            raw_text, sources_or_err = fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=ticker_names, model=search_model)
-            elapsed1 = time.time() - t0
+            try:
+                raw_text, sources_or_err = fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=ticker_names, model=search_model, is_retry=False)
+                elapsed1 = time.time() - t0
 
-            if raw_text:
-                all_sources.extend(sources_or_err)
-                ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-                print(f"[{ts}] [{market}] [{i+1}/{len(tickers)}] {ticker} - Stage1 done ({elapsed1:.1f}s), Stage2 filter starting...")
+                if raw_text:
+                    if any(s.get("url") == "fallback" for s in sources_or_err):
+                        total_fallback_used += 1
+                        
+                    all_sources.extend(sources_or_err)
+                    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+                    print(f"[{ts}] [{market}] [{i+1}/{len(tickers)}] {ticker} - Stage1 done ({elapsed1:.1f}s), Stage2 filter starting...")
 
-                # Stage 2: Reasoning & strict filtering per-ticker with chosen model
-                t0 = time.time()
-                clean_text = filter_batch_with_reasoning(client, raw_text, [], market, as_of_date, ticker_names=ticker_names, model=reasoning_model, budget=thinking_budget)
-                elapsed2 = time.time() - t0
-                ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-                if clean_text:
-                    filtered_batch_texts.append(clean_text)
-                    print(f"[{ts}] [{market}] [{i+1}/{len(tickers)}] {ticker} - done (search {elapsed1:.1f}s + filter {elapsed2:.1f}s = {elapsed1+elapsed2:.1f}s total)")
+                    # Stage 2: Reasoning & strict filtering per-ticker with chosen model
+                    t0_2 = time.time()
+                    clean_text = filter_batch_with_reasoning(client, raw_text, [], market, as_of_date, ticker_names=ticker_names, model=reasoning_model, budget=thinking_budget)
+                    elapsed2 = time.time() - t0_2
+                    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+                    if clean_text:
+                        filtered_batch_texts.append(clean_text)
+                        print(f"[{ts}] [{market}] [{i+1}/{len(tickers)}] {ticker} - done (search {elapsed1:.1f}s + filter {elapsed2:.1f}s = {elapsed1+elapsed2:.1f}s total)")
+                    else:
+                        print(f"[{ts}] [{market}] [{i+1}/{len(tickers)}] {ticker} - filtered to empty ({elapsed1:.1f}s + {elapsed2:.1f}s)")
                 else:
-                    print(f"[{ts}] [{market}] [{i+1}/{len(tickers)}] {ticker} - filtered to empty ({elapsed1:.1f}s + {elapsed2:.1f}s)")
-            else:
+                    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+                    print(f"[{ts}] [{market}] [{i+1}/{len(tickers)}] {ticker} - Stage1 FAILED ({elapsed1:.1f}s): {sources_or_err}")
+            except TimeoutError as e:
+                print(f"[{ts}] [{market}] [{i+1}/{len(tickers)}] {ticker} - TIMEOUT: {e}. Added to retry queue.")
+                retry_queue.append(ticker)
+            except Exception as e:
+                print(f"[{ts}] [{market}] [{i+1}/{len(tickers)}] {ticker} - EXCEPTION: {e}")
+
+        # Process retry queue
+        if retry_queue:
+            print(f"\n[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] === Processing Retry Queue ({len(retry_queue)} tickers) ===")
+            for i, ticker in enumerate(retry_queue):
+                time.sleep(SECONDS_BETWEEN_CALLS)
                 ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-                print(f"[{ts}] [{market}] [{i+1}/{len(tickers)}] {ticker} - Stage1 FAILED ({elapsed1:.1f}s): {sources_or_err}")
+                print(f"[{ts}] [RETRY] [{market}] [{i+1}/{len(retry_queue)}] {ticker} - Stage1 search starting...")
+                try:
+                    t0 = time.time()
+                    raw_text, sources_or_err = fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=ticker_names, model=search_model, is_retry=True)
+                    elapsed1 = time.time() - t0
+
+                    if raw_text:
+                        if any(s.get("url") == "fallback" for s in sources_or_err):
+                            total_fallback_used += 1
+                            
+                        all_sources.extend(sources_or_err)
+                        ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+                        print(f"[{ts}] [RETRY] [{market}] [{i+1}/{len(retry_queue)}] {ticker} - Stage1 done ({elapsed1:.1f}s), Stage2 filter starting...")
+
+                        t0_2 = time.time()
+                        clean_text = filter_batch_with_reasoning(client, raw_text, [], market, as_of_date, ticker_names=ticker_names, model=reasoning_model, budget=thinking_budget)
+                        elapsed2 = time.time() - t0_2
+                        ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+                        if clean_text:
+                            filtered_batch_texts.append(clean_text)
+                            print(f"[{ts}] [RETRY] [{market}] [{i+1}/{len(retry_queue)}] {ticker} - done ({elapsed1+elapsed2:.1f}s total)")
+                        else:
+                            print(f"[{ts}] [RETRY] [{market}] [{i+1}/{len(retry_queue)}] {ticker} - filtered to empty")
+                    else:
+                        print(f"[{ts}] [RETRY] [{market}] [{i+1}/{len(retry_queue)}] {ticker} - Stage1 FAILED ({elapsed1:.1f}s): {sources_or_err}")
+                except Exception as e:
+                    print(f"[{ts}] [RETRY] [{market}] [{i+1}/{len(retry_queue)}] {ticker} - EXCEPTION: {e}")
+                    
+        print(f"\n[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] [{market}] Offline Fallbacks Used: {total_fallback_used} times.")
 
         # Stage 3: Final market collation with chosen model
         print(f"\n[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] [{market}] Stage3 collation starting ({len(filtered_batch_texts)} filtered results)...")
