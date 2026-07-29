@@ -3,18 +3,17 @@ name: Daily Expert Views Generation
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
-# Runs once/day at 7:15 AM ET. First refreshes data_snapshot.json (replaces
+# Runs once/day at 11:00 PM ET. First refreshes data_snapshot.json (replaces
 # the standalone data-refresh workflow), then generates AI Expert Takes for
 # all tickers. Running data refresh here ensures expert views always work
-# from same-day price data. News Summary runs in parallel at the same time
-# (independent -- no shared dependency).
+# from same-day price data.
 #
-# 7:15 AM ET is 11:15 UTC during EDT (mid-Mar to early Nov) and 12:15 UTC
+# 11:00 PM ET is 03:00 UTC during EDT (mid-Mar to early Nov) and 04:00 UTC
 # during EST (early Nov to mid-Mar).
 on:
   schedule:
-    - cron: "15 11 * * *"   # 11:15 UTC = 7:15 AM ET during EDT
-    - cron: "15 12 * * *"   # 12:15 UTC = 7:15 AM ET during EST
+    - cron: "0 3 * * *"   # 03:00 UTC = 11:00 PM ET during EDT
+    - cron: "0 4 * * *"   # 04:00 UTC = 11:00 PM ET during EST
   workflow_dispatch: {}    # run manually from the Actions tab anytime, bypasses the gate
 
 permissions:
@@ -23,11 +22,12 @@ permissions:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     outputs:
       due: ${{ steps.check.outputs.due }}
     steps:
       - id: check
-        name: Is it ~7 AM ET right now?
+        name: Is it ~11 PM ET right now?
         env:
           CRON_SCHEDULE: ${{ github.event.schedule }}
         run: |
@@ -38,7 +38,7 @@ jobs:
           from datetime import datetime
           now_et = datetime.now(ZoneInfo("America/New_York"))
           
-          rule_hour = 7
+          rule_hour = 23
           cron = os.environ.get("CRON_SCHEDULE")
           
           is_valid_cron = True
@@ -61,6 +61,7 @@ jobs:
     needs: gate
     if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.due == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
