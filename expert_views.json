@@ -1,12 +1,12 @@
 {
   "LAURUSLABS.NS": {
     "verdict": "ACCUMULATE",
-    "headline": "Laurus Labs exhibits robust Stage 2 continuation with strong relative strength and volume accumulation.",
-    "technical_summary": "The stock is in a powerful Stage 2 uptrend, trading near its 52-week high of 1762.0 with all major weekly and daily EMAs rising cleanly. While momentum indicators are elevated (daily RSI at 78.8, weekly at 84.9), positive net volume accumulation (60.4%) and a rising VStop at 1601.9 confirm persistent institutional buying.",
-    "catalyst_summary": "No material news or upcoming catalysts were reported in the recent 24-48 hour window, leaving the strong price action driven entirely by underlying technical momentum and institutional accumulation.",
-    "actionable_take": "Look for a shallow consolidation or minor pullback toward the 1620-1650 zone to add to positions without chasing extended overbought levels. Maintain a strict trailing stop loss just beneath the weekly Volatility Stop at 1601.9 to protect capital against mean-reversion.",
-    "as_of": "2026-07-28 18:45",
-    "news_used": "Since no material news or upcoming catalysts were found for LAURUSLABS within the specified timeframe (2026-07-26 to 2026-07-28), no report is provided.",
+    "headline": "Laurus Labs powers near 52-week highs backed by strong Q1 earnings and upward analyst revisions.",
+    "technical_summary": "Robust multi-timeframe uptrend with price firmly above rising EMAs and strong Mansfield Relative Strength, though RSIs are overbought above 80. Net volume shows steady 72.5% accumulation over the last 10 days.",
+    "catalyst_summary": "Strong Q1 FY27 results spurred positive estimate revisions and target upgrades from major brokerages like Citigroup and Nomura, validating fundamental momentum.",
+    "actionable_take": "Look to add on minor intraday pullbacks toward the 10 DEMA while utilizing the volatility stop at 1627.8 as a strict trailing exit level to manage overbought risk.",
+    "as_of": "2026-07-29 05:29",
+    "news_used": "**Institutional Analyst Ratings & Upgrades/Downgrades**\n* **July 27, 2026:** Citigroup upgraded Laurus Labs from 'Sell' to 'Neutral'; target price raised to \u20b91,720 (from \u20b9875).\n* **July 27, 2026:** Nomura revised growth estimates higher for FY27 and FY29.\n* **July 27, 2026:** Deven Choksey issued an 'Accumulate' rating with a target price of \u20b91,758.90.\n* **July 27, 2026:** Analysts increased 2027 revenue and EPS forecasts following strong Q1 FY27 results.\n\n**Upcoming Catalysts (July 29 \u2013 August 2, 2026)**\n* No major upcoming catalysts (earnings or product launches) identified for this period.",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
   },
