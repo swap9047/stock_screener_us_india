@@ -42,5 +42,16 @@
     "news_used": "As of July 28, 2026, no material institutional analyst ratings, upgrades/downgrades, press releases, or upcoming catalysts (within the next 3\u20134 days) were found for KRYS in the specified period.",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
+  },
+  "NEOGEN.NS": {
+    "verdict": "ACCUMULATE",
+    "headline": "Neogen Chemicals exhibits strong Stage 2 momentum backed by robust Q1 FY27 earnings surge.",
+    "technical_summary": "The stock remains firmly in a Stage 2 uptrend with price comfortably above rising daily and weekly EMAs, supported by positive Mansfield Relative Strength and an active VStop at 1827.5, despite a short-term negative net volume divergence (-30.3%) amid exploding overall volume.",
+    "catalyst_summary": "Reported stellar Q1 FY27 results featuring a 67% YoY PAT surge and 34% revenue growth, backed by a strong analyst consensus Buy rating.",
+    "actionable_take": "Accumulate on pullbacks toward the 10 DEMA or 1970 support zone. Maintain a strict trailing stop-loss near the VStop level of 1827.5 to protect gains against potential near-term volatility.",
+    "as_of": "2026-07-29 05:25",
+    "news_used": "* **July 27, 2026:** Q1 FY27 earnings call held; earnings presentation released.\n* **July 28, 2026:** Reported robust Q1 FY27 results (67% YoY PAT surge, 34% revenue growth).\n* **July 28, 2026:** Analyst consensus rating: Buy.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
   }
 }
