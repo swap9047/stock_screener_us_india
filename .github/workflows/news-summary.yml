@@ -3,11 +3,11 @@ name: Daily Watchlist News Summary
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
-# Runs once/day at 7:00 AM ET (before market open), building a Gemini
+# Runs once/day at 8:00 PM ET (after market close), building a Gemini
 # grounded-search news digest (major announcements/developments/stock moves
 # in the last 24h) for each watchlist and sending it to Discord.
 #
-# 7:00 AM ET is 11:00 UTC during EDT (mid-Mar to early Nov) and 12:00 UTC
+# 8:00 PM ET is 00:00 UTC during EDT (mid-Mar to early Nov) and 01:00 UTC
 # during EST (early Nov to mid-Mar) -- GitHub Actions cron is UTC-only and
 # does NOT adjust for daylight saving, so both lines are scheduled and a
 # cheap "gate" job checks the real America/New_York wall-clock hour at run
@@ -15,8 +15,8 @@ env:
 # (mirrors the same DST pattern used in daily-alerts.yml).
 on:
   schedule:
-    - cron: "15 11 * * *"   # 11:15 UTC = 7:15 AM ET during EDT
-    - cron: "15 12 * * *"   # 12:15 UTC = 7:15 AM ET during EST
+    - cron: "0 0 * * *"   # 00:00 UTC = 8:00 PM ET during EDT
+    - cron: "0 1 * * *"   # 01:00 UTC = 8:00 PM ET during EST
   workflow_dispatch: {}    # run manually from the Actions tab anytime, bypasses the gate
 
 permissions:
@@ -25,11 +25,12 @@ permissions:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     outputs:
       due: ${{ steps.check.outputs.due }}
     steps:
       - id: check
-        name: Is it ~7 AM ET right now?
+        name: Is it ~8 PM ET right now?
         env:
           CRON_SCHEDULE: ${{ github.event.schedule }}
         run: |
@@ -40,7 +41,7 @@ jobs:
           from datetime import datetime
           now_et = datetime.now(ZoneInfo("America/New_York"))
           
-          rule_hour = 7
+          rule_hour = 20
           cron = os.environ.get("CRON_SCHEDULE")
           
           is_valid_cron = True
@@ -63,6 +64,7 @@ jobs:
     needs: gate
     if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.due == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
