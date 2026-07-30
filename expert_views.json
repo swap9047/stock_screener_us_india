@@ -834,5 +834,16 @@
     "news_used": "**2026-07-29**\n* **Board Meeting/AGM:** Approved unaudited Q1 FY27 financial results; held 33rd AGM where a \u20b91.25 per share final dividend (FY26) was declared and new statutory auditors and directors were appointed.\n\n**2026-07-30**\n* **Q1 FY27 Earnings:** Reported a consolidated net loss of \u20b99 crore (vs. \u20b986.7 crore profit in Q1 FY26) and a 16% YoY revenue decline to \u20b9736 crore, driven by the loss of a major biologics client, FX hedge losses, and \u20b910 crore in employee termination costs.\n* **Analyst Rating:** Macquarie retained an 'Outperform' rating with a target price of \u20b9735, characterizing the results as an \"all-round miss\" but noting maintained margin guidance.",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
+  },
+  "STLTECH.NS": {
+    "verdict": "HOLD",
+    "headline": "Broad structural uptrend consolidating near support with major fundamental upgrades.",
+    "technical_summary": "Price is currently undergoing a short-term consolidation phase with negative 10D net volume (-23.1%) and a downward VStop, but remains well above its rising 40 WEMA supported by strong long-term Mansfield relative strength.",
+    "catalyst_summary": "Analysts significantly upgraded FY27 revenue and EPS estimates, raising the target price by 57% to \u20b9860.",
+    "actionable_take": "Hold existing positions as the stock digests recent gains. Look to accumulate on a successful stabilization near the 50 DEMA / 20 WEMA zone (450-520), setting a trailing risk stop below the 40 WEMA.",
+    "as_of": "2026-07-30 19:03",
+    "news_used": "* **2026-07-30:** Analysts upgraded FY27 revenue and EPS estimates; price target increased 57% to \u20b9860.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
   }
 }
