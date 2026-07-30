@@ -2501,52 +2501,85 @@ with tab_news:
     
     st.divider()
     
-    col_ind, col_us = st.columns(2)
+    from plotly.subplots import make_subplots
+    import plotly.graph_objects as go
     
-    with col_ind:
-        st.markdown("### India Dashboard")
-        
-        st.markdown("**Nifty 500: % Stocks Above 200-Day EMA**")
+    # We will build a single 3x2 subplot figure so hover spikes sync perfectly across all rows.
+    # We check ind_invested first, but if it's empty, fallback to ind_tickers
+    india_portfolio_tickers = ind_invested if ind_invested else ind_tickers
+    
+    with st.spinner("Loading Dashboards..."):
+        closes_ind = None
+        df_perf_ind = None
+        if india_portfolio_tickers:
+            closes_ind = fetch_performance_data(india_portfolio_tickers, "^CRSLDX")
+            # If we fall back to ind_tickers, we don't have invested_weights for them, so we pass None
+            w = invested_weights if ind_invested else None
+            df_perf_ind = calculate_portfolio_returns(closes_ind, india_portfolio_tickers, "^CRSLDX", weights=w, filter_years=years)
+            
+        closes_us = None
+        df_perf_us = None
+        if us_tickers:
+            closes_us = fetch_performance_data(us_tickers, "SPY")
+            df_perf_us = calculate_portfolio_returns(closes_us, us_tickers, "SPY", weights=None, filter_years=years)
+            
         df_ema_ind, df_hl_ind = format_json_breadth(breadth_data.get("markets", {}).get("INDIA"), years)
-        if df_ema_ind is not None and not df_ema_ind.empty:
-            plot_breadth_plotly(df_ema_ind, "", "% Above 200d EMA", show_50=True)
-            
-        st.markdown("**Nifty 500: 52-Week Highs vs Lows**")
-        if df_hl_ind is not None and not df_hl_ind.empty:
-            plot_breadth_plotly(df_hl_ind, "", "% of Stocks")
-            
-        st.markdown("**India Invested Watchlist vs Nifty 500**")
-        if not ind_invested:
-            st.info("Mark stocks as 'Invested' in India Watchlist")
-        else:
-            with st.spinner("Loading India Performance..."):
-                closes_ind = fetch_performance_data(ind_invested, "^CRSLDX")
-                df_perf_ind = calculate_portfolio_returns(closes_ind, ind_invested, "^CRSLDX", weights=invested_weights, filter_years=years)
-                if df_perf_ind is not None:
-                    plot_performance_plotly(df_perf_ind, "India Watchlist", "Nifty 500")
-                    
-    with col_us:
-        st.markdown("### US Dashboard")
-        
-        st.markdown("**S&P 500: % Stocks Above 200-Day EMA**")
         df_ema_us, df_hl_us = format_json_breadth(breadth_data.get("markets", {}).get("US"), years)
-        if df_ema_us is not None and not df_ema_us.empty:
-            plot_breadth_plotly(df_ema_us, "", "% Above 200d EMA", show_50=True)
-            
-        st.markdown("**S&P 500: 52-Week Highs vs Lows**")
-        if df_hl_us is not None and not df_hl_us.empty:
-            plot_breadth_plotly(df_hl_us, "", "% of Stocks")
-            
-        st.markdown("**US Watchlist vs S&P 500**")
-        if not us_tickers:
-            st.info("Add stocks to US Watchlist")
-        else:
-            with st.spinner("Loading US Performance..."):
-                closes_us = fetch_performance_data(us_tickers, "SPY")
-                df_perf_us = calculate_portfolio_returns(closes_us, us_tickers, "SPY", weights=None, filter_years=years)
-                if df_perf_us is not None:
-                    plot_performance_plotly(df_perf_us, "US Watchlist", "S&P 500")
 
+        fig = make_subplots(
+            rows=3, cols=2,
+            shared_xaxes="all",
+            vertical_spacing=0.08,
+            horizontal_spacing=0.05,
+            subplot_titles=(
+                "Nifty 500: % Above 200-Day EMA", "S&P 500: % Above 200-Day EMA",
+                "Nifty 500: 52-Week Highs vs Lows", "S&P 500: 52-Week Highs vs Lows",
+                "India Watchlist vs Nifty 500", "US Watchlist vs S&P 500"
+            )
+        )
+        
+        colors = ['#2ecc71', '#e74c3c', '#f39c12']
+        
+        # Row 1: EMA Breadth
+        if df_ema_ind is not None and not df_ema_ind.empty:
+            for i, col in enumerate([c for c in df_ema_ind.columns if c != 'Date']):
+                fig.add_trace(go.Scatter(x=df_ema_ind['Date'], y=df_ema_ind[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5), showlegend=False), row=1, col=1)
+            fig.add_hline(y=50, line_dash="dash", line_color="rgba(0,0,0,0.3)", row=1, col=1)
+            
+        if df_ema_us is not None and not df_ema_us.empty:
+            for i, col in enumerate([c for c in df_ema_us.columns if c != 'Date']):
+                fig.add_trace(go.Scatter(x=df_ema_us['Date'], y=df_ema_us[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5), showlegend=False), row=1, col=2)
+            fig.add_hline(y=50, line_dash="dash", line_color="rgba(0,0,0,0.3)", row=1, col=2)
+            
+        # Row 2: High/Low Extremes
+        if df_hl_ind is not None and not df_hl_ind.empty:
+            for i, col in enumerate([c for c in df_hl_ind.columns if c != 'Date']):
+                fig.add_trace(go.Scatter(x=df_hl_ind['Date'], y=df_hl_ind[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5), showlegend=False), row=2, col=1)
+                
+        if df_hl_us is not None and not df_hl_us.empty:
+            for i, col in enumerate([c for c in df_hl_us.columns if c != 'Date']):
+                fig.add_trace(go.Scatter(x=df_hl_us['Date'], y=df_hl_us[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5), showlegend=False), row=2, col=2)
+                
+        # Row 3: Portfolio Performance
+        if df_perf_ind is not None and not df_perf_ind.empty:
+            fig.add_trace(go.Scatter(x=df_perf_ind.index, y=df_perf_ind['Portfolio'], name="India Watchlist", line=dict(color='#3498db', width=2), showlegend=False), row=3, col=1)
+            fig.add_trace(go.Scatter(x=df_perf_ind.index, y=df_perf_ind['Benchmark'], name="Nifty 500", line=dict(color='#95a5a6', width=1.5, dash='dot'), showlegend=False), row=3, col=1)
+            
+        if df_perf_us is not None and not df_perf_us.empty:
+            fig.add_trace(go.Scatter(x=df_perf_us.index, y=df_perf_us['Portfolio'], name="US Watchlist", line=dict(color='#3498db', width=2), showlegend=False), row=3, col=2)
+            fig.add_trace(go.Scatter(x=df_perf_us.index, y=df_perf_us['Benchmark'], name="S&P 500", line=dict(color='#95a5a6', width=1.5, dash='dot'), showlegend=False), row=3, col=2)
+            
+        fig.update_layout(
+            height=900,
+            hovermode="x unified",
+            margin=dict(l=0, r=0, t=30, b=0),
+            showlegend=False
+        )
+        fig.update_xaxes(showspikes=True, spikemode="across", spikesnap="cursor", showline=True, showgrid=False)
+        fig.update_yaxes(showgrid=True)
+        
+        st.plotly_chart(fig, width="stretch")
+        
     st.divider()
     st.subheader("Watchlist news digest")
     st.caption(
