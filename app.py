@@ -2348,7 +2348,7 @@ with tab_news:
         )
         st.plotly_chart(fig, width="stretch")
 
-    @st.cache_data(ttl=3600*12)
+    @st.cache_data(ttl=3600)
     def fetch_performance_data(tickers, benchmark_ticker, weights=None):
         import yfinance as yf
         import io
@@ -2531,8 +2531,11 @@ with tab_news:
                 return f"{df[col].iloc[-1]:.1f}"
             return "--"
             
-        title_ema_ind = f"Nifty 500: % Above 200-Day EMA (Current: {get_val(df_ema_ind, '% Above 200d EMA')}%)"
-        title_ema_us = f"S&P 500: % Above 200-Day EMA (Current: {get_val(df_ema_us, '% Above 200d EMA')}%)"
+        total_ind = breadth_data.get("markets", {}).get("INDIA", {}).get("total", "--")
+        total_us = breadth_data.get("markets", {}).get("US", {}).get("total", "--")
+            
+        title_ema_ind = f"Nifty 500: % Above 200-Day EMA (Current: {get_val(df_ema_ind, '% Above 200d EMA')}%, Captured: {total_ind}/501)"
+        title_ema_us = f"S&P 500: % Above 200-Day EMA (Current: {get_val(df_ema_us, '% Above 200d EMA')}%, Captured: {total_us}/503)"
         
         title_hl_ind = f"Nifty 500: 52-Week Highs vs Lows (Highs: {get_val(df_hl_ind, '% New Highs')}%, Lows: {get_val(df_hl_ind, '% New Lows')}%)"
         title_hl_us = f"S&P 500: 52-Week Highs vs Lows (Highs: {get_val(df_hl_us, '% New Highs')}%, Lows: {get_val(df_hl_us, '% New Lows')}%)"
