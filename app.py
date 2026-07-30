@@ -84,6 +84,21 @@ AUTH_CONFIG_FILE = os.path.join(SCRIPT_DIR, "auth_config.json")
 COLUMN_PREFS_FILE = os.path.join(SCRIPT_DIR, "column_prefs.json")
 
 
+def load_column_prefs_full():
+    if not os.path.exists(COLUMN_PREFS_FILE): return {}
+    try:
+        with open(COLUMN_PREFS_FILE) as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {"order": data}
+    except Exception:
+        return {}
+
+def update_column_prefs(key, value):
+    data = load_column_prefs_full()
+    data[key] = value
+    with open(COLUMN_PREFS_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
 def load_column_prefs():
     """Returns the saved column order (list of data keys, visible ones only,
     in display order) from column_prefs.json, or None if there's no file yet
@@ -92,22 +107,11 @@ def load_column_prefs():
     secret -- it's meant to be committed/pushed like watchlist.json etc. so
     a column layout set once (locally or on the deployed app) is shared by
     everyone who opens the app, not just the browser session that set it."""
-    if not os.path.exists(COLUMN_PREFS_FILE):
-        return None
-    try:
-        with open(COLUMN_PREFS_FILE) as f:
-            data = json.load(f)
-        order = data.get("order")
-        if isinstance(order, list) and all(isinstance(k, str) for k in order):
-            return order
-    except Exception:
-        pass
-    return None
+    return load_column_prefs_full().get("order")
 
 
 def save_column_prefs(order):
-    with open(COLUMN_PREFS_FILE, "w") as f:
-        json.dump({"order": order}, f, indent=2)
+    update_column_prefs("order", order)
 
 # ---------- auth gate ----------
 
@@ -1276,15 +1280,29 @@ def render_shared_sort_control(label_by_key, key_by_label):
     # computed AFTER filtering, inside render_market_tab -- not present on
     # the raw row dict at sort time -- excluded rather than silently
     # sorting wrong (or crashing on a missing key).
-    sort_labels = ["(default order)", "Ticker", "Last"] + [
+    sort_labels = ["(default order)", "Ticker", "Company Name", "Last"] + [
         lbl for key, lbl in label_by_key.items() if key not in ("matched_alerts", "vstop_change")
     ]
+    
+    prefs = load_column_prefs_full()
+    if "shared_sort_field" not in st.session_state:
+        val = prefs.get("sort_by", "(default order)")
+        st.session_state["shared_sort_field"] = val if val in sort_labels else "(default order)"
+    if "shared_sort_dir" not in st.session_state:
+        st.session_state["shared_sort_dir"] = prefs.get("sort_dir", "↑")
+
     sc1, sc2 = st.sidebar.columns([3, 1])
     sort_label = sc1.selectbox("Sort by", sort_labels, key="shared_sort_field")
-    ascending = sc2.selectbox("Dir", ["↑", "↓"], key="shared_sort_dir") == "↑"
+    sort_dir = sc2.selectbox("Dir", ["↑", "↓"], key="shared_sort_dir")
+    ascending = sort_dir == "↑"
+    
+    if sort_label != prefs.get("sort_by") or sort_dir != prefs.get("sort_dir"):
+        update_column_prefs("sort_by", sort_label)
+        update_column_prefs("sort_dir", sort_dir)
+
     if sort_label == "(default order)":
         return None, ascending
-    sort_field = {"Ticker": "ticker", "Last": "last_close"}.get(sort_label) or key_by_label.get(sort_label)
+    sort_field = {"Ticker": "ticker", "Company Name": "company_name", "Last": "last_close"}.get(sort_label) or key_by_label.get(sort_label)
     return sort_field, ascending
 
 
