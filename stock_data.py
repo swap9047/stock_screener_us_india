@@ -51,6 +51,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 WATCHLIST_FILE = os.path.join(SCRIPT_DIR, "watchlist.json")
 SETTINGS_FILE = os.path.join(SCRIPT_DIR, "settings.json")
 DATA_SNAPSHOT_FILE = os.path.join(SCRIPT_DIR, "data_snapshot.json")
+INVESTED_FILE = os.path.join(SCRIPT_DIR, "invested.json")
 
 MARKETS = ["US", "INDIA"]
 
@@ -189,6 +190,19 @@ def save_watchlist(market, tickers):
     all_lists = load_watchlists()
     all_lists[market] = tickers
     save_watchlists(all_lists)
+
+
+def load_invested_weights():
+    """Returns {"TICKER": 1.0, ...} mapping of invested tickers to their portfolio weight."""
+    if not os.path.exists(INVESTED_FILE):
+        return {}
+    with open(INVESTED_FILE) as f:
+        return json.load(f)
+
+
+def save_invested_weights(weights):
+    with open(INVESTED_FILE, "w") as f:
+        json.dump(weights, f, indent=2)
 
 
 def tradingview_url(ticker):

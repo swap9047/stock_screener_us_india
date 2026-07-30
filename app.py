@@ -977,44 +977,78 @@ def settings_dialog():
 
 
 def render_watchlist_editor(market, watchlists):
+    from stock_data import load_invested_weights, save_invested_weights
+    import pandas as pd
+    
     tickers = watchlists.get(market, [])
     st.caption(f"{len(tickers)} tickers")
-
-    if tickers:
-        per_row = 6
-        for i in range(0, len(tickers), per_row):
-            row_tickers = tickers[i:i + per_row]
-            cols = st.columns(per_row)
-            for col, t in zip(cols, row_tickers):
-                if col.button(f"{t}  ✕", key=f"rm_{market}_{t}"):
-                    new_list = [x for x in tickers if x != t]
-                    save_watchlist(market, new_list)
-                    st.session_state.refresh_token += 1
-                    st.rerun()
-    else:
-        st.write("No tickers yet — add one below.")
-
-    ac1, ac2 = st.columns([3, 1])
-    placeholder = "e.g. AAPL" if market == "US" else "e.g. RELIANCE.NS"
-    new_ticker = ac1.text_input("Add ticker", key=f"add_{market}", placeholder=placeholder, label_visibility="collapsed")
-    if ac2.button("Add", key=f"addbtn_{market}"):
-        t = new_ticker.strip().upper()
-        if not t:
-            pass
-        elif t in tickers:
-            st.warning(f"{t} is already in the watchlist.")
-        else:
-            with st.spinner(f"Checking {t} on Yahoo Finance..."):
-                valid = validate_ticker(t)
-            if not valid:
-                st.error(
-                    f"'{t}' doesn't return any price data from Yahoo Finance — check the "
-                    f"symbol and exchange suffix (India tickers need .NS or .BO) and try again."
-                )
+    
+    invested_weights = load_invested_weights()
+    
+    data = []
+    for t in tickers:
+        data.append({
+            "Ticker": t,
+            "Invested": t in invested_weights,
+            "Weight": invested_weights.get(t, 1.0)
+        })
+        
+    df = pd.DataFrame(data, columns=["Ticker", "Invested", "Weight"])
+    if df.empty:
+        df = pd.DataFrame(columns=["Ticker", "Invested", "Weight"])
+        
+    edited_df = st.data_editor(
+        df,
+        num_rows="dynamic",
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Ticker": st.column_config.TextColumn(
+                "Ticker" if market == "US" else "Ticker (needs .NS/.BO)", 
+                required=True
+            ),
+            "Invested": st.column_config.CheckboxColumn("Invested"),
+            "Weight": st.column_config.NumberColumn("Weight", min_value=0.0, step=0.1, format="%.2f")
+        }
+    )
+    
+    if st.button(f"Save {market} Watchlist", type="primary"):
+        new_tickers = []
+        for idx, row in edited_df.iterrows():
+            t = str(row["Ticker"]).strip().upper()
+            if not t or t == "NAN": continue
+            if t not in new_tickers:
+                new_tickers.append(t)
+                
+            is_invested = row["Invested"]
+            if is_invested:
+                w = 1.0
+                try:
+                    w = float(row["Weight"])
+                except Exception:
+                    pass
+                if pd.isna(w): w = 1.0
+                invested_weights[t] = w
             else:
-                save_watchlist(market, tickers + [t])
-                st.session_state.refresh_token += 1
-                st.rerun()
+                invested_weights.pop(t, None)
+                
+        with st.spinner("Validating new tickers..."):
+            valid_tickers = []
+            for t in new_tickers:
+                if t in tickers: # Already known to be valid
+                    valid_tickers.append(t)
+                elif validate_ticker(t):
+                    valid_tickers.append(t)
+                else:
+                    st.error(f"'{t}' doesn't return any price data from Yahoo Finance — dropping it.")
+                    invested_weights.pop(t, None)
+                    
+        save_watchlist(market, valid_tickers)
+        save_invested_weights(invested_weights)
+        st.session_state.refresh_token += 1
+        st.success(f"Saved {market} watchlist with {len(valid_tickers)} tickers.")
+        time.sleep(1)
+        st.rerun()
 
 
 def render_condition_builder(key_prefix, metric_names, filterable_metrics, logic_choice):
@@ -2261,9 +2295,133 @@ with tab_india:
     render_market_tab(
         "INDIA", per_market.get("INDIA", []), settings_now, shared_visible_keys, shared_label_by_key,
         shared_sort_field, shared_sort_ascending,
-    )
+    st.subheader("Market Breadth & Performance")
+    time_filter = st.radio("Time Horizon", ["3 Years", "5 Years"], horizontal=True, key="time_horizon_filter")
+    years = 3 if time_filter == "3 Years" else 5
+    
+    # 1. Market Breadth Section
+    breadth_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "market_breadth.json")
+    if os.path.exists(breadth_file):
+        with open(breadth_file) as f:
+            breadth_data = json.load(f)
+            
+        st.markdown("**% Stocks Above 200-Day EMA**")
+        b1, b2 = st.columns(2)
+        import pandas as pd
+        
+        def plot_breadth_history(market_data, title, col):
+            with col:
+                hist = market_data.get("history", {})
+                if hist:
+                    df = pd.DataFrame(list(hist.items()), columns=["Date", "% Above 200d EMA"])
+                    df["Date"] = pd.to_datetime(df["Date"])
+                    df = df.set_index("Date")
+                    
+                    # Filter by selected years
+                    cutoff = pd.Timestamp.now().normalize() - pd.DateOffset(years=years)
+                    df = df[df.index >= cutoff]
+                    
+                    st.caption(f"{title} (Latest: {market_data.get('pct_above', 0)}%)")
+                    st.line_chart(df, y="% Above 200d EMA")
+                else:
+                    # Fallback if no history (e.g. old json format)
+                    st.write(f"{title}: {market_data.get('pct_above')}%")
 
-with tab_news:
+        if "US" in breadth_data.get("markets", {}):
+            plot_breadth_history(breadth_data["markets"]["US"], "S&P 500", b1)
+            
+        if "INDIA" in breadth_data.get("markets", {}):
+            plot_breadth_history(breadth_data["markets"]["INDIA"], "Nifty 500", b2)
+
+    st.divider()
+
+    # 2. Performance Section
+    st.markdown("**Portfolio Performance vs Benchmark**")
+    @st.cache_data(ttl=3600*12)
+    def fetch_performance_data(tickers, benchmark_ticker, weights=None):
+        import yfinance as yf
+        import pandas as pd
+        all_tickers = list(tickers) + [benchmark_ticker]
+        data = yf.download(all_tickers, period="5y", interval="1d", auto_adjust=True, progress=False, threads=True)
+        if 'Close' not in data.columns:
+            if isinstance(data, pd.DataFrame) and not data.empty:
+                closes = data
+            else:
+                return None
+        else:
+            closes = data['Close']
+            
+        closes = closes.dropna(how='all').ffill()
+        if closes.empty: return None
+        return closes
+
+    def calculate_portfolio_returns(closes, tickers, benchmark_ticker, weights=None, filter_years=3):
+        import pandas as pd
+        if closes is None or closes.empty: return None
+        
+        # Filter by years
+        if closes.index.tzinfo is not None:
+            cutoff = pd.Timestamp.now(tz=closes.index.tz) - pd.DateOffset(years=filter_years)
+        else:
+            cutoff = pd.Timestamp.now().normalize() - pd.DateOffset(years=filter_years)
+            
+        closes = closes[closes.index >= cutoff]
+        if closes.empty: return None
+        
+        portfolio = pd.Series(0.0, index=closes.index)
+        total_weight = 0
+        for t in tickers:
+            if t in closes.columns and closes[t].first_valid_index() is not None:
+                w = weights.get(t, 1.0) if weights else 1.0
+                first_val = closes[t].bfill().iloc[0]
+                if first_val > 0:
+                    norm_series = (closes[t] / first_val) * 100
+                    portfolio += norm_series * w
+                    total_weight += w
+                    
+        if total_weight > 0:
+            portfolio = portfolio / total_weight
+        else:
+            portfolio = None
+            
+        bench = None
+        if benchmark_ticker in closes.columns and closes[benchmark_ticker].first_valid_index() is not None:
+            first_val = closes[benchmark_ticker].bfill().iloc[0]
+            if first_val > 0:
+                bench = (closes[benchmark_ticker] / first_val) * 100
+                
+        if portfolio is not None and bench is not None:
+            return pd.DataFrame({"Portfolio": portfolio, "Benchmark": bench})
+        return None
+
+    from stock_data import load_invested_weights
+    invested_weights = load_invested_weights()
+    p1, p2 = st.columns(2)
+    
+    with p1:
+        st.caption("US Watchlist vs SPY")
+        us_tickers = watchlists_now.get("US", [])
+        if us_tickers:
+            with st.spinner("Loading US..."):
+                closes_us = fetch_performance_data(us_tickers, "SPY")
+                df_us = calculate_portfolio_returns(closes_us, us_tickers, "SPY", weights=None, filter_years=years)
+                if df_us is not None:
+                    st.line_chart(df_us)
+                
+    with p2:
+        st.caption("India (Invested Only) vs Nifty 500")
+        ind_tickers = watchlists_now.get("INDIA", [])
+        ind_invested = [t for t in ind_tickers if t in invested_weights]
+        if ind_invested:
+            with st.spinner("Loading India..."):
+                closes_ind = fetch_performance_data(ind_invested, "^CRSLDX")
+                df_ind = calculate_portfolio_returns(closes_ind, ind_invested, "^CRSLDX", weights=invested_weights, filter_years=years)
+                if df_ind is not None:
+                    st.line_chart(df_ind)
+        else:
+            st.info("Mark some India stocks as 'Invested' in the Watchlist tab to see performance.")
+
+    st.divider()
     st.subheader("Watchlist news digest")
     st.caption(
         "Major announcements, developments, and stock moves for your watchlist tickers in the "
