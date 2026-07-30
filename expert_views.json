@@ -823,16 +823,5 @@
     "news_used": "Empty Response.",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
-  },
-  "SYNGENE.NS": {
-    "verdict": "CAUTION",
-    "headline": "Syngene shares plunge amid a severe Q1 net loss, guidance downgrade, and persistent technical downtrend.",
-    "technical_summary": "Stock trades deeply below all key moving averages in a strong downtrend, burdened by heavy distribution (-68.6% net 10D volume) and severe relative underperformance.",
-    "catalyst_summary": "Q1 FY27 results missed significantly with a net loss of \u20b99 crore, a 16% revenue drop, loss of a major biologics client, and a downward revision in full-year guidance.",
-    "actionable_take": "Avoid initiating new long positions due to negative earnings momentum and heavy selling pressure. Existing investors should enforce strict trailing stops near the 384 level or exit entirely to mitigate further downside risk.",
-    "as_of": "2026-07-30 14:04",
-    "news_used": "**Syngene International Limited (SYNGENE) - Material News (July 29\u201330, 2026)**\n\n**July 29, 2026**\n* **AGM & Governance:** Held 33rd Annual General Meeting (AGM); declared a final dividend of \u20b91.25 per share for FY26. Approved the appointment of Siddharth Mittal as Managing Director and CEO for a five-year term and appointed new independent directors (Dr. Vijaya Chandru and Dr. Arun Chandavarkar) and statutory auditors.\n* **Board Meeting:** Board approved unaudited standalone and consolidated financial results for Q1 FY27.\n\n**July 30, 2026**\n* **Q1 FY27 Earnings Release:** Reported a consolidated net loss of \u20b99 crore (compared to a profit of \u20b986.7 crore in Q1 FY26). Revenue declined 16% YoY to \u20b9736 crore. Operating EBITDA fell 56% YoY to \u20b991 crore, with margins contracting to 12.3%.\n* **Key Drivers:** Results were impacted by the loss of a major biologics client, foreign exchange hedge losses, and \u20b910\u201313.5 crore in exceptional employee termination costs. \n* **Guidance Update:** Management revised full-year revenue guidance to a low single-digit decline in constant currency terms (previously projected as flat growth), while maintaining a mid-20% operating margin target.\n* **Earnings Call:** Hosted Q1 FY27 results conference call to discuss the strategic transition toward CDMO and AI-led discovery services.",
-    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
-    "model_used": "gemini-3.5-flash-lite"
   }
 }
