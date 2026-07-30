@@ -26,7 +26,7 @@ def fetch_gemma_expert_news(client, ticker, market, company_name, news_text_fall
     """Fetches news specifically for Expert Views using gemma-4-26b-a4b-it with Google Search.
     Falls back to 31b, then to news_summary corpus if provided."""
     as_of_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    cutoff_date = (datetime.now(timezone.utc) - timedelta(days=2)).strftime("%Y-%m-%d")
+    cutoff_date = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
     exchange = "NSE/BSE-listed" if market == "INDIA" else "US-listed"
     
     bare = ticker.rsplit(".", 1)[0] if ticker.endswith(".NS") or ticker.endswith(".BO") else ticker
@@ -36,7 +36,7 @@ def fetch_gemma_expert_news(client, ticker, market, company_name, news_text_fall
         f"You are a financial news researcher. For the {exchange} stock {name} -- "
         f"search for recent institutional analyst ratings, upgrades/downgrades, press releases, "
         f"and major upcoming catalysts (e.g., earnings, product launches) between "
-        f"{cutoff_date} and {as_of_date} (the last 36 hours for news, next 3-4 days for events). "
+        f"{cutoff_date} and {as_of_date} (the last 24 hours for news, next 3-4 days for events). "
         "Report any material items you find, specifying the exact date of each item. Be extremely concise. "
         "If there is no material news, output nothing."
     )
