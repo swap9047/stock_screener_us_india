@@ -812,5 +812,16 @@
     "news_used": "- 2026-07-30: Board Meeting to consider Q1 FY27 financial results and proposed acquisitions of Apiqo Organics Private Limited (32.52%) and Bizotic LifeScience Private Limited (43.33%) via share swap.",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
+  },
+  "LANDMARK.NS": {
+    "verdict": "ACCUMULATE",
+    "headline": "Strong Stage 2 advance backed by exploding volume and robust relative strength.",
+    "technical_summary": "The stock is in a confirmed Stage 2 uptrend with price comfortably above rising daily and weekly EMAs. Volume is exploding with strong net accumulation (67.7%), and Mansfield Relative Strength is robustly positive across all timeframes.",
+    "catalyst_summary": "No recent news or announcements found in the last 24-48 hours, indicating price action is currently driven purely by technical momentum and accumulation.",
+    "actionable_take": "Ideal entry or add zone is near current levels or on minor pullbacks toward the 10 DEMA (~521). Maintain a disciplined trailing stop just below the weekly volatility stop level at 443.4 to protect against deeper pullbacks.",
+    "as_of": "2026-07-30 12:03",
+    "news_used": "Empty Response.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
   }
 }
