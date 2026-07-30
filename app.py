@@ -2412,21 +2412,21 @@ with tab_news:
         closes = closes[closes.index >= cutoff]
         if closes.empty: return None
         
-        portfolio = pd.Series(0.0, index=closes.index)
-        total_weight = 0
-        for t in tickers:
-            if t in closes.columns and closes[t].first_valid_index() is not None:
-                w = weights.get(t, 1.0) if weights else 1.0
-                first_val = closes[t].bfill().iloc[0]
-                if first_val > 0:
-                    norm_series = (closes[t] / first_val) * 100
-                    portfolio += norm_series * w
-                    total_weight += w
-                    
-        if total_weight > 0:
-            portfolio = portfolio / total_weight
-        else:
-            portfolio = None
+        valid_tickers = [t for t in tickers if t in closes.columns]
+        if not valid_tickers: return None
+        
+        returns = closes[valid_tickers].pct_change()
+        
+        w_dict = {}
+        for t in valid_tickers:
+            w_dict[t] = weights.get(t, 1.0) if weights else 1.0
+        w_series = pd.Series(w_dict)
+        
+        valid_weights = returns.notna() * w_series
+        weighted_returns = (returns * valid_weights).sum(axis=1) / valid_weights.sum(axis=1)
+        
+        portfolio = 100 * (1 + weighted_returns).cumprod()
+        portfolio.iloc[0] = 100
             
         bench = None
         if benchmark_ticker in closes.columns and closes[benchmark_ticker].first_valid_index() is not None:
@@ -2501,49 +2501,21 @@ with tab_news:
     
     st.divider()
     
-    col_us, col_ind = st.columns(2)
+    col_ind, col_us = st.columns(2)
     
-    with col_us:
-        st.markdown("### US Dashboard")
-        us_uni = st.selectbox("Universe", ["S&P 500 (Benchmark)", "US Watchlist"], key="us_uni")
-        
-        st.markdown("**Portfolio Performance**")
-        if not us_tickers:
-            st.info("Add stocks to US Watchlist")
-        else:
-            with st.spinner("Loading US Performance..."):
-                closes_us = fetch_performance_data(us_tickers, "SPY")
-                df_perf_us = calculate_portfolio_returns(closes_us, us_tickers, "SPY", weights=None, filter_years=years)
-                if df_perf_us is not None:
-                    portfolio_name = "US Watchlist" if us_uni == "US Watchlist" else "S&P 500" # Not exactly accurate if S&P 500, but they wanted the layout. 
-                    # Actually, if S&P 500 is selected, just show SPY performance vs SPY? Or just don't show performance.
-                    # Wait, the user said: option should be given to choose nifty 500, s&p 500 and indian watchlist... for ALL these charts.
-                    # Performance for S&P 500 vs SPY is meaningless. We should always just show Watchlist vs SPY, or maybe SPY vs something else.
-                    # Let's just always plot Watchlist vs SPY.
-                    plot_performance_plotly(df_perf_us, "US Watchlist", "SPY")
-                    
-        st.markdown("**% Stocks Above 200-Day EMA**")
-        if us_uni == "S&P 500 (Benchmark)":
-            df_ema_us, df_hl_us = format_json_breadth(breadth_data.get("markets", {}).get("US"), years)
-            if df_ema_us is not None and not df_ema_us.empty:
-                plot_breadth_plotly(df_ema_us, "", "% Above 200d EMA", show_50=True)
-            if df_hl_us is not None and not df_hl_us.empty:
-                st.markdown("**52-Week Highs vs Lows**")
-                plot_breadth_plotly(df_hl_us, "", "% of Stocks")
-        else:
-            if us_tickers and closes_us is not None:
-                df_ema_wl, df_hl_wl = calculate_watchlist_breadth(closes_us, years)
-                if df_ema_wl is not None:
-                    plot_breadth_plotly(df_ema_wl, "", "% Above 200d EMA", show_50=True)
-                if df_hl_wl is not None:
-                    st.markdown("**52-Week Highs vs Lows**")
-                    plot_breadth_plotly(df_hl_wl, "", "% of Stocks")
-                    
     with col_ind:
         st.markdown("### India Dashboard")
-        ind_uni = st.selectbox("Universe", ["Nifty 500 (Benchmark)", "India Watchlist (Invested)"], key="ind_uni")
         
-        st.markdown("**Portfolio Performance**")
+        st.markdown("**Nifty 500: % Stocks Above 200-Day EMA**")
+        df_ema_ind, df_hl_ind = format_json_breadth(breadth_data.get("markets", {}).get("INDIA"), years)
+        if df_ema_ind is not None and not df_ema_ind.empty:
+            plot_breadth_plotly(df_ema_ind, "", "% Above 200d EMA", show_50=True)
+            
+        st.markdown("**Nifty 500: 52-Week Highs vs Lows**")
+        if df_hl_ind is not None and not df_hl_ind.empty:
+            plot_breadth_plotly(df_hl_ind, "", "% of Stocks")
+            
+        st.markdown("**India Invested Watchlist vs Nifty 500**")
         if not ind_invested:
             st.info("Mark stocks as 'Invested' in India Watchlist")
         else:
@@ -2553,22 +2525,27 @@ with tab_news:
                 if df_perf_ind is not None:
                     plot_performance_plotly(df_perf_ind, "India Watchlist", "Nifty 500")
                     
-        st.markdown("**% Stocks Above 200-Day EMA**")
-        if ind_uni == "Nifty 500 (Benchmark)":
-            df_ema_ind, df_hl_ind = format_json_breadth(breadth_data.get("markets", {}).get("INDIA"), years)
-            if df_ema_ind is not None and not df_ema_ind.empty:
-                plot_breadth_plotly(df_ema_ind, "", "% Above 200d EMA", show_50=True)
-            if df_hl_ind is not None and not df_hl_ind.empty:
-                st.markdown("**52-Week Highs vs Lows**")
-                plot_breadth_plotly(df_hl_ind, "", "% of Stocks")
+    with col_us:
+        st.markdown("### US Dashboard")
+        
+        st.markdown("**S&P 500: % Stocks Above 200-Day EMA**")
+        df_ema_us, df_hl_us = format_json_breadth(breadth_data.get("markets", {}).get("US"), years)
+        if df_ema_us is not None and not df_ema_us.empty:
+            plot_breadth_plotly(df_ema_us, "", "% Above 200d EMA", show_50=True)
+            
+        st.markdown("**S&P 500: 52-Week Highs vs Lows**")
+        if df_hl_us is not None and not df_hl_us.empty:
+            plot_breadth_plotly(df_hl_us, "", "% of Stocks")
+            
+        st.markdown("**US Watchlist vs S&P 500**")
+        if not us_tickers:
+            st.info("Add stocks to US Watchlist")
         else:
-            if ind_invested and closes_ind is not None:
-                df_ema_wli, df_hl_wli = calculate_watchlist_breadth(closes_ind, years)
-                if df_ema_wli is not None:
-                    plot_breadth_plotly(df_ema_wli, "", "% Above 200d EMA", show_50=True)
-                if df_hl_wli is not None:
-                    st.markdown("**52-Week Highs vs Lows**")
-                    plot_breadth_plotly(df_hl_wli, "", "% of Stocks")
+            with st.spinner("Loading US Performance..."):
+                closes_us = fetch_performance_data(us_tickers, "SPY")
+                df_perf_us = calculate_portfolio_returns(closes_us, us_tickers, "SPY", weights=None, filter_years=years)
+                if df_perf_us is not None:
+                    plot_performance_plotly(df_perf_us, "US Watchlist", "S&P 500")
 
     st.divider()
     st.subheader("Watchlist news digest")
