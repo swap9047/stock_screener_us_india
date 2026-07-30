@@ -9,3 +9,4 @@ google-genai
 duckduckgo_search
 python-dotenv
 openai
+plotly
