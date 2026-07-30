@@ -2526,15 +2526,36 @@ with tab_news:
         df_ema_ind, df_hl_ind = format_json_breadth(breadth_data.get("markets", {}).get("INDIA"), years)
         df_ema_us, df_hl_us = format_json_breadth(breadth_data.get("markets", {}).get("US"), years)
 
+        def get_val(df, col):
+            if df is not None and not df.empty and col in df.columns:
+                return f"{df[col].iloc[-1]:.1f}"
+            return "--"
+            
+        title_ema_ind = f"Nifty 500: % Above 200-Day EMA (Current: {get_val(df_ema_ind, '% Above 200d EMA')}%)"
+        title_ema_us = f"S&P 500: % Above 200-Day EMA (Current: {get_val(df_ema_us, '% Above 200d EMA')}%)"
+        
+        title_hl_ind = f"Nifty 500: 52-Week Highs vs Lows (Highs: {get_val(df_hl_ind, '% New Highs')}%, Lows: {get_val(df_hl_ind, '% New Lows')}%)"
+        title_hl_us = f"S&P 500: 52-Week Highs vs Lows (Highs: {get_val(df_hl_us, '% New Highs')}%, Lows: {get_val(df_hl_us, '% New Lows')}%)"
+        
+        def get_perf(df):
+            if df is not None and not df.empty and 'Portfolio' in df.columns and 'Benchmark' in df.columns:
+                ret_port = (df['Portfolio'].iloc[-1] / 100 - 1) * 100
+                ret_bench = (df['Benchmark'].iloc[-1] / 100 - 1) * 100
+                return f"Watchlist: {ret_port:+.1f}%, Bench: {ret_bench:+.1f}%"
+            return "--"
+            
+        title_perf_ind = f"India Watchlist vs Nifty 500 ({get_perf(df_perf_ind)})"
+        title_perf_us = f"US Watchlist vs S&P 500 ({get_perf(df_perf_us)})"
+
         fig = make_subplots(
             rows=3, cols=2,
             shared_xaxes="all",
             vertical_spacing=0.08,
             horizontal_spacing=0.05,
             subplot_titles=(
-                "Nifty 500: % Above 200-Day EMA", "S&P 500: % Above 200-Day EMA",
-                "Nifty 500: 52-Week Highs vs Lows", "S&P 500: 52-Week Highs vs Lows",
-                "India Watchlist vs Nifty 500", "US Watchlist vs S&P 500"
+                title_ema_ind, title_ema_us,
+                title_hl_ind, title_hl_us,
+                title_perf_ind, title_perf_us
             )
         )
         
