@@ -74,7 +74,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Build news summary and send to Discord
-        run: python news_check.py
+        run: python -u news_check.py
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}

@@ -71,10 +71,10 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Refresh data snapshot
-        run: python refresh_data.py
+        run: python -u refresh_data.py
 
       - name: Generate AI Expert Views
-        run: python refresh_expert_views.py
+        run: python -u refresh_expert_views.py
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
