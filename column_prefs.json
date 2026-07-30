@@ -21,5 +21,7 @@
     "data_end",
     "flag",
     "note"
-  ]
+  ],
+  "sort_by": "Company Name",
+  "sort_dir": "\u2191"
 }
