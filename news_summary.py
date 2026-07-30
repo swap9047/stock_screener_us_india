@@ -100,7 +100,7 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None,
     prompt = (
         f"You are a financial news researcher. For the {exchange} stock {name} -- "
         f"search for news, announcements, press releases, analyst notes, and stock moves between "
-        f"{cutoff_date} and {as_of_date} (the last 24 hours), AND any major upcoming scheduled events in the next 3-4 days (e.g. earnings, launches). Report any news items you find, "
+        f"{cutoff_date} and {as_of_date} (the last 24 hours), AND any major upcoming scheduled events in the next 3-4 days (e.g. earnings (latest quarter only), launches). Report any news items you find, "
         "specifying the exact date of each item. Be extremely concise. If there is no news, output nothing."
     )
     
@@ -164,7 +164,7 @@ def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date, t
         f"STRICT RECENCY RULE: Evaluate each news item. Keep ONLY items from the last 24 hours, OR major upcoming scheduled events in the next 3-4 days. "
         f"Drop anything older or undated.\n\n"
         "STRICT MATERIALITY RULE:\n"
-        "- KEEP ONLY: earnings released in the last 2 days, upcoming earnings/events in the next 3-4 days, M&A/acquisitions, FDA/regulatory approvals, "
+        "- KEEP ONLY: earnings released in the last 2 days (latest quarter only), upcoming earnings/events in the next 3-4 days (latest quarter only), M&A/acquisitions, FDA/regulatory approvals, "
         "important board announcements (EXCLUDING dividend and generic day-to-day announcements), analyst coverage and important stock targets, "
         "major contract wins/losses, big institutional and promoter activity, and significant stock movements (+-3%).\n"
         "- DROP ENTIRELY: routine scheduled board meetings/AGMs/EGMs with no outcome yet, ordinary "

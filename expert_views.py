@@ -35,7 +35,7 @@ def fetch_gemma_expert_news(client, ticker, market, company_name, news_text_fall
     prompt = (
         f"You are a financial news researcher. For the {exchange} stock {name} -- "
         f"search for recent institutional analyst ratings, upgrades/downgrades, press releases, "
-        f"and major upcoming catalysts (e.g., earnings, product launches) between "
+        f"and major upcoming catalysts (e.g., earnings (latest quarter only), product launches) between "
         f"{cutoff_date} and {as_of_date} (the last 24 hours for news, next 3-4 days for events). "
         "Report any material items you find, specifying the exact date of each item. Be extremely concise. "
         "If there is no material news, output nothing."
