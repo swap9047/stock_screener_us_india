@@ -2295,9 +2295,19 @@ with tab_india:
     render_market_tab(
         "INDIA", per_market.get("INDIA", []), settings_now, shared_visible_keys, shared_label_by_key,
         shared_sort_field, shared_sort_ascending,
+    )
+
+with tab_news:
     st.subheader("Market Breadth & Performance")
-    time_filter = st.radio("Time Horizon", ["3 Years", "5 Years"], horizontal=True, key="time_horizon_filter")
-    years = 3 if time_filter == "3 Years" else 5
+    col_filter, col_refresh = st.columns([3, 1])
+    with col_filter:
+        time_filter = st.radio("Time Horizon", ["3 Years", "5 Years"], horizontal=True, key="time_horizon_filter")
+        years = 3 if time_filter == "3 Years" else 5
+        
+    with col_refresh:
+        if st.button("🔄 Refresh Charts", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
     
     # 1. Market Breadth Section
     breadth_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "market_breadth.json")
