@@ -29,11 +29,11 @@ def calculate_breadth(tickers, label):
     from contextlib import redirect_stderr
     
     print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Downloading 6y data (for 5y breadth + EMA warmup) for {len(tickers)} {label} tickers...")
-    # Group into batches of 50 to avoid rate limits and report progress
     batch_size = 50
     all_data = []
-    failed_tickers = set()
+    failed_tickers = set(tickers)
     
+    # Phase 1: Batches with 1 minute delay
     for i in range(0, len(tickers), batch_size):
         batch = tickers[i:i+batch_size]
         f = io.StringIO()
@@ -51,34 +51,55 @@ def calculate_breadth(tickers, label):
         if isinstance(closes, pd.Series):
             closes = closes.to_frame(name=batch[0])
             
-        # Identify missing/failed tickers
         missing = set(batch) - set(closes.columns)
         for col in closes.columns:
             if closes[col].isna().all():
                 missing.add(col)
                 closes = closes.drop(columns=[col])
                 
-        failed_tickers.update(missing)
-        
         if not closes.empty:
             all_data.append(closes)
+            failed_tickers -= set(closes.columns)
             
-        print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {label}: Processed {min(i+batch_size, len(tickers))}/{len(tickers)}. Failures in this batch: {len(missing)} | Total Failures: {len(failed_tickers)}")
+        print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {label}: Processed {min(i+batch_size, len(tickers))}/{len(tickers)}. Failures in this batch: {len(missing)}")
         if missing:
             print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Failed tickers in this batch: {missing}")
             
-        time.sleep(1)
-        
+        if i + batch_size < len(tickers):
+            time.sleep(60) # 1 minute wait between batches
+            
+    # Phase 2: Retry failures with 2 minute wait
     if failed_tickers:
-        print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Retrying {len(failed_tickers)} failed {label} tickers with 3s delay...")
-        for t in failed_tickers:
-            time.sleep(3)
+        print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Phase 1 complete. {len(failed_tickers)} failed tickers. Waiting 2 minutes before Phase 2 retry...")
+        time.sleep(120)
+        
+        for t in list(failed_tickers):
             with redirect_stderr(io.StringIO()):
                 retry_data = yf.download(t, period="6y", interval="1d", auto_adjust=True, progress=False)
             if not retry_data.empty and 'Close' in retry_data.columns and not retry_data['Close'].isna().all():
                 s = retry_data['Close']
                 s.name = t
                 all_data.append(s.to_frame())
+                failed_tickers.remove(t)
+            time.sleep(3) # Small delay between individual retries
+            
+    # Phase 3: Retry remaining failures with 5 minute wait
+    if failed_tickers:
+        print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Phase 2 complete. {len(failed_tickers)} still failed. Waiting 5 minutes before Phase 3 (Final) retry...")
+        time.sleep(300)
+        
+        for t in list(failed_tickers):
+            with redirect_stderr(io.StringIO()):
+                retry_data = yf.download(t, period="6y", interval="1d", auto_adjust=True, progress=False)
+            if not retry_data.empty and 'Close' in retry_data.columns and not retry_data['Close'].isna().all():
+                s = retry_data['Close']
+                s.name = t
+                all_data.append(s.to_frame())
+                failed_tickers.remove(t)
+            time.sleep(3)
+            
+    if failed_tickers:
+        print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Final failures that could not be downloaded: {failed_tickers}")
         
     print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Calculating Historical Metrics...")
     closes = pd.concat(all_data, axis=1)
