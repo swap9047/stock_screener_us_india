@@ -1047,6 +1047,16 @@ def render_watchlist_editor(market, watchlists):
         save_invested_weights(invested_weights)
         st.session_state.refresh_token += 1
         st.success(f"Saved {market} watchlist with {len(valid_tickers)} tickers.")
+        
+        gh_token, gh_repo, gh_branch = get_github_config(st.secrets)
+        if gh_token and gh_repo:
+            with st.spinner("Pushing watchlist to GitHub..."):
+                ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=["watchlist.json", "invested.json"], message=f"Update {market} watchlist")
+                if ok:
+                    st.success("Successfully pushed to GitHub!")
+                else:
+                    st.error(f"Failed to push to GitHub: {msg}")
+                    
         time.sleep(1)
         st.rerun()
 
