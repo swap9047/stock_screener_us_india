@@ -59,7 +59,7 @@ jobs:
       - name: Calculate Market Breadth
         if: steps.time_check.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
         run: |
-          python refresh_market_breadth.py
+          python -u refresh_market_breadth.py
 
       - name: Commit and push changes
         if: steps.time_check.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
