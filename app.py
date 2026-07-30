@@ -2352,11 +2352,11 @@ with tab_news:
         import yfinance as yf
         import pandas as pd
         import io
+        import time
         from contextlib import redirect_stderr
         
         all_tickers = list(tickers) + [benchmark_ticker]
         
-        # Silence YFRateLimitError prints and disable threads to avoid hitting limits
         f = io.StringIO()
         with redirect_stderr(f):
             data = yf.download(all_tickers, period="5y", interval="1d", auto_adjust=True, progress=False, threads=False)
@@ -2365,10 +2365,43 @@ with tab_news:
             if isinstance(data, pd.DataFrame) and not data.empty:
                 closes = data
             else:
-                return None
+                closes = pd.DataFrame()
         else:
             closes = data['Close']
             
+        if isinstance(closes, pd.Series):
+            closes = closes.to_frame(name=all_tickers[0])
+            
+        # Identify failures
+        failed_tickers = set(all_tickers) - set(closes.columns)
+        for col in closes.columns:
+            if closes[col].isna().all():
+                failed_tickers.add(col)
+                
+        # Drop all-NaN columns before retry
+        for t in failed_tickers:
+            if t in closes.columns:
+                closes = closes.drop(columns=[t])
+                
+        # Retry logic with 3-second wait
+        if failed_tickers:
+            print(f"Retrying {len(failed_tickers)} failed tickers with 3s delay...")
+            retry_series = []
+            for t in failed_tickers:
+                time.sleep(3)
+                with redirect_stderr(io.StringIO()):
+                    retry_data = yf.download(t, period="5y", interval="1d", auto_adjust=True, progress=False)
+                if not retry_data.empty and 'Close' in retry_data.columns and not retry_data['Close'].isna().all():
+                    s = retry_data['Close']
+                    s.name = t
+                    retry_series.append(s)
+                    
+            if retry_series:
+                if not closes.empty:
+                    closes = pd.concat([closes] + retry_series, axis=1)
+                else:
+                    closes = pd.concat(retry_series, axis=1)
+                    
         closes = closes.dropna(how='all').ffill()
         if closes.empty: return None
         return closes

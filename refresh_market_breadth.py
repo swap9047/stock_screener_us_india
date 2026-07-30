@@ -25,21 +25,55 @@ def get_nifty500_tickers():
     return [f"{sym}.NS" for sym in df['Symbol'].tolist()]
 
 def calculate_breadth(tickers, label):
+    import io
+    from contextlib import redirect_stderr
+    
     print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Downloading 6y data (for 5y breadth + EMA warmup) for {len(tickers)} {label} tickers...")
     # Group into batches of 100 to avoid rate limits
     batch_size = 100
     all_data = []
+    failed_tickers = set()
     
     for i in range(0, len(tickers), batch_size):
         batch = tickers[i:i+batch_size]
-        data = yf.download(batch, period="6y", interval="1d", auto_adjust=True, progress=False, threads=True)
+        f = io.StringIO()
+        with redirect_stderr(f):
+            data = yf.download(batch, period="6y", interval="1d", auto_adjust=True, progress=False, threads=False)
+            
         if 'Close' in data.columns:
             closes = data['Close']
         else:
-            closes = data
+            if isinstance(data, pd.DataFrame) and not data.empty:
+                closes = data
+            else:
+                closes = pd.DataFrame()
+                
+        if isinstance(closes, pd.Series):
+            closes = closes.to_frame(name=batch[0])
             
-        all_data.append(closes)
+        # Identify missing/failed tickers
+        missing = set(batch) - set(closes.columns)
+        for col in closes.columns:
+            if closes[col].isna().all():
+                missing.add(col)
+                closes = closes.drop(columns=[col])
+                
+        failed_tickers.update(missing)
+        
+        if not closes.empty:
+            all_data.append(closes)
         time.sleep(1)
+        
+    if failed_tickers:
+        print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Retrying {len(failed_tickers)} failed {label} tickers with 3s delay...")
+        for t in failed_tickers:
+            time.sleep(3)
+            with redirect_stderr(io.StringIO()):
+                retry_data = yf.download(t, period="6y", interval="1d", auto_adjust=True, progress=False)
+            if not retry_data.empty and 'Close' in retry_data.columns and not retry_data['Close'].isna().all():
+                s = retry_data['Close']
+                s.name = t
+                all_data.append(s.to_frame())
         
     print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Calculating 5-Year Historical 200d EMA Breadth...")
     closes = pd.concat(all_data, axis=1)
