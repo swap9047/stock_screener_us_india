@@ -1000,7 +1000,7 @@ def render_watchlist_editor(market, watchlists):
     edited_df = st.data_editor(
         df,
         num_rows="dynamic",
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "Ticker": st.column_config.TextColumn(
@@ -1796,7 +1796,7 @@ def render_expert_view_expander(market, filtered_rows, settings):
 
             # Per-ticker re-analyze button
             if api_key:
-                if st.button(f"⚡ Re-analyze {ticker}", key=f"re_ev_{market}_{ticker}", use_container_width=False):
+                if st.button(f"⚡ Re-analyze {ticker}", key=f"re_ev_{market}_{ticker}", width="content"):
                     with st.spinner(f"Analyzing {ticker} with deepseek-v4-flash..."):
                         analyze_single_ticker(ticker, row, api_key, nvidia_api_key=nvidia_api_key)
                         sync_expert_views_to_github(f"Re-analyze single ticker ({ticker}) via UI")
@@ -2305,7 +2305,7 @@ with tab_news:
         years = 3 if time_filter == "3 Years" else 5
         
     with col_refresh:
-        if st.button("🔄 Refresh Charts", use_container_width=True):
+        if st.button("🔄 Refresh Charts", width="stretch"):
             st.cache_data.clear()
             st.rerun()
     
@@ -2351,8 +2351,16 @@ with tab_news:
     def fetch_performance_data(tickers, benchmark_ticker, weights=None):
         import yfinance as yf
         import pandas as pd
+        import io
+        from contextlib import redirect_stderr
+        
         all_tickers = list(tickers) + [benchmark_ticker]
-        data = yf.download(all_tickers, period="5y", interval="1d", auto_adjust=True, progress=False, threads=True)
+        
+        # Silence YFRateLimitError prints and disable threads to avoid hitting limits
+        f = io.StringIO()
+        with redirect_stderr(f):
+            data = yf.download(all_tickers, period="5y", interval="1d", auto_adjust=True, progress=False, threads=False)
+            
         if 'Close' not in data.columns:
             if isinstance(data, pd.DataFrame) and not data.empty:
                 closes = data
@@ -2443,7 +2451,7 @@ with tab_news:
     
     col1, col2, col3, col4 = st.columns([2, 3, 3, 3])
     with col1:
-        if st.button("🔄 Refresh News", use_container_width=True):
+        if st.button("🔄 Refresh News", width="stretch"):
             token, repo, _ = get_github_config(st.secrets)
             if token and repo:
                 ok, msg = trigger_github_workflow(token, repo, "news-summary.yml")
