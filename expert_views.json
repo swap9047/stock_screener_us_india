@@ -823,5 +823,16 @@
     "news_used": "Empty Response.",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
+  },
+  "SYNGENE.NS": {
+    "verdict": "CAUTION",
+    "headline": "Syngene shares trade near 52-week lows following a severe Q1 earnings miss and major client loss.",
+    "technical_summary": "The stock remains in a strong downtrend, trading well below all key weekly and daily moving averages with weak RSI (~35), heavy distribution, and deeply negative Mansfield Relative Strength.",
+    "catalyst_summary": "Q1 FY27 results delivered an unexpected net loss and a 16% revenue drop due to a major biologics client loss and FX headwinds, overshadowing broker target retentions.",
+    "actionable_take": "Avoid fresh exposure until a proper bottoming base forms and momentum turns positive. Existing holders should maintain a strict trailing stop near the VStop level of 384.2 to protect against a breakdown to new lows.",
+    "as_of": "2026-07-30 15:01",
+    "news_used": "**2026-07-29**\n* **Board Meeting/AGM:** Approved unaudited Q1 FY27 financial results; held 33rd AGM where a \u20b91.25 per share final dividend (FY26) was declared and new statutory auditors and directors were appointed.\n\n**2026-07-30**\n* **Q1 FY27 Earnings:** Reported a consolidated net loss of \u20b99 crore (vs. \u20b986.7 crore profit in Q1 FY26) and a 16% YoY revenue decline to \u20b9736 crore, driven by the loss of a major biologics client, FX hedge losses, and \u20b910 crore in employee termination costs.\n* **Analyst Rating:** Macquarie retained an 'Outperform' rating with a target price of \u20b9735, characterizing the results as an \"all-round miss\" but noting maintained margin guidance.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
   }
 }
