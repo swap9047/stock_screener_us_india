@@ -2587,7 +2587,7 @@ with tab_news:
             if token and repo:
                 ok, msg = trigger_github_workflow(token, repo, "news-summary.yml")
                 if ok:
-                    st.success("News refresh started in background! Check back in 15 mins.")
+                    st.success(f"News refresh started in background! [View live logs on GitHub](https://github.com/{repo}/actions/workflows/news-summary.yml) (takes ~15 mins)")
                 else:
                     st.error(f"Failed to start refresh: {msg}")
             else:
