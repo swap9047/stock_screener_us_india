@@ -66,12 +66,12 @@ def calculate_breadth(tickers, label):
             print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Failed tickers in this batch: {missing}")
             
         if i + batch_size < len(tickers):
-            time.sleep(60) # 1 minute wait between batches
+            time.sleep(120) # 2 minute wait between batches
             
-    # Phase 2: Retry failures with 2 minute wait
+    # Phase 2: Retry failures with 3 minute wait
     if failed_tickers:
-        print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Phase 1 complete. {len(failed_tickers)} failed tickers. Waiting 2 minutes before Phase 2 retry...")
-        time.sleep(120)
+        print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Phase 1 complete. {len(failed_tickers)} failed tickers. Waiting 3 minutes before Phase 2 retry...")
+        time.sleep(180)
         
         for t in list(failed_tickers):
             with redirect_stderr(io.StringIO()):
