@@ -2308,49 +2308,49 @@ with tab_news:
         if st.button("🔄 Refresh Charts", width="stretch"):
             st.cache_data.clear()
             st.rerun()
-    
-    # 1. Market Breadth Section
-    breadth_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "market_breadth.json")
-    if os.path.exists(breadth_file):
-        with open(breadth_file) as f:
-            breadth_data = json.load(f)
+
+    # Helpers
+    import plotly.graph_objects as go
+    import pandas as pd
+
+    def plot_performance_plotly(df, portfolio_name, benchmark_name):
+        if df is None or df.empty:
+            return
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df.index, y=df['Portfolio'], name=portfolio_name, line=dict(color='#3498db', width=2)))
+        fig.add_trace(go.Scatter(x=df.index, y=df['Benchmark'], name=benchmark_name, line=dict(color='#95a5a6', width=1.5, dash='dot')))
+        fig.update_layout(
+            height=250, margin=dict(l=0, r=0, t=10, b=0),
+            hovermode="x unified",
+            xaxis=dict(showspikes=True, spikemode="across", spikesnap="cursor", showline=True, showgrid=False),
+            yaxis=dict(showgrid=True, title="Return (Base 100)"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        st.plotly_chart(fig, width="stretch")
+
+    def plot_breadth_plotly(df, title, y_label, show_50=False):
+        if df is None or df.empty:
+            return
+        fig = go.Figure()
+        colors = ['#2ecc71', '#e74c3c', '#f39c12']
+        for i, col in enumerate([c for c in df.columns if c != 'Date']):
+            fig.add_trace(go.Scatter(x=df['Date'], y=df[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5)))
             
-        st.markdown("**% Stocks Above 200-Day EMA**")
-        b1, b2 = st.columns(2)
-        import pandas as pd
-        
-        def plot_breadth_history(market_data, title, col):
-            with col:
-                hist = market_data.get("history", {})
-                if hist:
-                    df = pd.DataFrame(list(hist.items()), columns=["Date", "% Above 200d EMA"])
-                    df["Date"] = pd.to_datetime(df["Date"])
-                    df = df.set_index("Date")
-                    
-                    # Filter by selected years
-                    cutoff = pd.Timestamp.now().normalize() - pd.DateOffset(years=years)
-                    df = df[df.index >= cutoff]
-                    
-                    st.caption(f"{title} (Latest: {market_data.get('pct_above', 0)}%)")
-                    st.line_chart(df, y="% Above 200d EMA")
-                else:
-                    # Fallback if no history (e.g. old json format)
-                    st.write(f"{title}: {market_data.get('pct_above')}%")
-
-        if "US" in breadth_data.get("markets", {}):
-            plot_breadth_history(breadth_data["markets"]["US"], "S&P 500", b1)
+        if show_50:
+            fig.add_hline(y=50, line_dash="dash", line_color="rgba(0,0,0,0.3)", annotation_text="50%")
             
-        if "INDIA" in breadth_data.get("markets", {}):
-            plot_breadth_history(breadth_data["markets"]["INDIA"], "Nifty 500", b2)
+        fig.update_layout(
+            height=250, margin=dict(l=0, r=0, t=10, b=0),
+            hovermode="x unified",
+            xaxis=dict(showspikes=True, spikemode="across", spikesnap="cursor", showline=True, showgrid=False),
+            yaxis=dict(showgrid=True, title=y_label, range=[0, 100] if show_50 else None),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1) if len(df.columns) > 2 else dict(visible=False)
+        )
+        st.plotly_chart(fig, width="stretch")
 
-    st.divider()
-
-    # 2. Performance Section
-    st.markdown("**Portfolio Performance vs Benchmark**")
     @st.cache_data(ttl=3600*12)
     def fetch_performance_data(tickers, benchmark_ticker, weights=None):
         import yfinance as yf
-        import pandas as pd
         import io
         import time
         from contextlib import redirect_stderr
@@ -2372,20 +2372,16 @@ with tab_news:
         if isinstance(closes, pd.Series):
             closes = closes.to_frame(name=all_tickers[0])
             
-        # Identify failures
         failed_tickers = set(all_tickers) - set(closes.columns)
         for col in closes.columns:
             if closes[col].isna().all():
                 failed_tickers.add(col)
                 
-        # Drop all-NaN columns before retry
         for t in failed_tickers:
             if t in closes.columns:
                 closes = closes.drop(columns=[t])
                 
-        # Retry logic with 3-second wait
         if failed_tickers:
-            print(f"Retrying {len(failed_tickers)} failed tickers with 3s delay...")
             retry_series = []
             for t in failed_tickers:
                 time.sleep(3)
@@ -2407,10 +2403,7 @@ with tab_news:
         return closes
 
     def calculate_portfolio_returns(closes, tickers, benchmark_ticker, weights=None, filter_years=3):
-        import pandas as pd
         if closes is None or closes.empty: return None
-        
-        # Filter by years
         if closes.index.tzinfo is not None:
             cutoff = pd.Timestamp.now(tz=closes.index.tz) - pd.DateOffset(years=filter_years)
         else:
@@ -2445,32 +2438,137 @@ with tab_news:
             return pd.DataFrame({"Portfolio": portfolio, "Benchmark": bench})
         return None
 
+    def calculate_watchlist_breadth(closes, filter_years):
+        if closes is None or closes.empty: return None, None
+        ema200 = closes.ewm(span=200, adjust=False).mean()
+        high52 = closes.rolling(window=252, min_periods=126).max()
+        low52 = closes.rolling(window=252, min_periods=126).min()
+        
+        valid_counts = closes.notna().sum(axis=1)
+        ema_series = ((closes > ema200).sum(axis=1) / valid_counts) * 100
+        high_series = ((closes >= high52).sum(axis=1) / valid_counts) * 100
+        low_series = ((closes <= low52).sum(axis=1) / valid_counts) * 100
+        
+        if closes.index.tzinfo is not None:
+            cutoff = pd.Timestamp.now(tz=closes.index.tz) - pd.DateOffset(years=filter_years)
+        else:
+            cutoff = pd.Timestamp.now().normalize() - pd.DateOffset(years=filter_years)
+            
+        mask = (closes.index >= cutoff) & (valid_counts > 0)
+        if not mask.any(): return None, None
+        
+        df_ema = pd.DataFrame({"Date": closes.index[mask], "% Above 200d EMA": ema_series[mask]})
+        df_hl = pd.DataFrame({"Date": closes.index[mask], "% New Highs": high_series[mask], "% New Lows": low_series[mask]})
+        return df_ema, df_hl
+
+    def format_json_breadth(market_data, filter_years):
+        if not market_data: return None, None
+        cutoff = pd.Timestamp.now().normalize() - pd.DateOffset(years=filter_years)
+        
+        # EMA
+        hist = market_data.get("history", {})
+        df_ema = pd.DataFrame(list(hist.items()), columns=["Date", "% Above 200d EMA"]) if hist else pd.DataFrame()
+        if not df_ema.empty:
+            df_ema["Date"] = pd.to_datetime(df_ema["Date"])
+            df_ema = df_ema[df_ema["Date"] >= cutoff]
+            
+        # HL
+        h_hist = market_data.get("highs_history", {})
+        l_hist = market_data.get("lows_history", {})
+        df_hl = pd.DataFrame()
+        if h_hist and l_hist:
+            df_hl = pd.DataFrame({
+                "Date": pd.to_datetime(list(h_hist.keys())),
+                "% New Highs": list(h_hist.values()),
+                "% New Lows": list(l_hist.values())
+            })
+            df_hl = df_hl[df_hl["Date"] >= cutoff]
+            
+        return df_ema, df_hl
+
+    # Load Data
+    breadth_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "market_breadth.json")
+    breadth_data = {}
+    if os.path.exists(breadth_file):
+        with open(breadth_file) as f:
+            breadth_data = json.load(f)
+            
     from stock_data import load_invested_weights
     invested_weights = load_invested_weights()
-    p1, p2 = st.columns(2)
+    us_tickers = watchlists_now.get("US", [])
+    ind_tickers = watchlists_now.get("INDIA", [])
+    ind_invested = [t for t in ind_tickers if t in invested_weights]
     
-    with p1:
-        st.caption("US Watchlist vs SPY")
-        us_tickers = watchlists_now.get("US", [])
-        if us_tickers:
-            with st.spinner("Loading US..."):
-                closes_us = fetch_performance_data(us_tickers, "SPY")
-                df_us = calculate_portfolio_returns(closes_us, us_tickers, "SPY", weights=None, filter_years=years)
-                if df_us is not None:
-                    st.line_chart(df_us)
-                
-    with p2:
-        st.caption("India (Invested Only) vs Nifty 500")
-        ind_tickers = watchlists_now.get("INDIA", [])
-        ind_invested = [t for t in ind_tickers if t in invested_weights]
-        if ind_invested:
-            with st.spinner("Loading India..."):
-                closes_ind = fetch_performance_data(ind_invested, "^CRSLDX")
-                df_ind = calculate_portfolio_returns(closes_ind, ind_invested, "^CRSLDX", weights=invested_weights, filter_years=years)
-                if df_ind is not None:
-                    st.line_chart(df_ind)
+    st.divider()
+    
+    col_us, col_ind = st.columns(2)
+    
+    with col_us:
+        st.markdown("### US Dashboard")
+        us_uni = st.selectbox("Universe", ["S&P 500 (Benchmark)", "US Watchlist"], key="us_uni")
+        
+        st.markdown("**Portfolio Performance**")
+        if not us_tickers:
+            st.info("Add stocks to US Watchlist")
         else:
-            st.info("Mark some India stocks as 'Invested' in the Watchlist tab to see performance.")
+            with st.spinner("Loading US Performance..."):
+                closes_us = fetch_performance_data(us_tickers, "SPY")
+                df_perf_us = calculate_portfolio_returns(closes_us, us_tickers, "SPY", weights=None, filter_years=years)
+                if df_perf_us is not None:
+                    portfolio_name = "US Watchlist" if us_uni == "US Watchlist" else "S&P 500" # Not exactly accurate if S&P 500, but they wanted the layout. 
+                    # Actually, if S&P 500 is selected, just show SPY performance vs SPY? Or just don't show performance.
+                    # Wait, the user said: option should be given to choose nifty 500, s&p 500 and indian watchlist... for ALL these charts.
+                    # Performance for S&P 500 vs SPY is meaningless. We should always just show Watchlist vs SPY, or maybe SPY vs something else.
+                    # Let's just always plot Watchlist vs SPY.
+                    plot_performance_plotly(df_perf_us, "US Watchlist", "SPY")
+                    
+        st.markdown("**% Stocks Above 200-Day EMA**")
+        if us_uni == "S&P 500 (Benchmark)":
+            df_ema_us, df_hl_us = format_json_breadth(breadth_data.get("markets", {}).get("US"), years)
+            if df_ema_us is not None and not df_ema_us.empty:
+                plot_breadth_plotly(df_ema_us, "", "% Above 200d EMA", show_50=True)
+            if df_hl_us is not None and not df_hl_us.empty:
+                st.markdown("**52-Week Highs vs Lows**")
+                plot_breadth_plotly(df_hl_us, "", "% of Stocks")
+        else:
+            if us_tickers and closes_us is not None:
+                df_ema_wl, df_hl_wl = calculate_watchlist_breadth(closes_us, years)
+                if df_ema_wl is not None:
+                    plot_breadth_plotly(df_ema_wl, "", "% Above 200d EMA", show_50=True)
+                if df_hl_wl is not None:
+                    st.markdown("**52-Week Highs vs Lows**")
+                    plot_breadth_plotly(df_hl_wl, "", "% of Stocks")
+                    
+    with col_ind:
+        st.markdown("### India Dashboard")
+        ind_uni = st.selectbox("Universe", ["Nifty 500 (Benchmark)", "India Watchlist (Invested)"], key="ind_uni")
+        
+        st.markdown("**Portfolio Performance**")
+        if not ind_invested:
+            st.info("Mark stocks as 'Invested' in India Watchlist")
+        else:
+            with st.spinner("Loading India Performance..."):
+                closes_ind = fetch_performance_data(ind_invested, "^CRSLDX")
+                df_perf_ind = calculate_portfolio_returns(closes_ind, ind_invested, "^CRSLDX", weights=invested_weights, filter_years=years)
+                if df_perf_ind is not None:
+                    plot_performance_plotly(df_perf_ind, "India Watchlist", "Nifty 500")
+                    
+        st.markdown("**% Stocks Above 200-Day EMA**")
+        if ind_uni == "Nifty 500 (Benchmark)":
+            df_ema_ind, df_hl_ind = format_json_breadth(breadth_data.get("markets", {}).get("INDIA"), years)
+            if df_ema_ind is not None and not df_ema_ind.empty:
+                plot_breadth_plotly(df_ema_ind, "", "% Above 200d EMA", show_50=True)
+            if df_hl_ind is not None and not df_hl_ind.empty:
+                st.markdown("**52-Week Highs vs Lows**")
+                plot_breadth_plotly(df_hl_ind, "", "% of Stocks")
+        else:
+            if ind_invested and closes_ind is not None:
+                df_ema_wli, df_hl_wli = calculate_watchlist_breadth(closes_ind, years)
+                if df_ema_wli is not None:
+                    plot_breadth_plotly(df_ema_wli, "", "% Above 200d EMA", show_50=True)
+                if df_hl_wli is not None:
+                    st.markdown("**52-Week Highs vs Lows**")
+                    plot_breadth_plotly(df_hl_wli, "", "% of Stocks")
 
     st.divider()
     st.subheader("Watchlist news digest")

@@ -29,8 +29,8 @@ def calculate_breadth(tickers, label):
     from contextlib import redirect_stderr
     
     print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Downloading 6y data (for 5y breadth + EMA warmup) for {len(tickers)} {label} tickers...")
-    # Group into batches of 100 to avoid rate limits
-    batch_size = 100
+    # Group into batches of 50 to avoid rate limits and report progress
+    batch_size = 50
     all_data = []
     failed_tickers = set()
     
@@ -62,6 +62,11 @@ def calculate_breadth(tickers, label):
         
         if not closes.empty:
             all_data.append(closes)
+            
+        print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {label}: Processed {min(i+batch_size, len(tickers))}/{len(tickers)}. Failures in this batch: {len(missing)} | Total Failures: {len(failed_tickers)}")
+        if missing:
+            print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Failed tickers in this batch: {missing}")
+            
         time.sleep(1)
         
     if failed_tickers:
@@ -75,45 +80,58 @@ def calculate_breadth(tickers, label):
                 s.name = t
                 all_data.append(s.to_frame())
         
-    print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Calculating 5-Year Historical 200d EMA Breadth...")
+    print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Calculating Historical Metrics...")
     closes = pd.concat(all_data, axis=1)
     
     # Calculate 200d EMA
     ema200 = closes.ewm(span=200, adjust=False).mean()
-    
-    # Calculate boolean matrix: True if close > EMA200
     is_above = closes > ema200
     
-    # Calculate daily percentage
-    # is_above.sum(axis=1) is the number of stocks above EMA
-    # closes.notna().sum(axis=1) is the number of active/valid stocks on that day
+    # Calculate 52w High/Low (252 trading days)
+    high52 = closes.rolling(window=252, min_periods=126).max()
+    low52 = closes.rolling(window=252, min_periods=126).min()
+    
+    is_new_high = closes >= high52
+    is_new_low = closes <= low52
+    
     valid_counts = closes.notna().sum(axis=1)
+    
     breadth_series = (is_above.sum(axis=1) / valid_counts) * 100
+    highs_series = (is_new_high.sum(axis=1) / valid_counts) * 100
+    lows_series = (is_new_low.sum(axis=1) / valid_counts) * 100
     
-    # Drop dates with zero valid stocks
-    breadth_series = breadth_series[valid_counts > 0]
+    valid_mask = valid_counts > 0
+    breadth_series = breadth_series[valid_mask]
+    highs_series = highs_series[valid_mask]
+    lows_series = lows_series[valid_mask]
     
-    # Drop the first 200 days of the dataset to account for EMA warmup
-    if len(breadth_series) > 200:
-        breadth_series = breadth_series.iloc[200:]
+    # Drop first 252 days for warmup
+    if len(breadth_series) > 252:
+        breadth_series = breadth_series.iloc[252:]
+        highs_series = highs_series.iloc[252:]
+        lows_series = lows_series.iloc[252:]
         
-    # Keep only the last 5 years (approx 252 * 5 = 1260 trading days, let's just use dates)
     five_years_ago = pd.Timestamp.now(tz=breadth_series.index.tz) - pd.DateOffset(years=5)
-    breadth_series = breadth_series[breadth_series.index >= five_years_ago]
+    mask_5y = breadth_series.index >= five_years_ago
     
-    # Format into a dictionary { "2020-01-01": 55.4, ... }
-    # Also save the current (latest) stats for the gauge chart
+    breadth_series = breadth_series[mask_5y]
+    highs_series = highs_series[mask_5y]
+    lows_series = lows_series[mask_5y]
+    
+    history_dict = {}
+    highs_dict = {}
+    lows_dict = {}
+    
+    for date in breadth_series.index:
+        date_str = date.strftime("%Y-%m-%d")
+        history_dict[date_str] = round(float(breadth_series[date]), 1)
+        highs_dict[date_str] = round(float(highs_series[date]), 1)
+        lows_dict[date_str] = round(float(lows_series[date]), 1)
+        
     latest_close = closes.iloc[-1]
     latest_ema = ema200.iloc[-1]
     above_now = (latest_close > latest_ema).sum()
     total_now = len(latest_close.dropna())
-    
-    history_dict = {}
-    for date, val in breadth_series.items():
-        # date might be Timestamp, format to string YYYY-MM-DD
-        date_str = date.strftime("%Y-%m-%d")
-        history_dict[date_str] = round(float(val), 1)
-        
     pct_above_now = float(above_now / total_now * 100) if total_now > 0 else 0.0
     
     print(f"{label}: Latest {above_now}/{total_now} ({pct_above_now:.1f}%) above 200d EMA")
@@ -122,7 +140,9 @@ def calculate_breadth(tickers, label):
         "below": int(total_now - above_now),
         "total": int(total_now),
         "pct_above": round(pct_above_now, 1),
-        "history": history_dict
+        "history": history_dict,
+        "highs_history": highs_dict,
+        "lows_history": lows_dict
     }
 
 def main():
