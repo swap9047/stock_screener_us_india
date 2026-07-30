@@ -401,7 +401,7 @@ def build_discord_messages(news_data, limit=1900):
         if not summary:
             continue
 
-        parts = summary.split("\n\n")
+        parts = [p for p in summary.split("\n") if p.strip()]
         chunks, current, part_num = [], "", 1
 
         def flush(text, part_num, is_first):
@@ -410,7 +410,7 @@ def build_discord_messages(news_data, limit=1900):
 
         first = True
         for p in parts:
-            candidate = (current + "\n\n" + p) if current else p
+            candidate = (current + "\n" + p) if current else p
             if len(flush(candidate, part_num, first)) > limit and current:
                 chunks.append(flush(current, part_num, first))
                 first = False
