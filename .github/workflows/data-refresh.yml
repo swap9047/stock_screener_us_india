@@ -76,7 +76,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Refresh data snapshot
-        run: python refresh_data.py
+        run: python -u refresh_data.py
 
       - name: Commit and push updated data_snapshot.json
         run: |

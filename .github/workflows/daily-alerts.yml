@@ -83,9 +83,9 @@ jobs:
       - name: Run alert check
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            python alert_check.py --force
+            python -u alert_check.py --force
           else
-            python alert_check.py
+            python -u alert_check.py
           fi
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
