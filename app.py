@@ -66,6 +66,7 @@ from filters import (get_market_filters, save_market_filters, apply_filters, des
 from github_sync import get_github_config, push_all_config, trigger_github_workflow, SYNCABLE_FILES
 from news_summary import load_news_summary, MARKET_LABELS, get_gemini_api_key, get_nvidia_api_key
 from expert_views import load_expert_views, save_expert_views, analyze_single_ticker, generate_expert_view, _is_valid_view
+from fundamentals_eval import load_fundamentals
 from custom_columns import (
     load_custom_columns, save_custom_columns, validate_formula, column_key,
     FORMAT_CHOICES, CUSTOM_COLUMNS_FILE, apply_custom_columns_to_rows,
@@ -1218,6 +1219,7 @@ def build_column_defs(labels, custom_columns=None):
         ("volume_trend", "Vol Trend"),
         ("net_volume_10d_dir", "Net Vol 10D"),
         ("tech_uptrend_label", "Tech Uptrend"),
+        ("fundamentals", "Sentiment"),
         ("avg_volume_10d", "Vol 10D"),
         ("avg_volume_100d", "Vol 100D"),
     ]
@@ -1346,15 +1348,24 @@ def render_shared_column_picker(labels):
     # or removes a column) so stale saved state can't crash the lookup below.
     st.session_state[SHARED_ORDER_KEY] = [k for k in st.session_state[SHARED_ORDER_KEY] if k in label_by_key]
 
+    # Ensure 'fundamentals' column is present in active order if missing
+    if "fundamentals" not in st.session_state[SHARED_ORDER_KEY]:
+        if "tech_uptrend_label" in st.session_state[SHARED_ORDER_KEY]:
+            idx = st.session_state[SHARED_ORDER_KEY].index("tech_uptrend_label")
+            st.session_state[SHARED_ORDER_KEY].insert(idx + 1, "fundamentals")
+        else:
+            st.session_state[SHARED_ORDER_KEY].append("fundamentals")
+        save_column_prefs(st.session_state[SHARED_ORDER_KEY])
+
     with st.sidebar.expander("Columns to show / reorder", expanded=False):
         st.caption(
             "Applies to both the US and India tables. Ticker and Last always show first. "
             "Saved to column_prefs.json -- push it via the Alert Rules tab's GitHub button "
             "to make this layout show up on the deployed app too."
         )
-        current_labels = [label_by_key[k] for k in st.session_state[SHARED_ORDER_KEY]]
+        current_labels = [label_by_key[k] for k in st.session_state[SHARED_ORDER_KEY] if k in label_by_key]
         visible_labels = st.multiselect(
-            "Columns to show", options=all_labels, default=current_labels, key="shared_cols_multiselect",
+            "Columns to show", options=all_labels, default=current_labels
         )
         selected_keys = [key_by_label[lbl] for lbl in visible_labels if lbl in key_by_label]
 
@@ -2123,6 +2134,29 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             return with_tooltip(badge, tooltip)
 
         raw_df["expert_take"] = [_expert_take_cell(r["ticker"]) for r in filtered]
+
+        fundamentals = load_fundamentals()
+        def _fundamentals_cell(ticker):
+            v = fundamentals.get(ticker, {})
+            sentiment = v.get("sentiment", "Unknown")
+            earnings = v.get("earnings_summary", "N/A")
+            guidance = v.get("future_guidance", "N/A")
+            analyst = v.get("analyst_coverage", "N/A")
+            reasoning = v.get("reasoning", "No evaluation available yet.")
+            
+            if sentiment == "Positive":
+                badge = "🐂 Bullish"
+            elif sentiment == "Negative":
+                badge = "🐻 Bearish"
+            elif sentiment == "Neutral":
+                badge = "⚖️ Neutral"
+            else:
+                badge = "⚪ Unknown"
+                
+            tooltip = f"Earnings: {earnings}\n\nGuidance: {guidance}\n\nAnalyst Coverage: {analyst}\n\nReasoning: {reasoning}"
+            return with_tooltip(badge, tooltip)
+
+        raw_df["fundamentals"] = [_fundamentals_cell(r["ticker"]) for r in filtered]
 
         # Column visibility/order is chosen ONCE via the shared sidebar
         # picker (render_shared_column_picker) and passed in, so US and
