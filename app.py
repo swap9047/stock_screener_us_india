@@ -66,7 +66,7 @@ from filters import (get_market_filters, save_market_filters, apply_filters, des
 from github_sync import get_github_config, push_all_config, trigger_github_workflow, SYNCABLE_FILES
 from news_summary import load_news_summary, MARKET_LABELS, get_gemini_api_key, get_nvidia_api_key
 from expert_views import load_expert_views, save_expert_views, analyze_single_ticker, generate_expert_view, _is_valid_view
-from fundamentals_eval import load_fundamentals
+from fundamentals_eval import load_fundamentals, _validate_sentiment, SENTIMENT_STALE_DAYS
 from custom_columns import (
     load_custom_columns, save_custom_columns, validate_formula, column_key,
     FORMAT_CHOICES, CUSTOM_COLUMNS_FILE, apply_custom_columns_to_rows,
@@ -2143,7 +2143,22 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             guidance = v.get("future_guidance", "N/A")
             analyst = v.get("analyst_coverage", "N/A")
             reasoning = v.get("reasoning", "No evaluation available yet.")
-            
+            as_of = v.get("as_of", "unknown")
+            news_source = v.get("news_source", "⚪ Unknown")
+            model_used = v.get("model_used", "⚪ Unknown")
+
+            # Deterministic guard: never let a stale or data-less entry show a
+            # confident directional verdict, regardless of what the model wrote.
+            sentiment, flag = _validate_sentiment(v)
+            if flag == "STALE":
+                reasoning = f"{reasoning}\n\n[STALE: as_of {as_of} is older than {SENTIMENT_STALE_DAYS} days]"
+            elif flag == "STALE_QUARTER":
+                reasoning = f"{reasoning}\n\n[STALE_QUARTER: a confirmed earnings report exists that the news used didn't verifiably account for]"
+            elif flag == "NO_DATA":
+                reasoning = f"{reasoning}\n\n[NO_DATA: earnings, guidance and analyst coverage are all N/A]"
+            elif flag == "PARTIAL":
+                reasoning = f"{reasoning}\n\n[PARTIAL: only revenue/soft data — no EPS, guidance or analyst action; capped at Neutral]"
+
             if sentiment == "Positive":
                 color = "#00C853"
                 label = "🐂 Bullish"
@@ -2155,10 +2170,16 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
                 label = "⚖️ Neutral"
             else:
                 color = None
-                label = "⚪ Unknown"
+                label = "⚪ Unknown (STALE)" if flag == "STALE" else (
+                    "⚪ Unknown (NO DATA)" if flag == "NO_DATA" else (
+                        "⚪ Unknown (QUARTER UNCONFIRMED)" if flag == "STALE_QUARTER" else "⚪ Unknown"
+                    )
+                )
 
             tooltip_esc = html.escape(
-                f"Earnings: {earnings}\n\nGuidance: {guidance}\n\nAnalyst Coverage: {analyst}\n\nReasoning: {reasoning}"
+                f"Earnings: {earnings}\n\nGuidance: {guidance}\n\n"
+                f"Analyst Coverage: {analyst}\n\nReasoning: {reasoning}\n\n"
+                f"As of: {as_of}  |  Source: {news_source}  |  Model: {model_used}"
             )
             title_attr = tooltip_esc.replace("\n", "&#10;")
             body_html = tooltip_esc.replace("\n", "<br>")

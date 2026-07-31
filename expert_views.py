@@ -131,10 +131,20 @@ def build_expert_prompt(row_data, news_text, active_alerts_text="None"):
     note = row_data.get("note", "None")
     bench = "S&P 500 (SPY)" if market == "US" else "Nifty 500 (^CRSLDX)"
     
-    prompt = f"""You are an elite equity portfolio manager combining Stan Weinstein stage analysis, trend momentum, 
+    # Flag whether news is genuinely absent
+    news_absent = not news_text or news_text.strip().lower() in (
+        "no recent news found.", "no recent news found", "", "none"
+    )
+    news_quality_note = (
+        "⚠️ NEWS DATA: ABSENT — no material news was found for this ticker. "
+        "This MUST constrain the verdict (see rules below)."
+        if news_absent else ""
+    )
+
+    prompt = f"""You are an elite equity portfolio manager combining Stan Weinstein stage analysis, trend momentum,
 volume accumulation/distribution analysis, and fundamental catalyst evaluation.
 
-Analyze the stock {company_name} (Ticker: {ticker}) ({market} market) using the structured quantitative metrics and 
+Analyze the stock {company_name} (Ticker: {ticker}) ({market} market) using the structured quantitative metrics and
 recent web news findings provided below.
 
 ======================================================================
@@ -164,22 +174,29 @@ recent web news findings provided below.
 - Flag: {flag} | Note: {note}
 
 ======================================================================
-4. RECENT WEB NEWS & ANNOUNCEMENTS (Last 24-48 hours via Free Search)
+4. RECENT WEB NEWS & ANNOUNCEMENTS (Last 24-48 hours via Grounded Search)
 ======================================================================
+{news_quality_note}
 {news_text}
 
 ======================================================================
 EXPERT INSTRUCTIONS:
 ======================================================================
-Evaluate this stock from a disciplined growth-and-momentum investor perspective:
-1. Determine the overall Verdict. Must be EXACTLY ONE of:
-   - "ACCUMULATE" (Strong trend, outperforming benchmark, positive accumulation, good entry/add risk-reward)
-   - "HOLD" (In consolidation, mixed technicals, or awaiting catalyst breakout)
-   - "CAUTION" (Downtrend, broken VStop, severe underperformance, heavy distribution, or negative catalyst)
-2. Provide a 1-line headline summarizing the setup.
-3. Provide a concise Technical & Volume Assessment.
-4. Provide a concise Catalyst Assessment (or note absence of news).
-5. Provide a 2-3 sentence Actionable Take specifying ideal buy/add zones, trailing stop levels, or exit triggers.
+Evaluate this stock from a disciplined growth-and-momentum investor perspective.
+
+MANDATORY VERDICT RULES — apply these strictly before choosing a verdict:
+- HOLD is the DEFAULT. Use it whenever the picture is mixed, data is thin, or confidence is low.
+- ACCUMULATE requires ALL of: (a) Trend is "Uptrend" or "Strong Uptrend", (b) VStop direction is UP held ≥ 3 weeks, (c) RS is positive or N/A for very new data, (d) No negative news catalyst. If news is ABSENT, you may still give ACCUMULATE ONLY if ALL technical conditions above are clearly met — never give ACCUMULATE just because news is absent.
+- CAUTION requires at least ONE of: Trend is Downtrend or Sideways, VStop flipped DOWN, RSI > 80 on weekly or monthly (severely overbought), heavy distribution (Net Volume 10D Negative with large ratio), or a clearly negative news catalyst.
+- NEVER give ACCUMULATE when news shows a negative catalyst (earnings miss, downgrade, regulatory issue, fraud, etc.).
+- NEVER give ACCUMULATE solely because news is absent or minimal — absent news → lean HOLD unless technicals fully satisfy the ACCUMULATE criteria above.
+
+Then:
+1. State the Verdict (ACCUMULATE / HOLD / CAUTION).
+2. Provide a 1-line headline summarizing the key reason.
+3. Concise Technical & Volume Assessment (2-3 sentences).
+4. Concise Catalyst Assessment — if no news, explicitly state "No material news found; verdict based on technicals only."
+5. Actionable Take (2-3 sentences): entry/add zones, trailing stop levels, or exit triggers.
 
 Return ONLY a valid JSON object matching this schema:
 {{
@@ -196,7 +213,6 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
     from google.genai import types
     import json
     from datetime import datetime, timezone
-    from stock_data import load_settings
 
     ticker = row_data.get("ticker", "UNKNOWN")
     market = row_data.get("market", "US")
@@ -207,10 +223,6 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
 
     prompt = build_expert_prompt(row_data, news_text, active_alerts_text)
     
-    settings = load_settings()
-    model = settings.get("expert_reasoning_model", "models/gemini-3.5-flash-lite")
-    budget = settings.get("expert_thinking_budget", 8192)
-
     def _pending_fallback(reason, used_model="Error"):
         return {
             "verdict": "HOLD",
@@ -223,27 +235,7 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
             "model_used": used_model,
         }
 
-    # 1. Primary Reasoning Model
-    try:
-        config_kwargs = {"response_mime_type": "application/json"}
-        if "gemma" not in model:
-            if isinstance(budget, str):
-                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=budget)
-            else:
-                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
-        
-        config = types.GenerateContentConfig(**config_kwargs)
-        resp = client.models.generate_content(model=model, contents=prompt, config=config)
-        data = json.loads(resp.text)
-        data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
-        data["news_used"] = news_text
-        data["news_source"] = news_source or "⚪ Unknown"
-        data["model_used"] = model.split("/")[-1]
-        return data
-    except Exception as e:
-        print(f"  [{model} reasoning failed] {ticker}: {e} -> Falling back to 31b")
-
-    # 2. Fallback to 31b
+    # 1. Primary: gemma-4-31b-it (best available for nuanced judgment)
     try:
         config = types.GenerateContentConfig(response_mime_type="application/json")
         resp = client.models.generate_content(model="models/gemma-4-31b-it", contents=prompt, config=config)
@@ -251,12 +243,12 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
         data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         data["news_used"] = news_text
         data["news_source"] = news_source or "⚪ Unknown"
-        data["model_used"] = "gemma-4-31b-it (Fallback)"
+        data["model_used"] = "gemma-4-31b-it"
         return data
-    except Exception as e2:
-        print(f"  [31b reasoning failed] {ticker}: {e2} -> Falling back to 26b")
-        
-    # 3. Fallback to 26b
+    except Exception as e:
+        print(f"  [gemma-4-31b reasoning failed] {ticker}: {e} -> Falling back to 26b")
+
+    # 2. Fallback: gemma-4-26b-a4b-it
     try:
         config = types.GenerateContentConfig(response_mime_type="application/json")
         resp = client.models.generate_content(model="models/gemma-4-26b-a4b-it", contents=prompt, config=config)
@@ -266,9 +258,9 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
         data["news_source"] = news_source or "⚪ Unknown"
         data["model_used"] = "gemma-4-26b-a4b-it (Fallback)"
         return data
-    except Exception as e3:
-        print(f"  [26b reasoning failed] {ticker}: {e3} -> Giving up")
-        return _pending_fallback(str(e3))
+    except Exception as e2:
+        print(f"  [gemma-4-26b reasoning failed] {ticker}: {e2} -> Giving up")
+        return _pending_fallback(str(e2))
 
 
 def analyze_single_ticker(ticker, row_data, api_key, active_alerts_text=None, nvidia_api_key=None):
