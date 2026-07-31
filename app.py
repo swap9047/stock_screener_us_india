@@ -2145,16 +2145,34 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             reasoning = v.get("reasoning", "No evaluation available yet.")
             
             if sentiment == "Positive":
-                badge = '<span style="color: #00C853; font-weight: 500;">🐂 Bullish</span>'
+                color = "#00C853"
+                label = "🐂 Bullish"
             elif sentiment == "Negative":
-                badge = '<span style="color: #FF5252; font-weight: 500;">🐻 Bearish</span>'
+                color = "#FF5252"
+                label = "🐻 Bearish"
             elif sentiment == "Neutral":
-                badge = "⚖️ Neutral"
+                color = None
+                label = "⚖️ Neutral"
             else:
-                badge = "⚪ Unknown"
-                
-            tooltip = f"Earnings: {earnings}\n\nGuidance: {guidance}\n\nAnalyst Coverage: {analyst}\n\nReasoning: {reasoning}"
-            return with_tooltip(badge, tooltip)
+                color = None
+                label = "⚪ Unknown"
+
+            tooltip_esc = html.escape(
+                f"Earnings: {earnings}\n\nGuidance: {guidance}\n\nAnalyst Coverage: {analyst}\n\nReasoning: {reasoning}"
+            )
+            title_attr = tooltip_esc.replace("\n", "&#10;")
+            body_html = tooltip_esc.replace("\n", "<br>")
+            label_html = (
+                f'<span style="color:{color};font-weight:500">{html.escape(label)}</span>'
+                if color else html.escape(label)
+            )
+            return (
+                f'<details style="display:inline-block" title="{title_attr}">'
+                f'<summary style="cursor:help">{label_html}</summary>'
+                f'<div style="font-size:11px;font-weight:400;line-height:1.5;'
+                f'white-space:normal;margin-top:4px;">{body_html}</div>'
+                f'</details>'
+            )
 
         raw_df["fundamentals"] = [_fundamentals_cell(r["ticker"]) for r in filtered]
 
