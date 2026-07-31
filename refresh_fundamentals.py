@@ -8,11 +8,56 @@ import time
 from datetime import datetime, timezone
 from google import genai
 from stock_data import load_data_snapshot, load_watchlists
-from fundamentals_eval import load_fundamentals, save_fundamentals, generate_fundamental_view, _is_valid_view
+from fundamentals_eval import (
+    load_fundamentals, save_fundamentals, generate_fundamental_view,
+    _is_valid_view, _validate_sentiment, _view_age_days, SENTIMENT_STALE_DAYS,
+)
 from news_summary import get_gemini_api_key, get_nvidia_api_key
 
 def _ts():
     return datetime.now(timezone.utc).strftime("%H:%M:%S")
+
+def _unknown_fallback(reason):
+    """Full-schema Unknown view for failures/stale keep-prior cases.
+
+    Always writes every schema key so the UI never renders a tooltip of
+    missing/N/A fields for a bare {sentiment, reasoning} dict.
+    """
+    return {
+        "earnings_summary": "N/A",
+        "future_guidance": "N/A",
+        "analyst_coverage": "N/A",
+        "sentiment": "Unknown",
+        "reasoning": f"Analysis unavailable -- {reason}",
+        "as_of": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+        "news_source": "⚪ No Source",
+        "model_used": "Error",
+    }
+
+def _apply_result(fundamentals, tk, view, old_view, elapsed):
+    """Decide what to persist for one ticker. Returns (failed_inc, detail).
+
+    - Fresh valid view (incl. "Unknown"): apply deterministic guard, write it.
+    - Failed generation with fresh prior: keep prior (bounded by staleness).
+    - Failed generation with stale prior: overwrite with honest Unknown.
+    - Failed generation with no usable prior: write full-schema Unknown.
+    """
+    if _is_valid_view(view):
+        sentiment, flag = _validate_sentiment(view)
+        if flag:
+            view["sentiment"] = "Neutral" if flag == "PARTIAL" else "Unknown"
+            view["reasoning"] = f"{view.get('reasoning', '')}\n[auto-downgraded: {flag}]"
+        fundamentals[tk] = view
+        return 0, f"OK ({elapsed:.1f}s) sentiment={view.get('sentiment')}"
+    if _is_valid_view(old_view):
+        age = _view_age_days(old_view)
+        if age is not None and age > SENTIMENT_STALE_DAYS:
+            fundamentals[tk] = _unknown_fallback(f"previous view is {age:.1f} days old")
+            return 1, f"FAILED ({elapsed:.1f}s); prior stale ({age:.1f}d) -> wrote Unknown"
+        return 0, f"FAILED ({elapsed:.1f}s), keeping prior result"
+    reason = str(view.get("reasoning", view.get("sentiment", "no valid result")))[:160]
+    fundamentals[tk] = _unknown_fallback(reason)
+    return 1, f"FAILED ({elapsed:.1f}s): {view.get('sentiment')} -> wrote Unknown"
 
 def main():
     api_key = get_gemini_api_key()
@@ -65,22 +110,22 @@ def main():
                 )
                 elapsed = time.time() - t0
 
-                if _is_valid_view(view):
-                    fundamentals[tk] = view
-                    print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - OK ({elapsed:.1f}s) sentiment={view.get('sentiment')}")
-                elif _is_valid_view(old_view):
-                    print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - FAILED ({elapsed:.1f}s), keeping prior result")
-                else:
-                    fundamentals[tk] = view
-                    print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - FAILED ({elapsed:.1f}s): {view.get('sentiment')}")
-                    total_failed += 1
+                failed_inc, detail = _apply_result(fundamentals, tk, view, old_view, elapsed)
+                total_failed += failed_inc
+                print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - {detail}")
             except TimeoutError as e:
                 print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - TIMEOUT: {e}. Added to retry queue.")
                 retry_queue.append((market, tk, row, old_view))
             except Exception as e:
                 print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - ERROR: {e}")
-                if not _is_valid_view(old_view):
-                    fundamentals[tk] = {"sentiment": "Unknown", "reasoning": f"Error: {str(e)}"}
+                age = _view_age_days(old_view)
+                if _is_valid_view(old_view) and (age is None or age <= SENTIMENT_STALE_DAYS):
+                    pass  # keep prior fresh result
+                else:
+                    reason = str(e)
+                    if _is_valid_view(old_view):
+                        reason = f"previous view is {age:.1f} days old; {reason}"
+                    fundamentals[tk] = _unknown_fallback(reason)
                 total_failed += 1
             
             total_processed += 1
@@ -101,19 +146,19 @@ def main():
                 )
                 elapsed = time.time() - t0
 
-                if _is_valid_view(view):
-                    fundamentals[tk] = view
-                    print(f"[{_ts()}] [RETRY] [{idx+1}/{len(retry_queue)}] {tk} - OK ({elapsed:.1f}s) sentiment={view.get('sentiment')}")
-                elif _is_valid_view(old_view):
-                    print(f"[{_ts()}] [RETRY] [{idx+1}/{len(retry_queue)}] {tk} - FAILED ({elapsed:.1f}s), keeping prior result")
-                else:
-                    fundamentals[tk] = view
-                    print(f"[{_ts()}] [RETRY] [{idx+1}/{len(retry_queue)}] {tk} - FAILED ({elapsed:.1f}s): {view.get('sentiment')}")
-                    total_failed += 1
+                failed_inc, detail = _apply_result(fundamentals, tk, view, old_view, elapsed)
+                total_failed += failed_inc
+                print(f"[{_ts()}] [RETRY] [{idx+1}/{len(retry_queue)}] {tk} - {detail}")
             except Exception as e:
                 print(f"[{_ts()}] [RETRY] [{idx+1}/{len(retry_queue)}] {tk} - ERROR: {e}")
-                if not _is_valid_view(old_view):
-                    fundamentals[tk] = {"sentiment": "Unknown", "reasoning": f"Error: {str(e)}"}
+                age = _view_age_days(old_view)
+                if _is_valid_view(old_view) and (age is None or age <= SENTIMENT_STALE_DAYS):
+                    pass  # keep prior fresh result
+                else:
+                    reason = str(e)
+                    if _is_valid_view(old_view):
+                        reason = f"previous view is {age:.1f} days old; {reason}"
+                    fundamentals[tk] = _unknown_fallback(reason)
                 total_failed += 1
             
             save_fundamentals(fundamentals)
