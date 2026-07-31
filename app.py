@@ -2145,9 +2145,9 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             reasoning = v.get("reasoning", "No evaluation available yet.")
             
             if sentiment == "Positive":
-                badge = "🐂 Bullish"
+                badge = '<span style="color: #00C853; font-weight: 500;">🐂 Bullish</span>'
             elif sentiment == "Negative":
-                badge = "🐻 Bearish"
+                badge = '<span style="color: #FF5252; font-weight: 500;">🐻 Bearish</span>'
             elif sentiment == "Neutral":
                 badge = "⚖️ Neutral"
             else:
