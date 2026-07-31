@@ -129,9 +129,26 @@ Return ONLY a valid JSON object matching this schema:
         data["model_used"] = "gemini-3.1-flash-lite"
         return data
     except Exception as e:
-        print(f"  [3.1-flash-lite reasoning failed] {ticker}: {e} -> Falling back to 31b")
+        print(f"  [3.1-flash-lite reasoning failed] {ticker}: {e} -> Falling back to 3.5-flash-lite")
 
-    # 2. Fallback to 31b
+    # 2. First Fallback (Gemini 3.5 Flash Lite with Reasoning)
+    try:
+        config_kwargs = {
+            "response_mime_type": "application/json",
+            "thinking_config": types.ThinkingConfig(thinking_budget=4096)
+        }
+        config = types.GenerateContentConfig(**config_kwargs)
+        resp = client.models.generate_content(model="models/gemini-3.5-flash-lite", contents=prompt, config=config)
+        data = json.loads(resp.text)
+        data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+        data["news_used"] = news_text
+        data["news_source"] = news_source or "⚪ Unknown"
+        data["model_used"] = "gemini-3.5-flash-lite (Fallback)"
+        return data
+    except Exception as e2:
+        print(f"  [3.5-flash-lite reasoning failed] {ticker}: {e2} -> Falling back to 31b")
+
+    # 3. Final Fallback to 31b
     try:
         config = types.GenerateContentConfig(response_mime_type="application/json")
         resp = client.models.generate_content(model="models/gemma-4-31b-it", contents=prompt, config=config)
