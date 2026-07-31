@@ -93,6 +93,8 @@ RECENT FUNDAMENTAL NEWS & ANNOUNCEMENTS
 {news_text}
 ======================================================================
 
+CRITICAL RULE: If the news text says "No recent fundamental news found" or lacks any material fundamental facts, you MUST set "sentiment" to "Unknown" and the other fields to "N/A". Do not guess or hallucinate a sentiment based on the company's past history.
+
 Return ONLY a valid JSON object matching this schema:
 {{
   "earnings_summary": "Q2 EPS beat by $0.05, Revenue $1.2B (+10% YoY) (or 'N/A if no news')",
@@ -114,24 +116,7 @@ Return ONLY a valid JSON object matching this schema:
             "model_used": used_model,
         }
 
-    # 1. Primary Reasoning Model (Gemini 3.1 Flash Lite with Reasoning)
-    try:
-        config_kwargs = {
-            "response_mime_type": "application/json",
-            "thinking_config": types.ThinkingConfig(thinking_budget=4096)
-        }
-        config = types.GenerateContentConfig(**config_kwargs)
-        resp = client.models.generate_content(model="models/gemini-3.1-flash-lite", contents=prompt, config=config)
-        data = json.loads(resp.text)
-        data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
-        data["news_used"] = news_text
-        data["news_source"] = news_source or "⚪ Unknown"
-        data["model_used"] = "gemini-3.1-flash-lite"
-        return data
-    except Exception as e:
-        print(f"  [3.1-flash-lite reasoning failed] {ticker}: {e} -> Falling back to 3.5-flash-lite")
-
-    # 2. First Fallback (Gemini 3.5 Flash Lite with Reasoning)
+    # 1. Primary Reasoning Model (Gemini 3.5 Flash Lite with Reasoning)
     try:
         config_kwargs = {
             "response_mime_type": "application/json",
@@ -143,12 +128,12 @@ Return ONLY a valid JSON object matching this schema:
         data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         data["news_used"] = news_text
         data["news_source"] = news_source or "⚪ Unknown"
-        data["model_used"] = "gemini-3.5-flash-lite (Fallback)"
+        data["model_used"] = "gemini-3.5-flash-lite"
         return data
-    except Exception as e2:
-        print(f"  [3.5-flash-lite reasoning failed] {ticker}: {e2} -> Falling back to 31b")
+    except Exception as e:
+        print(f"  [3.5-flash-lite reasoning failed] {ticker}: {e} -> Falling back to 31b")
 
-    # 3. Final Fallback to 31b
+    # 2. Final Fallback (Gemma 4 31B)
     try:
         config = types.GenerateContentConfig(response_mime_type="application/json")
         resp = client.models.generate_content(model="models/gemma-4-31b-it", contents=prompt, config=config)
