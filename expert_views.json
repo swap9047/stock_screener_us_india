@@ -485,13 +485,13 @@
   },
   "EBGNG.NS": {
     "verdict": "HOLD",
-    "headline": "Consolidating within a broader uptrend amid declining near-term volume.",
-    "technical_summary": "The stock remains above key moving averages with strong relative strength, but near-term momentum shows negative net volume (-14.4%) and a declining volume trend, indicating a consolidation phase.",
-    "catalyst_summary": "Upcoming Q1 FY27 financial results and earnings conference call scheduled for July 30, 2026.",
-    "actionable_take": "Maintain current positions while the stock consolidates above the 50-day moving average (~532). Wait for volume accumulation to return and a break past recent resistance before deploying new capital.",
-    "as_of": "2026-07-30 06:12",
-    "news_used": "**Upcoming Catalysts**\n* **2026-07-30**: Board meeting to approve Q1 FY27 unaudited financial results.\n* **2026-07-30**: Q1 FY27 Earnings Conference Call at 6:00 PM IST.",
-    "news_source": "\ud83d\udd0d Gemma-4-31B (Google Search)",
+    "headline": "Structural uptrend undergoing a healthy consolidation phase with short-term distribution.",
+    "technical_summary": "The stock maintains a broader structural uptrend above rising 40-week and 50/200-day EMAs with strong Mansfield relative strength. However, short-term momentum has cooled, evidenced by a downward-flipping weekly VStop, declining volume, and negative 10-day net volume accumulation.",
+    "catalyst_summary": "No recent news or fundamental catalysts reported in the past 24-48 hours.",
+    "actionable_take": "Maintain existing positions while monitoring for volume expansion and price stabilization near the 50-day DEMA (approx. 531). Refrain from adding fresh capital until net volume turns positive and the weekly VStop reverts to an uptrend.",
+    "as_of": "2026-07-31 00:07",
+    "news_used": "No recent news found.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
   },
   "AARTIPHARM.NS": {
@@ -836,13 +836,13 @@
     "model_used": "gemini-3.5-flash-lite"
   },
   "STLTECH.NS": {
-    "verdict": "HOLD",
-    "headline": "Broad structural uptrend consolidating near support with major fundamental upgrades.",
-    "technical_summary": "Price is currently undergoing a short-term consolidation phase with negative 10D net volume (-23.1%) and a downward VStop, but remains well above its rising 40 WEMA supported by strong long-term Mansfield relative strength.",
-    "catalyst_summary": "Analysts significantly upgraded FY27 revenue and EPS estimates, raising the target price by 57% to \u20b9860.",
-    "actionable_take": "Hold existing positions as the stock digests recent gains. Look to accumulate on a successful stabilization near the 50 DEMA / 20 WEMA zone (450-520), setting a trailing risk stop below the 40 WEMA.",
-    "as_of": "2026-07-30 19:03",
-    "news_used": "* **2026-07-30:** Analysts upgraded FY27 revenue and EPS estimates; price target increased 57% to \u20b9860.",
+    "verdict": "ACCUMULATE",
+    "headline": "Major fundamental earnings upgrades and a strong Stage 2 uptrend offer a compelling pullback accumulation setup.",
+    "technical_summary": "The stock remains in a structural Stage 2 uptrend above the rising 40 WEMA, currently experiencing a healthy short-term consolidation with declining volume and negative 10D net volume (-23.1%) as it tests the 50 DEMA.",
+    "catalyst_summary": "Analysts significantly upgraded FY27 forecasts, raising revenue estimates to \u20b981b and EPS to \u20b916.50, which drove a 57% hike in the consensus price target to \u20b9860.",
+    "actionable_take": "Accumulate in a phased manner around the current 520 support zone down to the rising 20 WEMA. Set a disciplined stop-loss below the major 40 WEMA trend baseline near 335 to protect capital against deeper correction.",
+    "as_of": "2026-07-31 00:08",
+    "news_used": "**July 30, 2026:** Analysts upgraded statutory forecasts for FY27, significantly increasing revenue estimates to \u20b981b (from \u20b969b) and EPS to \u20b916.50 (from \u20b98.70). The consensus price target was raised by 57% to \u20b9860.",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
   }
