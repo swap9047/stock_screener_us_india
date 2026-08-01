@@ -226,7 +226,7 @@ Evaluate this stock from a disciplined growth-and-momentum investor perspective.
 MANDATORY VERDICT RULES — apply these strictly before choosing a verdict:
 - HOLD is the DEFAULT. Use it whenever the picture is mixed, data is thin, or confidence is low.
 - ACCUMULATE requires ALL of: (a) Trend is "Uptrend" or "Strong Uptrend", (b) VStop direction is UP held ≥ 3 weeks, (c) RS is positive or N/A for very new data, (d) No negative news catalyst. If news is ABSENT, you may still give ACCUMULATE ONLY if ALL technical conditions above are clearly met — never give ACCUMULATE just because news is absent.
-- CAUTION requires at least ONE of: Trend is Downtrend or Sideways, VStop flipped DOWN, RSI > 80 on weekly or monthly (severely overbought), heavy distribution (Net Volume 10D Negative with large ratio), or a clearly negative news catalyst.
+- CAUTION requires AT LEAST TWO of the following five signals to agree — a single isolated signal (e.g. trend just not yet confirmed as an uptrend, with everything else neutral or positive) is NOT enough on its own and must fall through to HOLD instead: (1) Trend is Downtrend, (2) VStop flipped DOWN, (3) RSI > 80 on weekly or monthly (severely overbought), (4) heavy distribution (Net Volume 10D Negative with large ratio), (5) a clearly negative news catalyst.
 - NEVER give ACCUMULATE when news shows a negative catalyst (earnings miss, downgrade, regulatory issue, fraud, etc.).
 - NEVER give ACCUMULATE solely because news is absent or minimal — absent news → lean HOLD unless technicals fully satisfy the ACCUMULATE criteria above.
 
