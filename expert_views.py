@@ -22,9 +22,9 @@ def _generate_with_timeout(client, model, contents, config, timeout=120):
         except concurrent.futures.TimeoutError:
             raise TimeoutError(f"API call to {model} timed out after {timeout}s")
 
-def fetch_gemma_expert_news(client, ticker, market, company_name, news_text_fallback=None, is_retry=False):
+def fetch_gemma_expert_news(client, ticker, market, company_name, is_retry=False):
     """Fetches news specifically for Expert Views using gemma-4-26b-a4b-it with Google Search.
-    Falls back to 31b, then to news_summary corpus if provided."""
+    Falls back to 31b."""
     as_of_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     cutoff_date = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
     exchange = "NSE/BSE-listed" if market == "INDIA" else "US-listed"
@@ -62,9 +62,7 @@ def fetch_gemma_expert_news(client, ticker, market, company_name, news_text_fall
             print(f"  [expert gemma 31b search failed/timeout] {ticker}: {e2}")
             if not is_retry:
                 raise TimeoutError("Search timed out. Add to retry queue.")
-            print(f"  [expert search final fallback] {ticker} -> Falling back to corpus")
-            if news_text_fallback:
-                return news_text_fallback, "⚪ news_summary.json (Corpus Reuse)"
+            print(f"  [expert search final fallback] {ticker} -> No source available")
             return "No recent news found.", "⚪ No Source"
 
 
@@ -83,6 +81,23 @@ def save_expert_views(data):
         json.dump(data, f, indent=2)
 
 
+def stale_view_fallback(reason):
+    """Full-schema 'HOLD/pending' view for a prior verdict that's gone stale
+    (regeneration has failed for more than EXPERT_STALE_DAYS). Mirrors
+    fundamentals_eval._unknown_fallback so a stuck pipeline stops silently
+    displaying an unverified old ACCUMULATE/CAUTION call as current."""
+    return {
+        "verdict": "HOLD",
+        "headline": f"Analysis pending -- {reason}",
+        "technical_summary": "Technical data available in table.",
+        "catalyst_summary": "N/A",
+        "actionable_take": "Review technical indicators in table.",
+        "as_of": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+        "news_source": "⚪ Unknown",
+        "model_used": "Error",
+    }
+
+
 def _is_valid_view(view):
     """Returns True if a view is a real successful analysis (not a 429/error fallback)."""
     if not view:
@@ -94,6 +109,30 @@ def _is_valid_view(view):
     if "429" in headline or "resource_exhausted" in headline or "analysis pending" in headline or "error" in headline:
         return False
     return True
+
+
+EXPERT_STALE_DAYS = 4
+
+def _view_age_days(view):
+    """Age of a view in days, or None if as_of is missing/unparseable.
+
+    This is a pipeline-health circuit breaker, not a "has the market moved
+    on" freshness check: as_of is refreshed every time generation succeeds
+    (even if the verdict is unchanged), so a healthy nightly run keeps this
+    at ~0 regardless of how long the same verdict has held. It only climbs
+    past EXPERT_STALE_DAYS when regeneration has been failing for several
+    consecutive nights, at which point the stale verdict should stop being
+    displayed as current."""
+    as_of = (view or {}).get("as_of")
+    if not as_of:
+        return None
+    try:
+        ts = datetime.fromisoformat(as_of.replace(" ", "T", 1))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - ts).total_seconds() / 86400
+    except Exception:
+        return None
 
 
 def build_expert_prompt(row_data, news_text, active_alerts_text="None"):
@@ -209,7 +248,7 @@ Return ONLY a valid JSON object matching this schema:
     return prompt
 
 
-def generate_expert_view(client, row_data, news_text=None, news_source=None, active_alerts_text=None, nvidia_api_key=None, news_text_fallback=None, is_retry=False):
+def generate_expert_view(client, row_data, news_text=None, news_source=None, active_alerts_text=None, nvidia_api_key=None, is_retry=False):
     from google.genai import types
     import json
     from datetime import datetime, timezone
@@ -219,7 +258,7 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
     company_name = row_data.get("company_name", ticker)
 
     if news_text is None:
-        news_text, news_source = fetch_gemma_expert_news(client, ticker, market, company_name, news_text_fallback=news_text_fallback, is_retry=is_retry)
+        news_text, news_source = fetch_gemma_expert_news(client, ticker, market, company_name, is_retry=is_retry)
 
     prompt = build_expert_prompt(row_data, news_text, active_alerts_text)
 
@@ -250,7 +289,7 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
                 config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
 
         config = types.GenerateContentConfig(**config_kwargs)
-        resp = client.models.generate_content(model=model, contents=prompt, config=config)
+        resp = _generate_with_timeout(client, model, prompt, config, timeout=120)
         data = json.loads(resp.text)
         data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         data["news_used"] = news_text
@@ -263,7 +302,7 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
     # 2. Fallback: gemma-4-31b-it
     try:
         config = types.GenerateContentConfig(response_mime_type="application/json")
-        resp = client.models.generate_content(model="models/gemma-4-31b-it", contents=prompt, config=config)
+        resp = _generate_with_timeout(client, "models/gemma-4-31b-it", prompt, config, timeout=120)
         data = json.loads(resp.text)
         data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         data["news_used"] = news_text
@@ -276,7 +315,7 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
     # 3. Fallback: gemma-4-26b-a4b-it
     try:
         config = types.GenerateContentConfig(response_mime_type="application/json")
-        resp = client.models.generate_content(model="models/gemma-4-26b-a4b-it", contents=prompt, config=config)
+        resp = _generate_with_timeout(client, "models/gemma-4-26b-a4b-it", prompt, config, timeout=120)
         data = json.loads(resp.text)
         data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         data["news_used"] = news_text

@@ -320,7 +320,7 @@ Return ONLY a valid JSON object matching this schema:
                 config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
 
         config = types.GenerateContentConfig(**config_kwargs)
-        resp = client.models.generate_content(model=model, contents=prompt, config=config)
+        resp = _generate_with_timeout(client, model, prompt, config, timeout=120)
         data = json.loads(resp.text)
         return _finalize(data, model.split("/")[-1])
     except Exception as e:
@@ -329,7 +329,7 @@ Return ONLY a valid JSON object matching this schema:
     # 2. Final Fallback (Gemma 4 31B)
     try:
         config = types.GenerateContentConfig(response_mime_type="application/json")
-        resp = client.models.generate_content(model="models/gemma-4-31b-it", contents=prompt, config=config)
+        resp = _generate_with_timeout(client, "models/gemma-4-31b-it", prompt, config, timeout=120)
         data = json.loads(resp.text)
         return _finalize(data, "gemma-4-31b-it (Fallback)")
     except Exception as e2:

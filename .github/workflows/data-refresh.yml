@@ -3,24 +3,23 @@ name: Daily Data Refresh
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
-# Runs once/day at ~7:00 AM ET (before market open), fetching all watchlist
-# tickers via yfinance and saving the result to data_snapshot.json. The
-# Streamlit app reads this snapshot on load instead of hitting yfinance
-# live every session -- much faster, and avoids redundant identical fetches
-# across visitors. The app's "Refresh Data" button still fetches live data
-# on demand regardless of this snapshot.
+# Fetches all watchlist tickers via yfinance and saves the result to
+# data_snapshot.json. The Streamlit app reads this snapshot on load instead
+# of hitting yfinance live every session -- much faster, and avoids
+# redundant identical fetches across visitors. The app's "Refresh Data"
+# button still fetches live data on demand regardless of this snapshot.
 #
-# 7:00 AM ET is 11:00 UTC during EDT and 12:00 UTC during EST -- same
-# DST-safe two-cron-line pattern as daily-alerts.yml and news-summary.yml.
-# The gate uses a 22-hour tolerance since GitHub's
-# scheduler is best-effort and can delay a trigger -- see
-# alerts.py's is_rule_due() and news-summary.yml's gate for the same fix,
-# both added after a real missed run caused by an exact-hour check with no
-# grace period.
+# This workflow's own schedule is disabled -- data_snapshot.json is now
+# refreshed nightly (~11:00 PM ET) as the first step of expert-views.yml,
+# right before Expert Views generation, so both always work from the same
+# fresh snapshot. This file is kept workflow_dispatch-only for manual/
+# on-demand refreshes (e.g. after editing the watchlist).
 on:
-  # Schedule disabled -- data refresh is now the first step in expert-views.yml
-  # which runs daily at 7:15 AM ET. Keep workflow_dispatch for manual on-demand runs.
   workflow_dispatch: {}    # run manually from the Actions tab anytime
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 permissions:
   contents: write   # needed to commit data_snapshot.json back to the repo

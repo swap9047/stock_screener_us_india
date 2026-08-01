@@ -39,8 +39,10 @@ EMA settings (Daily: 10/50/200, Weekly: 10/20/40):
 All displayed numeric values are rounded to 1 decimal place.
 """
 
+import concurrent.futures
 import json
 import os
+import time
 from datetime import datetime
 
 import numpy as np
@@ -90,7 +92,7 @@ DEFAULT_SETTINGS = {
     # -- News Pipeline Defaults --
     "news_search_model": "models/gemma-4-26b-a4b-it",
     "news_reasoning_model": "models/gemini-3.5-flash-lite",
-    "news_reasoning_budget": 4096,
+    "news_reasoning_budget": 8192,
     
     # -- Expert Pipeline Defaults --
     "expert_reasoning_model": "models/gemini-3.5-flash-lite",
@@ -506,6 +508,32 @@ def compute_trend(last_close, ema_slow_series, rs_weekly, week52_high, week52_lo
     return label, rank, detail
 
 
+def _download_with_retries(all_tickers, period, attempts=3, timeout=90, wait=30):
+    """Bulk yf.download() with a hard per-attempt timeout (yfinance/Yahoo can
+    hang or stall with no native timeout of its own) and a retry-with-backoff
+    loop, mirroring the _generate_with_timeout pattern used for LLM calls
+    elsewhere in this app. Raises the last error if all attempts fail, so a
+    persistent outage fails the job clearly instead of hanging indefinitely
+    or silently proceeding with partial/no data."""
+    last_exc = None
+    for attempt in range(1, attempts + 1):
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                yf.download, all_tickers, period=period, interval="1d",
+                group_by="ticker", auto_adjust=True, progress=False, threads=True,
+            )
+            try:
+                return future.result(timeout=timeout)
+            except concurrent.futures.TimeoutError:
+                last_exc = TimeoutError(f"yf.download timed out after {timeout}s (attempt {attempt}/{attempts})")
+            except Exception as e:
+                last_exc = e
+        print(f"  [yf.download attempt {attempt}/{attempts} failed] {last_exc}")
+        if attempt < attempts:
+            time.sleep(wait)
+    raise last_exc
+
+
 def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
     """Returns (results list of dicts, as_of timestamp string) for one market's tickers."""
     settings = settings or load_settings()
@@ -529,8 +557,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
         return [], datetime.now().strftime("%Y-%m-%d %H:%M")
 
     all_tickers = list(tickers) + [benchmark]
-    raw = yf.download(all_tickers, period=period, interval="1d", group_by="ticker",
-                       auto_adjust=True, progress=False, threads=True)
+    raw = _download_with_retries(all_tickers, period)
 
     bench_daily = raw[benchmark]["Close"].dropna()
     bench_df = raw[benchmark].dropna(how="all")
