@@ -1689,6 +1689,53 @@ def render_expert_analysis_control_bar(market, results):
             save_settings(settings_now)
             st.rerun()
 
+    st.markdown("##### 🧠 AI Sentiment Analysis Controls")
+
+    scol1, scol2 = st.columns([3, 3])
+    with scol1:
+        s_reason_choices = ["models/gemini-3.5-flash-lite", "models/gemma-4-31b-it", "models/gemma-4-26b-a4b-it"]
+        s_current_reason = settings_now.get("sentiment_reasoning_model", "models/gemini-3.5-flash-lite")
+        s_new_reason = st.selectbox(
+            "Reasoning Model", s_reason_choices,
+            index=s_reason_choices.index(s_current_reason) if s_current_reason in s_reason_choices else 0,
+            key=f"sentiment_reasoning_model_select_{market}"
+        )
+        if s_new_reason != settings_now.get("sentiment_reasoning_model", "models/gemini-3.5-flash-lite"):
+            settings_now["sentiment_reasoning_model"] = s_new_reason
+            save_settings(settings_now)
+            st.rerun()
+
+    with scol2:
+        s_is_gemma = "gemma" in settings_now.get("sentiment_reasoning_model", "")
+        if s_is_gemma:
+            s_budget_choices = ["LOW", "MEDIUM", "HIGH"]
+            s_default_val = "HIGH"
+        else:
+            s_budget_choices = [1024, 2048, 4096, 8192]
+            s_default_val = 8192
+
+        s_current_val = settings_now.get("sentiment_thinking_budget", s_default_val)
+
+        if s_is_gemma and s_current_val not in s_budget_choices:
+            s_current_val = s_default_val
+        elif not s_is_gemma:
+            try:
+                s_current_val = int(s_current_val)
+            except (ValueError, TypeError):
+                s_current_val = s_default_val
+            if s_current_val not in s_budget_choices:
+                s_current_val = s_default_val
+
+        s_new_budget = st.selectbox(
+            "Thinking Budget / Level", s_budget_choices,
+            index=s_budget_choices.index(s_current_val),
+            key=f"sentiment_reasoning_budget_select_{market}"
+        )
+        if s_new_budget != s_current_val:
+            settings_now["sentiment_thinking_budget"] = s_new_budget
+            save_settings(settings_now)
+            st.rerun()
+
     c1, c2, c3, c4 = st.columns([3.5, 1.3, 1.8, 1.4])
 
     selected_to_reanalyze = c1.multiselect(

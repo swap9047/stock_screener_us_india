@@ -95,6 +95,10 @@ DEFAULT_SETTINGS = {
     # -- Expert Pipeline Defaults --
     "expert_reasoning_model": "models/gemini-3.5-flash-lite",
     "expert_thinking_budget": 8192,
+
+    # -- Sentiment Pipeline Defaults --
+    "sentiment_reasoning_model": "models/gemini-3.5-flash-lite",
+    "sentiment_thinking_budget": 8192,
 }
 
 

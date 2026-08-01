@@ -305,18 +305,26 @@ Return ONLY a valid JSON object matching this schema:
         data["real_earnings_date"] = real_date.isoformat() if real_date else None
         return data
 
-    # 1. Primary Reasoning Model (Gemini 3.5 Flash Lite with Reasoning)
+    from stock_data import load_settings
+    settings = load_settings()
+    model = settings.get("sentiment_reasoning_model", "models/gemini-3.5-flash-lite")
+    budget = settings.get("sentiment_thinking_budget", 8192)
+
+    # 1. Primary Reasoning Model (configurable, defaults to Gemini 3.5 Flash Lite with thinking)
     try:
-        config_kwargs = {
-            "response_mime_type": "application/json",
-            "thinking_config": types.ThinkingConfig(thinking_budget=8192)
-        }
+        config_kwargs = {"response_mime_type": "application/json"}
+        if "gemma" not in model:
+            if isinstance(budget, str):
+                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=budget)
+            else:
+                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
+
         config = types.GenerateContentConfig(**config_kwargs)
-        resp = client.models.generate_content(model="models/gemini-3.5-flash-lite", contents=prompt, config=config)
+        resp = client.models.generate_content(model=model, contents=prompt, config=config)
         data = json.loads(resp.text)
-        return _finalize(data, "gemini-3.5-flash-lite")
+        return _finalize(data, model.split("/")[-1])
     except Exception as e:
-        print(f"  [3.5-flash-lite reasoning failed] {ticker}: {e} -> Falling back to 31b")
+        print(f"  [{model} reasoning failed] {ticker}: {e} -> Falling back to 31b")
 
     # 2. Final Fallback (Gemma 4 31B)
     try:
