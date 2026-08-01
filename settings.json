@@ -26,5 +26,5 @@
   "tech_uptrend_volume_ratio": 1.3,
   "news_search_model": "models/gemma-4-26b-a4b-it",
   "news_reasoning_model": "gemini-3.5-flash-lite",
-  "news_reasoning_budget": 4096
+  "news_reasoning_budget": 8192
 }

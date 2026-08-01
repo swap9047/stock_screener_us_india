@@ -28,6 +28,10 @@ on:
     - cron: "15 2 * * *"   # 02:15 UTC = 9:15 PM ET during EST
   workflow_dispatch: {}   # run manually from the Actions tab anytime, bypasses the gate
 
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   gate:
     runs-on: ubuntu-latest

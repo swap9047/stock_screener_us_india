@@ -162,7 +162,7 @@ def main():
                 total_failed += 1
             
             save_fundamentals(fundamentals)
-            time.sleep(2)
+            time.sleep(30)
 
     print(f"\n[{_ts()}] Fundamentals refresh complete.")
     print(f"Processed: {total_processed}")

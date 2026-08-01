@@ -2813,8 +2813,8 @@ with tab_news:
             default_val = "HIGH"
         else:
             budget_choices = [1024, 2048, 4096, 8192]
-            default_val = 4096
-            
+            default_val = 8192
+
         current_val = settings_now.get("news_reasoning_budget", default_val)
         
         # Type safety for transitioning between models

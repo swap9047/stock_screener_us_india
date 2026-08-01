@@ -16,6 +16,10 @@ on:
     - cron: "0 4 * * *"   # 04:00 UTC = 11:00 PM ET during EST
   workflow_dispatch: {}    # run manually from the Actions tab anytime, bypasses the gate
 
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 permissions:
   contents: write   # needed to commit expert_views.json back to the repo
 

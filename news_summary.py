@@ -31,6 +31,9 @@ REASONING_MODEL = "gemini-3.5-flash-lite"
 BATCH_SIZE = 5
 # 2s delay between search calls as requested by user
 SECONDS_BETWEEN_CALLS = 2
+# Longer backoff between retry-queue attempts, to give a transient
+# rate-limit/network issue more time to clear before hitting the same API again
+RETRY_SECONDS_BETWEEN_CALLS = 30
 
 MARKET_LABELS = {"US": "US Watchlist", "INDIA": "India Watchlist"}
 
@@ -181,12 +184,12 @@ def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date, t
             else:
                 config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
         config = types.GenerateContentConfig(**config_kwargs)
-        resp = client.models.generate_content(model=model, contents=prompt, config=config)
+        resp = _generate_with_timeout(client, model, prompt, config, timeout=120)
         return resp.text or raw_text
     except Exception as e:
         print(f"  [gemini reasoning failed] {e} -> Falling back to gemma-4-26b-a4b-it")
         try:
-            resp = client.models.generate_content(model="models/gemma-4-26b-a4b-it", contents=prompt)
+            resp = _generate_with_timeout(client, "models/gemma-4-26b-a4b-it", prompt, types.GenerateContentConfig(), timeout=120)
             return resp.text or raw_text
         except Exception as e2:
             print(f"  [gemma reasoning fallback failed] {e2} -> Returning raw text")
@@ -229,12 +232,12 @@ def collate_market_summary(client, market, batch_texts, as_of_date=None, model=R
             else:
                 config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
         config = types.GenerateContentConfig(**config_kwargs)
-        resp = client.models.generate_content(model=model, contents=prompt, config=config)
+        resp = _generate_with_timeout(client, model, prompt, config, timeout=120)
         return resp.text or combined
     except Exception as e:
         print(f"  [gemini collate failed] {e} -> Falling back to gemma-4-26b-a4b-it")
         try:
-            resp = client.models.generate_content(model="models/gemma-4-26b-a4b-it", contents=prompt)
+            resp = _generate_with_timeout(client, "models/gemma-4-26b-a4b-it", prompt, types.GenerateContentConfig(), timeout=120)
             return resp.text or combined
         except Exception as e2:
             print(f"  [gemma collate fallback failed] {e2} -> Returning raw combined text")
@@ -339,7 +342,7 @@ def build_news_summary(watchlists, api_key, batch_size=BATCH_SIZE):
         if retry_queue:
             print(f"\n[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] === Processing Retry Queue ({len(retry_queue)} tickers) ===")
             for i, ticker in enumerate(retry_queue):
-                time.sleep(SECONDS_BETWEEN_CALLS)
+                time.sleep(RETRY_SECONDS_BETWEEN_CALLS)
                 ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
                 print(f"[{ts}] [RETRY] [{market}] [{i+1}/{len(retry_queue)}] {ticker} - Stage1 search starting...")
                 try:

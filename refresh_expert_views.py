@@ -9,12 +9,38 @@ import time
 from datetime import datetime, timezone
 from google import genai
 from stock_data import load_data_snapshot, load_watchlists
-from expert_views import load_expert_views, save_expert_views, generate_expert_view, _is_valid_view
-from news_summary import get_gemini_api_key, get_nvidia_api_key, load_news_summary
+from expert_views import (
+    load_expert_views, save_expert_views, generate_expert_view, _is_valid_view,
+    EXPERT_STALE_DAYS, _view_age_days, stale_view_fallback,
+)
+from news_summary import get_gemini_api_key, get_nvidia_api_key
 
 
 def _ts():
     return datetime.now(timezone.utc).strftime("%H:%M:%S")
+
+def _apply_result(expert_views, tk, view, old_view, elapsed):
+    """Decide what to persist for one ticker. Returns (failed_inc, fallback_inc, detail).
+
+    - Fresh valid view: write it.
+    - Failed generation with a fresh prior: keep prior (bounded by staleness).
+    - Failed generation with a stale prior (regeneration has failed for more
+      than EXPERT_STALE_DAYS): overwrite with an honest pending placeholder
+      rather than silently keep showing an unverified old verdict.
+    - Failed generation with no usable prior: write the failed view as-is.
+    """
+    if _is_valid_view(view):
+        expert_views[tk] = view
+        fallback_inc = 1 if "⚪" in view.get("news_source", "") else 0
+        return 0, fallback_inc, f"OK ({elapsed:.1f}s) verdict={view.get('verdict')}"
+    if _is_valid_view(old_view):
+        age = _view_age_days(old_view)
+        if age is not None and age > EXPERT_STALE_DAYS:
+            expert_views[tk] = stale_view_fallback(f"previous view is {age:.1f} days old")
+            return 1, 0, f"FAILED ({elapsed:.1f}s); prior stale ({age:.1f}d) -> wrote pending"
+        return 0, 0, f"FAILED ({elapsed:.1f}s), keeping prior result"
+    expert_views[tk] = view
+    return 1, 0, f"FAILED ({elapsed:.1f}s): {view.get('headline')}"
 
 def main():
     api_key = get_gemini_api_key()
@@ -35,7 +61,6 @@ def main():
     # Load global watchlist to know exactly what to process
     watchlists = load_watchlists()
     expert_views = load_expert_views()
-    news_summary_data = load_news_summary()
 
     total_processed = 0
     total_failed = 0
@@ -65,38 +90,23 @@ def main():
 
             old_view = expert_views.get(tk)
 
-            # Find news for this ticker from news_summary.json as fallback
-            ticker_news_fallback = None
-            if news_summary_data and market in news_summary_data:
-                market_news = news_summary_data[market].get("news_by_ticker", {})
-                if tk in market_news:
-                    ticker_news_fallback = market_news[tk]
-
             try:
                 t0 = time.time()
                 view = generate_expert_view(
                     client,
                     row,
                     nvidia_api_key=nvidia_api_key,
-                    news_text_fallback=ticker_news_fallback,
                     is_retry=False
                 )
                 elapsed = time.time() - t0
 
-                if _is_valid_view(view):
-                    expert_views[tk] = view
-                    if "⚪" in view.get("news_source", ""):
-                        total_fallback_used += 1
-                    print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - OK ({elapsed:.1f}s) verdict={view.get('verdict')}")
-                elif _is_valid_view(old_view):
-                    print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - FAILED ({elapsed:.1f}s), keeping prior result")
-                else:
-                    expert_views[tk] = view
-                    print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - FAILED ({elapsed:.1f}s): {view.get('headline')}")
-                    total_failed += 1
+                failed_inc, fallback_inc, detail = _apply_result(expert_views, tk, view, old_view, elapsed)
+                total_failed += failed_inc
+                total_fallback_used += fallback_inc
+                print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - {detail}")
             except TimeoutError as e:
                 print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - TIMEOUT: {e}. Added to retry queue.")
-                retry_queue.append((market, tk, row, ticker_news_fallback, old_view))
+                retry_queue.append((market, tk, row, old_view))
             except Exception as e:
                 print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - EXCEPTION: {e}")
                 total_failed += 1
@@ -112,7 +122,7 @@ def main():
     # Process retry queue
     if retry_queue:
         print(f"\n[{_ts()}] === Processing Retry Queue ({len(retry_queue)} tickers) ===")
-        for idx, (market, tk, row, ticker_news_fallback, old_view) in enumerate(retry_queue):
+        for idx, (market, tk, row, old_view) in enumerate(retry_queue):
             company_name = row.get("company_name", tk)
             print(f"[{_ts()}] [RETRY] [{market}] [{idx+1}/{len(retry_queue)}] {tk} ({company_name}) - starting...")
             try:
@@ -121,33 +131,25 @@ def main():
                     client,
                     row,
                     nvidia_api_key=nvidia_api_key,
-                    news_text_fallback=ticker_news_fallback,
                     is_retry=True
                 )
                 elapsed = time.time() - t0
 
-                if _is_valid_view(view):
-                    expert_views[tk] = view
-                    if "⚪" in view.get("news_source", ""):
-                        total_fallback_used += 1
-                    print(f"[{_ts()}] [RETRY] [{market}] [{idx+1}/{len(retry_queue)}] {tk} - OK ({elapsed:.1f}s) verdict={view.get('verdict')}")
-                elif _is_valid_view(old_view):
-                    print(f"[{_ts()}] [RETRY] [{market}] [{idx+1}/{len(retry_queue)}] {tk} - FAILED ({elapsed:.1f}s), keeping prior result")
-                else:
-                    expert_views[tk] = view
-                    print(f"[{_ts()}] [RETRY] [{market}] [{idx+1}/{len(retry_queue)}] {tk} - FAILED ({elapsed:.1f}s): {view.get('headline')}")
-                    total_failed += 1
+                failed_inc, fallback_inc, detail = _apply_result(expert_views, tk, view, old_view, elapsed)
+                total_failed += failed_inc
+                total_fallback_used += fallback_inc
+                print(f"[{_ts()}] [RETRY] [{market}] [{idx+1}/{len(retry_queue)}] {tk} - {detail}")
             except Exception as e:
                 print(f"[{_ts()}] [RETRY] [{market}] [{idx+1}/{len(retry_queue)}] {tk} - EXCEPTION: {e}")
                 total_failed += 1
                 
             save_expert_views(expert_views)
-            
+
             if idx < len(retry_queue) - 1:
-                time.sleep(5)
+                time.sleep(30)
 
     print(f"\nDone. Processed {total_processed} initial tickers and {len(retry_queue)} retries.")
-    print(f"Offline Corpus Fallbacks Used: {total_fallback_used} times.")
+    print(f"No-Source Fallbacks: {total_fallback_used} times.")
     print(f"Final failures: {total_failed}.")
 
 if __name__ == "__main__":

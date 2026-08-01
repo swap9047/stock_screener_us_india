@@ -3,16 +3,24 @@ name: Daily Fundamental Views Generation
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
-# Runs once/day at 11:30 PM ET. 
-# It generates AI Fundamental Views for all tickers.
+# Runs once/day at 3:00 AM ET. It generates AI Fundamental Views for all
+# tickers, reading data_snapshot.json rather than refreshing it itself.
+# Scheduled 4 hours after expert-views.yml's 11:00 PM ET run (which is what
+# actually refreshes data_snapshot.json, as its first step) so this workflow
+# has a large buffer to guarantee that snapshot is fresh and already
+# committed by the time it reads it, rather than racing a 30-minute gap.
 on:
   schedule:
-    - cron: "30 3 * * *"   # 03:30 UTC = 11:30 PM ET during EDT
-    - cron: "30 4 * * *"   # 04:30 UTC = 11:30 PM ET during EST
-  workflow_dispatch: {}    
+    - cron: "0 7 * * *"   # 07:00 UTC = 3:00 AM ET during EDT
+    - cron: "0 8 * * *"   # 08:00 UTC = 3:00 AM ET during EST
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 permissions:
-  contents: write   
+  contents: write
 
 jobs:
   gate:
@@ -21,7 +29,7 @@ jobs:
       due: ${{ steps.check.outputs.due }}
     steps:
       - id: check
-        name: Is it ~11:30 PM ET right now?
+        name: Is it ~3:00 AM ET right now?
         env:
           CRON_SCHEDULE: ${{ github.event.schedule }}
         run: |
@@ -30,8 +38,8 @@ jobs:
           from zoneinfo import ZoneInfo
           from datetime import datetime
           now_et = datetime.now(ZoneInfo("America/New_York"))
-          
-          rule_hour = 23
+
+          rule_hour = 3
           cron = os.environ.get("CRON_SCHEDULE")
           
           is_valid_cron = True
