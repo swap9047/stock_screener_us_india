@@ -222,7 +222,12 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
         news_text, news_source = fetch_gemma_expert_news(client, ticker, market, company_name, news_text_fallback=news_text_fallback, is_retry=is_retry)
 
     prompt = build_expert_prompt(row_data, news_text, active_alerts_text)
-    
+
+    from stock_data import load_settings
+    settings = load_settings()
+    model = settings.get("expert_reasoning_model", "models/gemini-3.5-flash-lite")
+    budget = settings.get("expert_thinking_budget", 8192)
+
     def _pending_fallback(reason, used_model="Error"):
         return {
             "verdict": "HOLD",
@@ -235,7 +240,27 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
             "model_used": used_model,
         }
 
-    # 1. Primary: gemma-4-31b-it (best available for nuanced judgment)
+    # 1. Primary Reasoning Model (configurable, defaults to Gemini 3.5 Flash Lite with thinking)
+    try:
+        config_kwargs = {"response_mime_type": "application/json"}
+        if "gemma" not in model:
+            if isinstance(budget, str):
+                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=budget)
+            else:
+                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
+
+        config = types.GenerateContentConfig(**config_kwargs)
+        resp = client.models.generate_content(model=model, contents=prompt, config=config)
+        data = json.loads(resp.text)
+        data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+        data["news_used"] = news_text
+        data["news_source"] = news_source or "⚪ Unknown"
+        data["model_used"] = model.split("/")[-1]
+        return data
+    except Exception as e:
+        print(f"  [{model} reasoning failed] {ticker}: {e} -> Falling back to 31b")
+
+    # 2. Fallback: gemma-4-31b-it
     try:
         config = types.GenerateContentConfig(response_mime_type="application/json")
         resp = client.models.generate_content(model="models/gemma-4-31b-it", contents=prompt, config=config)
@@ -243,12 +268,12 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
         data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         data["news_used"] = news_text
         data["news_source"] = news_source or "⚪ Unknown"
-        data["model_used"] = "gemma-4-31b-it"
+        data["model_used"] = "gemma-4-31b-it (Fallback)"
         return data
-    except Exception as e:
-        print(f"  [gemma-4-31b reasoning failed] {ticker}: {e} -> Falling back to 26b")
+    except Exception as e2:
+        print(f"  [gemma-4-31b reasoning failed] {ticker}: {e2} -> Falling back to 26b")
 
-    # 2. Fallback: gemma-4-26b-a4b-it
+    # 3. Fallback: gemma-4-26b-a4b-it
     try:
         config = types.GenerateContentConfig(response_mime_type="application/json")
         resp = client.models.generate_content(model="models/gemma-4-26b-a4b-it", contents=prompt, config=config)
@@ -258,9 +283,9 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
         data["news_source"] = news_source or "⚪ Unknown"
         data["model_used"] = "gemma-4-26b-a4b-it (Fallback)"
         return data
-    except Exception as e2:
-        print(f"  [gemma-4-26b reasoning failed] {ticker}: {e2} -> Giving up")
-        return _pending_fallback(str(e2))
+    except Exception as e3:
+        print(f"  [gemma-4-26b reasoning failed] {ticker}: {e3} -> Giving up")
+        return _pending_fallback(str(e3))
 
 
 def analyze_single_ticker(ticker, row_data, api_key, active_alerts_text=None, nvidia_api_key=None):
