@@ -38,6 +38,14 @@ RETRY_SECONDS_BETWEEN_CALLS = 30
 MARKET_LABELS = {"US": "US Watchlist", "INDIA": "India Watchlist"}
 
 
+def _market_label(market):
+    """Display label for a market: the registry's label if registered,
+    falling back to the legacy MARKET_LABELS dict, then the raw key."""
+    from stock_data import load_markets_registry
+    registry_label = load_markets_registry().get(market, {}).get("label")
+    return registry_label or MARKET_LABELS.get(market, market)
+
+
 def get_gemini_api_key(st_secrets=None):
     """Returns the Gemini API key, checking (in order) a passed-in
     Streamlit secrets-dict-like object, then the GEMINI_API_KEY env var
@@ -91,9 +99,10 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None,
     articles and web sources for a single ticker."""
     from datetime import datetime, timedelta
     from news_search import get_stock_news
+    from stock_data import get_exchange_label
 
     cutoff_date = (datetime.strptime(as_of_date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
-    exchange = "NSE/BSE-listed" if market == "INDIA" else "US-listed"
+    exchange = get_exchange_label(market)
     
     ticker_names = ticker_names or {}
     bare = _bare_ticker(ticker)
@@ -214,7 +223,7 @@ def collate_market_summary(client, market, batch_texts, as_of_date=None, model=R
         return "No major news for this watchlist's tickers in the last 24 hours."
 
     prompt = (
-        f"Below are filtered news notes gathered for the {MARKET_LABELS.get(market, market)}.\n\n"
+        f"Below are filtered news notes gathered for the {_market_label(market)}.\n\n"
         "Act as an editor for a daily investor briefing (like Perplexity Finance's watchlist digest). "
         "Produce an EXTREMELY CRISP summary (under 500 words, max 1 pager) containing ONLY material, recent items.\n\n"
         f"{window_line}drop any note if it's older than 24 hours.\n\n"
@@ -281,7 +290,7 @@ def build_news_summary(watchlists, api_key, batch_size=BATCH_SIZE):
                 if "company_name" in row:
                     ticker_names[row["ticker"]] = row["company_name"]
 
-    for market in ("US", "INDIA"):
+    for market in watchlists.keys():
         tickers = watchlists.get(market, [])
         if not tickers:
             result["markets"][market] = {
@@ -394,11 +403,11 @@ def build_discord_messages(news_data, limit=1900):
     """Turns a news_summary.json-shaped dict into a list of Discord-ready message strings."""
     messages = []
     as_of = news_data.get("as_of", "")
-    for market in ("US", "INDIA"):
+    for market in news_data.get("markets", {}).keys():
         entry = news_data.get("markets", {}).get(market)
         if not entry:
             continue
-        label = MARKET_LABELS.get(market, market)
+        label = _market_label(market)
         title = f"**📰 {label} News — {as_of}**"
         summary = entry.get("summary", "").strip()
         if not summary:

@@ -25,10 +25,12 @@ def _generate_with_timeout(client, model, contents, config, timeout=120):
 def fetch_gemma_expert_news(client, ticker, market, company_name, is_retry=False):
     """Fetches news specifically for Expert Views using gemma-4-26b-a4b-it with Google Search.
     Falls back to 31b."""
+    from stock_data import get_exchange_label
+
     as_of_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     cutoff_date = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
-    exchange = "NSE/BSE-listed" if market == "INDIA" else "US-listed"
-    
+    exchange = get_exchange_label(market)
+
     bare = ticker.rsplit(".", 1)[0] if ticker.endswith(".NS") or ticker.endswith(".BO") else ticker
     name = f"{company_name} ({bare})" if company_name and company_name != ticker else bare
 
@@ -168,7 +170,8 @@ def build_expert_prompt(row_data, news_text, active_alerts_text="None"):
     l52 = row_data.get("week52_low", "N/A")
     flag = row_data.get("flag", "None")
     note = row_data.get("note", "None")
-    bench = "S&P 500 (SPY)" if market == "US" else "Nifty 500 (^CRSLDX)"
+    from stock_data import get_benchmark_display
+    bench = get_benchmark_display(market)
     
     # Flag whether news is genuinely absent
     news_absent = not news_text or news_text.strip().lower() in (

@@ -44,6 +44,23 @@ DISCORD_CONFIG_FILE = os.path.join(SCRIPT_DIR, "discord_config.json")
 
 SCOPE_LABELS = {"ALL": "All watchlist", "US": "US watchlist", "INDIA": "India watchlist"}
 
+
+def _scope_label(scope):
+    """Human-readable label for a rule's scope: "All watchlist", "<market
+    label> watchlist" for any registered market (falls back to the raw key
+    if the registry lookup fails for any reason), or the scope itself (a
+    single ticker symbol)."""
+    if scope == "ALL":
+        return SCOPE_LABELS["ALL"]
+    try:
+        from stock_data import load_markets_registry
+        registry = load_markets_registry()
+        if scope in registry:
+            return f"{registry[scope]['label']} watchlist"
+    except Exception:
+        pass
+    return SCOPE_LABELS.get(scope, scope)
+
 # --- Per-rule scheduling -----------------------------------------------
 # Each rule carries a "schedule" dict: {"type": "scheduled"|"none", "days":
 # [...], "time_et": "HH:00"}. "none" means the rule is a scan-only rule --
@@ -261,12 +278,15 @@ def load_discord_webhook():
 
 
 def _applicable_tickers(rule, snapshot_results):
-    """snapshot_results rows must carry a "market" key (US/INDIA) -- set by
-    stock_data.fetch_all_markets -- so scope US/INDIA can be resolved."""
+    """snapshot_results rows must carry a "market" key (its watchlist's
+    stable key -- see stock_data.load_markets_registry()) so a scope of
+    "<market key>" can be resolved to every ticker in that watchlist."""
+    from stock_data import load_markets_registry
+
     scope = rule.get("scope", "ALL")
     if scope == "ALL":
         return [r["ticker"] for r in snapshot_results]
-    if scope in ("US", "INDIA"):
+    if scope in load_markets_registry():
         return [r["ticker"] for r in snapshot_results if r.get("market") == scope]
     return [scope] if any(r["ticker"] == scope for r in snapshot_results) else []
 
@@ -399,7 +419,7 @@ def build_discord_messages_for_rule(rule, tickers, snapshot_by_ticker, metric_la
         all_rows.append([t] + [_format_cell(m, row.get(m)) for m in metrics])
 
     name = rule.get("name") or "(unnamed)"
-    scope_label = SCOPE_LABELS.get(rule.get("scope"), rule.get("scope"))
+    scope_label = _scope_label(rule.get("scope"))
     title = f"**{name}** — {scope_label}"
 
     def build_chunk(rows_subset, part=None):

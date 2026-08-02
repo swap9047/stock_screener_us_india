@@ -54,7 +54,12 @@ WATCHLIST_FILE = os.path.join(SCRIPT_DIR, "watchlist.json")
 SETTINGS_FILE = os.path.join(SCRIPT_DIR, "settings.json")
 DATA_SNAPSHOT_FILE = os.path.join(SCRIPT_DIR, "data_snapshot.json")
 INVESTED_FILE = os.path.join(SCRIPT_DIR, "invested.json")
+MARKETS_FILE = os.path.join(SCRIPT_DIR, "markets.json")
 
+# Legacy fallback list -- kept only for the one-off markets.json bootstrap
+# and any old code (e.g. debug_snap.py) that still imports it directly. Live
+# code should call get_market_keys() instead, since that reflects whatever
+# markets have actually been added at runtime, not just these original two.
 MARKETS = ["US", "INDIA"]
 
 # Fallback/default values -- used to seed settings.json the first time, and
@@ -101,6 +106,9 @@ DEFAULT_SETTINGS = {
     # -- Sentiment Pipeline Defaults --
     "sentiment_reasoning_model": "models/gemini-3.5-flash-lite",
     "sentiment_thinking_budget": 8192,
+
+    # -- Fundamental columns (Sentiment, Qtr Profit/Revenue Growth %, etc.) --
+    "show_fundamental_columns": True,
 }
 
 
@@ -124,9 +132,134 @@ def save_settings(settings):
         json.dump(clean, f, indent=2)
 
 
+def _slugify_market_key(label):
+    """Turns a free-text watchlist label into a safe, stable internal key:
+    lowercase, alphanumeric/underscore only. This key is what every JSON
+    file, alert rule scope, and cached AI view's "market" field is keyed
+    by forever -- the label can be freely renamed later with zero data
+    migration because nothing else ever reads the label as an identifier."""
+    slug = "".join(c if c.isalnum() else "_" for c in label.strip().lower())
+    slug = "_".join(filter(None, slug.split("_")))  # collapse repeated underscores
+    return slug or "market"
+
+
+def load_markets_registry():
+    """Returns {key: {"label": str, "benchmark": str}}. Bootstraps
+    markets.json from the legacy benchmark_us/benchmark_india settings (so
+    any customization an existing user already made is preserved) the first
+    time it's called on an install that predates this registry -- written
+    immediately so the file always exists after the app's first render,
+    same pattern as column_prefs.json's bootstrap."""
+    if not os.path.exists(MARKETS_FILE):
+        settings = load_settings()
+        registry = {
+            "US": {"label": "US Watchlist", "benchmark": settings.get("benchmark_us", BENCHMARKS["US"])},
+            "INDIA": {"label": "India Watchlist", "benchmark": settings.get("benchmark_india", BENCHMARKS["INDIA"])},
+        }
+        save_markets_registry(registry)
+        return registry
+    try:
+        with open(MARKETS_FILE) as f:
+            registry = json.load(f)
+        if not registry:
+            raise ValueError("empty registry")
+        return registry
+    except Exception:
+        return {
+            "US": {"label": "US Watchlist", "benchmark": BENCHMARKS["US"]},
+            "INDIA": {"label": "India Watchlist", "benchmark": BENCHMARKS["INDIA"]},
+        }
+
+
+def save_markets_registry(registry):
+    with open(MARKETS_FILE, "w") as f:
+        json.dump(registry, f, indent=2)
+
+
+def get_market_keys():
+    """Live list of every registered market's stable key, in registry order.
+    Prefer this over the legacy MARKETS constant -- it reflects watchlists
+    added at runtime, not just the original US/INDIA pair."""
+    return list(load_markets_registry().keys())
+
+
+def add_watchlist(label, benchmark):
+    """Registers a new watchlist: generates a permanent unique key from
+    `label` (slugified), adds it to the markets registry with an empty
+    ticker list and empty custom-filter list. Returns the new key.
+
+    Deletion is intentionally NOT exposed here or anywhere in the UI --
+    removing a watchlist means manually dropping its key from markets.json,
+    watchlist.json, and custom_filters.json (a deliberate, code-level-only
+    action, not a clickable button)."""
+    from filters import load_custom_filters, save_custom_filters
+
+    registry = load_markets_registry()
+    base_key = _slugify_market_key(label)
+    if base_key.upper() == "ALL":
+        base_key = f"{base_key}_market"  # "ALL" is reserved for the alert-scope "every watchlist" option
+    key = base_key
+    suffix = 2
+    while key in registry:
+        key = f"{base_key}_{suffix}"
+        suffix += 1
+
+    registry[key] = {"label": label.strip(), "benchmark": benchmark.strip()}
+    save_markets_registry(registry)
+
+    watchlists = load_watchlists()
+    watchlists[key] = []
+    save_watchlists(watchlists)
+
+    custom_filters = load_custom_filters()
+    custom_filters[key] = []
+    save_custom_filters(custom_filters)
+
+    return key
+
+
+def rename_watchlist(key, new_label):
+    """Renames a watchlist's DISPLAY LABEL only -- the internal key (and
+    everything keyed by it: watchlist.json, custom_filters.json, alert rule
+    scopes, cached AI views' "market" field) never changes, so this is a
+    single-field update with no data migration."""
+    registry = load_markets_registry()
+    if key not in registry:
+        raise KeyError(f"Unknown market key: {key}")
+    registry[key]["label"] = new_label.strip()
+    save_markets_registry(registry)
+
+
 def get_benchmarks(settings=None):
-    settings = settings or load_settings()
-    return {"US": settings["benchmark_us"], "INDIA": settings["benchmark_india"]}
+    """Returns {market_key: benchmark_ticker} for every registered market."""
+    registry = load_markets_registry()
+    return {key: info["benchmark"] for key, info in registry.items()}
+
+
+def get_exchange_label(market):
+    """Human-readable 'X-listed' phrase for LLM search/reasoning prompts.
+    Preserves the exact existing wording for the two pre-registered markets
+    (US/INDIA) so their prompts don't change at all; any other market gets a
+    generic fallback built from its registry label, since the minimal
+    add-watchlist form doesn't collect a dedicated exchange phrase."""
+    if market == "INDIA":
+        return "NSE/BSE-listed"
+    if market == "US":
+        return "US-listed"
+    label = load_markets_registry().get(market, {}).get("label", market)
+    return f"{label}-listed"
+
+
+def get_benchmark_display(market):
+    """Human-readable benchmark name for LLM prompts, e.g. "S&P 500 (SPY)".
+    Preserves exact existing wording for US/INDIA; any other market falls
+    back to just its benchmark ticker, since the minimal add-watchlist form
+    doesn't collect a separate display name."""
+    if market == "US":
+        return "S&P 500 (SPY)"
+    if market == "INDIA":
+        return "Nifty 500 (^CRSLDX)"
+    return load_markets_registry().get(market, {}).get("benchmark", market)
 
 
 def get_filterable_metrics(settings=None):
@@ -160,6 +293,8 @@ def get_filterable_metrics(settings=None):
         "Vol 10D": "avg_volume_10d",
         "Vol 100D": "avg_volume_100d",
         "% Chg": "pct_change_1d",
+        "Qtr Profit Growth %": "qtr_profit_growth",
+        "Qtr Revenue Growth %": "qtr_revenue_growth",
         "VStop Weeks Ago": "vstop_weekly_weeks_since_change",
         "Tech Uptrend": "tech_uptrend",
         "Flag": "flag",
@@ -175,17 +310,22 @@ FILTERABLE_METRICS = get_filterable_metrics()
 
 
 def load_watchlists():
-    """Returns {"US": [...], "INDIA": [...]}."""
+    """Returns {market_key: [tickers]} for every registered market (see
+    load_markets_registry()), plus any additional keys already present in
+    the raw JSON file -- defensive union, not a hardcoded "US"/"INDIA"
+    whitelist, so a newly added market's tickers are never silently dropped."""
+    registry_keys = set(load_markets_registry().keys())
     if not os.path.exists(WATCHLIST_FILE):
-        return {"US": [], "INDIA": []}
+        return {k: [] for k in registry_keys}
     with open(WATCHLIST_FILE) as f:
         data = json.load(f)
-    return {"US": data.get("US", []), "INDIA": data.get("INDIA", [])}
+    all_keys = registry_keys | set(data.keys())
+    return {k: data.get(k, []) for k in all_keys}
 
 
 def save_watchlists(watchlists):
     with open(WATCHLIST_FILE, "w") as f:
-        json.dump({"US": watchlists.get("US", []), "INDIA": watchlists.get("INDIA", [])}, f, indent=2)
+        json.dump(watchlists, f, indent=2)
 
 
 def load_watchlist(market):
@@ -568,9 +708,19 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
 
     for t in tickers:
         company_name = t
+        qtr_profit_growth = None
+        qtr_revenue_growth = None
         try:
             info = yf.Ticker(t).info
             company_name = info.get("longName") or info.get("shortName") or t
+            # Yahoo's own YoY quarterly growth reads (this quarter vs. the
+            # same quarter last year) -- returned as decimals (0.278 = 27.8%).
+            earnings_growth = info.get("earningsQuarterlyGrowth")
+            revenue_growth = info.get("revenueGrowth")
+            if earnings_growth is not None:
+                qtr_profit_growth = round(earnings_growth * 100, 1)
+            if revenue_growth is not None:
+                qtr_revenue_growth = round(revenue_growth * 100, 1)
         except Exception as e:
             print(f"  [{t}] Could not fetch company name: {e}")
 
@@ -765,6 +915,8 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 "company_name": company_name,
                 "last_close": round(last_close, 1),
                 "pct_change_1d": pct_change_1d,
+                "qtr_profit_growth": qtr_profit_growth,
+                "qtr_revenue_growth": qtr_revenue_growth,
                 "data_start": data_start,
                 "data_end": data_end,
                 "data_end_age_days": data_end_age_days,
@@ -831,7 +983,7 @@ def fetch_all_markets(watchlists=None, period="5y", settings=None):
 
     per_market = {}
     as_of = datetime.now().strftime("%Y-%m-%d %H:%M")
-    for market in MARKETS:
+    for market in watchlists.keys():
         tickers = watchlists.get(market, [])
         bench = benchmarks.get(market, "SPY")
         results, as_of = fetch_snapshot(tickers, benchmark=bench, period=period, settings=settings)
@@ -847,7 +999,7 @@ def fetch_all_markets(watchlists=None, period="5y", settings=None):
     # conditions, not just the table, so it has to be computed here, at the
     # source, rather than bolted on downstream in just one consumer.
     from custom_columns import apply_custom_columns_to_rows
-    combined = [r for market in MARKETS for r in per_market[market]]
+    combined = [r for market in per_market for r in per_market[market]]
     apply_custom_columns_to_rows(combined)
 
     # Same reasoning as custom columns above -- per-ticker notes/flags
@@ -918,7 +1070,7 @@ def snapshot_is_usable(snapshot, watchlists, settings):
         return False
         
     per_market = snapshot["per_market"]
-    for market in MARKETS:
+    for market in watchlists.keys():
         snap_tickers = {r.get("ticker") for r in per_market.get(market, [])}
         wanted = set(watchlists.get(market, []))
         if not wanted.issubset(snap_tickers):
@@ -928,4 +1080,4 @@ def snapshot_is_usable(snapshot, watchlists, settings):
 
 if __name__ == "__main__":
     combined, as_of, per_market = fetch_all_markets()
-    print(json.dumps({"as_of": as_of, "US": per_market["US"], "INDIA": per_market["INDIA"]}, indent=2))
+    print(json.dumps({"as_of": as_of, **per_market}, indent=2))

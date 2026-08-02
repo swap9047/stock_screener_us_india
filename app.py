@@ -56,9 +56,9 @@ from streamlit_sortables import sort_items
 from stock_data import (
     load_watchlists, save_watchlist, fetch_all_markets, validate_ticker, tradingview_url,
     load_settings, save_settings, DEFAULT_SETTINGS, get_benchmarks, get_filterable_metrics,
-    MARKETS, load_data_snapshot, snapshot_is_usable, save_data_snapshot,
+    load_markets_registry, load_data_snapshot, snapshot_is_usable, save_data_snapshot,
 )
-from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE, send_discord, SCOPE_LABELS,
+from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE, send_discord,
                      build_discord_messages_for_rule, describe_schedule, DAY_CODES, DAY_LABELS,
                      DEFAULT_DAYS, ALLOWED_HOURS, HOUR_LABELS)
 from filters import (get_market_filters, save_market_filters, apply_filters, describe_filter,
@@ -455,7 +455,7 @@ def style_row(row, ema_labels):
             color = trend_colors.get(val)
             if color:
                 styles[i] = f"color:{color};font-weight:700"
-        elif col == "% Chg" and pd.notna(val):
+        elif col in ("% Chg", "Qtr Profit Growth %", "Qtr Revenue Growth %") and pd.notna(val):
             styles[i] = "color:#1e8449;font-weight:600" if val > 0 else ("color:#c0392b;font-weight:600" if val < 0 else "")
         elif col == "Vol Trend" and isinstance(val, str):
             vol_colors = {"Exploding": "#1e8449", "Declining": "#c0392b"}
@@ -637,7 +637,12 @@ def ratio_cols():
 
 
 VOLUME_COLS = ["Vol 10D", "Vol 100D"]
-PCT_COLS = ["% Chg"]
+PCT_COLS = ["% Chg", "Qtr Profit Growth %", "Qtr Revenue Growth %"]
+
+# Column keys considered "fundamental" (company financials/valuation, as
+# opposed to technical/price-derived) -- hideable as a group via the
+# "Show fundamental columns" toggle, independent of the per-column picker.
+FUNDAMENTAL_COLUMN_KEYS = {"fundamentals", "qtr_profit_growth", "qtr_revenue_growth"}
 
 
 LINK_COLUMN_CONFIG = {
@@ -661,23 +666,55 @@ STICKY_TH_STYLE = (
     "text-align:left;padding:6px 10px;font-size:13px;"
 )
 
+# The Ticker column (always first, since the index is hidden) is additionally
+# pinned horizontally so it stays visible while scrolling right through the
+# wide table. The header's Ticker cell sticks on BOTH axes at once (it's the
+# top-left corner), so it needs its own variant layered over the header row
+# variant above, with a higher z-index since it overlaps both the sticky
+# header row and the sticky Ticker column. Body-cell Ticker entries only need
+# the left axis. Both get a right-edge box-shadow so the column reads as
+# visually separate from whatever's scrolled underneath it.
+STICKY_TH_CORNER_STYLE = (
+    "position:sticky;top:60px;left:0;z-index:3;"
+    "background-color:var(--background-color, #ffffff);"
+    "box-shadow:0 1px 0 rgba(128,128,128,0.4), 2px 0 2px -1px rgba(128,128,128,0.3);"
+    "text-align:left;padding:6px 10px;font-size:13px;"
+)
+STICKY_TD_TICKER_STYLE = (
+    "position:sticky;left:0;z-index:1;"
+    "background-color:var(--background-color, #ffffff);"
+    "box-shadow:2px 0 2px -1px rgba(128,128,128,0.3);"
+)
+
 
 def sticky_header_html(styler):
-    """Renders a pandas Styler as an HTML table with a sticky header, embedded
-    directly in the page (no nested scroll box -- the browser's normal page
-    scroll handles it).
+    """Renders a pandas Styler as an HTML table with a sticky header AND a
+    sticky (horizontally pinned) Ticker column, embedded directly in the page
+    (no nested scroll box -- the browser's normal page scroll handles it).
 
     Streamlit's markdown/HTML renderer strips <style> tags outright (along
     with <pre>/<script>/<textarea>) even with unsafe_allow_html=True -- this
     is a fixed list in its own markdown parser, confirmed in Streamlit's
     frontend source, not a guess. That's why a <style>-block-based sticky
     header (via Styler.set_table_styles()) silently does nothing. Inline
-    style="..." *attributes* are a different thing and are NOT stripped
-    (proven by the fact that this table's per-cell color coding, which is
-    exactly that, already renders correctly) -- so the sticky CSS is
-    injected directly onto each <th> tag here instead of via a <style> block."""
+    style="..." *attributes* are a different thing and are NOT stripped, so
+    all sticky CSS here (header row AND Ticker column) is injected directly
+    onto each <th>/<td> tag via regex instead of via a <style> block.
+
+    Since the index is hidden, the Ticker column is always the first cell of
+    every row -- <th> in the header row, <td> in every body row -- so
+    "first cell in this row" is a reliable, order-based way to target it
+    without needing to know pandas' generated column id/class names."""
     html = styler.to_html(escape=False)
-    return re.sub(r"<th\b", f'<th style="{STICKY_TH_STYLE}"', html)
+    html = re.sub(r"<th\b", f'<th style="{STICKY_TH_STYLE}"', html)
+    # The very first <th> emitted (Ticker's header cell) additionally sticks
+    # left -- swap it for the corner variant. count=1 targets only that one.
+    html = re.sub(re.escape(f'<th style="{STICKY_TH_STYLE}"'), f'<th style="{STICKY_TH_CORNER_STYLE}"', html, count=1)
+
+    def _stick_first_td(row_match):
+        return re.sub(r"<td\b", f'<td style="{STICKY_TD_TICKER_STYLE}"', row_match.group(0), count=1)
+
+    return re.sub(r"<tr\b.*?</tr>", _stick_first_td, html, flags=re.DOTALL)
 
 
 def column_definitions(settings, labels):
@@ -730,8 +767,16 @@ def column_definitions(settings, labels):
         ),
         "Vol 10D": "Average daily share volume over the last 10 trading days.",
         "Vol 100D": "Average daily share volume over the last 100 trading days.",
-        "Flag": "A colored marker you set via the sidebar 'Ticker Notes' panel -- also shown next to the ticker symbol itself.",
+        "Flag": (
+            "A colored marker, also shown next to the ticker symbol itself. Manually set via the sidebar "
+            "'Ticker Notes' panel always wins; otherwise auto-computed from a vote across Expert Take, "
+            "Trend, Tech Uptrend, and Sentiment -- Green needs 3+ of 4 bullish, Red needs 3+ of 4 bearish, "
+            "and a strong contradicting signal downgrades either to Yellow ('further study'). Hover a "
+            "flagged cell for the exact vote/veto breakdown."
+        ),
         "Notes": "Your free-text note for this ticker, set via the sidebar 'Ticker Notes' panel. Hover/tap a truncated note to see the full text.",
+        "Qtr Profit Growth %": "Year-over-year net income growth for the most recent reported quarter, vs. the same quarter a year ago (Yahoo Finance).",
+        "Qtr Revenue Growth %": "Year-over-year revenue growth for the most recent reported quarter, vs. the same quarter a year ago (Yahoo Finance).",
     }
     return defs
 
@@ -828,10 +873,40 @@ def settings_dialog():
     vstop_length = v1.number_input("11. VStop length", min_value=2, step=1, value=int(settings["vstop_length"]), key="set_vstop_length")
     vstop_factor = v2.number_input("12. VStop ATR factor", min_value=0.1, step=0.1, format="%.1f", value=float(settings["vstop_factor"]), key="set_vstop_factor")
 
-    st.markdown("**Benchmarks**")
-    b1, b2 = st.columns(2)
-    benchmark_us = b1.text_input("13. US benchmark ticker", value=settings["benchmark_us"], key="set_bench_us")
-    benchmark_india = b2.text_input("14. India benchmark ticker", value=settings["benchmark_india"], key="set_bench_india")
+    st.markdown("**Watchlists**")
+    st.caption(
+        "Each watchlist's benchmark ticker and display label, plus adding a new watchlist. Renaming a "
+        "label is always safe (nothing else changes). Deleting an existing watchlist isn't available "
+        "here by design -- it's a deliberate, code-level-only action, not a clickable button."
+    )
+    from stock_data import load_markets_registry, save_markets_registry, add_watchlist
+
+    markets_registry = load_markets_registry()
+    for mkey, minfo in list(markets_registry.items()):
+        mc1, mc2 = st.columns(2)
+        new_mlabel = mc1.text_input(f"Label ({mkey})", value=minfo["label"], key=f"mkt_label_{mkey}")
+        new_mbench = mc2.text_input(f"Benchmark ticker ({mkey})", value=minfo["benchmark"], key=f"mkt_bench_{mkey}")
+        if new_mlabel.strip() and new_mlabel.strip() != minfo["label"]:
+            markets_registry[mkey]["label"] = new_mlabel.strip()
+            save_markets_registry(markets_registry)
+            st.rerun()
+        if new_mbench.strip() and new_mbench.strip() != minfo["benchmark"]:
+            markets_registry[mkey]["benchmark"] = new_mbench.strip()
+            save_markets_registry(markets_registry)
+            st.rerun()
+
+    st.markdown("➕ **Add Watchlist**")
+    aw1, aw2, aw3 = st.columns([2, 2, 1])
+    new_wl_label = aw1.text_input("Label", key="new_watchlist_label", placeholder="e.g. UK Watchlist")
+    new_wl_bench = aw2.text_input("Benchmark ticker", key="new_watchlist_bench", placeholder="e.g. ^FTSE")
+    aw3.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+    if aw3.button("Add", key="add_watchlist_btn"):
+        if not new_wl_label.strip() or not new_wl_bench.strip():
+            st.error("Both a label and a benchmark ticker are required.")
+        else:
+            add_watchlist(new_wl_label.strip(), new_wl_bench.strip())
+            st.success(f"Added \"{new_wl_label.strip()}\".")
+            st.rerun()
 
     st.markdown("**Trend column** (Strong Uptrend / Uptrend / Downtrend / Strong Downtrend)")
     st.caption(
@@ -903,8 +978,6 @@ def settings_dialog():
             st.error("Weekly EMA periods must be increasing: fast < medium < slow.")
         elif not (new_daily[0] < new_daily[1] < new_daily[2]):
             st.error("Daily EMA periods must be increasing: fast < medium < slow.")
-        elif not benchmark_us.strip() or not benchmark_india.strip():
-            st.error("Benchmark tickers can't be empty.")
         else:
             save_settings({
                 "ema_weekly": new_weekly,
@@ -915,8 +988,6 @@ def settings_dialog():
                 "rs_lookback_monthly": int(rs_monthly),
                 "vstop_length": int(vstop_length),
                 "vstop_factor": float(vstop_factor),
-                "benchmark_us": benchmark_us.strip().upper(),
-                "benchmark_india": benchmark_india.strip(),
                 "trend_slope_lookback": int(trend_slope_lookback),
                 "trend_near_high_low_pct": float(trend_near_pct),
                 "trend_volume_ratio": float(trend_vol_ratio),
@@ -982,9 +1053,10 @@ def settings_dialog():
 
 
 def render_watchlist_editor(market, watchlists):
-    from stock_data import load_invested_weights, save_invested_weights
+    from stock_data import load_invested_weights, save_invested_weights, load_markets_registry
     import pandas as pd
-    
+
+    market_label = load_markets_registry().get(market, {}).get("label", market)
     tickers = watchlists.get(market, [])
     st.caption(f"{len(tickers)} tickers")
     
@@ -1009,7 +1081,7 @@ def render_watchlist_editor(market, watchlists):
         hide_index=True,
         column_config={
             "Ticker": st.column_config.TextColumn(
-                "Ticker" if market == "US" else "Ticker (needs .NS/.BO)", 
+                "Ticker" if market == "US" else ("Ticker (needs .NS/.BO)" if market == "INDIA" else "Ticker (as recognized by Yahoo Finance)"),
                 required=True
             ),
             "Invested": st.column_config.CheckboxColumn("Invested"),
@@ -1017,7 +1089,7 @@ def render_watchlist_editor(market, watchlists):
         }
     )
     
-    if st.button(f"Save {market} Watchlist", type="primary"):
+    if st.button(f"Save {market_label}", type="primary", key=f"save_watchlist_{market}"):
         new_tickers = []
         for idx, row in edited_df.iterrows():
             t = str(row["Ticker"]).strip().upper()
@@ -1220,9 +1292,14 @@ def build_column_defs(labels, custom_columns=None):
         ("net_volume_10d_dir", "Net Vol 10D"),
         ("tech_uptrend_label", "Tech Uptrend"),
         ("fundamentals", "Sentiment"),
+        ("qtr_profit_growth", "Qtr Profit Growth %"),
+        ("qtr_revenue_growth", "Qtr Revenue Growth %"),
         ("avg_volume_10d", "Vol 10D"),
         ("avg_volume_100d", "Vol 100D"),
     ]
+    from stock_data import load_settings
+    if not load_settings().get("show_fundamental_columns", True):
+        optional_defs = [(k, lbl) for k, lbl in optional_defs if k not in FUNDAMENTAL_COLUMN_KEYS]
     for col in (custom_columns if custom_columns is not None else load_custom_columns()):
         if col.get("enabled", True):
             optional_defs.append((column_key(col), col["name"]))
@@ -1349,7 +1426,9 @@ def render_shared_column_picker(labels):
     st.session_state[SHARED_ORDER_KEY] = [k for k in st.session_state[SHARED_ORDER_KEY] if k in label_by_key]
 
     # Ensure 'fundamentals' column is present in active order if missing
-    if "fundamentals" not in st.session_state[SHARED_ORDER_KEY]:
+    # (skipped entirely when fundamental columns are toggled off, since it
+    # won't be in label_by_key in that case -- nothing to force back in).
+    if "fundamentals" in label_by_key and "fundamentals" not in st.session_state[SHARED_ORDER_KEY]:
         if "tech_uptrend_label" in st.session_state[SHARED_ORDER_KEY]:
             idx = st.session_state[SHARED_ORDER_KEY].index("tech_uptrend_label")
             st.session_state[SHARED_ORDER_KEY].insert(idx + 1, "fundamentals")
@@ -1363,6 +1442,19 @@ def render_shared_column_picker(labels):
             "Saved to column_prefs.json -- push it via the Alert Rules tab's GitHub button "
             "to make this layout show up on the deployed app too."
         )
+        from stock_data import load_settings, save_settings
+        fund_settings = load_settings()
+        show_fundamentals = st.checkbox(
+            "Show fundamental columns (Sentiment, Qtr Profit/Revenue Growth %)",
+            value=fund_settings.get("show_fundamental_columns", True),
+            key="show_fundamental_columns_toggle",
+            help="Turn off to hide all fundamental-data columns at once, instead of unchecking them individually below.",
+        )
+        if show_fundamentals != fund_settings.get("show_fundamental_columns", True):
+            fund_settings["show_fundamental_columns"] = show_fundamentals
+            save_settings(fund_settings)
+            st.rerun()
+
         current_labels = [label_by_key[k] for k in st.session_state[SHARED_ORDER_KEY] if k in label_by_key]
         visible_labels = st.multiselect(
             "Columns to show", options=all_labels, default=current_labels
@@ -1536,7 +1628,7 @@ def render_ticker_notes_manager():
     Notes column, plus the flag color prepended to the ticker symbol
     itself, via flag_marker_html)."""
     watchlists = load_watchlists()
-    all_tickers = sorted(set(watchlists.get("US", []) + watchlists.get("INDIA", [])))
+    all_tickers = sorted(set(t for tickers in watchlists.values() for t in tickers))
     if not all_tickers:
         return
 
@@ -2386,7 +2478,7 @@ if st.session_state.refresh_token == 0:
         as_of = snapshot["as_of"]
         # Filter the snapshot to only include the tickers currently in the watchlist
         filtered_per_market = {}
-        for mkt in MARKETS:
+        for mkt in watchlists_now.keys():
             wl = set(watchlists_now.get(mkt, []))
             filtered_per_market[mkt] = [r for r in snapshot["per_market"].get(mkt, []) if r.get("ticker") in wl]
         per_market = filtered_per_market
@@ -2425,25 +2517,59 @@ for _market_rows in per_market.values():
 
 source_label = "daily snapshot" if using_snapshot else "live fetch"
 st.sidebar.caption(f"Data as of: {as_of} ({source_label})")
-st.sidebar.caption(f"US: {len(per_market.get('US', []))} · India: {len(per_market.get('INDIA', []))}")
+markets_registry_now = load_markets_registry()
+st.sidebar.caption(
+    " · ".join(
+        f"{markets_registry_now.get(mkt, {}).get('label', mkt)}: {len(per_market.get(mkt, []))}"
+        for mkt in markets_registry_now.keys()
+    )
+)
 
 shared_visible_keys, shared_label_by_key, shared_sort_field, shared_sort_ascending = render_shared_column_picker(
     ema_col_labels(settings_now)
 )
 
-tab_us, tab_india, tab_news, tab_alerts = st.tabs(["US Watchlist", "India Watchlist", "News", "Alert Rules"])
-
-with tab_us:
-    render_market_tab(
-        "US", per_market.get("US", []), settings_now, shared_visible_keys, shared_label_by_key,
-        shared_sort_field, shared_sort_ascending,
+# Prominent, upfront dashboard controls -- shortcuts to settings that
+# otherwise require opening a sidebar expander or the Settings dialog.
+# These read/write the exact same settings.json / markets.json as those
+# other locations, so all access points always stay in sync.
+dash1, dash2 = st.columns([1, 3])
+with dash1:
+    dash_show_fundamentals = st.checkbox(
+        "Show fundamental columns",
+        value=settings_now.get("show_fundamental_columns", True),
+        key="dash_show_fundamental_columns_toggle",
+        help="Sentiment, Qtr Profit/Revenue Growth %. Same setting as the toggle in the column picker.",
     )
+    if dash_show_fundamentals != settings_now.get("show_fundamental_columns", True):
+        settings_now["show_fundamental_columns"] = dash_show_fundamentals
+        save_settings(settings_now)
+        st.rerun()
+with dash2:
+    with st.popover("➕ Add Watchlist"):
+        dash_wl_label = st.text_input("Label", key="dash_new_watchlist_label", placeholder="e.g. UK Watchlist")
+        dash_wl_bench = st.text_input("Benchmark ticker", key="dash_new_watchlist_bench", placeholder="e.g. ^FTSE")
+        if st.button("Add", key="dash_add_watchlist_btn"):
+            if not dash_wl_label.strip() or not dash_wl_bench.strip():
+                st.error("Both a label and a benchmark ticker are required.")
+            else:
+                from stock_data import add_watchlist as _dash_add_watchlist
+                _dash_add_watchlist(dash_wl_label.strip(), dash_wl_bench.strip())
+                st.success(f"Added \"{dash_wl_label.strip()}\".")
+                st.rerun()
 
-with tab_india:
-    render_market_tab(
-        "INDIA", per_market.get("INDIA", []), settings_now, shared_visible_keys, shared_label_by_key,
-        shared_sort_field, shared_sort_ascending,
-    )
+market_keys_now = list(markets_registry_now.keys())
+market_tab_labels = [markets_registry_now[mkt]["label"] for mkt in market_keys_now]
+all_tabs = st.tabs(market_tab_labels + ["News", "Alert Rules"])
+market_tabs = dict(zip(market_keys_now, all_tabs[:-2]))
+tab_news, tab_alerts = all_tabs[-2], all_tabs[-1]
+
+for mkt in market_keys_now:
+    with market_tabs[mkt]:
+        render_market_tab(
+            mkt, per_market.get(mkt, []), settings_now, shared_visible_keys, shared_label_by_key,
+            shared_sort_field, shared_sort_ascending,
+        )
 
 with tab_news:
     st.subheader("Market Breadth & Performance")
@@ -2846,11 +2972,11 @@ with tab_news:
         )
     else:
         st.caption(f"As of {news_data.get('as_of', '—')}")
-        for market in ("US", "INDIA"):
+        for market in market_keys_now:
             entry = news_data.get("markets", {}).get(market)
             if not entry:
                 continue
-            st.markdown(f"### {MARKET_LABELS.get(market, market)}")
+            st.markdown(f"### {markets_registry_now.get(market, {}).get('label', MARKET_LABELS.get(market, market))}")
             st.markdown(entry.get("summary", "_No summary available._"))
             sources = entry.get("sources") or []
             if sources:
@@ -2872,8 +2998,8 @@ with tab_alerts:
         "rules and previewing what would fire right now."
     )
 
-    combined_tickers = watchlists_now.get("US", []) + watchlists_now.get("INDIA", [])
-    combined_results = per_market.get("US", []) + per_market.get("INDIA", [])
+    combined_tickers = [t for mkt in market_keys_now for t in watchlists_now.get(mkt, [])]
+    combined_results = [r for mkt in market_keys_now for r in per_market.get(mkt, [])]
     filterable_metrics_alert = get_all_filterable_metrics(settings_now)
     metric_names_alert = list(filterable_metrics_alert.keys())
     metric_labels_alert = {v: k for k, v in filterable_metrics_alert.items()}
@@ -2887,7 +3013,9 @@ with tab_alerts:
         st.session_state.draft_rule_conditions = []
 
     top1, top2 = st.columns([2, 3])
-    scope_options = ["All watchlist", "US watchlist", "India watchlist"] + combined_tickers
+    market_scope_label_to_key = {f"{markets_registry_now[mkt]['label']} watchlist": mkt for mkt in market_keys_now}
+    market_scope_key_to_label = {v: k for k, v in market_scope_label_to_key.items()}
+    scope_options = ["All watchlist"] + list(market_scope_label_to_key.keys()) + combined_tickers
     scope_choice = top1.selectbox("Scope", scope_options, key="rule_scope")
     rule_name = top2.text_input("Name (optional)", key="rule_name", placeholder="e.g. Stage 2 breakout")
 
@@ -2954,10 +3082,8 @@ with tab_alerts:
         else:
             if scope_choice == "All watchlist":
                 scope_val = "ALL"
-            elif scope_choice == "US watchlist":
-                scope_val = "US"
-            elif scope_choice == "India watchlist":
-                scope_val = "INDIA"
+            elif scope_choice in market_scope_label_to_key:
+                scope_val = market_scope_label_to_key[scope_choice]
             else:
                 scope_val = scope_choice
             if dr_alert_mode == "Scheduled Discord alert":
@@ -2988,7 +3114,7 @@ with tab_alerts:
         st.info("No rules yet — add one above.")
     else:
         for rule in rules:
-            scope_label = SCOPE_LABELS.get(rule.get("scope"), rule.get("scope"))
+            scope_label = {"ALL": "All watchlist", **market_scope_key_to_label}.get(rule.get("scope"), rule.get("scope"))
             name_label = rule.get("name") or "(unnamed)"
             n_conds = len(rule.get("conditions", []))
             sched_summary = describe_schedule(rule)
@@ -2999,7 +3125,7 @@ with tab_alerts:
                     st.write(describe_chain(rule["conditions"], metric_labels_alert))
                 else:
                     st.warning("This rule has no conditions (from an older rule format) — delete it and re-add with the current builder.")
-                if rule.get("scope") not in ("ALL", "US", "INDIA"):
+                if rule.get("scope") != "ALL" and rule.get("scope") not in market_scope_key_to_label:
                     st.markdown(f"Ticker: [{rule['scope']}]({tradingview_url(rule['scope'])})")
 
                 en_col, del_col = st.columns([1, 1])
@@ -3016,8 +3142,8 @@ with tab_alerts:
                 st.markdown("**Name & scope**")
                 nm_col, sc_col = st.columns([2, 2])
                 edit_name = nm_col.text_input("Name", value=rule.get("name", ""), key=f"nm_{rule['id']}")
-                scope_label_map = {"ALL": "All watchlist", "US": "US watchlist", "INDIA": "India watchlist"}
-                scope_edit_options = ["All watchlist", "US watchlist", "India watchlist"] + combined_tickers
+                scope_label_map = {"ALL": "All watchlist", **market_scope_key_to_label}
+                scope_edit_options = ["All watchlist"] + list(market_scope_label_to_key.keys()) + combined_tickers
                 current_scope_label = scope_label_map.get(rule.get("scope"), rule.get("scope"))
                 if current_scope_label not in scope_edit_options:
                     scope_edit_options = [current_scope_label] + scope_edit_options
@@ -3028,10 +3154,8 @@ with tab_alerts:
                 if st.button("Save name/scope", key=f"nmsc_save_{rule['id']}"):
                     if edit_scope_label == "All watchlist":
                         edit_scope_val = "ALL"
-                    elif edit_scope_label == "US watchlist":
-                        edit_scope_val = "US"
-                    elif edit_scope_label == "India watchlist":
-                        edit_scope_val = "INDIA"
+                    elif edit_scope_label in market_scope_label_to_key:
+                        edit_scope_val = market_scope_label_to_key[edit_scope_label]
                     else:
                         edit_scope_val = edit_scope_label
                     rule["name"] = edit_name.strip()
