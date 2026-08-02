@@ -24,13 +24,13 @@ from stock_data import load_watchlists, load_settings, fetch_all_markets, save_d
 def main():
     watchlists = load_watchlists()
     settings = load_settings()
-    total = len(watchlists.get("US", [])) + len(watchlists.get("INDIA", []))
+    total = sum(len(v) for v in watchlists.values())
     if total == 0:
         print("Watchlist is empty. Nothing to refresh.")
         return
 
-    print(f"Fetching {total} tickers ({len(watchlists.get('US', []))} US + "
-          f"{len(watchlists.get('INDIA', []))} India)...")
+    breakdown = " + ".join(f"{len(tks)} {mkt}" for mkt, tks in watchlists.items())
+    print(f"Fetching {total} tickers ({breakdown})...")
     combined, as_of, per_market = fetch_all_markets(watchlists, settings=settings)
     save_data_snapshot(as_of, per_market, settings=settings)
     print(f"Saved data_snapshot.json (as_of {as_of}, {len(combined)} rows).")

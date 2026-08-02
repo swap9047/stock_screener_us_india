@@ -47,7 +47,8 @@ def main():
 
     settings = load_settings()
     combined, as_of, per_market = fetch_all_markets(settings=settings)
-    print(f"Checking {len(due_rules)} rule(s) (of {len(all_rules)} total) against {len(per_market['US'])} US + {len(per_market['INDIA'])} India tickers...")
+    breakdown = " + ".join(f"{len(rows)} {mkt}" for mkt, rows in per_market.items())
+    print(f"Checking {len(due_rules)} rule(s) (of {len(all_rules)} total) against {breakdown} tickers...")
 
     metric_labels = {v: k for k, v in get_filterable_metrics(settings).items()}
     state = load_state()
