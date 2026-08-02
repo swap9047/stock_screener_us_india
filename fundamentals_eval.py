@@ -23,10 +23,12 @@ def _generate_with_timeout(client, model, contents, config, timeout=120):
             raise TimeoutError(f"API call to {model} timed out after {timeout}s")
 
 def fetch_fundamental_news(client, ticker, market, company_name, is_retry=False):
+    from stock_data import get_exchange_label
+
     as_of_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     window = SEARCH_WINDOW_DAYS.get(market, SEARCH_WINDOW_DAYS["US"])
     cutoff_date = (datetime.now(timezone.utc) - timedelta(days=window)).strftime("%Y-%m-%d")
-    exchange = "NSE/BSE-listed" if market == "INDIA" else "US-listed"
+    exchange = get_exchange_label(market)
     
     bare = ticker.rsplit(".", 1)[0] if ticker.endswith(".NS") or ticker.endswith(".BO") else ticker
     name = f"{company_name} ({bare})" if company_name and company_name != ticker else bare

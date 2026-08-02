@@ -46,6 +46,7 @@ GITHUB_API = "https://api.github.com"
 # (local filename, human label) for every config file this app can push.
 SYNCABLE_FILES = [
     ("watchlist.json", "Watchlist (tickers per market)"),
+    ("markets.json", "Markets registry (labels, benchmarks per watchlist)"),
     ("invested.json", "Invested positions and weights"),
     ("custom_filters.json", "Custom filters (per market)"),
     ("settings.json", "Calculation settings"),

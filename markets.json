@@ -1,0 +1,10 @@
+{
+  "US": {
+    "label": "US Watchlist",
+    "benchmark": "SPY"
+  },
+  "INDIA": {
+    "label": "India Watchlist",
+    "benchmark": "^CRSLDX"
+  }
+}

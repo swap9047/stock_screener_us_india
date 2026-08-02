@@ -96,23 +96,24 @@ def _normalize_conditions(val):
 
 
 def load_custom_filters():
-    """Returns {"US": [condition, ...], "INDIA": [condition, ...]}."""
+    """Returns {market_key: [condition, ...]} for every registered market
+    (see stock_data.load_markets_registry()), plus any additional keys
+    already present in the raw JSON -- defensive union, not a hardcoded
+    "US"/"INDIA" whitelist, so a newly added market's filters are never
+    silently dropped."""
+    from stock_data import load_markets_registry
+    registry_keys = set(load_markets_registry().keys())
     if not os.path.exists(CUSTOM_FILTERS_FILE):
-        return {"US": [], "INDIA": []}
+        return {k: [] for k in registry_keys}
     with open(CUSTOM_FILTERS_FILE) as f:
         data = json.load(f)
-    return {
-        "US": _normalize_conditions(data.get("US", [])),
-        "INDIA": _normalize_conditions(data.get("INDIA", [])),
-    }
+    all_keys = registry_keys | set(data.keys())
+    return {k: _normalize_conditions(data.get(k, [])) for k in all_keys}
 
 
 def save_custom_filters(all_filters):
     with open(CUSTOM_FILTERS_FILE, "w") as f:
-        json.dump({
-            "US": all_filters.get("US", []),
-            "INDIA": all_filters.get("INDIA", []),
-        }, f, indent=2)
+        json.dump(all_filters, f, indent=2)
 
 
 def get_market_filters(market):
