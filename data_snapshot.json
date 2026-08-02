@@ -1,6 +1,6 @@
 {
-  "as_of": "2026-08-02 18:04",
-  "generated_at": "2026-08-02T18:04:34.048335+00:00",
+  "as_of": "2026-08-02 20:20",
+  "generated_at": "2026-08-02T20:20:56.426751+00:00",
   "per_market": {
     "INDIA": [
       {
@@ -4118,11 +4118,11 @@
     "US": [
       {
         "ticker": "TWST",
-        "company_name": "Twist Bioscience Corporation",
+        "company_name": "TWST",
         "last_close": 91.6,
         "pct_change_1d": 0.24,
         "qtr_profit_growth": null,
-        "qtr_revenue_growth": 19.3,
+        "qtr_revenue_growth": null,
         "data_start": "2021-08-02",
         "data_end": "2026-07-31",
         "data_end_age_days": 2,
