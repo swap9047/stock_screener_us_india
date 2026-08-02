@@ -1425,15 +1425,23 @@ def render_shared_column_picker(labels):
     # or removes a column) so stale saved state can't crash the lookup below.
     st.session_state[SHARED_ORDER_KEY] = [k for k in st.session_state[SHARED_ORDER_KEY] if k in label_by_key]
 
-    # Ensure 'fundamentals' column is present in active order if missing
-    # (skipped entirely when fundamental columns are toggled off, since it
-    # won't be in label_by_key in that case -- nothing to force back in).
-    if "fundamentals" in label_by_key and "fundamentals" not in st.session_state[SHARED_ORDER_KEY]:
-        if "tech_uptrend_label" in st.session_state[SHARED_ORDER_KEY]:
-            idx = st.session_state[SHARED_ORDER_KEY].index("tech_uptrend_label")
-            st.session_state[SHARED_ORDER_KEY].insert(idx + 1, "fundamentals")
-        else:
-            st.session_state[SHARED_ORDER_KEY].append("fundamentals")
+    # Ensure every fundamental column (Sentiment, Qtr Profit/Revenue Growth %)
+    # is present in the active order if missing -- e.g. a saved
+    # column_prefs.json from before these columns existed, or before the
+    # "Show fundamental columns" toggle was last turned on, would otherwise
+    # never surface them even though they're now available in label_by_key.
+    # Skipped for any key currently toggled off (it won't be in label_by_key
+    # in that case -- nothing to force back in).
+    inserted = False
+    for fund_key in FUNDAMENTAL_COLUMN_KEYS:
+        if fund_key in label_by_key and fund_key not in st.session_state[SHARED_ORDER_KEY]:
+            if "tech_uptrend_label" in st.session_state[SHARED_ORDER_KEY]:
+                idx = st.session_state[SHARED_ORDER_KEY].index("tech_uptrend_label")
+                st.session_state[SHARED_ORDER_KEY].insert(idx + 1, fund_key)
+            else:
+                st.session_state[SHARED_ORDER_KEY].append(fund_key)
+            inserted = True
+    if inserted:
         save_column_prefs(st.session_state[SHARED_ORDER_KEY])
 
     with st.sidebar.expander("Columns to show / reorder", expanded=False):
