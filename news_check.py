@@ -36,12 +36,12 @@ def main():
         sys.exit(1)
 
     watchlists = load_watchlists()
-    if not watchlists.get("US") and not watchlists.get("INDIA"):
-        print("Both watchlists are empty. Nothing to summarize.")
+    if not any(watchlists.values()):
+        print("All watchlists are empty. Nothing to summarize.")
         return
 
-    print(f"Building news summary for {len(watchlists.get('US', []))} US + "
-          f"{len(watchlists.get('INDIA', []))} India tickers via Gemini grounded search...")
+    breakdown = " + ".join(f"{len(tks)} {mkt}" for mkt, tks in watchlists.items())
+    print(f"Building news summary for {breakdown} tickers via Gemini grounded search...")
     news_data = build_news_summary(watchlists, api_key)
     save_news_summary(news_data)
     print(f"Saved news_summary.json (as_of {news_data['as_of']}).")
