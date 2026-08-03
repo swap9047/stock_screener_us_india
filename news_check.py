@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """
 Scheduled news digest checker. Meant to run once daily (GitHub Actions,
-7:00 AM ET, before market open) -- independent of the alert checker.
+8:00 PM ET, after market close) -- independent of the alert checker.
 
 Uses Gemini (Google Search grounding) to build a single collated summary
 of important news/announcements/major stock moves in the last 24 hours for
-each watchlist (US, India), then sends both to Discord and saves the result
-to news_summary.json (which the Streamlit app's News tab reads).
+each watchlist in scope (controlled by news_watchlist_scope in settings.json;
+empty = all markets), then sends to Discord and saves to news_summary.json
+(which the Streamlit app's News tab reads).
 
 Config/env (same folder):
     watchlist.json        - {"US": [...], "INDIA": [...]}
+    settings.json         - includes news_watchlist_scope (which watchlists to run)
     GEMINI_API_KEY (env)  - Gemini API key (GitHub Actions repo secret)
     DISCORD_WEBHOOK_URL (env) - Discord webhook (same secret alert_check.py uses)
     news_summary.json     - auto-managed output, read by the app's News tab

@@ -107,6 +107,11 @@ DEFAULT_SETTINGS = {
     "sentiment_reasoning_model": "models/gemini-3.5-flash-lite",
     "sentiment_thinking_budget": 8192,
 
+    # -- News scope (which watchlist keys to include in news generation) --
+    # Empty list = all registered markets (backward-compatible default).
+    # Set to e.g. ["US"] to restrict the daily digest to one watchlist only.
+    "news_watchlist_scope": [],
+
     # -- Fundamental columns (Sentiment, Qtr Profit/Revenue Growth %, etc.) --
     "show_fundamental_columns": True,
 }

@@ -15,6 +15,10 @@ Perplexity-Finance-style digest built with a 3-stage hybrid architecture:
 
 Batch size is set to 8 (26 US tickers -> 4 batches, 47 India tickers -> 6 batches =
 10 grounded search calls/day total, well under the 20 RPD cap for gemini-2.5-flash).
+
+News is generated once/day at 8:00 PM ET via GitHub Actions (news-summary.yml).
+The watchlist scope (which markets to include) is controlled by the
+``news_watchlist_scope`` key in settings.json (empty list = all markets).
 """
 
 import json
@@ -254,12 +258,27 @@ def collate_market_summary(client, market, batch_texts, as_of_date=None, model=R
 
 
 def build_news_summary(watchlists, api_key, batch_size=BATCH_SIZE):
-    """Runs the 3-stage pipeline for both markets. Returns a dict:
+    """Runs the 3-stage pipeline for every market in `watchlists`, respecting
+    the ``news_watchlist_scope`` setting (empty = all markets). Returns a dict:
     {"as_of": ISO date, "generated_at": ISO datetime, "markets": {"US": {...}, "INDIA": {...}}}"""
     from google import genai
     from stock_data import load_settings
-    
+
     settings = load_settings()
+
+    # Scope filtering: if the user has selected specific watchlists for news,
+    # restrict processing to those keys only. Empty list = all markets.
+    scope = settings.get("news_watchlist_scope", [])
+    if scope:
+        watchlists = {k: v for k, v in watchlists.items() if k in scope}
+        if not watchlists:
+            print(f"[news] news_watchlist_scope={scope} but none of those keys exist in the watchlist. Nothing to process.")
+            return {
+                "as_of": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "markets": {},
+            }
+
     search_model = settings.get("news_search_model", SEARCH_MODEL)
     reasoning_model = settings.get("news_reasoning_model", REASONING_MODEL)
     if reasoning_model == "gemini-3.5-flash-lite":

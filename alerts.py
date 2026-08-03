@@ -404,19 +404,34 @@ def _ascii_table(headers, rows):
 
 def build_discord_messages_for_rule(rule, tickers, snapshot_by_ticker, metric_labels, limit=1900):
     """Builds one or more Discord-ready messages for a single rule: a
-    monospace table with Ticker as the first column, then one column per
-    metric referenced in the rule's conditions with that ticker's current
-    value. Splits into multiple messages (repeating the header) if the full
-    table would exceed Discord's ~2000-char limit. Returns [] if `tickers`
-    is empty."""
+    monospace table with Ticker as the first column, then a Watchlist column
+    for ALL-scope rules (so recipients see which market each ticker belongs
+    to at a glance), then one column per metric referenced in the rule's
+    conditions with that ticker's current value. Splits into multiple messages
+    (repeating the header) if the full table would exceed Discord's ~2000-char
+    limit. Returns [] if `tickers` is empty."""
     if not tickers:
         return []
+
+    # For ALL-scope rules, inject a Watchlist column so it's clear which
+    # market each ticker belongs to (especially when US and India tickers
+    # share similar names or are both in the same fired-rule batch).
+    include_watchlist_col = rule.get("scope") == "ALL"
+    if include_watchlist_col:
+        from stock_data import load_markets_registry
+        registry = load_markets_registry()
+
     metrics = _metrics_used_in_conditions(rule.get("conditions", []))
-    headers = ["Ticker"] + [metric_labels.get(m, m) for m in metrics]
+    headers = ["Ticker"] + (["Watchlist"] if include_watchlist_col else []) + [metric_labels.get(m, m) for m in metrics]
     all_rows = []
     for t in tickers:
         row = snapshot_by_ticker.get(t, {})
-        all_rows.append([t] + [_format_cell(m, row.get(m)) for m in metrics])
+        if include_watchlist_col:
+            mkey = row.get("market", "")
+            wl_label = registry.get(mkey, {}).get("label", mkey)
+            all_rows.append([t, wl_label] + [_format_cell(m, row.get(m)) for m in metrics])
+        else:
+            all_rows.append([t] + [_format_cell(m, row.get(m)) for m in metrics])
 
     name = rule.get("name") or "(unnamed)"
     scope_label = _scope_label(rule.get("scope"))
