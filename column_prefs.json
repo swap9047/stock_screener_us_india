@@ -4,6 +4,8 @@
     "pct_change_1d",
     "trend",
     "tech_uptrend_label",
+    "qtr_profit_growth",
+    "qtr_revenue_growth",
     "fundamentals",
     "vstop_change",
     "volume_trend",
