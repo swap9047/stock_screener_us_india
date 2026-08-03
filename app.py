@@ -1052,6 +1052,42 @@ def settings_dialog():
         )
 
 
+def _apply_watchlist_tickers(market, market_label, existing_tickers, candidate_tickers, invested_weights):
+    """Validates `candidate_tickers` against Yahoo Finance (skipping
+    tickers already known-valid in `existing_tickers`), saves the
+    watchlist + invested weights, pushes to GitHub if configured, and
+    reruns. Shared by the manual per-row editor's Save button and the
+    bulk-upload handler so both go through the exact same validate/save/
+    push sequence instead of duplicating it."""
+    with st.spinner("Validating new tickers..."):
+        valid_tickers = []
+        for t in candidate_tickers:
+            if t in existing_tickers:  # Already known to be valid
+                valid_tickers.append(t)
+            elif validate_ticker(t):
+                valid_tickers.append(t)
+            else:
+                st.error(f"'{t}' doesn't return any price data from Yahoo Finance — dropping it.")
+                invested_weights.pop(t, None)
+
+    save_watchlist(market, valid_tickers)
+    save_invested_weights(invested_weights)
+    st.session_state.refresh_token += 1
+    st.success(f"Saved {market_label} with {len(valid_tickers)} tickers.")
+
+    gh_token, gh_repo, gh_branch = get_github_config(st.secrets)
+    if gh_token and gh_repo:
+        with st.spinner("Pushing watchlist to GitHub..."):
+            ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=["watchlist.json", "invested.json"], message=f"Update {market_label}")
+            if ok:
+                st.success("Successfully pushed to GitHub!")
+            else:
+                st.error(f"Failed to push to GitHub: {msg}")
+
+    time.sleep(1)
+    st.rerun()
+
+
 def render_watchlist_editor(market, watchlists):
     from stock_data import load_invested_weights, save_invested_weights, load_markets_registry
     import pandas as pd
@@ -1059,9 +1095,56 @@ def render_watchlist_editor(market, watchlists):
     market_label = load_markets_registry().get(market, {}).get("label", market)
     tickers = watchlists.get(market, [])
     st.caption(f"{len(tickers)} tickers")
-    
+
     invested_weights = load_invested_weights()
-    
+
+    with st.expander("⬆️ Bulk add tickers (.csv or .txt)", expanded=False):
+        st.caption(
+            "One ticker per line, or comma-separated. For a CSV, put tickers in a column named "
+            "'Ticker' (or the first column if there's no header). New tickers are added to the "
+            "existing watchlist -- nothing gets removed."
+        )
+        uploaded = st.file_uploader(
+            "Upload file", type=["csv", "txt"], key=f"bulk_upload_{market}", label_visibility="collapsed",
+        )
+        if uploaded is not None:
+            raw_tickers = []
+            try:
+                if uploaded.name.lower().endswith(".csv"):
+                    up_df = pd.read_csv(uploaded)
+                    col = next((c for c in up_df.columns if str(c).strip().lower() == "ticker"), up_df.columns[0])
+                    raw_tickers = up_df[col].astype(str).tolist()
+                else:
+                    text = uploaded.read().decode("utf-8", errors="ignore")
+                    raw_tickers = [line for line in text.replace(",", "\n").splitlines() if line.strip()]
+            except Exception as e:
+                st.error(f"Couldn't read the uploaded file: {e}")
+
+            cleaned = []
+            for t in raw_tickers:
+                t = str(t).strip().upper()
+                if t and t != "NAN" and t not in cleaned:
+                    cleaned.append(t)
+
+            new_from_upload = [t for t in cleaned if t not in tickers]
+            already_present = len(cleaned) - len(new_from_upload)
+
+            if not cleaned:
+                st.warning("No tickers found in the uploaded file.")
+            else:
+                st.write(
+                    f"Found {len(cleaned)} ticker(s) in the file: {len(new_from_upload)} new, "
+                    f"{already_present} already in the watchlist."
+                )
+                if st.button(
+                    f"Add {len(new_from_upload)} new ticker(s)",
+                    key=f"bulk_add_confirm_{market}",
+                    disabled=not new_from_upload,
+                    type="primary",
+                ):
+                    merged = tickers + new_from_upload
+                    _apply_watchlist_tickers(market, market_label, tickers, merged, invested_weights)
+
     data = []
     for t in tickers:
         data.append({
@@ -1108,34 +1191,8 @@ def render_watchlist_editor(market, watchlists):
                 invested_weights[t] = w
             else:
                 invested_weights.pop(t, None)
-                
-        with st.spinner("Validating new tickers..."):
-            valid_tickers = []
-            for t in new_tickers:
-                if t in tickers: # Already known to be valid
-                    valid_tickers.append(t)
-                elif validate_ticker(t):
-                    valid_tickers.append(t)
-                else:
-                    st.error(f"'{t}' doesn't return any price data from Yahoo Finance — dropping it.")
-                    invested_weights.pop(t, None)
-                    
-        save_watchlist(market, valid_tickers)
-        save_invested_weights(invested_weights)
-        st.session_state.refresh_token += 1
-        st.success(f"Saved {market} watchlist with {len(valid_tickers)} tickers.")
-        
-        gh_token, gh_repo, gh_branch = get_github_config(st.secrets)
-        if gh_token and gh_repo:
-            with st.spinner("Pushing watchlist to GitHub..."):
-                ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=["watchlist.json", "invested.json"], message=f"Update {market} watchlist")
-                if ok:
-                    st.success("Successfully pushed to GitHub!")
-                else:
-                    st.error(f"Failed to push to GitHub: {msg}")
-                    
-        time.sleep(1)
-        st.rerun()
+
+        _apply_watchlist_tickers(market, market_label, tickers, new_tickers, invested_weights)
 
 
 def render_condition_builder(key_prefix, metric_names, filterable_metrics, logic_choice):
@@ -2351,6 +2408,45 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         df.columns = ["Ticker", "Company Name", "Last"] + [label_by_key[k] for k in visible_keys]
         if "Trend" in df.columns:
             df["Trend"] = df["Trend"].fillna("—")
+
+        # CSV export built straight from `filtered` (plain values, pre-HTML)
+        # rather than scraping raw_df's with_tooltip()-wrapped cells -- those
+        # mix the visible label and the tooltip explanation in one HTML
+        # string, so reversing that reliably would mean re-deriving each
+        # column's plain value anyway. Every key here is already a plain
+        # field on the row dict (flag/note/expert_take are attached earlier
+        # in this function; trend/tech_uptrend/etc. come straight from
+        # stock_data.py) except Sentiment and Alerts, which get the exact
+        # same one-line lookups _fundamentals_cell/the alert-matching loop
+        # above already use, minus the badge/tooltip formatting.
+        def _export_value(r, key):
+            if key == "tech_uptrend_label":
+                return "Yes" if r.get("tech_uptrend") else "No"
+            if key == "vstop_change":
+                return vstop_change_str(r)
+            if key == "fundamentals":
+                v = fundamentals.get(r["ticker"], {})
+                return v.get("sentiment", "Unknown")
+            if key == "matched_alerts":
+                return ", ".join(str(n) for n in sorted(alert_matches.get(r["ticker"], [])))
+            return r.get(key)
+
+        export_df = pd.DataFrame([
+            {
+                "Ticker": r["ticker"],
+                "Company Name": r.get("company_name", ""),
+                "Last": r.get("last_close"),
+                **{label_by_key[k]: _export_value(r, k) for k in visible_keys},
+            }
+            for r in filtered
+        ])
+        st.download_button(
+            "⬇ Download table (CSV)",
+            data=export_df.to_csv(index=False),
+            file_name=f"{market}_watchlist_{date.today()}.csv",
+            mime="text/csv",
+            key=f"download_csv_{market}",
+        )
 
         price_cs = [c for c in price_cols(labels) if c in df.columns]
         ratio_cs = [c for c in ratio_cols() if c in df.columns]
