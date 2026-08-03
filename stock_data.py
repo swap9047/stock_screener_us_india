@@ -662,17 +662,19 @@ def _download_with_retries(all_tickers, period, attempts=3, timeout=90, wait=30)
     or silently proceeding with partial/no data."""
     last_exc = None
     for attempt in range(1, attempts + 1):
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(
-                yf.download, all_tickers, period=period, interval="1d",
-                group_by="ticker", auto_adjust=True, progress=False, threads=True,
-            )
-            try:
-                return future.result(timeout=timeout)
-            except concurrent.futures.TimeoutError:
-                last_exc = TimeoutError(f"yf.download timed out after {timeout}s (attempt {attempt}/{attempts})")
-            except Exception as e:
-                last_exc = e
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(
+            yf.download, all_tickers, period=period, interval="1d",
+            group_by="ticker", auto_adjust=True, progress=False, threads=True,
+        )
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            last_exc = TimeoutError(f"yf.download timed out after {timeout}s (attempt {attempt}/{attempts})")
+        except Exception as e:
+            last_exc = e
+        finally:
+            executor.shutdown(wait=False)
         print(f"  [yf.download attempt {attempt}/{attempts} failed] {last_exc}")
         if attempt < attempts:
             time.sleep(wait)
