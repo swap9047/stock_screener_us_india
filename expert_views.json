@@ -1,1 +1,101 @@
-{}
+{
+  "AKAM": {
+    "verdict": "CAUTION",
+    "headline": "AKAM Triggers Caution Signals Due to Ongoing Downtrend and Distribution Pressure",
+    "technical_summary": "AKAM remains in a structural downtrend with a downward-sloping VStop held for 7 weeks and negative 10-day net volume (-17.8%). While trading above its rising 40 WEMA, weak Mansfield Relative Strength and declining volume trends reflect a lack of immediate institutional accumulation.",
+    "catalyst_summary": "BofA analysts issued a 'Buy' rating with a $175 price target, and Q2 2026 earnings are scheduled to be released after the market close on August 6, 2026.",
+    "actionable_take": "Exercise caution and avoid initiating new long positions until the technical trend improves and VStop flips upward. Await the Q2 earnings release and a clear volume accumulation phase before re-evaluating the stock for an entry.",
+    "as_of": "2026-08-03 19:22",
+    "news_used": "**Analyst Ratings & News**\n* **Aug 3, 2026:** BofA analysts Tal Liani and Trevor Dodds issued \"Buy\" ratings for AKAM with a $175 price target.\n\n**Upcoming Catalysts**\n* **Aug 6, 2026:** Q2 2026 earnings release (after market close) and investor conference call (4:30 PM ET).",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "AMKR": {
+    "verdict": "CAUTION",
+    "headline": "AMKR exhibits a confirmed downtrend, heavy distribution, and a recent downgrade, demanding caution.",
+    "technical_summary": "AMKR remains in a Stage 4 downtrend, trading well below its 40-week and 200-day EMAs with a downward VStop. Volume trends are exploding on the downside, supported by a heavy net distribution ratio of -38.1% over the last 10 days.",
+    "catalyst_summary": "The stock was recently downgraded from 'Very Strong' to 'Strong' by Stock Grader, reinforcing the fragile fundamental and technical backdrop.",
+    "actionable_take": "Avoid initiating new long positions and consider protecting capital by tightening trailing stops or exiting lagging holdings. Wait for a complete structural reversal, positive relative strength, and clear institutional accumulation before re-engaging.",
+    "as_of": "2026-08-03 19:23",
+    "news_used": "* **2026-08-03:** Downgraded from \"Very Strong\" to \"Strong\" (Stock Grader).",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "ASX": {
+    "verdict": "HOLD",
+    "headline": "ASX maintains intermediate uptrend despite short-term VStop pullback and minor distribution.",
+    "technical_summary": "The stock remains above its rising 40 WEMA, but a recent VStop flip to down and a -9.1% 10-day net volume ratio indicate near-term distribution and consolidation. Momentum indicators like daily RSI at 47.2 show a neutral short-term bias.",
+    "catalyst_summary": "No material news found; verdict based on technicals only.",
+    "actionable_take": "Hold current positions while monitoring the rising 40 WEMA as the ultimate trend filter. Avoid new buying until the VStop flips back to up and volume accumulation resumes.",
+    "as_of": "2026-08-03 19:24",
+    "news_used": "No recent news found.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "UFBL.NS": {
+    "verdict": "ACCUMULATE",
+    "headline": "Robust Stage 2 uptrend supported by strong relative strength and positive momentum.",
+    "technical_summary": "The stock trades firmly above key rising moving averages with a VStop pointing upward for 25 weeks. While 10-day volume is currently below the 100-day average, net 10-day volume remains positive, indicating ongoing institutional sponsorship.",
+    "catalyst_summary": "Upcoming financial results and earnings call scheduled for August 4, 2026; no material negative news found.",
+    "actionable_take": "Accumulate positions on minor pullbacks toward the 620-690 support zone while utilizing the weekly VStop level of 646.6 as a strict trailing stop-loss.",
+    "as_of": "2026-08-03 19:27",
+    "news_used": "**Upcoming Catalysts**\n* **2026-08-04:** Board meeting to review and approve unaudited standalone and consolidated financial results for the quarter ended June 30, 2026.\n* **2026-08-04:** Earnings conference call scheduled for 5:00 PM IST.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "VISHNU.NS": {
+    "verdict": "ACCUMULATE",
+    "headline": "Strong uptrend supported by exploding volume and positive relative strength.",
+    "technical_summary": "The stock exhibits a robust technical uptrend with price comfortably above rising weekly and daily EMAs. Volume is exploding with positive net accumulation (32% ratio), and the weekly VStop has remained solidly in an uptrend for 77 weeks.",
+    "catalyst_summary": "No material news found; verdict based on technicals only.",
+    "actionable_take": "Look to accumulate near current levels or minor pullbacks toward the 10 DEMA, utilizing the weekly VStop level of 543.7 as a strict trailing stop.",
+    "as_of": "2026-08-03 19:28",
+    "news_used": "No material news or upcoming catalysts were found for Vishnu Chemicals Limited (VISHNU) for the specified period.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "BLUEJET.NS": {
+    "verdict": "ACCUMULATE",
+    "headline": "Blue Jet Healthcare exhibits a robust technical uptrend backed by exploding volume accumulation.",
+    "technical_summary": "The stock maintains a strong structural uptrend, comfortably trading above its rising 40-week and 50-day moving averages. Volume is expanding significantly with positive net accumulation, while the weekly RSI at 64.4 and a well-established VStop trend indicate healthy momentum without being overextended.",
+    "catalyst_summary": "No material news found; verdict based on technicals only.",
+    "actionable_take": "Look to accumulate on minor intraday pullbacks toward the 10 DEMA near 595. Maintain a strict trailing stop aligned with the Volatility Stop level at 517.9 to manage downside risk.",
+    "as_of": "2026-08-03 19:28",
+    "news_used": "No material news or upcoming catalysts were found for Blue Jet Healthcare Limited (BLUEJET) between 2026-08-02 and 2026-08-03.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "ADVENZYMES.NS": {
+    "verdict": "CAUTION",
+    "headline": "Stock remains in a structural downtrend with VStop pointing down despite upcoming buyback catalysts.",
+    "technical_summary": "The stock is currently in a Downtrend, trading below its key 40 WEMA and 50 DEMA with negative Mansfield Relative Strength. Although 10-day net volume shows some positive accumulation, the VStop is firmly down at 370.5 and technical uptrend criteria are not met.",
+    "catalyst_summary": "Upcoming board meeting to consider Q1FY26 results and a share buyback proposal, alongside a board rejig and an analyst target of \u20b9370, offer potential fundamental support.",
+    "actionable_take": "Exercise caution and avoid fresh accumulation until the trend reverses and price reclaims the 40 WEMA. Watch the upcoming board meeting for buyback details as a potential catalyst for a structural turnaround.",
+    "as_of": "2026-08-03 19:29",
+    "news_used": "- **Aug 03, 2026**: Board rejig; Mukund Madhusudan Kabra re-appointed as Whole-Time Director; Pradip Bhailal Shah appointed as Independent Director.\n- **Aug 03, 2026**: Analyst price target of \u20b9370.00.\n- **Aug 08, 2026**: Upcoming board meeting to approve Q1FY26 financial results and share buyback proposal.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "ANLON.NS": {
+    "verdict": "CAUTION",
+    "headline": "ANLON faces near-term headwinds with a recent VStop flip and heavy volume distribution.",
+    "technical_summary": "While the broader trend remains classed as an uptrend above the rising 40 WEMA, the Volatility Stop has flipped to down and 10-day net volume shows heavy distribution (-31.3%), accompanied by declining volume trends and soft daily momentum (RSI 40.4).",
+    "catalyst_summary": "No material news found; verdict based on technicals only.",
+    "actionable_take": "Investors should avoid new long entries while distribution and downside momentum persist. Consider tightening stops if already holding, and wait for volume accumulation to return and VStop to reclaim an upward trajectory before re-engaging.",
+    "as_of": "2026-08-03 19:29",
+    "news_used": "No material news found for ANLON (ANLON.NS, 0P0001QAIM, 6000) between 2026-08-02 and 2026-08-03.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "AYE.NS": {
+    "verdict": "HOLD",
+    "headline": "Volume accumulation is strong, but formal trend confirmation is lacking for new entries.",
+    "technical_summary": "Price holds above short-term EMAs with exploding 10-day volume and positive accumulation (72.6% ratio), but lacks full uptrend confirmation and key long-term moving average metrics. RSI remains neutral across daily and weekly timeframes.",
+    "catalyst_summary": "No material news found; verdict based on technicals only.",
+    "actionable_take": "Wait for a confirmed technical uptrend and clearer structural alignment before deploying capital. Monitor pullbacks toward the 10-day or 50-day EMA around 161-167 for relative strength, and maintain strict risk controls below recent swing lows.",
+    "as_of": "2026-08-03 19:29",
+    "news_used": "I have conducted a thorough search for material information regarding AYE FINANCE LIMITED (AYE) for the specified period (2026-08-02 to 2026-08-03) and the immediate upcoming window.\n\nNo material news, analyst ratings, upgrades/downgrades, press releases, or upcoming catalysts were found for this period.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
+  }
+}
