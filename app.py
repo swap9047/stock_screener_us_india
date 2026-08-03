@@ -1202,6 +1202,7 @@ def render_watchlist_editor(market, watchlists):
         df,
         num_rows="dynamic",
         width="stretch",
+        key=f"watchlist_editor_{market}",
         hide_index=True,
         column_config={
             "Ticker": st.column_config.TextColumn(
