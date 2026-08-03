@@ -1,5 +1,5 @@
 """
-Shared calculation logic for the WEMA/RSI/RS watchlist tools.
+Shared calculation logic for the WSMA/RSI/RS watchlist tools.
 Used by app.py (Streamlit dashboard) and alert_check.py (scheduled
 Discord alert checker).
 
@@ -13,8 +13,8 @@ Watchlists are segregated by market:
 
 Metrics computed per ticker, matching the reference chart's Fast/Medium/Slow
 EMA settings (Daily: 10/50/200, Weekly: 10/20/40):
-  - EMA10 / EMA20 / EMA40  (weekly closes)
-  - EMA10 / EMA50 / EMA200 (daily closes)
+  - SMA10 / SMA20 / SMA40  (weekly closes)
+  - SMA10 / SMA50 / SMA200 (daily closes)
   - RSI(14) on daily, weekly, AND monthly closes
   - Mansfield Relative Strength (RSM), on daily / weekly / monthly closes,
     vs the market benchmark, matching the "Mansfield" RS Mode config:
@@ -73,8 +73,8 @@ VSTOP_LENGTH = 20
 VSTOP_FACTOR = 2
 
 DEFAULT_SETTINGS = {
-    "ema_weekly": [10, 20, 40],   # weekly EMA fast/mid/slow periods
-    "ema_daily": [10, 50, 200],   # daily EMA fast/mid/slow periods
+    "ema_weekly": [10, 20, 40],   # weekly SMA fast/mid/slow periods
+    "ema_daily": [10, 50, 200],   # daily SMA fast/mid/slow periods
     "rsi_period": 14,
     "rs_lookback_daily": RS_LOOKBACK_DAILY,
     "rs_lookback_weekly": RS_LOOKBACK_WEEKLY,
@@ -84,7 +84,7 @@ DEFAULT_SETTINGS = {
     "benchmark_us": BENCHMARKS["US"],
     "benchmark_india": BENCHMARKS["INDIA"],
     # -- Trend column (Strong Uptrend/Uptrend/Downtrend/Strong Downtrend) --
-    "trend_slope_lookback": 3,   # weeks used for the slow WEMA's regression slope
+    "trend_slope_lookback": 3,   # weeks used for the slow WSMA's regression slope
     "trend_near_high_low_pct": 0.10,   # "Strong" requires price within this % of the 52w high/low
     "trend_volume_ratio": 1.0,   # "Strong" requires avg_volume_10d / avg_volume_100d >= this
     # -- Vol Trend column (Exploding/In-line/Declining) -- independent of Trend/Tech Uptrend --
@@ -106,6 +106,8 @@ DEFAULT_SETTINGS = {
     # -- Sentiment Pipeline Defaults --
     "sentiment_reasoning_model": "models/gemini-3.5-flash-lite",
     "sentiment_thinking_budget": 8192,
+
+    "note_dropdown_options": "",
 
     # -- News scope (which watchlist keys to include in news generation) --
     # Empty list = all registered markets (backward-compatible default).
@@ -269,19 +271,19 @@ def get_benchmark_display(market):
 
 def get_filterable_metrics(settings=None):
     """Metrics available for the custom filter builder (label -> field name).
-    Labels for the EMA rows embed the currently configured period, so they
+    Labels for the SMA rows embed the currently configured period, so they
     stay accurate when the user edits Settings."""
     settings = settings or load_settings()
     w_fast, w_mid, w_slow = settings["ema_weekly"]
     d_fast, d_mid, d_slow = settings["ema_daily"]
     return {
         "Last Close": "last_close",
-        f"{w_fast} WEMA": "ema10",
-        f"{w_mid} WEMA": "ema20",
-        f"{w_slow} WEMA": "ema40",
-        f"{d_fast} DEMA": "ema10_daily",
-        f"{d_mid} DEMA": "ema50",
-        f"{d_slow} DEMA": "ema200",
+        f"{w_fast} WSMA": "ema10",
+        f"{w_mid} WSMA": "ema20",
+        f"{w_slow} WSMA": "ema40",
+        f"{d_fast} DSMA": "ema10_daily",
+        f"{d_mid} DSMA": "ema50",
+        f"{d_slow} DSMA": "ema200",
         "RSI-D": "rsi14_daily",
         "RSI-W": "rsi14_weekly",
         "RSI-M": "rsi14_monthly",
@@ -539,11 +541,11 @@ def compute_trend(last_close, ema_slow_series, rs_weekly, week52_high, week52_lo
     Direction (up vs down) is a hard AND across up to 4 conditions --
     "Uptrend" requires ALL of the following that are evaluable (no partial
     credit, no majority vote):
-      1. price above the slow WEMA
-      2. the WEMA's own regression slope over `slope_lookback` weeks is
+      1. price above the slow WSMA
+      2. the WSMA's own regression slope over `slope_lookback` weeks is
          rising (a least-squares fit, not a raw two-point diff -- see note
          below)
-      3. fast WEMA above slow WEMA (e.g. 10 WEMA > 40 WEMA) -- moving-average
+      3. fast WSMA above slow WSMA (e.g. 10 WSMA > 40 WSMA) -- moving-average
          alignment, required whenever `ema_fast` is supplied
       4. Mansfield RS vs the benchmark is positive, if available
     "Downtrend" is the mirror image (all 4 conditions bearish). Any mixed
@@ -566,7 +568,7 @@ def compute_trend(last_close, ema_slow_series, rs_weekly, week52_high, week52_lo
     the similarly-shaped ratios used by the Vol Trend and Tech Uptrend
     columns (see DEFAULT_SETTINGS), so tuning one never moves the others.
 
-    Using a regression slope (not a 2-point endpoint diff) for the WEMA
+    Using a regression slope (not a 2-point endpoint diff) for the WSMA
     direction matters for volatile movers: a violent spike-and-fade (e.g. a
     short squeeze) keeps a longer-window endpoint diff positive for weeks
     after the MA has already turned down, since the old spike still
@@ -724,6 +726,31 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
             # same quarter last year) -- returned as decimals (0.278 = 27.8%).
             earnings_growth = info.get("earningsQuarterlyGrowth")
             revenue_growth = info.get("revenueGrowth")
+            
+            trailing_pe = info.get("trailingPE")
+            forward_pe = info.get("forwardPE")
+            pb_ratio = info.get("priceToBook")
+            ev_ebitda = info.get("enterpriseToEbitda")
+            
+            p_cashflow = None
+            market_cap = info.get("marketCap") or info.get("nonDilutedMarketCap")
+            ocf = info.get("operatingCashflow")
+            if market_cap and ocf and ocf != 0:
+                p_cashflow = round(market_cap / ocf, 2)
+            
+            reported_qtr = None
+            mrq_ts = info.get("mostRecentQuarter")
+            if mrq_ts:
+                dt = datetime.fromtimestamp(mrq_ts)
+                m, y = dt.month, dt.year
+                if t.endswith(".NS") or t.endswith(".BO"):
+                    q = "Q1" if m in (4, 5, 6) else "Q2" if m in (7, 8, 9) else "Q3" if m in (10, 11, 12) else "Q4"
+                    fy = y if m > 3 else y - 1
+                    reported_qtr = f"{q} FY{str(fy + 1)[-2:]}"
+                else:
+                    q = "Q1" if m in (1, 2, 3) else "Q2" if m in (4, 5, 6) else "Q3" if m in (7, 8, 9) else "Q4"
+                    reported_qtr = f"{q} {y}"
+                    
             if earnings_growth is not None:
                 qtr_profit_growth = round(earnings_growth * 100, 1)
             if revenue_growth is not None:
@@ -756,16 +783,16 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 if pd.notna(rsi14_monthly_series.iloc[-1]):
                     rsi14_monthly = round(float(rsi14_monthly_series.iloc[-1]), 1)
 
-            # Weekly EMAs (fast/mid/slow, e.g. 10/20/40)
+            # Weekly SMAs (fast/mid/slow, e.g. 10/20/40)
             ema10 = ema20 = ema40 = None
             crossed_below_10 = crossed_below_40 = False
             crossed_above_10 = crossed_above_40 = False
             ema40_series = None
 
             if len(weekly) >= w_slow + 1:
-                ema10_series = weekly["Close"].ewm(span=w_fast, adjust=False).mean()
-                ema20_series = weekly["Close"].ewm(span=w_mid, adjust=False).mean()
-                ema40_series = weekly["Close"].ewm(span=w_slow, adjust=False).mean()
+                ema10_series = weekly["Close"].rolling(window=w_fast, min_periods=1).mean()
+                ema20_series = weekly["Close"].rolling(window=w_mid, min_periods=1).mean()
+                ema40_series = weekly["Close"].rolling(window=w_slow, min_periods=1).mean()
 
                 last_close_w = weekly["Close"].iloc[-1]
                 prev_close_w = weekly["Close"].iloc[-2]
@@ -782,33 +809,33 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 crossed_above_10 = bool(prev_close_w < prev_ema10 and last_close_w >= ema10)
                 crossed_above_40 = bool(prev_close_w < prev_ema40 and last_close_w >= ema40)
             elif len(weekly) >= w_mid + 1:
-                ema10_series = weekly["Close"].ewm(span=w_fast, adjust=False).mean()
-                ema20_series = weekly["Close"].ewm(span=w_mid, adjust=False).mean()
+                ema10_series = weekly["Close"].rolling(window=w_fast, min_periods=1).mean()
+                ema20_series = weekly["Close"].rolling(window=w_mid, min_periods=1).mean()
                 ema10 = round(float(ema10_series.iloc[-1]), 1)
                 ema20 = round(float(ema20_series.iloc[-1]), 1)
 
-            # Daily EMAs (fast/mid/slow, e.g. 10/50/200)
+            # Daily SMAs (fast/mid/slow, e.g. 10/50/200)
             ema10_daily = ema50 = ema200 = None
             crossed_below_10_daily = crossed_above_10_daily = False
             crossed_below_50 = crossed_above_50 = False
             crossed_below_200 = crossed_above_200 = False
 
             if len(daily_close) >= d_fast + 1:
-                ema10_daily_series = daily_close.ewm(span=d_fast, adjust=False).mean()
+                ema10_daily_series = daily_close.rolling(window=d_fast, min_periods=1).mean()
                 ema10_daily = round(float(ema10_daily_series.iloc[-1]), 1)
                 prev_close_d0 = daily_close.iloc[-2]
                 prev_ema10_daily = ema10_daily_series.iloc[-2]
                 crossed_below_10_daily = bool(prev_close_d0 >= prev_ema10_daily and daily_close.iloc[-1] < ema10_daily)
                 crossed_above_10_daily = bool(prev_close_d0 < prev_ema10_daily and daily_close.iloc[-1] >= ema10_daily)
             if len(daily_close) >= d_mid + 1:
-                ema50_series = daily_close.ewm(span=d_mid, adjust=False).mean()
+                ema50_series = daily_close.rolling(window=d_mid, min_periods=1).mean()
                 ema50 = round(float(ema50_series.iloc[-1]), 1)
                 prev_close_d = daily_close.iloc[-2]
                 prev_ema50 = ema50_series.iloc[-2]
                 crossed_below_50 = bool(prev_close_d >= prev_ema50 and daily_close.iloc[-1] < ema50)
                 crossed_above_50 = bool(prev_close_d < prev_ema50 and daily_close.iloc[-1] >= ema50)
             if len(daily_close) >= d_slow + 1:
-                ema200_series = daily_close.ewm(span=d_slow, adjust=False).mean()
+                ema200_series = daily_close.rolling(window=d_slow, min_periods=1).mean()
                 ema200 = round(float(ema200_series.iloc[-1]), 1)
                 prev_close_d2 = daily_close.iloc[-2]
                 prev_ema200 = ema200_series.iloc[-2]
@@ -898,7 +925,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 )
 
             # Tech Uptrend: close > weekly VStop (in an uptrend that's held for
-            # a while) + close above the slow weekly WEMA + volume surging.
+            # a while) + close above the slow weekly WSMA + volume surging.
             # Uses its OWN volume ratio (tech_uptrend_volume_ratio) -- independent
             # of Vol Trend's "Exploding" ratio above, even though both default to
             # the same 1.4x, so tuning one column never moves the other.
@@ -924,6 +951,13 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 "pct_change_1d": pct_change_1d,
                 "qtr_profit_growth": qtr_profit_growth,
                 "qtr_revenue_growth": qtr_revenue_growth,
+                "trailing_pe": trailing_pe,
+                "forward_pe": forward_pe,
+                "pb_ratio": pb_ratio,
+                "ev_ebitda": ev_ebitda,
+                "p_cashflow": p_cashflow,
+                "reported_qtr": reported_qtr,
+                "last_price": last_close,
                 "data_start": data_start,
                 "data_end": data_end,
                 "data_end_age_days": data_end_age_days,
@@ -1034,7 +1068,7 @@ def save_data_snapshot(as_of, per_market, settings=None):
     can load it directly instead of hitting yfinance live on every session
     -- meant to be called once/day by the scheduled data-refresh workflow
     (see refresh_data.py), not by the app itself. Stores the settings used
-    to compute it too, so the app can detect a settings change (EMA
+    to compute it too, so the app can detect a settings change (SMA
     lengths, thresholds, etc.) since the snapshot ran and fall back to a
     live fetch instead of showing data computed with stale parameters."""
     from datetime import timezone
@@ -1061,7 +1095,7 @@ def snapshot_is_usable(snapshot, watchlists, settings):
     """True if `snapshot` can be shown as-is: it has a row for every ticker
     currently in `watchlists` (for every market), AND it was computed with
     the same settings as `settings`. If someone added a ticker since the
-    last scheduled refresh, or changed a calc parameter (EMA length, RSI
+    last scheduled refresh, or changed a calc parameter (SMA length, RSI
     threshold, etc.) in the Settings dialog, the snapshot no longer
     reflects reality -- the app should fall back to a live fetch rather
     than silently show stale/incomplete data until tomorrow's 7 AM run."""

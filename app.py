@@ -19,10 +19,10 @@ Tabs:
                         fire right now, and sending a test Discord message.
 
 Each market tab also has a custom filter builder: compare any metric against
-another metric or a fixed value (e.g. "10 WEMA > 40 WEMA", "200 DEMA >= 200"),
+another metric or a fixed value (e.g. "10 WSMA > 40 WSMA", "200 DSMA >= 200"),
 combined with AND logic alongside the preset Above/Below/range filters.
 
-Sidebar "Settings" opens a dialog where every calculation parameter (EMA
+Sidebar "Settings" opens a dialog where every calculation parameter (SMA
 periods, RSI period, RS lookbacks, VStop length/factor, benchmarks) can be
 edited -- changes are saved to settings.json and take effect on next refresh
 -- plus a "Login (optional)" section to set/change/disable the username and
@@ -396,13 +396,13 @@ def clear_auth_credentials_local():
 
 
 def ema_col_labels(settings):
-    """Column-header labels for the 6 EMA slots, reflecting the currently
-    configured periods (e.g. {'w_fast': '10 WEMA', ...})."""
+    """Column-header labels for the 6 SMA slots, reflecting the currently
+    configured periods (e.g. {'w_fast': '10 WSMA', ...})."""
     wf, wm, ws = settings["ema_weekly"]
     df_, dm, ds = settings["ema_daily"]
     return {
-        "w_fast": f"{wf} WEMA", "w_mid": f"{wm} WEMA", "w_slow": f"{ws} WEMA",
-        "d_fast": f"{df_} DEMA", "d_mid": f"{dm} DEMA", "d_slow": f"{ds} DEMA",
+        "w_fast": f"{wf} WSMA", "w_mid": f"{wm} WSMA", "w_slow": f"{ws} WSMA",
+        "d_fast": f"{df_} DSMA", "d_mid": f"{dm} DSMA", "d_slow": f"{ds} DSMA",
     }
 
 
@@ -633,7 +633,7 @@ def price_cols(ema_labels):
 def ratio_cols():
     """Oscillator/ratio columns -- kept at 1 decimal (whole numbers would
     lose meaningful resolution for RSI/RS reads)."""
-    return ["RSI-D", "RSI-W", "RSI-M", "RS-D", "RS-W", "RS-M"]
+    return ["RSI-D", "RSI-W", "RSI-M", "RS-D", "RS-W", "RS-M", "P/E (TTM)", "P/E (Fwd)", "P/B", "EV/EBITDA", "P/Cashflow"]
 
 
 VOLUME_COLS = ["Vol 10D", "Vol 100D"]
@@ -642,7 +642,7 @@ PCT_COLS = ["% Chg", "Qtr Profit Growth %", "Qtr Revenue Growth %"]
 # Column keys considered "fundamental" (company financials/valuation, as
 # opposed to technical/price-derived) -- hideable as a group via the
 # "Show fundamental columns" toggle, independent of the per-column picker.
-FUNDAMENTAL_COLUMN_KEYS = {"fundamentals", "qtr_profit_growth", "qtr_revenue_growth"}
+FUNDAMENTAL_COLUMN_KEYS = {"fundamentals", "qtr_profit_growth", "qtr_revenue_growth", "trailing_pe", "forward_pe", "pb_ratio", "ev_ebitda", "p_cashflow", "reported_qtr"}
 
 
 LINK_COLUMN_CONFIG = {
@@ -725,12 +725,12 @@ def column_definitions(settings, labels):
     defs = {
         "Ticker": "Click to open this symbol's chart on TradingView.",
         "Last": "Most recent daily closing price.",
-        labels["w_fast"]: f"Weekly EMA, fast period ({settings['ema_weekly'][0]} weeks).",
-        labels["w_mid"]: f"Weekly EMA, medium period ({settings['ema_weekly'][1]} weeks).",
-        labels["w_slow"]: f"Weekly EMA, slow period ({settings['ema_weekly'][2]} weeks). The 'slow WEMA' referenced by Trend and Tech Uptrend.",
-        labels["d_fast"]: f"Daily EMA, fast period ({settings['ema_daily'][0]} days).",
-        labels["d_mid"]: f"Daily EMA, medium period ({settings['ema_daily'][1]} days).",
-        labels["d_slow"]: f"Daily EMA, slow period ({settings['ema_daily'][2]} days).",
+        labels["w_fast"]: f"Weekly SMA, fast period ({settings['ema_weekly'][0]} weeks).",
+        labels["w_mid"]: f"Weekly SMA, medium period ({settings['ema_weekly'][1]} weeks).",
+        labels["w_slow"]: f"Weekly SMA, slow period ({settings['ema_weekly'][2]} weeks). The 'slow WSMA' referenced by Trend and Tech Uptrend.",
+        labels["d_fast"]: f"Daily SMA, fast period ({settings['ema_daily'][0]} days).",
+        labels["d_mid"]: f"Daily SMA, medium period ({settings['ema_daily'][1]} days).",
+        labels["d_slow"]: f"Daily SMA, slow period ({settings['ema_daily'][2]} days).",
         "RSI-D": f"Daily RSI, {settings['rsi_period']}-period. ≤30 oversold, ≥70 overbought.",
         "RSI-W": f"Weekly RSI, {settings['rsi_period']}-period. ≤30 oversold, ≥70 overbought.",
         "RSI-M": f"Monthly RSI, {settings['rsi_period']}-period. ≤30 oversold, ≥70 overbought.",
@@ -742,8 +742,8 @@ def column_definitions(settings, labels):
         "VStop Weeks Ago": "Weeks since the weekly VStop last flipped direction.",
         "Trend": (
             "Strong Uptrend / Uptrend / Downtrend / Strong Downtrend. Uptrend requires ALL of: price above "
-            f"slow WEMA, slow WEMA slope rising over {settings.get('trend_slope_lookback', 3)} weeks, fast "
-            "WEMA above slow WEMA, and weekly RS positive (when available) -- no partial credit, anything "
+            f"slow WSMA, slow WSMA slope rising over {settings.get('trend_slope_lookback', 3)} weeks, fast "
+            "WSMA above slow WSMA, and weekly RS positive (when available) -- no partial credit, anything "
             "short of unanimous is Downtrend. Strong additionally needs price within "
             f"{settings.get('trend_near_high_low_pct', 0.10) * 100:.0f}% of the 52W high/low AND 10D avg "
             f"volume ≥ {settings.get('trend_volume_ratio', 1.0)}× the 100D avg. Hover a cell for the "
@@ -761,7 +761,7 @@ def column_definitions(settings, labels):
         ),
         "Tech Uptrend": (
             "Yes only if ALL of: close > weekly VStop, VStop held its direction for more than "
-            f"{settings.get('tech_uptrend_min_vstop_weeks', 3)} weeks, close > slow WEMA, and 10D avg volume "
+            f"{settings.get('tech_uptrend_min_vstop_weeks', 3)} weeks, close > slow WSMA, and 10D avg volume "
             f"≥ {settings.get('tech_uptrend_volume_ratio', 1.4)}× the 100D avg. Hover a cell for the "
             "per-condition breakdown."
         ),
@@ -778,6 +778,12 @@ def column_definitions(settings, labels):
         "Invested": "Whether this ticker is marked Invested in the watchlist editor's Invested/Weight table.",
         "Qtr Profit Growth %": "Year-over-year net income growth for the most recent reported quarter, vs. the same quarter a year ago (Yahoo Finance).",
         "Qtr Revenue Growth %": "Year-over-year revenue growth for the most recent reported quarter, vs. the same quarter a year ago (Yahoo Finance).",
+        "P/E (TTM)": "Trailing 12-month Price to Earnings ratio (Yahoo Finance).",
+        "P/E (Fwd)": "Forward Price to Earnings ratio based on analyst estimates for the next fiscal year (Yahoo Finance).",
+        "P/B": "Price to Book ratio (Yahoo Finance).",
+        "EV/EBITDA": "Enterprise Value to EBITDA ratio (Yahoo Finance).",
+        "P/Cashflow": "Calculated as Market Cap divided by Operating Cash Flow (Yahoo Finance).",
+        "Reported Qtr": "The most recent quarter for which the company reported earnings and revenue growth, mapped to the local financial year (Yahoo Finance).",
     }
     return defs
 
@@ -848,17 +854,17 @@ def settings_dialog():
         "Save applies immediately on your next Refresh Data."
     )
 
-    st.markdown("**Weekly EMA periods** (fast / medium / slow)")
+    st.markdown("**Weekly SMA periods** (fast / medium / slow)")
     w1, w2, w3 = st.columns(3)
-    ema_w_fast = w1.number_input("1. Weekly EMA fast", min_value=1, step=1, value=int(settings["ema_weekly"][0]), key="set_ema_w_fast")
-    ema_w_mid = w2.number_input("2. Weekly EMA medium", min_value=1, step=1, value=int(settings["ema_weekly"][1]), key="set_ema_w_mid")
-    ema_w_slow = w3.number_input("3. Weekly EMA slow", min_value=1, step=1, value=int(settings["ema_weekly"][2]), key="set_ema_w_slow")
+    ema_w_fast = w1.number_input("1. Weekly SMA fast", min_value=1, step=1, value=int(settings["ema_weekly"][0]), key="set_ema_w_fast")
+    ema_w_mid = w2.number_input("2. Weekly SMA medium", min_value=1, step=1, value=int(settings["ema_weekly"][1]), key="set_ema_w_mid")
+    ema_w_slow = w3.number_input("3. Weekly SMA slow", min_value=1, step=1, value=int(settings["ema_weekly"][2]), key="set_ema_w_slow")
 
-    st.markdown("**Daily EMA periods** (fast / medium / slow)")
+    st.markdown("**Daily SMA periods** (fast / medium / slow)")
     d1, d2, d3 = st.columns(3)
-    ema_d_fast = d1.number_input("4. Daily EMA fast", min_value=1, step=1, value=int(settings["ema_daily"][0]), key="set_ema_d_fast")
-    ema_d_mid = d2.number_input("5. Daily EMA medium", min_value=1, step=1, value=int(settings["ema_daily"][1]), key="set_ema_d_mid")
-    ema_d_slow = d3.number_input("6. Daily EMA slow", min_value=1, step=1, value=int(settings["ema_daily"][2]), key="set_ema_d_slow")
+    ema_d_fast = d1.number_input("4. Daily SMA fast", min_value=1, step=1, value=int(settings["ema_daily"][0]), key="set_ema_d_fast")
+    ema_d_mid = d2.number_input("5. Daily SMA medium", min_value=1, step=1, value=int(settings["ema_daily"][1]), key="set_ema_d_mid")
+    ema_d_slow = d3.number_input("6. Daily SMA slow", min_value=1, step=1, value=int(settings["ema_daily"][2]), key="set_ema_d_slow")
 
     st.markdown("**RSI**")
     rsi_period = st.number_input("7. RSI period", min_value=2, step=1, value=int(settings["rsi_period"]), key="set_rsi_period")
@@ -932,8 +938,8 @@ def settings_dialog():
 
     st.markdown("**Trend column** (Strong Uptrend / Uptrend / Downtrend / Strong Downtrend)")
     st.caption(
-        "Uptrend requires ALL of: price above slow WEMA, the WEMA's own slope rising, fast WEMA above "
-        "slow WEMA (e.g. 10 WEMA > 40 WEMA), and Mansfield RS positive (when available) — no partial "
+        "Uptrend requires ALL of: price above slow WSMA, the WSMA's own slope rising, fast WSMA above "
+        "slow WSMA (e.g. 10 WSMA > 40 WSMA), and Mansfield RS positive (when available) — no partial "
         "credit; anything short of unanimous is Downtrend. "
         "\"Strong\" additionally needs BOTH of the two thresholds below — parameters here only affect "
         "this column, independent of Vol Trend or Tech Uptrend."
@@ -942,9 +948,9 @@ def settings_dialog():
     trend_slope_lookback = tr1.number_input(
         "15. MA slope lookback (weeks)", min_value=2, step=1,
         value=int(settings.get("trend_slope_lookback", 3)), key="set_trend_slope",
-        help="Width of the regression window (in weeks) used to judge whether the slow WEMA is "
-             "currently rising or falling. Shorter = catches recent rollovers faster (can be "
-             "noisier); longer = smoother but slower to detect a real trend change.",
+        help="Width of the regression window (in weeks) used to judge whether the slow WSMA is "
+        "currently rising or falling. Shorter = catches recent rollovers faster (can be "
+        "noisier); longer = smoother but slower to detect a real trend change.",
     )
     trend_near_pct = tr2.number_input(
         "16. \"Strong\": within % of 52W high/low", min_value=0.0, max_value=1.0, step=0.01, format="%.2f",
@@ -981,7 +987,7 @@ def settings_dialog():
         "20. Min weeks held above VStop", min_value=0, step=1,
         value=int(settings.get("tech_uptrend_min_vstop_weeks", 3)), key="set_tech_min_weeks",
         help="Tech Uptrend requires the weekly VStop to have been in an uptrend for MORE than this "
-             "many weeks (in addition to close > VStop, close > slow WEMA, and the volume ratio below).",
+             "many weeks (in addition to close > VStop, close > slow WSMA, and the volume ratio below).",
     )
     tech_uptrend_vol_ratio = tu2.number_input(
         "21. Min 10D ÷ 100D vol ratio", min_value=1.0, step=0.1, format="%.2f",
@@ -991,15 +997,23 @@ def settings_dialog():
              "though both default to the same value.",
     )
 
+    st.markdown("**Ticker Notes**")
+    note_dropdown_options = st.text_input(
+        "22. Dropdown Options (comma-separated)",
+        value=settings.get("note_dropdown_options", ""),
+        key="set_note_opts",
+        help="If provided, the Ticker Notes field in the sidebar will become a dropdown menu with these specific values (along with a 'Custom...' option for free text)."
+    )
+
     st.divider()
     c1, c2 = st.columns(2)
     if c1.button("Save", type="primary", width="stretch"):
         new_weekly = [int(ema_w_fast), int(ema_w_mid), int(ema_w_slow)]
         new_daily = [int(ema_d_fast), int(ema_d_mid), int(ema_d_slow)]
         if not (new_weekly[0] < new_weekly[1] < new_weekly[2]):
-            st.error("Weekly EMA periods must be increasing: fast < medium < slow.")
+            st.error("Weekly SMA periods must be increasing: fast < medium < slow.")
         elif not (new_daily[0] < new_daily[1] < new_daily[2]):
-            st.error("Daily EMA periods must be increasing: fast < medium < slow.")
+            st.error("Daily SMA periods must be increasing: fast < medium < slow.")
         else:
             save_settings({
                 "ema_weekly": new_weekly,
@@ -1017,6 +1031,7 @@ def settings_dialog():
                 "volume_decline_ratio": float(volume_decline_ratio),
                 "tech_uptrend_min_vstop_weeks": int(tech_uptrend_min_vstop_weeks),
                 "tech_uptrend_volume_ratio": float(tech_uptrend_vol_ratio),
+                "note_dropdown_options": note_dropdown_options.strip(),
             })
             st.session_state.refresh_token += 1
             st.success("Settings saved.")
@@ -1395,6 +1410,12 @@ def build_column_defs(labels, custom_columns=None):
         ("fundamentals", "Sentiment"),
         ("qtr_profit_growth", "Qtr Profit Growth %"),
         ("qtr_revenue_growth", "Qtr Revenue Growth %"),
+        ("reported_qtr", "Reported Qtr"),
+        ("trailing_pe", "P/E (TTM)"),
+        ("forward_pe", "P/E (Fwd)"),
+        ("pb_ratio", "P/B"),
+        ("ev_ebitda", "EV/EBITDA"),
+        ("p_cashflow", "P/Cashflow"),
         ("avg_volume_10d", "Vol 10D"),
         ("avg_volume_100d", "Vol 100D"),
     ]
@@ -1571,8 +1592,9 @@ def render_shared_column_picker(labels):
             st.rerun()
 
         current_labels = [label_by_key[k] for k in st.session_state[SHARED_ORDER_KEY] if k in label_by_key]
+        multiselect_key = f"shared_col_multiselect_{hash(tuple(st.session_state[SHARED_ORDER_KEY]))}"
         visible_labels = st.multiselect(
-            "Columns to show", options=all_labels, default=current_labels
+            "Columns to show", options=all_labels, default=current_labels, key=multiselect_key
         )
         selected_keys = [key_by_label[lbl] for lbl in visible_labels if lbl in key_by_label]
 
@@ -1773,7 +1795,25 @@ def render_ticker_notes_manager():
             format_func=lambda f: f"{FLAG_EMOJI[f]} {f}" if f in FLAG_EMOJI else "(none)",
         )
         new_flag = "" if new_flag_choice == "(none)" else new_flag_choice
-        new_note = st.text_area("Note", value=current_note, key=f"tn_note_{picked}", height=80)
+        
+        note_opts_str = load_settings().get("note_dropdown_options", "").strip()
+        if note_opts_str:
+            options = [o.strip() for o in note_opts_str.split(",") if o.strip()]
+            options = [""] + options + ["Custom..."]
+            
+            if current_note and current_note not in options and current_note != "Custom...":
+                idx = options.index("Custom...")
+            else:
+                idx = options.index(current_note) if current_note in options else 0
+                
+            selected_note_opt = st.selectbox("Note Dropdown", options, index=idx, key=f"tn_note_sel_{picked}")
+            
+            if selected_note_opt == "Custom..." or (current_note and current_note not in options and current_note != "Custom..."):
+                new_note = st.text_area("Custom Note", value=current_note, key=f"tn_note_{picked}", height=80)
+            else:
+                new_note = selected_note_opt
+        else:
+            new_note = st.text_area("Note", value=current_note, key=f"tn_note_{picked}", height=80)
 
         scol1, scol2 = st.columns(2)
         if scol1.button("Save", key=f"tn_save_{picked}", width="stretch"):
@@ -2566,14 +2606,14 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
     st.caption(
         f"Mansfield RS = ((price/{bench} ratio today ÷ SMA of that ratio, n) − 1) × 100. "
         "Positive = outperforming the benchmark's trend, negative = underperforming. "
-        "WEMA = weekly EMA, DEMA = daily EMA. "
+        "WSMA = weekly EMA, DSMA = daily EMA. "
         f"VStop-W = weekly Volatility Stop (Wilder's ATR stop-and-reverse system, "
         f"length={settings['vstop_length']}, factor={settings['vstop_factor']}) — not independently "
         "cross-checked against your chart the way RS/RSI were, so compare a few readings before relying "
         "on it. Trend = a 4-level read (Strong Uptrend / Uptrend / Downtrend / Strong Downtrend). Uptrend "
-        "requires ALL of: price above the slow WEMA, that WEMA's "
-        f"{settings.get('trend_slope_lookback', 3)}-week slope rising, fast WEMA above slow WEMA (e.g. 10 "
-        "WEMA > 40 WEMA), and weekly RS positive (when available) — no partial credit, anything short of "
+        "requires ALL of: price above the slow WSMA, that WSMA's "
+        f"{settings.get('trend_slope_lookback', 3)}-week slope rising, fast WSMA above slow WSMA (e.g. 10 "
+        "WSMA > 40 WSMA), and weekly RS positive (when available) — no partial credit, anything short of "
         "unanimous is Downtrend. 'Strong' additionally requires price within "
         f"{settings.get('trend_near_high_low_pct', 0.10) * 100:.0f}% of its 52-week high/low AND 10D avg "
         f"volume ≥ {settings.get('trend_volume_ratio', 1.0)}× the 100D avg — its own parameters, "
@@ -2584,7 +2624,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         f"10D-vs-100D average volume as Exploding (≥{settings.get('volume_explode_ratio', 1.4)}×), "
         f"Declining (≤{settings.get('volume_decline_ratio', 0.7)}×), or In-line — thresholds editable in "
         "Settings. Tech Uptrend = close above the weekly VStop (held for more than "
-        f"{settings.get('tech_uptrend_min_vstop_weeks', 3)} weeks) AND close above the slow WEMA AND 10D "
+        f"{settings.get('tech_uptrend_min_vstop_weeks', 3)} weeks) AND close above the slow WSMA AND 10D "
         f"volume ≥ {settings.get('tech_uptrend_volume_ratio', 1.4)}× the 100D avg — its own volume ratio, "
         "independent of Vol Trend's Exploding ratio even though they default to the same value. All "
         "values shown to 1 decimal. Use 'Columns to show' above the table to hide/show columns. Edit any "
@@ -2907,7 +2947,7 @@ with tab_news:
         mask = (closes.index >= cutoff) & (valid_counts > 0)
         if not mask.any(): return None, None
         
-        df_ema = pd.DataFrame({"Date": closes.index[mask], "% Above 200d EMA": ema_series[mask]})
+        df_ema = pd.DataFrame({"Date": closes.index[mask], "% Above 200d SMA": ema_series[mask]})
         df_hl = pd.DataFrame({"Date": closes.index[mask], "% New Highs": high_series[mask], "% New Lows": low_series[mask]})
         return df_ema, df_hl
 
@@ -2917,7 +2957,7 @@ with tab_news:
         
         # EMA
         hist = market_data.get("history", {})
-        df_ema = pd.DataFrame(list(hist.items()), columns=["Date", "% Above 200d EMA"]) if hist else pd.DataFrame()
+        df_ema = pd.DataFrame(list(hist.items()), columns=["Date", "% Above 200d SMA"]) if hist else pd.DataFrame()
         if not df_ema.empty:
             df_ema["Date"] = pd.to_datetime(df_ema["Date"])
             df_ema = df_ema[df_ema["Date"] >= cutoff]
@@ -2984,8 +3024,8 @@ with tab_news:
         total_ind = breadth_data.get("markets", {}).get("INDIA", {}).get("total", "--")
         total_us = breadth_data.get("markets", {}).get("US", {}).get("total", "--")
             
-        title_ema_ind = f"Nifty 500: % Above 200-Day EMA (Current: {get_val(df_ema_ind, '% Above 200d EMA')}%, Captured: {total_ind}/501)"
-        title_ema_us = f"S&P 500: % Above 200-Day EMA (Current: {get_val(df_ema_us, '% Above 200d EMA')}%, Captured: {total_us}/503)"
+        title_ema_ind = f"Nifty 500: % Above 200-Day SMA (Current: {get_val(df_ema_ind, '% Above 200d SMA')}%, Captured: {total_ind}/501)"
+        title_ema_us = f"S&P 500: % Above 200-Day SMA (Current: {get_val(df_ema_us, '% Above 200d SMA')}%, Captured: {total_us}/503)"
         
         title_hl_ind = f"Nifty 500: 52-Week Highs vs Lows (Highs: {get_val(df_hl_ind, '% New Highs')}%, Lows: {get_val(df_hl_ind, '% New Lows')}%)"
         title_hl_us = f"S&P 500: 52-Week Highs vs Lows (Highs: {get_val(df_hl_us, '% New Highs')}%, Lows: {get_val(df_hl_us, '% New Lows')}%)"

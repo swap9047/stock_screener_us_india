@@ -84,8 +84,13 @@ jobs:
           git add data_snapshot.json
           if ! git diff --staged --quiet; then
             git commit -m "Update data_snapshot.json [automated]"
-            git pull --rebase origin main
-            git push origin main
+            for i in {1..5}; do
+              git fetch origin main
+              git rebase -X theirs origin/main && git push origin main && break || {
+                git rebase --abort 2>/dev/null || true
+                sleep 2
+              }
+            done
           else
             echo "No changes to commit"
           fi
