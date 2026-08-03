@@ -91,12 +91,14 @@ def batch_list(items, size):
 import concurrent.futures
 
 def _generate_with_timeout(client, model, contents, config, timeout=120):
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(client.models.generate_content, model=model, contents=contents, config=config)
-        try:
-            return future.result(timeout=timeout)
-        except concurrent.futures.TimeoutError:
-            raise TimeoutError(f"API call to {model} timed out after {timeout}s")
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(client.models.generate_content, model=model, contents=contents, config=config)
+    try:
+        return future.result(timeout=timeout)
+    except concurrent.futures.TimeoutError:
+        raise TimeoutError(f"API call to {model} timed out after {timeout}s")
+    finally:
+        executor.shutdown(wait=False)
 
 def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None, model=SEARCH_MODEL, is_retry=False):
     """Stage 1: Grounded search call. Fetches raw news
