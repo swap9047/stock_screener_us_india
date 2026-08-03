@@ -6,5 +6,9 @@
   "INDIA": {
     "label": "India Invested",
     "benchmark": "^CRSLDX"
+  },
+  "india_watchlist": {
+    "label": "India Watchlist",
+    "benchmark": "^CRSLDX"
   }
 }
