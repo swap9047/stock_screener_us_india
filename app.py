@@ -1075,6 +1075,7 @@ def settings_dialog():
 
 
 def _apply_watchlist_tickers(market, market_label, existing_tickers, candidate_tickers, invested_weights):
+    from stock_data import save_invested_weights
     """Validates `candidate_tickers` against Yahoo Finance (skipping
     tickers already known-valid in `existing_tickers`), saves the
     watchlist + invested weights, pushes to GitHub if configured, and
