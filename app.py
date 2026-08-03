@@ -898,7 +898,14 @@ def settings_dialog():
                 changed = True
             if changed:
                 save_markets_registry(markets_registry)
+                gh_token, gh_repo, gh_branch = get_github_config(getattr(st, "secrets", None))
+                if gh_token and gh_repo:
+                    with st.spinner("Pushing rename to GitHub..."):
+                        ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=["markets.json"], message=f"Rename watchlist {mkey}")
+                        if not ok:
+                            st.error(f"Failed to push to GitHub: {msg}")
                 st.success(f"Saved changes to {mkey}.")
+                time.sleep(1)
                 st.rerun()
             else:
                 st.info("No changes detected.")
@@ -913,11 +920,14 @@ def settings_dialog():
             st.error("Both a label and a benchmark ticker are required.")
         else:
             add_watchlist(new_wl_label.strip(), new_wl_bench.strip())
-            st.success(
-                f"Added \"{new_wl_label.strip()}\". "
-                "Push to GitHub (Alert Rules tab → Push config to GitHub) so the "
-                "GitHub Actions workflows pick up the new watchlist."
-            )
+            gh_token, gh_repo, gh_branch = get_github_config(getattr(st, "secrets", None))
+            if gh_token and gh_repo:
+                with st.spinner("Pushing new watchlist to GitHub..."):
+                    ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=["markets.json", "watchlist.json", "custom_filters.json"], message=f"Add watchlist {new_wl_label.strip()}")
+                    if not ok:
+                        st.error(f"Failed to push to GitHub: {msg}")
+            st.success(f"Added \"{new_wl_label.strip()}\".")
+            time.sleep(1)
             st.rerun()
 
     st.markdown("**Trend column** (Strong Uptrend / Uptrend / Downtrend / Strong Downtrend)")
@@ -2705,10 +2715,14 @@ with dash2:
             else:
                 from stock_data import add_watchlist as _dash_add_watchlist
                 _dash_add_watchlist(dash_wl_label.strip(), dash_wl_bench.strip())
-                st.success(
-                    f"Added \"{dash_wl_label.strip()}\". "
-                    "Push to GitHub (Alert Rules tab → Push config to GitHub) so workflows pick up the new watchlist."
-                )
+                gh_token, gh_repo, gh_branch = get_github_config(getattr(st, "secrets", None))
+                if gh_token and gh_repo:
+                    with st.spinner("Pushing new watchlist to GitHub..."):
+                        ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=["markets.json", "watchlist.json", "custom_filters.json"], message=f"Add watchlist {dash_wl_label.strip()}")
+                        if not ok:
+                            st.error(f"Failed to push to GitHub: {msg}")
+                st.success(f"Added \"{dash_wl_label.strip()}\".")
+                time.sleep(1)
                 st.rerun()
 
 market_keys_now = list(markets_registry_now.keys())
@@ -2814,10 +2828,13 @@ with tab_news:
                 time.sleep(3)
                 with redirect_stderr(io.StringIO()):
                     retry_data = yf.download(t, period="5y", interval="1d", auto_adjust=True, progress=False)
-                if not retry_data.empty and 'Close' in retry_data.columns and not retry_data['Close'].isna().all():
+                if not retry_data.empty and 'Close' in retry_data.columns:
                     s = retry_data['Close']
-                    s.name = t
-                    retry_series.append(s)
+                    if isinstance(s, pd.DataFrame):
+                        s = s.iloc[:, 0]
+                    if not s.isna().all():
+                        s.name = t
+                        retry_series.append(s)
                     
             if retry_series:
                 if not closes.empty:
