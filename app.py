@@ -423,10 +423,17 @@ def _plain_text(val):
 
 def style_row(row, ema_labels):
     styles = [""] * len(row)
+    # If there are duplicate 'Last' columns, row["Last"] might be a Series.
+    # Take the first one if that happens.
     last = row["Last"]
+    if isinstance(last, pd.Series):
+        last = last.iloc[0]
+        
     ema_cols = set(ema_labels.values())
     for i, col in enumerate(row.index):
-        val = row[col]
+        # Access by index rather than label to avoid returning a Series
+        # when duplicate column names exist in the DataFrame.
+        val = row.iloc[i]
         if col in ("Trend", "Vol Trend", "Tech Uptrend", "Net Vol 10D"):
             val = _plain_text(val)
         if col in ema_cols and pd.notna(val):
@@ -2497,7 +2504,18 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         # picker (render_shared_column_picker) and passed in, so US and
         # India always show identical columns in identical order.
         df = raw_df[["ticker_link", "company_name", "last_close"] + visible_keys].copy()
-        df.columns = ["Ticker", "Company Name", "Last"] + [label_by_key[k] for k in visible_keys]
+        
+        # Deduplicate column names (append space) to prevent pandas Styler
+        # crashing in to_html() when non-unique columns are present.
+        raw_cols = ["Ticker", "Company Name", "Last"] + [label_by_key[k] for k in visible_keys]
+        seen = set()
+        dedup_cols = []
+        for c in raw_cols:
+            while c in seen:
+                c = c + " "
+            seen.add(c)
+            dedup_cols.append(c)
+        df.columns = dedup_cols
         if "Trend" in df.columns:
             df["Trend"] = df["Trend"].fillna("—")
 
