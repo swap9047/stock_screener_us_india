@@ -31,38 +31,5 @@
     "news_used": "No material news or upcoming catalysts were found for Blue Jet Healthcare Limited (BLUEJET) between 2026-08-02 and 2026-08-03.",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
-  },
-  "ADVENZYMES.NS": {
-    "verdict": "CAUTION",
-    "headline": "Stock remains in a structural downtrend with VStop pointing down despite upcoming buyback catalysts.",
-    "technical_summary": "The stock is currently in a Downtrend, trading below its key 40 WEMA and 50 DEMA with negative Mansfield Relative Strength. Although 10-day net volume shows some positive accumulation, the VStop is firmly down at 370.5 and technical uptrend criteria are not met.",
-    "catalyst_summary": "Upcoming board meeting to consider Q1FY26 results and a share buyback proposal, alongside a board rejig and an analyst target of \u20b9370, offer potential fundamental support.",
-    "actionable_take": "Exercise caution and avoid fresh accumulation until the trend reverses and price reclaims the 40 WEMA. Watch the upcoming board meeting for buyback details as a potential catalyst for a structural turnaround.",
-    "as_of": "2026-08-03 19:29",
-    "news_used": "- **Aug 03, 2026**: Board rejig; Mukund Madhusudan Kabra re-appointed as Whole-Time Director; Pradip Bhailal Shah appointed as Independent Director.\n- **Aug 03, 2026**: Analyst price target of \u20b9370.00.\n- **Aug 08, 2026**: Upcoming board meeting to approve Q1FY26 financial results and share buyback proposal.",
-    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
-    "model_used": "gemini-3.5-flash-lite"
-  },
-  "ANLON.NS": {
-    "verdict": "CAUTION",
-    "headline": "ANLON faces near-term headwinds with a recent VStop flip and heavy volume distribution.",
-    "technical_summary": "While the broader trend remains classed as an uptrend above the rising 40 WEMA, the Volatility Stop has flipped to down and 10-day net volume shows heavy distribution (-31.3%), accompanied by declining volume trends and soft daily momentum (RSI 40.4).",
-    "catalyst_summary": "No material news found; verdict based on technicals only.",
-    "actionable_take": "Investors should avoid new long entries while distribution and downside momentum persist. Consider tightening stops if already holding, and wait for volume accumulation to return and VStop to reclaim an upward trajectory before re-engaging.",
-    "as_of": "2026-08-03 19:29",
-    "news_used": "No material news found for ANLON (ANLON.NS, 0P0001QAIM, 6000) between 2026-08-02 and 2026-08-03.",
-    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
-    "model_used": "gemini-3.5-flash-lite"
-  },
-  "AYE.NS": {
-    "verdict": "HOLD",
-    "headline": "Volume accumulation is strong, but formal trend confirmation is lacking for new entries.",
-    "technical_summary": "Price holds above short-term EMAs with exploding 10-day volume and positive accumulation (72.6% ratio), but lacks full uptrend confirmation and key long-term moving average metrics. RSI remains neutral across daily and weekly timeframes.",
-    "catalyst_summary": "No material news found; verdict based on technicals only.",
-    "actionable_take": "Wait for a confirmed technical uptrend and clearer structural alignment before deploying capital. Monitor pullbacks toward the 10-day or 50-day EMA around 161-167 for relative strength, and maintain strict risk controls below recent swing lows.",
-    "as_of": "2026-08-03 19:29",
-    "news_used": "I have conducted a thorough search for material information regarding AYE FINANCE LIMITED (AYE) for the specified period (2026-08-02 to 2026-08-03) and the immediate upcoming window.\n\nNo material news, analyst ratings, upgrades/downgrades, press releases, or upcoming catalysts were found for this period.",
-    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
-    "model_used": "gemini-3.5-flash-lite"
   }
 }
