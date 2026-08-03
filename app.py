@@ -884,17 +884,24 @@ def settings_dialog():
 
     markets_registry = load_markets_registry()
     for mkey, minfo in list(markets_registry.items()):
-        mc1, mc2 = st.columns(2)
+        mc1, mc2, mc3 = st.columns([2, 2, 1])
         new_mlabel = mc1.text_input(f"Label ({mkey})", value=minfo["label"], key=f"mkt_label_{mkey}")
         new_mbench = mc2.text_input(f"Benchmark ticker ({mkey})", value=minfo["benchmark"], key=f"mkt_bench_{mkey}")
-        if new_mlabel.strip() and new_mlabel.strip() != minfo["label"]:
-            markets_registry[mkey]["label"] = new_mlabel.strip()
-            save_markets_registry(markets_registry)
-            st.rerun()
-        if new_mbench.strip() and new_mbench.strip() != minfo["benchmark"]:
-            markets_registry[mkey]["benchmark"] = new_mbench.strip()
-            save_markets_registry(markets_registry)
-            st.rerun()
+        mc3.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        if mc3.button("Save", key=f"mkt_save_{mkey}"):
+            changed = False
+            if new_mlabel.strip() and new_mlabel.strip() != minfo["label"]:
+                markets_registry[mkey]["label"] = new_mlabel.strip()
+                changed = True
+            if new_mbench.strip() and new_mbench.strip() != minfo["benchmark"]:
+                markets_registry[mkey]["benchmark"] = new_mbench.strip()
+                changed = True
+            if changed:
+                save_markets_registry(markets_registry)
+                st.success(f"Saved changes to {mkey}.")
+                st.rerun()
+            else:
+                st.info("No changes detected.")
 
     st.markdown("➕ **Add Watchlist**")
     aw1, aw2, aw3 = st.columns([2, 2, 1])
@@ -906,7 +913,11 @@ def settings_dialog():
             st.error("Both a label and a benchmark ticker are required.")
         else:
             add_watchlist(new_wl_label.strip(), new_wl_bench.strip())
-            st.success(f"Added \"{new_wl_label.strip()}\".")
+            st.success(
+                f"Added \"{new_wl_label.strip()}\". "
+                "Push to GitHub (Alert Rules tab → Push config to GitHub) so the "
+                "GitHub Actions workflows pick up the new watchlist."
+            )
             st.rerun()
 
     st.markdown("**Trend column** (Strong Uptrend / Uptrend / Downtrend / Strong Downtrend)")
@@ -2104,7 +2115,8 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
                 )
 
     watchlists = load_watchlists()
-    with st.expander(f"Edit {market} watchlist", expanded=False):
+    market_display_label = load_markets_registry().get(market, {}).get("label", market)
+    with st.expander(f"Edit {market_display_label}", expanded=False):
         render_watchlist_editor(market, watchlists)
 
     if not results:
@@ -2693,7 +2705,10 @@ with dash2:
             else:
                 from stock_data import add_watchlist as _dash_add_watchlist
                 _dash_add_watchlist(dash_wl_label.strip(), dash_wl_bench.strip())
-                st.success(f"Added \"{dash_wl_label.strip()}\".")
+                st.success(
+                    f"Added \"{dash_wl_label.strip()}\". "
+                    "Push to GitHub (Alert Rules tab → Push config to GitHub) so workflows pick up the new watchlist."
+                )
                 st.rerun()
 
 market_keys_now = list(markets_registry_now.keys())
@@ -2959,8 +2974,12 @@ with tab_news:
                 return f"Watchlist: {ret_port:+.1f}%, Bench: {ret_bench:+.1f}%"
             return "--"
             
-        title_perf_ind = f"India Watchlist vs Nifty 500 ({get_perf(df_perf_ind)})"
-        title_perf_us = f"US Watchlist vs S&P 500 ({get_perf(df_perf_us)})"
+        _ind_display_label = markets_registry_now.get("INDIA", {}).get("label", "India Watchlist")
+        _us_display_label = markets_registry_now.get("US", {}).get("label", "US Watchlist")
+        _ind_bench_label = markets_registry_now.get("INDIA", {}).get("benchmark", "Nifty 500")
+        _us_bench_label = markets_registry_now.get("US", {}).get("benchmark", "S&P 500")
+        title_perf_ind = f"{_ind_display_label} vs {_ind_bench_label} ({get_perf(df_perf_ind)})"
+        title_perf_us = f"{_us_display_label} vs {_us_bench_label} ({get_perf(df_perf_us)})"
 
         fig = make_subplots(
             rows=3, cols=2,
@@ -2997,12 +3016,14 @@ with tab_news:
                 fig.add_trace(go.Scatter(x=df_hl_us['Date'], y=df_hl_us[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5), showlegend=False), row=2, col=2)
                 
         # Row 3: Portfolio Performance
+        _ind_label = markets_registry_now.get("INDIA", {}).get("label", "India Watchlist")
+        _us_label = markets_registry_now.get("US", {}).get("label", "US Watchlist")
         if df_perf_ind is not None and not df_perf_ind.empty:
-            fig.add_trace(go.Scatter(x=df_perf_ind.index, y=df_perf_ind['Portfolio'], name="India Watchlist", line=dict(color='#3498db', width=2), showlegend=False), row=3, col=1)
+            fig.add_trace(go.Scatter(x=df_perf_ind.index, y=df_perf_ind['Portfolio'], name=_ind_label, line=dict(color='#3498db', width=2), showlegend=False), row=3, col=1)
             fig.add_trace(go.Scatter(x=df_perf_ind.index, y=df_perf_ind['Benchmark'], name="Nifty 500", line=dict(color='#95a5a6', width=1.5, dash='dot'), showlegend=False), row=3, col=1)
             
         if df_perf_us is not None and not df_perf_us.empty:
-            fig.add_trace(go.Scatter(x=df_perf_us.index, y=df_perf_us['Portfolio'], name="US Watchlist", line=dict(color='#3498db', width=2), showlegend=False), row=3, col=2)
+            fig.add_trace(go.Scatter(x=df_perf_us.index, y=df_perf_us['Portfolio'], name=_us_label, line=dict(color='#3498db', width=2), showlegend=False), row=3, col=2)
             fig.add_trace(go.Scatter(x=df_perf_us.index, y=df_perf_us['Benchmark'], name="S&P 500", line=dict(color='#95a5a6', width=1.5, dash='dot'), showlegend=False), row=3, col=2)
             
         fig.update_layout(
@@ -3021,11 +3042,40 @@ with tab_news:
     st.caption(
         "Major announcements, developments, and stock moves for your watchlist tickers in the "
         "last 24-48 hours, summarized via Gemini (Google Search grounding). Runs once a day at "
-        "7:00 AM ET via GitHub Actions and is also sent to Discord — this tab just shows the "
+        "8:00 PM ET via GitHub Actions and is also sent to Discord — this tab just shows the "
         "same result."
     )
     news_data = load_news_summary()
-    
+
+    # ── News scope selector ─────────────────────────────────────────────────
+    # Controls which watchlists are included when the news pipeline runs.
+    # The selection is persisted in settings.json so GitHub Actions picks it
+    # up on the next scheduled run (after pushing settings to GitHub).
+    _all_news_market_opts = {
+        markets_registry_now.get(mkt, {}).get("label", mkt): mkt
+        for mkt in market_keys_now
+    }
+    _saved_scope_keys = settings_now.get("news_watchlist_scope", [])
+    _saved_scope_labels = [
+        lbl for lbl, key in _all_news_market_opts.items() if key in _saved_scope_keys
+    ]
+    _selected_scope_labels = st.multiselect(
+        "📋 News scope — generate for watchlists (empty = all)",
+        options=list(_all_news_market_opts.keys()),
+        default=_saved_scope_labels,
+        key="news_scope_select",
+        help=(
+            "Choose which watchlists to include in the news digest. "
+            "Leave empty to include all. Push settings to GitHub (Alert Rules tab) "
+            "so the scheduled GitHub Actions workflow respects this selection."
+        ),
+    )
+    _new_scope_keys = [_all_news_market_opts[lbl] for lbl in _selected_scope_labels]
+    if _new_scope_keys != _saved_scope_keys:
+        settings_now["news_watchlist_scope"] = _new_scope_keys
+        save_settings(settings_now)
+        st.rerun()
+
     col1, col2, col3, col4 = st.columns([2, 3, 3, 3])
     with col1:
         if st.button("🔄 Refresh News", width="stretch"):
@@ -3392,8 +3442,11 @@ with tab_alerts:
         else:
             rows_preview = []
             for p in active:
+                market_key = p["row"].get("market", "")
+                watchlist_label = markets_registry_now.get(market_key, {}).get("label", market_key)
                 rows_preview.append({
                     "Ticker": tradingview_url(p["ticker"]),
+                    "Watchlist": watchlist_label,
                     "Rule": p.get("rule_name") or "(unnamed)",
                     "Conditions": describe_chain_with_values(p["row"], p["conditions"], metric_labels_alert),
                 })
