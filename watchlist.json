@@ -1,32 +1,4 @@
 {
-  "US": [
-    "TWST",
-    "KRYS",
-    "NTRA",
-    "QURE",
-    "GRID",
-    "RKLB",
-    "META",
-    "IAU",
-    "HIMS",
-    "ZS",
-    "BNTX",
-    "JNJ",
-    "ORCL",
-    "ASX",
-    "BE",
-    "MRAAY",
-    "AMKR",
-    "AKAM",
-    "Q",
-    "KXIAY",
-    "VSH",
-    "ROBO",
-    "WOLF",
-    "SNDK",
-    "RGEN",
-    "CYRX"
-  ],
   "india_watchlist": [],
   "sajal_kapoor": [],
   "INDIA": [
@@ -84,5 +56,6 @@
     "INDGN.NS",
     "INTELLECT.NS",
     "NRBBEARING.NS"
-  ]
+  ],
+  "US": []
 }
