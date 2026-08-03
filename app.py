@@ -1194,6 +1194,10 @@ def render_watchlist_editor(market, watchlists):
     if df.empty:
         df = pd.DataFrame(columns=["Ticker", "Invested", "Weight"])
         
+    df = df.astype({"Ticker": "string", "Invested": "boolean", "Weight": "Float64"})
+    
+    st.caption("💡 **Tip:** To remove a ticker, click the row's leftmost edge to select the entire row, then press Delete or click the trash icon.")
+        
     edited_df = st.data_editor(
         df,
         num_rows="dynamic",
