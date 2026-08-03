@@ -4,7 +4,7 @@
     "benchmark": "SPY"
   },
   "INDIA": {
-    "label": "India Watchlist",
+    "label": "India Invested",
     "benchmark": "^CRSLDX"
   }
 }
