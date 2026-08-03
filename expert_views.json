@@ -33,13 +33,13 @@
     "model_used": "gemini-3.5-flash-lite"
   },
   "KRYS": {
-    "verdict": "HOLD",
-    "headline": "Uptrend remains intact, but heavy short-term distribution ahead of Q2 earnings warrants patience.",
-    "technical_summary": "KRYS remains in a solid intermediate uptrend with price above rising moving averages and a positive Mansfield relative strength. However, exploding volume paired with a sharply negative 10D net volume ratio (-57.5%) highlights underlying distribution, while the weekly VStop provides support at 328.1.",
-    "catalyst_summary": "Institutional backing is evident with Janus Henderson increasing its stake by 21.5%, while the upcoming Q2 2026 financial results and conference call present a near-term binary catalyst.",
-    "actionable_take": "Hold existing positions and use the 328.1 VStop as a trailing exit trigger. Refrain from adding new capital until post-earnings clarity emerges and short-term volume metrics transition back to accumulation.",
-    "as_of": "2026-08-03 06:21",
-    "news_used": "**News**\n* 2026-08-02: Janus Henderson Group PLC increased its stake in KRYS by 21.5% (per 13F filing).\n\n**Events**\n* 2026-08-03: Q2 2026 Financial Results release.\n* 2026-08-03: Q2 2026 Earnings Conference Call (8:30 AM ET).",
+    "verdict": "CAUTION",
+    "headline": "KRYS faces heavy distribution and a Q2 revenue miss alongside a VStop flip to down.",
+    "technical_summary": "While the broader trend remains above the rising 40 WEMA, the weekly VStop has flipped down and 10-day net volume shows heavy distribution (-56.9% ratio) on exploding volume. Daily RSI has slipped to 39.4, reflecting short-term momentum weakness.",
+    "catalyst_summary": "Q2 2026 results reported solid VYJUVEK revenue growth and an EPS beat, but a total revenue miss disappointed investors and triggered a post-earnings stock decline.",
+    "actionable_take": "Avoid new long entries until heavy distribution subsides and technical momentum stabilizes. Monitor the rising 40 WEMA (283.7) and 200 DEMA (278.3) as critical downside support levels for potential stabilization.",
+    "as_of": "2026-08-03 14:51",
+    "news_used": "**2026-08-03**\n* **Press Release:** Reported Q2 2026 financial results; VYJUVEK revenue was $119.2 million (up 24% YoY); EPS of $1.79 beat consensus; total revenue missed expectations.\n* **Market News:** Stock price declined following the Q2 revenue miss.",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
   },
