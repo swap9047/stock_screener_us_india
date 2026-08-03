@@ -10,5 +10,9 @@
   "india_watchlist": {
     "label": "India Watchlist",
     "benchmark": "^CRSLDX"
+  },
+  "sajal_kapoor": {
+    "label": "sajal kapoor",
+    "benchmark": "^CRSLDX"
   }
 }
