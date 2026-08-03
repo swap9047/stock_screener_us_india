@@ -59,7 +59,9 @@
     "TANFACIND.BO",
     "TDPOWERSYS.NS",
     "VENUSPIPES.NS",
-    "WINDLAS.NS"
+    "WINDLAS.NS",
+    "CYIENT.NS",
+    "LUMAXIND.NS"
   ],
   "US": [
     "BNTX",
