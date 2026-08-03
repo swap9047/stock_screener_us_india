@@ -775,6 +775,7 @@ def column_definitions(settings, labels):
             "flagged cell for the exact vote/veto breakdown."
         ),
         "Notes": "Your free-text note for this ticker, set via the sidebar 'Ticker Notes' panel. Hover/tap a truncated note to see the full text.",
+        "Invested": "Whether this ticker is marked Invested in the watchlist editor's Invested/Weight table.",
         "Qtr Profit Growth %": "Year-over-year net income growth for the most recent reported quarter, vs. the same quarter a year ago (Yahoo Finance).",
         "Qtr Revenue Growth %": "Year-over-year revenue growth for the most recent reported quarter, vs. the same quarter a year ago (Yahoo Finance).",
     }
@@ -1112,8 +1113,23 @@ def render_watchlist_editor(market, watchlists):
             try:
                 if uploaded.name.lower().endswith(".csv"):
                     up_df = pd.read_csv(uploaded)
-                    col = next((c for c in up_df.columns if str(c).strip().lower() == "ticker"), up_df.columns[0])
-                    raw_tickers = up_df[col].astype(str).tolist()
+                    col = next((c for c in up_df.columns if str(c).strip().lower() == "ticker"), None)
+                    if col is not None:
+                        raw_tickers = up_df[col].astype(str).tolist()
+                    else:
+                        # No column literally named "Ticker" -- pandas always
+                        # treats row 1 as a header, so for a bare headerless
+                        # list (just tickers, one per line) the very first
+                        # ticker would otherwise be silently swallowed as the
+                        # column name instead of a value. Recover it by
+                        # treating the header text as a candidate ticker too;
+                        # if it turns out to be a genuine unrecognized header
+                        # (e.g. "Symbol"), that's a harmless extra entry --
+                        # validate_ticker() rejects it later same as any typo,
+                        # which is a much safer failure mode than silently
+                        # losing real data.
+                        first_col = up_df.columns[0]
+                        raw_tickers = [str(first_col)] + up_df[first_col].astype(str).tolist()
                 else:
                     text = uploaded.read().decode("utf-8", errors="ignore")
                     raw_tickers = [line for line in text.replace(",", "\n").splitlines() if line.strip()]
@@ -1325,6 +1341,7 @@ def build_column_defs(labels, custom_columns=None):
         ("trend", "Trend"),
         ("flag", "Flag"),
         ("note", "Notes"),
+        ("invested_label", "Invested"),
         ("matched_alerts", "Alerts"),
         ("pct_change_1d", "% Chg"),
         ("week52_high", "52W High"),
@@ -1364,8 +1381,10 @@ def build_column_defs(labels, custom_columns=None):
     key_by_label = {lbl: k for k, lbl in optional_defs}
     all_labels = list(label_by_key.values())
     # Raw 10D/100D volume are hidden by default (Vol Trend already
-    # summarizes them); everything else shows by default.
-    default_hidden = {"Vol 10D", "Vol 100D"}
+    # summarizes them); Flag and Invested are personal annotations shown
+    # via the ticker-flag marker/watchlist editor already, so they're
+    # opt-in here too; everything else shows by default.
+    default_hidden = {"Vol 10D", "Vol 100D", "Flag", "Invested"}
     default_visible = [lbl for lbl in all_labels if lbl not in default_hidden]
     return optional_defs, label_by_key, key_by_label, all_labels, default_visible
 
@@ -1438,7 +1457,11 @@ def render_shared_sort_control(label_by_key, key_by_label):
 
     if sort_label == "(default order)":
         return None, ascending
-    sort_field = {"Ticker": "ticker", "Company Name": "company_name", "Last": "last_close"}.get(sort_label) or key_by_label.get(sort_label)
+    # "Invested" resolves to the raw boolean field ("invested"), not the
+    # display key ("invested_label") key_by_label would otherwise give --
+    # apply_sort operates on the row dict, which only ever carries the raw
+    # field, same reasoning as Ticker/Company Name/Last below.
+    sort_field = {"Ticker": "ticker", "Company Name": "company_name", "Last": "last_close", "Invested": "invested"}.get(sort_label) or key_by_label.get(sort_label)
     return sort_field, ascending
 
 
@@ -2240,6 +2263,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             with_tooltip("Yes" if r["tech_uptrend"] else "No", tech_uptrend_tooltip(r, settings, labels))
             for r in filtered
         ]
+        raw_df["invested_label"] = ["Yes" if r.get("invested") else "No" for r in filtered]
         # Note text: short preview in the cell, full text on hover/tap (same
         # with_tooltip pattern as Trend/Vol Trend above) so a long note
         # doesn't blow out the column width.
@@ -2422,6 +2446,8 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         def _export_value(r, key):
             if key == "tech_uptrend_label":
                 return "Yes" if r.get("tech_uptrend") else "No"
+            if key == "invested_label":
+                return "Yes" if r.get("invested") else "No"
             if key == "vstop_change":
                 return vstop_change_str(r)
             if key == "fundamentals":
@@ -2610,6 +2636,8 @@ if not using_snapshot:
 # snapshot was built or whether this run used it at all.
 custom_columns_now = load_custom_columns()
 ticker_notes_now = load_ticker_notes()
+from stock_data import load_invested_weights as _load_invested_weights_now
+invested_weights_now = _load_invested_weights_now()
 for _market_rows in per_market.values():
     apply_custom_columns_to_rows(_market_rows, custom_columns_now)
     # Notes/flags change far more often than custom columns (edited
@@ -2618,6 +2646,12 @@ for _market_rows in per_market.values():
     # just saved shows up immediately even when serving from this morning's
     # snapshot instead of waiting for the next refresh.
     apply_notes_to_rows(_market_rows, ticker_notes_now, min_vstop_weeks=settings_now.get("tech_uptrend_min_vstop_weeks", 3))
+    # Invested status lives in invested.json (edited via the watchlist
+    # editor's Invested/Weight table), not the technical snapshot -- attach
+    # it here, same reasoning as notes/flags above, so it's sortable and
+    # exportable like any other column.
+    for _row in _market_rows:
+        _row["invested"] = _row["ticker"] in invested_weights_now
 
 source_label = "daily snapshot" if using_snapshot else "live fetch"
 st.sidebar.caption(f"Data as of: {as_of} ({source_label})")
