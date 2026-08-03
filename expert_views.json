@@ -1,37 +1,4 @@
 {
-  "AKAM": {
-    "verdict": "CAUTION",
-    "headline": "AKAM Triggers Caution Signals Due to Ongoing Downtrend and Distribution Pressure",
-    "technical_summary": "AKAM remains in a structural downtrend with a downward-sloping VStop held for 7 weeks and negative 10-day net volume (-17.8%). While trading above its rising 40 WEMA, weak Mansfield Relative Strength and declining volume trends reflect a lack of immediate institutional accumulation.",
-    "catalyst_summary": "BofA analysts issued a 'Buy' rating with a $175 price target, and Q2 2026 earnings are scheduled to be released after the market close on August 6, 2026.",
-    "actionable_take": "Exercise caution and avoid initiating new long positions until the technical trend improves and VStop flips upward. Await the Q2 earnings release and a clear volume accumulation phase before re-evaluating the stock for an entry.",
-    "as_of": "2026-08-03 19:22",
-    "news_used": "**Analyst Ratings & News**\n* **Aug 3, 2026:** BofA analysts Tal Liani and Trevor Dodds issued \"Buy\" ratings for AKAM with a $175 price target.\n\n**Upcoming Catalysts**\n* **Aug 6, 2026:** Q2 2026 earnings release (after market close) and investor conference call (4:30 PM ET).",
-    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
-    "model_used": "gemini-3.5-flash-lite"
-  },
-  "AMKR": {
-    "verdict": "CAUTION",
-    "headline": "AMKR exhibits a confirmed downtrend, heavy distribution, and a recent downgrade, demanding caution.",
-    "technical_summary": "AMKR remains in a Stage 4 downtrend, trading well below its 40-week and 200-day EMAs with a downward VStop. Volume trends are exploding on the downside, supported by a heavy net distribution ratio of -38.1% over the last 10 days.",
-    "catalyst_summary": "The stock was recently downgraded from 'Very Strong' to 'Strong' by Stock Grader, reinforcing the fragile fundamental and technical backdrop.",
-    "actionable_take": "Avoid initiating new long positions and consider protecting capital by tightening trailing stops or exiting lagging holdings. Wait for a complete structural reversal, positive relative strength, and clear institutional accumulation before re-engaging.",
-    "as_of": "2026-08-03 19:23",
-    "news_used": "* **2026-08-03:** Downgraded from \"Very Strong\" to \"Strong\" (Stock Grader).",
-    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
-    "model_used": "gemini-3.5-flash-lite"
-  },
-  "ASX": {
-    "verdict": "HOLD",
-    "headline": "ASX maintains intermediate uptrend despite short-term VStop pullback and minor distribution.",
-    "technical_summary": "The stock remains above its rising 40 WEMA, but a recent VStop flip to down and a -9.1% 10-day net volume ratio indicate near-term distribution and consolidation. Momentum indicators like daily RSI at 47.2 show a neutral short-term bias.",
-    "catalyst_summary": "No material news found; verdict based on technicals only.",
-    "actionable_take": "Hold current positions while monitoring the rising 40 WEMA as the ultimate trend filter. Avoid new buying until the VStop flips back to up and volume accumulation resumes.",
-    "as_of": "2026-08-03 19:24",
-    "news_used": "No recent news found.",
-    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
-    "model_used": "gemini-3.5-flash-lite"
-  },
   "UFBL.NS": {
     "verdict": "ACCUMULATE",
     "headline": "Robust Stage 2 uptrend supported by strong relative strength and positive momentum.",
