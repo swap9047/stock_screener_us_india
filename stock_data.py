@@ -941,8 +941,20 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
             vstop_weekly_weeks_since_change = None
             vstop_weekly_flipped = False
 
-            if len(weekly) >= vstop_length + 5:
-                vstop_series, dir_series = compute_vstop(weekly, length=vstop_length, factor=vstop_factor)
+            # Only completed weekly bars may drive the VStop: a W-FRI bar whose
+            # Friday close hasn't actually printed is incomplete (e.g. the Friday
+            # bar was missing from the pull, or the trailing week is still
+            # forming). Its Close then anchors to an earlier trading day and can
+            # falsely breach the stop, flipping the stop-and-reverse. Trim any
+            # trailing bar(s) whose Friday label is not a printed trading day.
+            # RS/WEMA/RSI keep the full weekly series.
+            daily_days = set(df.index.normalize())
+            weekly_complete = weekly
+            while len(weekly_complete) > 0 and weekly_complete.index[-1].normalize() not in daily_days:
+                weekly_complete = weekly_complete.iloc[:-1]
+
+            if len(weekly_complete) >= vstop_length + 5:
+                vstop_series, dir_series = compute_vstop(weekly_complete, length=vstop_length, factor=vstop_factor)
                 valid_dir = dir_series.dropna()
                 if not valid_dir.empty:
                     vstop_weekly = round(float(vstop_series.iloc[-1]), 1)
@@ -955,12 +967,6 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                         weeks_since = valid_dir.index.get_loc(valid_dir.index[-1]) - valid_dir.index.get_loc(last_change_idx)
                         vstop_weekly_weeks_since_change = int(weeks_since)
                         vstop_weekly_flipped = bool(weeks_since == 0)
-
-                if t == "TDPOWERSYS.NS":
-                    print(f"  [DEBUG {t}] vstop_length={vstop_length} factor={vstop_factor} weekly_rows={len(weekly)}")
-                    print(f"  [DEBUG {t}] weekly tail:\n{weekly[['Open','High','Low','Close']].tail(5)}")
-                    print(f"  [DEBUG {t}] vstop tail:\n{vstop_series.tail(5)}")
-                    print(f"  [DEBUG {t}] direction tail:\n{dir_series.tail(5)}")
 
             last_close = float(daily_close.iloc[-1])
             pct_change_1d = None
