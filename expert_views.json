@@ -878,5 +878,16 @@
     "news_used": "**News (August 3\u20134, 2026)**\n* **August 3, 2026:** Reported unusual call option activity with 73,244 calls purchased, 160% above the average volume.\n\n**Upcoming Catalysts (Next 3\u20134 days)**\n* **August 4, 2026:** Earnings report (expected after market close).",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
+  },
+  "TATVA.NS": {
+    "verdict": "HOLD",
+    "headline": "Strong uptrend near 52-week highs tempered by heavy 10-day volume distribution.",
+    "technical_summary": "The stock exhibits a strong uptrend with price well above key moving averages and a 3-week VStop held at 1514.9. Despite reaching new 52-week highs, 10-day net volume shows significant distribution (-41.7%), creating a mixed picture of rising prices on conflicting volume flows.",
+    "catalyst_summary": "No negative news catalyst found; upcoming virtual analyst meeting with ChrysCapital Associates LLP. Verdict driven by technical and volume divergence.",
+    "actionable_take": "Hold current positions while utilizing the VStop level at 1514.9 as a trailing stop. Avoid fresh aggressive accumulation until net volume turns positive and confirms institutional accumulation at these elevated levels.",
+    "as_of": "2026-08-04 05:18",
+    "news_used": "* **August 3, 2026:** Stock reached a new 52-week high of \u20b91,838.85.\n* **August 6, 2026 (Upcoming):** Virtual one-to-one analyst meeting with ChrysCapital Associates LLP.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
   }
 }
