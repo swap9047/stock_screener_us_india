@@ -25,6 +25,13 @@
   "tech_uptrend_min_vstop_weeks": 3,
   "tech_uptrend_volume_ratio": 1.3,
   "news_search_model": "models/gemma-4-26b-a4b-it",
-  "news_reasoning_model": "gemini-3.5-flash-lite",
-  "news_reasoning_budget": 8192
+  "news_reasoning_model": "models/gemini-3.5-flash-lite",
+  "news_reasoning_budget": 8192,
+  "expert_reasoning_model": "models/gemini-3.5-flash-lite",
+  "expert_thinking_budget": 8192,
+  "sentiment_reasoning_model": "models/gemini-3.5-flash-lite",
+  "sentiment_thinking_budget": 8192,
+  "note_dropdown_options": "wrap, sajal kapoor, soic, self",
+  "news_watchlist_scope": [],
+  "show_fundamental_columns": true
 }

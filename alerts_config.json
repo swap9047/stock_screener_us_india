@@ -152,5 +152,53 @@
       ],
       "time_et": "21:00"
     }
+  },
+  {
+    "id": "ae60c0b9",
+    "name": "stocks in uptrend and near 10w ema",
+    "scope": "ALL",
+    "conditions": [
+      {
+        "metric_a": "last_close",
+        "operator": "<=",
+        "compare_type": "metric",
+        "metric_b": "ema10",
+        "logic": "AND",
+        "multiplier": 1.03
+      },
+      {
+        "metric_a": "vstop_weekly_weeks_since_change",
+        "operator": ">=",
+        "compare_type": "value",
+        "value": 4.0,
+        "logic": "AND"
+      },
+      {
+        "metric_a": "last_close",
+        "operator": ">=",
+        "compare_type": "metric",
+        "metric_b": "vstop_weekly",
+        "logic": "AND"
+      },
+      {
+        "metric_a": "last_close",
+        "operator": ">=",
+        "compare_type": "metric",
+        "metric_b": "ema40",
+        "logic": "AND"
+      }
+    ],
+    "enabled": true,
+    "schedule": {
+      "type": "scheduled",
+      "days": [
+        "MON",
+        "TUE",
+        "WED",
+        "THU",
+        "FRI"
+      ],
+      "time_et": "21:00"
+    }
   }
 ]
