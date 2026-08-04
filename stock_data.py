@@ -72,6 +72,7 @@ RS_LOOKBACK_WEEKLY = 26
 RS_LOOKBACK_MONTHLY = 12
 VSTOP_LENGTH = 10
 VSTOP_FACTOR = 2
+SNAPSHOT_VERSION = 2  # bump when computation logic changes (EMA vs SMA, vstop params, etc.)
 
 DEFAULT_SETTINGS = {
     "ema_weekly": [10, 20, 40],   # weekly EMA fast/mid/slow periods
@@ -1154,6 +1155,7 @@ def save_data_snapshot(as_of, per_market, settings=None):
         json.dump({
             "as_of": as_of,
             "generated_at": datetime.now(timezone.utc).isoformat(),
+            "snapshot_version": SNAPSHOT_VERSION,
             "per_market": per_market,
             "settings": settings or {},
         }, f, indent=2, default=_json_default)
@@ -1179,7 +1181,10 @@ def snapshot_is_usable(snapshot, watchlists, settings):
     than silently show stale/incomplete data until tomorrow's 7 AM run."""
     if not snapshot or not isinstance(snapshot.get("per_market"), dict):
         return False
-        
+
+    if snapshot.get("snapshot_version", 1) != SNAPSHOT_VERSION:
+        return False
+
     # Only compare calculation settings, ignoring pipeline/model choices and
     # UI-only settings so changing a news model, sentiment model, or note
     # dropdown labels doesn't invalidate the price snapshot!
