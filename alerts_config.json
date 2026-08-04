@@ -73,9 +73,9 @@
         "metric_a": "last_close",
         "operator": ">=",
         "compare_type": "metric",
-        "logic": "AND",
         "metric_b": "week52_high",
-        "multiplier": 0.95
+        "logic": "AND",
+        "multiplier": 0.98
       }
     ],
     "enabled": true,
@@ -185,6 +185,46 @@
         "operator": ">=",
         "compare_type": "metric",
         "metric_b": "ema40",
+        "logic": "AND"
+      }
+    ],
+    "enabled": true,
+    "schedule": {
+      "type": "scheduled",
+      "days": [
+        "MON",
+        "TUE",
+        "WED",
+        "THU",
+        "FRI"
+      ],
+      "time_et": "21:00"
+    }
+  },
+  {
+    "id": "dccb5c72",
+    "name": "early stage 2",
+    "scope": "ALL",
+    "conditions": [
+      {
+        "metric_a": "gc_weeks_10_30",
+        "operator": ">=",
+        "compare_type": "value",
+        "value": 2.0,
+        "logic": "AND"
+      },
+      {
+        "metric_a": "gc_weeks_10_30",
+        "operator": "<=",
+        "compare_type": "value",
+        "value": 5.0,
+        "logic": "AND"
+      },
+      {
+        "metric_a": "rel_ret_1w_n50",
+        "operator": ">=",
+        "compare_type": "value",
+        "value": 1.0,
         "logic": "AND"
       }
     ],
