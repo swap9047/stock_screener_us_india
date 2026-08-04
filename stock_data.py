@@ -956,6 +956,12 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                         vstop_weekly_weeks_since_change = int(weeks_since)
                         vstop_weekly_flipped = bool(weeks_since == 0)
 
+                if t == "TDPOWERSYS.NS":
+                    print(f"  [DEBUG {t}] vstop_length={vstop_length} factor={vstop_factor} weekly_rows={len(weekly)}")
+                    print(f"  [DEBUG {t}] weekly tail:\n{weekly[['Open','High','Low','Close']].tail(5)}")
+                    print(f"  [DEBUG {t}] vstop tail:\n{vstop_series.tail(5)}")
+                    print(f"  [DEBUG {t}] direction tail:\n{dir_series.tail(5)}")
+
             last_close = float(daily_close.iloc[-1])
             pct_change_1d = None
             if len(daily_close) >= 2 and daily_close.iloc[-2]:
