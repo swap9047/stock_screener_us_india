@@ -13,6 +13,9 @@
     "pb_ratio",
     "ev_ebitda",
     "p_cashflow",
+    "roe",
+    "cfo_op_5yr",
+    "roce",
     "vstop_change",
     "volume_trend",
     "matched_alerts",
@@ -31,7 +34,12 @@
     "data_end",
     "note",
     "qtr_profit_growth",
-    "qtr_revenue_growth"
+    "qtr_revenue_growth",
+    "perf_1m",
+    "perf_3m",
+    "perf_6m",
+    "perf_1y",
+    "perf_3y"
   ],
   "sort_by": "Company Name",
   "sort_dir": "\u2191"

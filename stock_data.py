@@ -683,6 +683,17 @@ def _download_with_retries(all_tickers, period, attempts=3, timeout=90, wait=30)
     raise last_exc
 
 
+def _safe_fetch(fn, label=""):
+    """Wraps a yfinance property call so a network error on one statement
+    (cash_flow, income_stmt, balance_sheet) doesn't abort the others."""
+    try:
+        result = fn()
+        return result if result is not None and not getattr(result, "empty", False) else None
+    except Exception as e:
+        print(f"  {label} fetch failed: {e}")
+        return None
+
+
 def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
     """Returns (results list of dicts, as_of timestamp string) for one market's tickers."""
     settings = settings or load_settings()
@@ -719,25 +730,28 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
         company_name = t
         qtr_profit_growth = None
         qtr_revenue_growth = None
+        roe = cfo_op_5yr = roce = None
+        perf_1m = perf_3m = perf_6m = perf_1y = perf_3y = None
         try:
-            info = yf.Ticker(t).info
+            yf_t = yf.Ticker(t)
+            info = yf_t.info
             company_name = info.get("longName") or info.get("shortName") or t
             # Yahoo's own YoY quarterly growth reads (this quarter vs. the
             # same quarter last year) -- returned as decimals (0.278 = 27.8%).
             earnings_growth = info.get("earningsQuarterlyGrowth")
             revenue_growth = info.get("revenueGrowth")
-            
+
             trailing_pe = info.get("trailingPE")
             forward_pe = info.get("forwardPE")
             pb_ratio = info.get("priceToBook")
             ev_ebitda = info.get("enterpriseToEbitda")
-            
+
             p_cashflow = None
             market_cap = info.get("marketCap") or info.get("nonDilutedMarketCap")
             ocf = info.get("operatingCashflow")
             if market_cap and ocf and ocf != 0:
                 p_cashflow = round(market_cap / ocf, 2)
-            
+
             reported_qtr = None
             mrq_ts = info.get("mostRecentQuarter")
             if mrq_ts:
@@ -750,13 +764,51 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 else:
                     q = "Q1" if m in (1, 2, 3) else "Q2" if m in (4, 5, 6) else "Q3" if m in (7, 8, 9) else "Q4"
                     reported_qtr = f"{q} {y}"
-                    
+
             if earnings_growth is not None:
                 qtr_profit_growth = round(earnings_growth * 100, 1)
             if revenue_growth is not None:
                 qtr_revenue_growth = round(revenue_growth * 100, 1)
+
+            raw_roe = info.get("returnOnEquity")
+            if raw_roe is not None:
+                roe = round(raw_roe * 100, 1)
         except Exception as e:
             print(f"  [{t}] Could not fetch company name: {e}")
+
+        # Annual statements: each fetched independently so a timeout on one
+        # doesn't zero out metrics computed from the others.
+        try:
+            cf  = _safe_fetch(lambda: yf_t.cash_flow,    label=f"[{t}] cash_flow")
+            inc = _safe_fetch(lambda: yf_t.income_stmt,   label=f"[{t}] income_stmt")
+            bs  = _safe_fetch(lambda: yf_t.balance_sheet, label=f"[{t}] balance_sheet")
+
+            if cf is not None and inc is not None:
+                if "Operating Cash Flow" in cf.index and "Operating Income" in inc.index:
+                    cfo_s = cf.loc["Operating Cash Flow"].dropna()
+                    op_s  = inc.loc["Operating Income"].dropna()
+                    dates = cfo_s.index.intersection(op_s.index).sort_values(ascending=False)[:5]
+                    if len(dates) > 0:
+                        op_sum = float(op_s.loc[dates].sum())
+                        if op_sum != 0:
+                            cfo_op_5yr = round(float(cfo_s.loc[dates].sum()) / op_sum, 2)
+
+            if inc is not None and bs is not None:
+                if "Operating Income" in inc.index:
+                    op_vals = inc.loc["Operating Income"].dropna()
+                    eq_vals = bs.loc["Stockholders Equity"].dropna() if "Stockholders Equity" in bs.index else None
+                    dt_row  = ("Long Term Debt" if "Long Term Debt" in bs.index
+                               else "Total Debt"    if "Total Debt"    in bs.index else None)
+                    dt_vals = bs.loc[dt_row].dropna() if dt_row else None
+                    if len(op_vals) > 0:
+                        op_inc = float(op_vals.iloc[0])
+                        equity = float(eq_vals.iloc[0]) if eq_vals is not None and len(eq_vals) > 0 else 0.0
+                        debt   = float(dt_vals.iloc[0]) if dt_vals is not None and len(dt_vals) > 0 else 0.0
+                        cap_emp = equity + debt
+                        if cap_emp != 0:
+                            roce = round(op_inc / cap_emp * 100, 1)
+        except Exception as e:
+            print(f"  [{t}] Statement metrics failed: {e}")
 
         try:
             df = raw[t].dropna(how="all")
@@ -764,6 +816,17 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 continue
 
             daily_close = df["Close"].dropna()
+
+            def _perf(n):
+                if len(daily_close) > n:
+                    return round((float(daily_close.iloc[-1]) / float(daily_close.iloc[-n - 1]) - 1) * 100, 1)
+                return None
+
+            perf_1m = _perf(22)
+            perf_3m = _perf(63)
+            perf_6m = _perf(126)
+            perf_1y = _perf(252)
+            perf_3y = _perf(756)
 
             # RSI
             rsi14_daily_series = compute_rsi(daily_close, rsi_period)
@@ -949,6 +1012,11 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 "company_name": company_name,
                 "last_close": round(last_close, 1),
                 "pct_change_1d": pct_change_1d,
+                "perf_1m": perf_1m,
+                "perf_3m": perf_3m,
+                "perf_6m": perf_6m,
+                "perf_1y": perf_1y,
+                "perf_3y": perf_3y,
                 "qtr_profit_growth": qtr_profit_growth,
                 "qtr_revenue_growth": qtr_revenue_growth,
                 "trailing_pe": trailing_pe,
@@ -956,6 +1024,9 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 "pb_ratio": pb_ratio,
                 "ev_ebitda": ev_ebitda,
                 "p_cashflow": p_cashflow,
+                "roe": roe,
+                "cfo_op_5yr": cfo_op_5yr,
+                "roce": roce,
                 "reported_qtr": reported_qtr,
                 "last_price": last_close,
                 "data_start": data_start,
@@ -1027,7 +1098,12 @@ def fetch_all_markets(watchlists=None, period="5y", settings=None):
     for market in watchlists.keys():
         tickers = watchlists.get(market, [])
         bench = benchmarks.get(market, "SPY")
-        results, as_of = fetch_snapshot(tickers, benchmark=bench, period=period, settings=settings)
+        try:
+            results, as_of = fetch_snapshot(tickers, benchmark=bench, period=period, settings=settings)
+        except Exception as e:
+            print(f"  [fetch_all_markets] skipping {market} (benchmark={bench}): {e}")
+            per_market[market] = []
+            continue
         for r in results:
             r["market"] = market
         per_market[market] = results
@@ -1102,10 +1178,12 @@ def snapshot_is_usable(snapshot, watchlists, settings):
     if not snapshot or not isinstance(snapshot.get("per_market"), dict):
         return False
         
-    # Only compare calculation settings, ignoring pipeline/model choices
-    # so changing a news model doesn't invalidate the price snapshot!
-    snap_calc = {k: v for k, v in snapshot.get("settings", {}).items() if not k.startswith(("news_", "expert_"))}
-    curr_calc = {k: v for k, v in settings.items() if not k.startswith(("news_", "expert_"))}
+    # Only compare calculation settings, ignoring pipeline/model choices and
+    # UI-only settings so changing a news model, sentiment model, or note
+    # dropdown labels doesn't invalidate the price snapshot!
+    _NON_CALC = ("news_", "expert_", "note_", "sentiment_")
+    snap_calc = {k: v for k, v in snapshot.get("settings", {}).items() if not k.startswith(_NON_CALC)}
+    curr_calc = {k: v for k, v in settings.items() if not k.startswith(_NON_CALC)}
     
     if snap_calc != curr_calc:
         return False
