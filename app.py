@@ -649,7 +649,7 @@ PCT_COLS = ["% Chg", "Qtr Profit Growth %", "Qtr Revenue Growth %"]
 # Column keys considered "fundamental" (company financials/valuation, as
 # opposed to technical/price-derived) -- hideable as a group via the
 # "Show fundamental columns" toggle, independent of the per-column picker.
-FUNDAMENTAL_COLUMN_KEYS = {"fundamentals", "qtr_profit_growth", "qtr_revenue_growth", "trailing_pe", "forward_pe", "pb_ratio", "ev_ebitda", "p_cashflow", "reported_qtr"}
+FUNDAMENTAL_COLUMN_KEYS = {"fundamentals", "qtr_profit_growth", "qtr_revenue_growth", "trailing_pe", "forward_pe", "pb_ratio", "ev_ebitda", "p_cashflow", "reported_qtr", "roe", "cfo_op_5yr", "roce"}
 
 
 LINK_COLUMN_CONFIG = {
@@ -790,7 +790,15 @@ def column_definitions(settings, labels):
         "P/B": "Price to Book ratio (Yahoo Finance).",
         "EV/EBITDA": "Enterprise Value to EBITDA ratio (Yahoo Finance).",
         "P/Cashflow": "Calculated as Market Cap divided by Operating Cash Flow (Yahoo Finance).",
+        "ROE %": "Return on Equity: Net Income / Shareholders Equity as a percentage (Yahoo Finance TTM).",
+        "CFO/OP 5Y": "Cash Flow from Operations divided by Operating Income, summed over up to 5 fiscal years. Values > 1 indicate high earnings quality (the company converts more than its reported profit into actual cash). From yfinance annual statements.",
+        "ROCE %": "Return on Capital Employed: Operating Income / (Stockholders Equity + Long-term Debt) as a percentage, using the most recent annual figures from yfinance.",
         "Reported Qtr": "The most recent quarter for which the company reported earnings and revenue growth, mapped to the local financial year (Yahoo Finance).",
+        "Perf 1M %": "Price return over the past ~1 month (22 trading days).",
+        "Perf 3M %": "Price return over the past ~3 months (63 trading days).",
+        "Perf 6M %": "Price return over the past ~6 months (126 trading days).",
+        "Perf 1Y %": "Price return over the past ~1 year (252 trading days).",
+        "Perf 3Y %": "Price return over the past ~3 years (756 trading days). Blank when fewer than 3 years of daily data are available.",
     }
     return defs
 
@@ -1423,8 +1431,16 @@ def build_column_defs(labels, custom_columns=None):
         ("pb_ratio", "P/B"),
         ("ev_ebitda", "EV/EBITDA"),
         ("p_cashflow", "P/Cashflow"),
+        ("roe", "ROE %"),
+        ("cfo_op_5yr", "CFO/OP 5Y"),
+        ("roce", "ROCE %"),
         ("avg_volume_10d", "Vol 10D"),
         ("avg_volume_100d", "Vol 100D"),
+        ("perf_1m", "Perf 1M %"),
+        ("perf_3m", "Perf 3M %"),
+        ("perf_6m", "Perf 6M %"),
+        ("perf_1y", "Perf 1Y %"),
+        ("perf_3y", "Perf 3Y %"),
     ]
     from stock_data import load_settings
     if not load_settings().get("show_fundamental_columns", True):
@@ -1567,14 +1583,25 @@ def render_shared_column_picker(labels):
     # never surface them even though they're now available in label_by_key.
     # Skipped for any key currently toggled off (it won't be in label_by_key
     # in that case -- nothing to force back in).
+    # Iterate in optional_defs order (not the set) so multiple new fundamental
+    # columns are inserted in the correct sequence (sets have no guaranteed order).
+    fund_keys_in_order = [k for k, _ in optional_defs if k in FUNDAMENTAL_COLUMN_KEYS]
     inserted = False
-    for fund_key in FUNDAMENTAL_COLUMN_KEYS:
+    for fund_key in fund_keys_in_order:
         if fund_key in label_by_key and fund_key not in st.session_state[SHARED_ORDER_KEY]:
-            if "tech_uptrend_label" in st.session_state[SHARED_ORDER_KEY]:
-                idx = st.session_state[SHARED_ORDER_KEY].index("tech_uptrend_label")
-                st.session_state[SHARED_ORDER_KEY].insert(idx + 1, fund_key)
+            order = st.session_state[SHARED_ORDER_KEY]
+            # Insert after the last existing fundamental column, so new ones land
+            # at the end of the group rather than right after tech_uptrend_label.
+            fund_positions = [order.index(k) for k in FUNDAMENTAL_COLUMN_KEYS if k in order]
+            if fund_positions:
+                idx = max(fund_positions)
+            elif "tech_uptrend_label" in order:
+                idx = order.index("tech_uptrend_label")
             else:
-                st.session_state[SHARED_ORDER_KEY].append(fund_key)
+                order.append(fund_key)
+                inserted = True
+                continue
+            order.insert(idx + 1, fund_key)
             inserted = True
     if inserted:
         save_column_prefs(st.session_state[SHARED_ORDER_KEY])
@@ -2179,7 +2206,8 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
 
     watchlists = load_watchlists()
     market_display_label = load_markets_registry().get(market, {}).get("label", market)
-    with st.expander(f"Edit {market_display_label}", expanded=False):
+    _wl_empty = not watchlists.get(market)
+    with st.expander(f"Edit {market_display_label}", expanded=_wl_empty):
         render_watchlist_editor(market, watchlists)
 
     if not results:
@@ -2503,11 +2531,15 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         # Column visibility/order is chosen ONCE via the shared sidebar
         # picker (render_shared_column_picker) and passed in, so US and
         # India always show identical columns in identical order.
-        df = raw_df[["ticker_link", "company_name", "last_close"] + visible_keys].copy()
-        
+        # Guard: only select columns that actually exist in raw_df. New columns
+        # won't be present in a snapshot built before this code was deployed;
+        # selecting a missing column raises KeyError rather than showing blanks.
+        safe_keys = [k for k in visible_keys if k in raw_df.columns]
+        df = raw_df[["ticker_link", "company_name", "last_close"] + safe_keys].copy()
+
         # Deduplicate column names (append space) to prevent pandas Styler
         # crashing in to_html() when non-unique columns are present.
-        raw_cols = ["Ticker", "Company Name", "Last"] + [label_by_key[k] for k in visible_keys]
+        raw_cols = ["Ticker", "Company Name", "Last"] + [label_by_key[k] for k in safe_keys]
         seen = set()
         dedup_cols = []
         for c in raw_cols:
@@ -2701,9 +2733,11 @@ if st.session_state.refresh_token == 0:
         using_snapshot = True
 
 if not using_snapshot:
-    # Filter out pipeline settings so changing a news model doesn't bust
-    # the cache and trigger a live fetch when refresh_token > 0
-    calc_settings = {k: v for k, v in settings_now.items() if not k.startswith(("news_", "expert_"))}
+    # Filter out pipeline/UI settings so changing a news model, sentiment
+    # model, or note dropdown labels doesn't bust the cache and trigger a
+    # live fetch when refresh_token > 0
+    _NON_CALC = ("news_", "expert_", "note_", "sentiment_")
+    calc_settings = {k: v for k, v in settings_now.items() if not k.startswith(_NON_CALC)}
     
     as_of, per_market = cached_fetch_all(
         st.session_state.refresh_token,
