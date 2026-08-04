@@ -733,6 +733,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
         qtr_revenue_growth = None
         roe = cfo_op_5yr = roce = None
         perf_1m = perf_3m = perf_6m = perf_1y = perf_3y = None
+        trailing_pe = forward_pe = pb_ratio = ev_ebitda = p_cashflow = reported_qtr = None
         try:
             yf_t = yf.Ticker(t)
             info = yf_t.info
