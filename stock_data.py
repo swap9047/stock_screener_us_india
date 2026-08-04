@@ -44,6 +44,7 @@ import json
 import os
 import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -714,7 +715,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
     tech_uptrend_volume_ratio = settings.get("tech_uptrend_volume_ratio", 1.4)
 
     if not tickers:
-        return [], datetime.now().strftime("%Y-%m-%d %H:%M")
+        return [], datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M ET")
 
     all_tickers = list(tickers) + [benchmark]
     raw = _download_with_retries(all_tickers, period)
@@ -1080,7 +1081,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
         except Exception as e:
             print(f"  {t}: ERROR {e}")
 
-    as_of = datetime.now().strftime("%Y-%m-%d %H:%M")
+    as_of = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M ET")
     return results, as_of
 
 
@@ -1094,7 +1095,7 @@ def fetch_all_markets(watchlists=None, period="5y", settings=None):
     benchmarks = get_benchmarks(settings)
 
     per_market = {}
-    as_of = datetime.now().strftime("%Y-%m-%d %H:%M")
+    as_of = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M ET")
     for market in watchlists.keys():
         tickers = watchlists.get(market, [])
         bench = benchmarks.get(market, "SPY")

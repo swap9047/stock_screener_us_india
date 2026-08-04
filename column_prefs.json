@@ -21,9 +21,7 @@
     "matched_alerts",
     "custom_w52dist",
     "custom_w52lowdist",
-    "vstop_change",
     "vstop_weekly_direction",
-    "volume_trend",
     "net_volume_10d_dir",
     "ema10",
     "ema40",
@@ -33,8 +31,6 @@
     "vstop_weekly",
     "data_end",
     "note",
-    "qtr_profit_growth",
-    "qtr_revenue_growth",
     "perf_1m",
     "perf_3m",
     "perf_6m",
@@ -42,5 +38,5 @@
     "perf_3y"
   ],
   "sort_by": "Company Name",
-  "sort_dir": "\u2191"
+  "sort_dir": "↑"
 }
