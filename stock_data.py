@@ -40,6 +40,7 @@ All displayed numeric values are rounded to 1 decimal place.
 """
 
 import concurrent.futures
+import hashlib
 import json
 import os
 import time
@@ -1141,6 +1142,20 @@ def _json_default(o):
     raise TypeError(f"Object of type {o.__class__.__name__} is not JSON serializable")
 
 
+def _code_fingerprint():
+    """Hash of this module's own source, used to detect when a snapshot was
+    computed by a since-replaced version of the calc code (e.g. an EMA/SMA
+    switch or a vstop parameter change) even if settings.json didn't change.
+    Deliberately avoids the `git` CLI/`.git` dir -- not reliably available
+    in every deploy sandbox (e.g. Streamlit Cloud), which silently disabled
+    an earlier version of this guard."""
+    try:
+        with open(__file__, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()[:16]
+    except Exception:
+        return "unknown"
+
+
 def save_data_snapshot(as_of, per_market, settings=None):
     """Persists a fetch_all_markets() result to disk so the Streamlit app
     can load it directly instead of hitting yfinance live on every session
@@ -1149,17 +1164,12 @@ def save_data_snapshot(as_of, per_market, settings=None):
     to compute it too, so the app can detect a settings change (SMA
     lengths, thresholds, etc.) since the snapshot ran and fall back to a
     live fetch instead of showing data computed with stale parameters."""
-    import subprocess
     from datetime import timezone
-    try:
-        git_sha = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
-    except Exception:
-        git_sha = "unknown"
     with open(DATA_SNAPSHOT_FILE, "w") as f:
         json.dump({
             "as_of": as_of,
             "generated_at": datetime.now(timezone.utc).isoformat(),
-            "code_version": git_sha,
+            "code_version": _code_fingerprint(),
             "per_market": per_market,
             "settings": settings or {},
         }, f, indent=2, default=_json_default)
@@ -1186,12 +1196,7 @@ def snapshot_is_usable(snapshot, watchlists, settings):
     if not snapshot or not isinstance(snapshot.get("per_market"), dict):
         return False
 
-    import subprocess
-    try:
-        current_sha = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
-    except Exception:
-        current_sha = None
-    if current_sha and snapshot.get("code_version") != current_sha:
+    if snapshot.get("code_version") != _code_fingerprint():
         return False
 
     # Only compare calculation settings, ignoring pipeline/model choices and
