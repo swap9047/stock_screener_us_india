@@ -305,6 +305,8 @@ def get_filterable_metrics(settings=None):
         "Qtr Profit Growth %": "qtr_profit_growth",
         "Qtr Revenue Growth %": "qtr_revenue_growth",
         "VStop Weeks Ago": "vstop_weekly_weeks_since_change",
+        "10/30 W Golden Cross (weeks ago)": "gc_weeks_10_30",
+        "1W Ret vs Nifty 500": "rel_ret_1w_n50",
         "Tech Uptrend": "tech_uptrend",
         "Flag": "flag",
         "Notes": "note",
@@ -1042,6 +1044,32 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                     and avg_volume_10d > tech_uptrend_volume_ratio * avg_volume_100d
                 )
 
+            # Weeks since the last 10w/30w WEEKLY golden cross (EMA10 crossing
+            # UP through EMA30). None while EMA10 is not currently above EMA30
+            # (i.e. no active golden-cross state), no crossover found yet, or
+            # not enough weekly history. EMA30 is purpose-built here -- it is
+            # NOT one of the configured weekly EMA periods (10/20/40).
+            gc_weeks_10_30 = None
+            if len(weekly) >= 31:
+                ema10_w = weekly["Close"].ewm(span=10, adjust=False).mean()
+                ema30_w = weekly["Close"].ewm(span=30, adjust=False).mean()
+                crossed_up = (ema10_w > ema30_w) & (ema10_w.shift(1) <= ema30_w.shift(1))
+                if bool(ema10_w.iloc[-1] > ema30_w.iloc[-1]) and crossed_up.any():
+                    last_cross_pos = int(np.flatnonzero(crossed_up.to_numpy())[-1])
+                    gc_weeks_10_30 = int(len(weekly) - 1 - last_cross_pos)
+
+            # Relative 1-week return vs the configured India benchmark (^CRSLDX,
+            # the app's Nifty 500 proxy): stock 1-week return minus benchmark
+            # 1-week return, trailing ~5 daily sessions.
+            rel_ret_1w_n50 = None
+            if len(daily_close) >= 7 and len(bench_daily) >= 7:
+                try:
+                    stock_1w = float(daily_close.iloc[-1]) / float(daily_close.iloc[-6]) - 1
+                    bench_1w = float(bench_daily.iloc[-1]) / float(bench_daily.iloc[-6]) - 1
+                    rel_ret_1w_n50 = round((stock_1w - bench_1w) * 100, 1)
+                except (ZeroDivisionError, IndexError):
+                    rel_ret_1w_n50 = None
+
             results.append({
                 "ticker": t,
                 "company_name": company_name,
@@ -1111,6 +1139,8 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 "vstop_weekly_last_change": vstop_weekly_last_change,
                 "vstop_weekly_weeks_since_change": vstop_weekly_weeks_since_change,
                 "vstop_weekly_flipped": vstop_weekly_flipped,
+                "gc_weeks_10_30": gc_weeks_10_30,
+                "rel_ret_1w_n50": rel_ret_1w_n50,
             })
         except Exception as e:
             print(f"  {t}: ERROR {e}")
