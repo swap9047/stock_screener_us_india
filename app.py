@@ -339,17 +339,40 @@ require_login()
 
 
 @st.cache_data(show_spinner="Fetching latest prices...")
-def cached_fetch_all(refresh_token, watchlists_json, settings_json):
-    # NOTE: refresh_token and settings_json must NOT be prefixed with "_" --
+def cached_fetch_all(refresh_nonce, watchlists_json, settings_json):
+    # NOTE: refresh_nonce and settings_json must NOT be prefixed with "_" --
     # Streamlit's cache_data excludes underscore-prefixed params from the
-    # cache key hash, which silently broke the Refresh Data button (clicking
-    # it changed refresh_token but the cache never saw that as a new key, so
-    # it kept serving stale results). Settings are included in the key too,
-    # so changing calculation parameters always forces a fresh fetch.
+    # cache key hash, which would silently break cache-busting (see
+    # _bump_refresh() for why refresh_nonce -- a fresh uuid per refresh event,
+    # not a small incrementing counter -- is used here at all: a counter that
+    # predictably restarts at 0/1/2... per session causes different
+    # sessions' first-ever refresh to collide on the same cache entry).
+    # Settings are included in the key too, so changing calculation
+    # parameters always forces a fresh fetch.
     watchlists = json.loads(watchlists_json)
     settings = json.loads(settings_json)
     combined, as_of, per_market = fetch_all_markets(watchlists, settings=settings)
     return as_of, per_market
+
+
+def _bump_refresh():
+    """Marks that this session should bypass the daily snapshot and do a live
+    fetch (refresh_token), AND forces cached_fetch_all() to actually run a
+    fresh fetch instead of reusing a cached result (refresh_nonce).
+
+    These are two different jobs and need two different values: refresh_token
+    only needs to flip away from 0 (checked via `== 0` elsewhere to decide
+    snapshot vs. live-fetch), but using it ALSO as cached_fetch_all's
+    cache-busting argument is a bug -- st.cache_data's cache is keyed on
+    argument values only, not per-session, so two different users' (or two
+    reloads') first-ever refresh both land on refresh_token=1 with identical
+    watchlists/settings and collide onto the SAME cache entry. Whoever's
+    fetch got cached first (even a transient rate-limited/bad one) then gets
+    served to everyone else's "fresh" refresh too, indefinitely, until that
+    exact (token, watchlists, settings) combination changes. refresh_nonce is
+    a fresh uuid every time, so it can never collide with a previous refresh."""
+    st.session_state.refresh_token += 1
+    st.session_state.refresh_nonce = uuid.uuid4().hex
 
 
 def get_discord_webhook():
@@ -1049,12 +1072,12 @@ def settings_dialog():
                 "tech_uptrend_volume_ratio": float(tech_uptrend_vol_ratio),
                 "note_dropdown_options": note_dropdown_options.strip(),
             })
-            st.session_state.refresh_token += 1
+            _bump_refresh()
             st.success("Settings saved.")
             st.rerun()
     if c2.button("Reset to defaults", width="stretch"):
         save_settings(dict(DEFAULT_SETTINGS))
-        st.session_state.refresh_token += 1
+        _bump_refresh()
         st.success("Reset to defaults.")
         st.rerun()
 
@@ -1126,7 +1149,7 @@ def _apply_watchlist_tickers(market, market_label, existing_tickers, candidate_t
 
     save_watchlist(market, valid_tickers)
     save_invested_weights(invested_weights)
-    st.session_state.refresh_token += 1
+    _bump_refresh()
     st.success(f"Saved {market_label} with {len(valid_tickers)} tickers.")
 
     gh_token, gh_repo, gh_branch = get_github_config(st.secrets)
@@ -2692,6 +2715,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
 
 if "refresh_token" not in st.session_state:
     st.session_state.refresh_token = 0
+    st.session_state.refresh_nonce = uuid.uuid4().hex
 watchlists_now = load_watchlists()
 settings_now = load_settings()
 
@@ -2715,7 +2739,7 @@ if sb1.button("Refresh Data", type="primary", width="stretch"):
             "per_market_counts": {mkt: len(rows) for mkt, rows in per_market.items()},
             "total": len(combined),
         }
-        st.session_state.refresh_token += 1
+        _bump_refresh()
         st.rerun()
 
 if "last_refresh_summary" in st.session_state:
@@ -2754,7 +2778,7 @@ if not using_snapshot:
     calc_settings = {k: v for k, v in settings_now.items() if not k.startswith(_NON_CALC)}
     
     as_of, per_market = cached_fetch_all(
-        st.session_state.refresh_token,
+        st.session_state.refresh_nonce,
         json.dumps(watchlists_now, sort_keys=True),
         json.dumps(calc_settings, sort_keys=True),
     )
