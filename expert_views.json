@@ -593,17 +593,6 @@
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
   },
-  "INTELLECT.BO": {
-    "verdict": "CAUTION",
-    "headline": "Persistent downtrend, negative volume distribution, and lowered analyst EPS estimates warrant caution.",
-    "technical_summary": "The stock remains in a medium-term downtrend, trading below both its 40-week and 200-day EMAs. Volume trend is declining with a negative 10-day net volume distribution ratio (-14.2%), signaling lack of aggressive institutional accumulation despite the weekly VStop holding upward.",
-    "catalyst_summary": "While Q1 FY27 revenue grew 19% YoY, the moderation in profit growth led analysts to reduce EPS estimates and lower consensus price targets by 9.6%, creating a negative near-term fundamental catalyst.",
-    "actionable_take": "Avoid initiating new long positions while the stock lingers in a downtrend below key moving averages. Existing holders should strictly monitor the weekly VStop level at 645.3 as a trailing risk-management floor.",
-    "as_of": "2026-08-04 14:39",
-    "news_used": "**August 3, 2026**\n* **Earnings:** Reported Q1 FY27 results; revenue rose 19% YoY to \u20b9872 Cr and PAT increased 8.7% YoY to \u20b9101.8 Cr.\n\n**August 4, 2026**\n* **Analyst Ratings:** Consensus price target lowered 9.6% to \u20b9957; analysts reduced EPS estimates following the earnings report.\n* **Press Release:** Announced the successful launch of the eMACH.ai Treasury platform at Swaziland Building Society.\n* **Event:** One-on-one analyst meeting with Amansa Holdings (2:30 PM \u2013 3:30 PM IST).",
-    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
-    "model_used": "gemini-3.5-flash-lite"
-  },
   "INTELLECT.NS": {
     "verdict": "CAUTION",
     "headline": "Ongoing downtrend and negative net volume accumulation warrant a defensive stance despite solid Q1 earnings.",
