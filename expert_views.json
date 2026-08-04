@@ -32,17 +32,6 @@
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
   },
-  "BNTX": {
-    "verdict": "CAUTION",
-    "headline": "BioNTech faces near-term pressure from a Q2 earnings miss and lowered guidance within a persistent downtrend.",
-    "technical_summary": "BNTX remains in a structural downtrend trading below its declining 40-week and 200-day EMAs with weak relative strength. Although a 15-week VStop holds at 87.3 and 10-day net volume shows mild accumulation, the broader technical setup lacks momentum confirmation.",
-    "catalyst_summary": "The company reported a Q2 2026 revenue and EPS miss, alongside a downward revision of full-year revenue guidance to \u20ac1.6\u20131.9 billion, creating a clear fundamental headwind compounded by upcoming leadership transitions.",
-    "actionable_take": "Avoid new long positions given the fundamental headwinds and lagging trend. Existing holders should closely monitor the 87.3 volatility stop level as a strict exit trigger to limit downside risk.",
-    "as_of": "2026-08-04 13:58",
-    "news_used": "**Analyst Ratings & Forecasts**\n* **2026-08-03:** MarketBeat issued a price target of $129.13 for BNTX.\n\n**Press Releases**\n* **2026-08-03:** BioNTech announced the appointment of Guido Oelkers, Ph.D., to the Management Board as Chief Executive Officer (to take office by February 1, 2027).\n\n**Major Catalysts & Events**\n* **2026-08-04:** Q2 2026 Earnings Release:\n    * **Revenue:** \u20ac105.6 million (missed estimates).\n    * **EPS:** -$2.22 (missed estimates).\n    * **Guidance:** Lowered full-year 2026 revenue guidance to \u20ac1.6\u20131.9 billion (previously \u20ac2.0\u20132.3 billion).",
-    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
-    "model_used": "gemini-3.5-flash-lite"
-  },
   "GRID": {
     "verdict": "CAUTION",
     "headline": "GRID faces downward pressure amid a bearish VStop, negative relative strength, and distribution.",
