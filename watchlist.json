@@ -13,7 +13,6 @@
     "WOLF"
   ],
   "US": [
-    "BNTX",
     "GRID",
     "HIMS",
     "IAU",
@@ -25,7 +24,9 @@
     "QURE",
     "RKLB",
     "TWST",
-    "ZS"
+    "ZS",
+    "CYRX",
+    "ASX"
   ],
   "india_watchlist": [
     "UFBL.NS",
