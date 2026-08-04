@@ -65,51 +65,6 @@
     }
   },
   {
-    "id": "222260fb",
-    "name": "uptrending stocks and below 10w ema",
-    "scope": "ALL",
-    "conditions": [
-      {
-        "metric_a": "tech_uptrend",
-        "operator": "==",
-        "compare_type": "value",
-        "logic": "AND",
-        "value": "Yes"
-      },
-      {
-        "metric_a": "trend",
-        "operator": "in",
-        "compare_type": "value",
-        "value": [
-          "Strong Uptrend"
-        ],
-        "logic": "OR"
-      },
-      {
-        "metric_a": "last_close",
-        "operator": "<=",
-        "compare_type": "metric",
-        "metric_b": "ema10",
-        "logic": "AND",
-        "multiplier": 1.03
-      }
-    ],
-    "enabled": true,
-    "schedule": {
-      "type": "scheduled",
-      "days": [
-        "MON",
-        "TUE",
-        "WED",
-        "THU",
-        "FRI",
-        "SAT",
-        "SUN"
-      ],
-      "time_et": "21:00"
-    }
-  },
-  {
     "id": "1b91dbc4",
     "name": "stocks near 52w high",
     "scope": "ALL",
