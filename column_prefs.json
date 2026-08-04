@@ -34,7 +34,8 @@
     "ev_ebitda",
     "p_cashflow",
     "roe",
-    "note"
+    "note",
+    "vstop_weekly"
   ],
   "sort_by": "Company Name",
   "sort_dir": "\u2191"
