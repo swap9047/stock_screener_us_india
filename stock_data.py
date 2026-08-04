@@ -1,5 +1,5 @@
 """
-Shared calculation logic for the WSMA/RSI/RS watchlist tools.
+Shared calculation logic for the WEMA/RSI/RS watchlist tools.
 Used by app.py (Streamlit dashboard) and alert_check.py (scheduled
 Discord alert checker).
 
@@ -70,11 +70,11 @@ BENCHMARKS = {"US": "SPY", "INDIA": "^CRSLDX"}  # S&P 500 proxy / Nifty 500
 RS_LOOKBACK_DAILY = 63
 RS_LOOKBACK_WEEKLY = 26
 RS_LOOKBACK_MONTHLY = 12
-VSTOP_LENGTH = 20
+VSTOP_LENGTH = 10
 VSTOP_FACTOR = 2
 
 DEFAULT_SETTINGS = {
-    "ema_weekly": [10, 20, 40],   # weekly SMA fast/mid/slow periods
+    "ema_weekly": [10, 20, 40],   # weekly EMA fast/mid/slow periods
     "ema_daily": [10, 50, 200],   # daily SMA fast/mid/slow periods
     "rsi_period": 14,
     "rs_lookback_daily": RS_LOOKBACK_DAILY,
@@ -85,7 +85,7 @@ DEFAULT_SETTINGS = {
     "benchmark_us": BENCHMARKS["US"],
     "benchmark_india": BENCHMARKS["INDIA"],
     # -- Trend column (Strong Uptrend/Uptrend/Downtrend/Strong Downtrend) --
-    "trend_slope_lookback": 3,   # weeks used for the slow WSMA's regression slope
+    "trend_slope_lookback": 3,   # weeks used for the slow WEMA's regression slope
     "trend_near_high_low_pct": 0.10,   # "Strong" requires price within this % of the 52w high/low
     "trend_volume_ratio": 1.0,   # "Strong" requires avg_volume_10d / avg_volume_100d >= this
     # -- Vol Trend column (Exploding/In-line/Declining) -- independent of Trend/Tech Uptrend --
@@ -279,9 +279,9 @@ def get_filterable_metrics(settings=None):
     d_fast, d_mid, d_slow = settings["ema_daily"]
     return {
         "Last Close": "last_close",
-        f"{w_fast} WSMA": "ema10",
-        f"{w_mid} WSMA": "ema20",
-        f"{w_slow} WSMA": "ema40",
+        f"{w_fast} WEMA": "ema10",
+        f"{w_mid} WEMA": "ema20",
+        f"{w_slow} WEMA": "ema40",
         f"{d_fast} DSMA": "ema10_daily",
         f"{d_mid} DSMA": "ema50",
         f"{d_slow} DSMA": "ema200",
@@ -542,11 +542,11 @@ def compute_trend(last_close, ema_slow_series, rs_weekly, week52_high, week52_lo
     Direction (up vs down) is a hard AND across up to 4 conditions --
     "Uptrend" requires ALL of the following that are evaluable (no partial
     credit, no majority vote):
-      1. price above the slow WSMA
-      2. the WSMA's own regression slope over `slope_lookback` weeks is
+      1. price above the slow WEMA
+      2. the WEMA's own regression slope over `slope_lookback` weeks is
          rising (a least-squares fit, not a raw two-point diff -- see note
          below)
-      3. fast WSMA above slow WSMA (e.g. 10 WSMA > 40 WSMA) -- moving-average
+      3. fast WEMA above slow WEMA (e.g. 10 WEMA > 40 WEMA) -- moving-average
          alignment, required whenever `ema_fast` is supplied
       4. Mansfield RS vs the benchmark is positive, if available
     "Downtrend" is the mirror image (all 4 conditions bearish). Any mixed
@@ -569,7 +569,7 @@ def compute_trend(last_close, ema_slow_series, rs_weekly, week52_high, week52_lo
     the similarly-shaped ratios used by the Vol Trend and Tech Uptrend
     columns (see DEFAULT_SETTINGS), so tuning one never moves the others.
 
-    Using a regression slope (not a 2-point endpoint diff) for the WSMA
+    Using a regression slope (not a 2-point endpoint diff) for the WEMA
     direction matters for volatile movers: a violent spike-and-fade (e.g. a
     short squeeze) keeps a longer-window endpoint diff positive for weeks
     after the MA has already turned down, since the old spike still
@@ -847,16 +847,16 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 if pd.notna(rsi14_monthly_series.iloc[-1]):
                     rsi14_monthly = round(float(rsi14_monthly_series.iloc[-1]), 1)
 
-            # Weekly SMAs (fast/mid/slow, e.g. 10/20/40)
+            # Weekly EMAs (fast/mid/slow, e.g. 10/20/40)
             ema10 = ema20 = ema40 = None
             crossed_below_10 = crossed_below_40 = False
             crossed_above_10 = crossed_above_40 = False
             ema40_series = None
 
             if len(weekly) >= w_slow + 1:
-                ema10_series = weekly["Close"].rolling(window=w_fast, min_periods=1).mean()
-                ema20_series = weekly["Close"].rolling(window=w_mid, min_periods=1).mean()
-                ema40_series = weekly["Close"].rolling(window=w_slow, min_periods=1).mean()
+                ema10_series = weekly["Close"].ewm(span=w_fast, adjust=False).mean()
+                ema20_series = weekly["Close"].ewm(span=w_mid, adjust=False).mean()
+                ema40_series = weekly["Close"].ewm(span=w_slow, adjust=False).mean()
 
                 last_close_w = weekly["Close"].iloc[-1]
                 prev_close_w = weekly["Close"].iloc[-2]
@@ -873,8 +873,8 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 crossed_above_10 = bool(prev_close_w < prev_ema10 and last_close_w >= ema10)
                 crossed_above_40 = bool(prev_close_w < prev_ema40 and last_close_w >= ema40)
             elif len(weekly) >= w_mid + 1:
-                ema10_series = weekly["Close"].rolling(window=w_fast, min_periods=1).mean()
-                ema20_series = weekly["Close"].rolling(window=w_mid, min_periods=1).mean()
+                ema10_series = weekly["Close"].ewm(span=w_fast, adjust=False).mean()
+                ema20_series = weekly["Close"].ewm(span=w_mid, adjust=False).mean()
                 ema10 = round(float(ema10_series.iloc[-1]), 1)
                 ema20 = round(float(ema20_series.iloc[-1]), 1)
 
@@ -989,7 +989,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 )
 
             # Tech Uptrend: close > weekly VStop (in an uptrend that's held for
-            # a while) + close above the slow weekly WSMA + volume surging.
+            # a while) + close above the slow weekly WEMA + volume surging.
             # Uses its OWN volume ratio (tech_uptrend_volume_ratio) -- independent
             # of Vol Trend's "Exploding" ratio above, even though both default to
             # the same 1.4x, so tuning one column never moves the other.

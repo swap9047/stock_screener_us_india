@@ -19,7 +19,7 @@ Tabs:
                         fire right now, and sending a test Discord message.
 
 Each market tab also has a custom filter builder: compare any metric against
-another metric or a fixed value (e.g. "10 WSMA > 40 WSMA", "200 DSMA >= 200"),
+another metric or a fixed value (e.g. "10 WEMA > 40 WEMA", "200 DSMA >= 200"),
 combined with AND logic alongside the preset Above/Below/range filters.
 
 Sidebar "Settings" opens a dialog where every calculation parameter (SMA
@@ -397,11 +397,11 @@ def clear_auth_credentials_local():
 
 def ema_col_labels(settings):
     """Column-header labels for the 6 SMA slots, reflecting the currently
-    configured periods (e.g. {'w_fast': '10 WSMA', ...})."""
+    configured periods (e.g. {'w_fast': '10 WEMA', ...})."""
     wf, wm, ws = settings["ema_weekly"]
     df_, dm, ds = settings["ema_daily"]
     return {
-        "w_fast": f"{wf} WSMA", "w_mid": f"{wm} WSMA", "w_slow": f"{ws} WSMA",
+        "w_fast": f"{wf} WEMA", "w_mid": f"{wm} WEMA", "w_slow": f"{ws} WEMA",
         "d_fast": f"{df_} DSMA", "d_mid": f"{dm} DSMA", "d_slow": f"{ds} DSMA",
     }
 
@@ -733,9 +733,9 @@ def column_definitions(settings, labels):
     defs = {
         "Ticker": "Click to open this symbol's chart on TradingView.",
         "Last": "Most recent daily closing price.",
-        labels["w_fast"]: f"Weekly SMA, fast period ({settings['ema_weekly'][0]} weeks).",
-        labels["w_mid"]: f"Weekly SMA, medium period ({settings['ema_weekly'][1]} weeks).",
-        labels["w_slow"]: f"Weekly SMA, slow period ({settings['ema_weekly'][2]} weeks). The 'slow WSMA' referenced by Trend and Tech Uptrend.",
+        labels["w_fast"]: f"Weekly EMA, fast period ({settings['ema_weekly'][0]} weeks).",
+        labels["w_mid"]: f"Weekly EMA, medium period ({settings['ema_weekly'][1]} weeks).",
+        labels["w_slow"]: f"Weekly EMA, slow period ({settings['ema_weekly'][2]} weeks). The 'slow WEMA' referenced by Trend and Tech Uptrend.",
         labels["d_fast"]: f"Daily SMA, fast period ({settings['ema_daily'][0]} days).",
         labels["d_mid"]: f"Daily SMA, medium period ({settings['ema_daily'][1]} days).",
         labels["d_slow"]: f"Daily SMA, slow period ({settings['ema_daily'][2]} days).",
@@ -750,8 +750,8 @@ def column_definitions(settings, labels):
         "VStop Weeks Ago": "Weeks since the weekly VStop last flipped direction.",
         "Trend": (
             "Strong Uptrend / Uptrend / Downtrend / Strong Downtrend. Uptrend requires ALL of: price above "
-            f"slow WSMA, slow WSMA slope rising over {settings.get('trend_slope_lookback', 3)} weeks, fast "
-            "WSMA above slow WSMA, and weekly RS positive (when available) -- no partial credit, anything "
+            f"slow WEMA, slow WEMA slope rising over {settings.get('trend_slope_lookback', 3)} weeks, fast "
+            "WEMA above slow WEMA, and weekly RS positive (when available) -- no partial credit, anything "
             "short of unanimous is Downtrend. Strong additionally needs price within "
             f"{settings.get('trend_near_high_low_pct', 0.10) * 100:.0f}% of the 52W high/low AND 10D avg "
             f"volume ≥ {settings.get('trend_volume_ratio', 1.0)}× the 100D avg. Hover a cell for the "
@@ -769,7 +769,7 @@ def column_definitions(settings, labels):
         ),
         "Tech Uptrend": (
             "Yes only if ALL of: close > weekly VStop, VStop held its direction for more than "
-            f"{settings.get('tech_uptrend_min_vstop_weeks', 3)} weeks, close > slow WSMA, and 10D avg volume "
+            f"{settings.get('tech_uptrend_min_vstop_weeks', 3)} weeks, close > slow WEMA, and 10D avg volume "
             f"≥ {settings.get('tech_uptrend_volume_ratio', 1.4)}× the 100D avg. Hover a cell for the "
             "per-condition breakdown."
         ),
@@ -870,11 +870,11 @@ def settings_dialog():
         "Save applies immediately on your next Refresh Data."
     )
 
-    st.markdown("**Weekly SMA periods** (fast / medium / slow)")
+    st.markdown("**Weekly EMA periods** (fast / medium / slow)")
     w1, w2, w3 = st.columns(3)
-    ema_w_fast = w1.number_input("1. Weekly SMA fast", min_value=1, step=1, value=int(settings["ema_weekly"][0]), key="set_ema_w_fast")
-    ema_w_mid = w2.number_input("2. Weekly SMA medium", min_value=1, step=1, value=int(settings["ema_weekly"][1]), key="set_ema_w_mid")
-    ema_w_slow = w3.number_input("3. Weekly SMA slow", min_value=1, step=1, value=int(settings["ema_weekly"][2]), key="set_ema_w_slow")
+    ema_w_fast = w1.number_input("1. Weekly EMA fast", min_value=1, step=1, value=int(settings["ema_weekly"][0]), key="set_ema_w_fast")
+    ema_w_mid = w2.number_input("2. Weekly EMA medium", min_value=1, step=1, value=int(settings["ema_weekly"][1]), key="set_ema_w_mid")
+    ema_w_slow = w3.number_input("3. Weekly EMA slow", min_value=1, step=1, value=int(settings["ema_weekly"][2]), key="set_ema_w_slow")
 
     st.markdown("**Daily SMA periods** (fast / medium / slow)")
     d1, d2, d3 = st.columns(3)
@@ -954,8 +954,8 @@ def settings_dialog():
 
     st.markdown("**Trend column** (Strong Uptrend / Uptrend / Downtrend / Strong Downtrend)")
     st.caption(
-        "Uptrend requires ALL of: price above slow WSMA, the WSMA's own slope rising, fast WSMA above "
-        "slow WSMA (e.g. 10 WSMA > 40 WSMA), and Mansfield RS positive (when available) — no partial "
+        "Uptrend requires ALL of: price above slow WEMA, the WEMA's own slope rising, fast WEMA above "
+        "slow WEMA (e.g. 10 WEMA > 40 WEMA), and Mansfield RS positive (when available) — no partial "
         "credit; anything short of unanimous is Downtrend. "
         "\"Strong\" additionally needs BOTH of the two thresholds below — parameters here only affect "
         "this column, independent of Vol Trend or Tech Uptrend."
@@ -964,7 +964,7 @@ def settings_dialog():
     trend_slope_lookback = tr1.number_input(
         "15. MA slope lookback (weeks)", min_value=2, step=1,
         value=int(settings.get("trend_slope_lookback", 3)), key="set_trend_slope",
-        help="Width of the regression window (in weeks) used to judge whether the slow WSMA is "
+        help="Width of the regression window (in weeks) used to judge whether the slow WEMA is "
         "currently rising or falling. Shorter = catches recent rollovers faster (can be "
         "noisier); longer = smoother but slower to detect a real trend change.",
     )
@@ -1003,7 +1003,7 @@ def settings_dialog():
         "20. Min weeks held above VStop", min_value=0, step=1,
         value=int(settings.get("tech_uptrend_min_vstop_weeks", 3)), key="set_tech_min_weeks",
         help="Tech Uptrend requires the weekly VStop to have been in an uptrend for MORE than this "
-             "many weeks (in addition to close > VStop, close > slow WSMA, and the volume ratio below).",
+             "many weeks (in addition to close > VStop, close > slow WEMA, and the volume ratio below).",
     )
     tech_uptrend_vol_ratio = tu2.number_input(
         "21. Min 10D ÷ 100D vol ratio", min_value=1.0, step=0.1, format="%.2f",
@@ -1027,7 +1027,7 @@ def settings_dialog():
         new_weekly = [int(ema_w_fast), int(ema_w_mid), int(ema_w_slow)]
         new_daily = [int(ema_d_fast), int(ema_d_mid), int(ema_d_slow)]
         if not (new_weekly[0] < new_weekly[1] < new_weekly[2]):
-            st.error("Weekly SMA periods must be increasing: fast < medium < slow.")
+            st.error("Weekly EMA periods must be increasing: fast < medium < slow.")
         elif not (new_daily[0] < new_daily[1] < new_daily[2]):
             st.error("Daily SMA periods must be increasing: fast < medium < slow.")
         else:
@@ -2660,14 +2660,14 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
     st.caption(
         f"Mansfield RS = ((price/{bench} ratio today ÷ SMA of that ratio, n) − 1) × 100. "
         "Positive = outperforming the benchmark's trend, negative = underperforming. "
-        "WSMA = weekly EMA, DSMA = daily EMA. "
+        "WEMA = weekly EMA, DSMA = daily EMA. "
         f"VStop-W = weekly Volatility Stop (Wilder's ATR stop-and-reverse system, "
         f"length={settings['vstop_length']}, factor={settings['vstop_factor']}) — not independently "
         "cross-checked against your chart the way RS/RSI were, so compare a few readings before relying "
         "on it. Trend = a 4-level read (Strong Uptrend / Uptrend / Downtrend / Strong Downtrend). Uptrend "
-        "requires ALL of: price above the slow WSMA, that WSMA's "
-        f"{settings.get('trend_slope_lookback', 3)}-week slope rising, fast WSMA above slow WSMA (e.g. 10 "
-        "WSMA > 40 WSMA), and weekly RS positive (when available) — no partial credit, anything short of "
+        "requires ALL of: price above the slow WEMA, that WEMA's "
+        f"{settings.get('trend_slope_lookback', 3)}-week slope rising, fast WEMA above slow WEMA (e.g. 10 "
+        "WEMA > 40 WEMA), and weekly RS positive (when available) — no partial credit, anything short of "
         "unanimous is Downtrend. 'Strong' additionally requires price within "
         f"{settings.get('trend_near_high_low_pct', 0.10) * 100:.0f}% of its 52-week high/low AND 10D avg "
         f"volume ≥ {settings.get('trend_volume_ratio', 1.0)}× the 100D avg — its own parameters, "
@@ -2678,7 +2678,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         f"10D-vs-100D average volume as Exploding (≥{settings.get('volume_explode_ratio', 1.4)}×), "
         f"Declining (≤{settings.get('volume_decline_ratio', 0.7)}×), or In-line — thresholds editable in "
         "Settings. Tech Uptrend = close above the weekly VStop (held for more than "
-        f"{settings.get('tech_uptrend_min_vstop_weeks', 3)} weeks) AND close above the slow WSMA AND 10D "
+        f"{settings.get('tech_uptrend_min_vstop_weeks', 3)} weeks) AND close above the slow WEMA AND 10D "
         f"volume ≥ {settings.get('tech_uptrend_volume_ratio', 1.4)}× the 100D avg — its own volume ratio, "
         "independent of Vol Trend's Exploding ratio even though they default to the same value. All "
         "values shown to 1 decimal. Use 'Columns to show' above the table to hide/show columns. Edit any "
