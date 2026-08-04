@@ -29,21 +29,6 @@
     "STLTECH.NS",
     "TATVA.NS"
   ],
-  "sajal_kapoor": [
-    "AKAM",
-    "AMKR",
-    "ASX",
-    "BE",
-    "CYRX",
-    "KXIAY",
-    "MRAAY",
-    "Q",
-    "RGEN",
-    "ROBO",
-    "SNDK",
-    "VSH",
-    "WOLF"
-  ],
   "INDIA": [
     "AARTIPHARM.NS",
     "CARYSIL.NS",
@@ -71,7 +56,8 @@
     "TDPOWERSYS.NS",
     "VENUSPIPES.NS",
     "WINDLAS.NS",
-    "LUMAXIND.NS"
+    "LUMAXIND.NS",
+    "STLTECH.NS"
   ],
   "US": [
     "BNTX",
@@ -87,5 +73,20 @@
     "RKLB",
     "TWST",
     "ZS"
+  ],
+  "sajal_kapoor": [
+    "AKAM",
+    "AMKR",
+    "ASX",
+    "BE",
+    "CYRX",
+    "KXIAY",
+    "MRAAY",
+    "Q",
+    "RGEN",
+    "ROBO",
+    "SNDK",
+    "VSH",
+    "WOLF"
   ]
 }
