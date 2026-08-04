@@ -644,7 +644,8 @@ def ratio_cols():
 
 
 VOLUME_COLS = ["Vol 10D", "Vol 100D"]
-PCT_COLS = ["% Chg", "Qtr Profit Growth %", "Qtr Revenue Growth %"]
+PCT_COLS = ["% Chg", "Qtr Profit Growth %", "Qtr Revenue Growth %", "ROE %", "ROCE %"]
+PERF_PCT_COLS = ["Perf 1M %", "Perf 3M %", "Perf 6M %", "Perf 1Y %", "Perf 3Y %"]
 
 # Column keys considered "fundamental" (company financials/valuation, as
 # opposed to technical/price-derived) -- hideable as a group via the
@@ -2630,6 +2631,9 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         all_pct_cols = pct_cols + custom_pct_cs
         if all_pct_cols:
             styled = styled.format(lambda v: f"{v:+.1f}%" if pd.notna(v) else "—", subset=all_pct_cols)
+        perf_pct_cols = [c for c in PERF_PCT_COLS if c in df.columns]
+        if perf_pct_cols:
+            styled = styled.format(lambda v: f"{v:+.0f}%" if pd.notna(v) else "—", subset=perf_pct_cols)
         header_tooltips = {**column_definitions(settings, labels), **custom_column_tooltips(custom_columns)}
         table_html = add_header_tooltips(sticky_header_html(styled), header_tooltips)
         st.markdown(table_html, unsafe_allow_html=True)
@@ -2706,8 +2710,18 @@ if sb1.button("Refresh Data", type="primary", width="stretch"):
                 st.toast(f"✓ Refreshed live prices! (GitHub sync: {msg})")
         else:
             st.toast(f"✓ Refreshed live prices for {len(combined)} tickers!")
+        st.session_state["last_refresh_summary"] = {
+            "as_of": as_of,
+            "per_market_counts": {mkt: len(rows) for mkt, rows in per_market.items()},
+            "total": len(combined),
+        }
         st.session_state.refresh_token += 1
         st.rerun()
+
+if "last_refresh_summary" in st.session_state:
+    s = st.session_state["last_refresh_summary"]
+    counts_str = " · ".join(f"{mkt}: {n}" for mkt, n in s["per_market_counts"].items())
+    st.sidebar.caption(f"Last refresh: {s['as_of']}  \n{counts_str} ({s['total']} total)")
 
 if sb2.button("⚙️ Settings", width="stretch"):
     settings_dialog()
