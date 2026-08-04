@@ -657,6 +657,26 @@ def compute_trend(last_close, ema_slow_series, rs_weekly, week52_high, week52_lo
     return label, rank, detail
 
 
+def _fetch_info_with_retry(yf_t, ticker, attempts=3, base_delay=3):
+    """yf.Ticker.info makes one HTTP request per ticker with no built-in retry --
+    back-to-back calls across a full watchlist reliably trip Yahoo's rate limiter
+    (429 Too Many Requests / 401 Invalid Crumb), especially from a shared/datacenter
+    IP like Streamlit Cloud's. Retries with exponential backoff on those specific
+    transient errors; gives up (returns {}) after exhausting attempts so callers
+    keep their existing None-safe behavior."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return yf_t.info
+        except Exception as e:
+            msg = str(e)
+            if attempt < attempts and any(s in msg for s in ("Too Many Requests", "Rate limited", "Invalid Crumb", "401", "429")):
+                time.sleep(base_delay * attempt)
+                continue
+            print(f"  [{ticker}] .info fetch failed: {e}")
+            return {}
+    return {}
+
+
 def _download_with_retries(all_tickers, period, attempts=3, timeout=90, wait=30):
     """Bulk yf.download() with a hard per-attempt timeout (yfinance/Yahoo can
     hang or stall with no native timeout of its own) and a retry-with-backoff
@@ -737,7 +757,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
         trailing_pe = forward_pe = pb_ratio = ev_ebitda = p_cashflow = reported_qtr = None
         try:
             yf_t = yf.Ticker(t)
-            info = yf_t.info
+            info = _fetch_info_with_retry(yf_t, t)
             company_name = info.get("longName") or info.get("shortName") or t
             # Yahoo's own YoY quarterly growth reads (this quarter vs. the
             # same quarter last year) -- returned as decimals (0.278 = 27.8%).
@@ -1082,6 +1102,11 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
             })
         except Exception as e:
             print(f"  {t}: ERROR {e}")
+
+        # Small pause between tickers' .info calls (the main source of
+        # rate-limit trips, see _fetch_info_with_retry) to avoid tripping
+        # Yahoo's limiter in the first place, not just retrying after the fact.
+        time.sleep(0.5)
 
     as_of = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M ET")
     return results, as_of
