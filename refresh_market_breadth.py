@@ -149,8 +149,12 @@ def calculate_breadth(tickers, label):
         highs_dict[date_str] = round(float(highs_series[date]), 1)
         lows_dict[date_str] = round(float(lows_series[date]), 1)
         
-    latest_close = closes.iloc[-1]
-    latest_ema = ema200.iloc[-1]
+    valid_closes = closes.dropna(how="all")
+    if valid_closes.empty:
+        return None
+    last_valid_idx = valid_closes.index[-1]
+    latest_close = closes.loc[last_valid_idx]
+    latest_ema = ema200.loc[last_valid_idx]
     above_now = (latest_close > latest_ema).sum()
     total_now = len(latest_close.dropna())
     pct_above_now = float(above_now / total_now * 100) if total_now > 0 else 0.0
