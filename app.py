@@ -60,7 +60,7 @@ from stock_data import (
 )
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE, send_discord,
                      build_discord_messages_for_rule, describe_schedule, DAY_CODES, DAY_LABELS,
-                     DEFAULT_DAYS, ALLOWED_HOURS, HOUR_LABELS)
+                     DEFAULT_DAYS, ALLOWED_HOURS, HOUR_LABELS, compute_rule_truth)
 from filters import (get_market_filters, save_market_filters, apply_filters, describe_filter,
                      describe_chain, describe_chain_with_values, passes_filter_chain, CATEGORICAL_METRICS)
 from github_sync import get_github_config, push_all_config, trigger_github_workflow, SYNCABLE_FILES
@@ -1314,7 +1314,7 @@ def render_watchlist_editor(market, watchlists):
         _apply_watchlist_tickers(market, market_label, tickers, new_tickers, invested_weights)
 
 
-def render_condition_builder(key_prefix, metric_names, filterable_metrics, logic_choice):
+def render_condition_builder(key_prefix, metric_names, filterable_metrics, logic_choice, available_rules=None, exclude_rule_id=None):
     """Renders one full condition-builder row (Metric A / Operator / Compare
     to / Value / Add button) shared by the watchlist custom-filter builder,
     the new-rule builder, and each existing rule's inline condition editor
@@ -1328,9 +1328,39 @@ def render_condition_builder(key_prefix, metric_names, filterable_metrics, logic
     from the real list, and can match several at once (e.g. Trend in
     [Downtrend, Strong Downtrend]).
 
+    A condition can alternatively reference another saved alert
+    ({"type": "rule", "rule_id": ...}) -- true iff that alert is currently
+    matching this ticker. `available_rules` supplies the pickable alerts;
+    `exclude_rule_id` hides the rule being edited so it can't reference
+    itself.
+
     Returns a finished condition dict (with "logic" set to `logic_choice`,
     ready to append to a conditions list) the moment "Add" is clicked with
     valid inputs, else None."""
+    condition_type = st.radio(
+        "Condition type",
+        ["Metric comparison", "Reference another alert"],
+        key=f"{key_prefix}_condtype",
+        horizontal=True,
+        help="A metric comparison tests a metric value; 'Reference another alert' is true "
+             "whenever that saved alert is currently matching this ticker.",
+    )
+    if condition_type == "Reference another alert":
+        options = [
+            r for r in (available_rules or [])
+            if r.get("enabled", True) and r.get("conditions") and r.get("id") != exclude_rule_id
+        ]
+        if not options:
+            st.caption("No other saved alerts to reference yet — create one in the Alert Rules tab first.")
+            return None
+        rule_labels = [f"{r.get('name') or '(unnamed)'} [{r['id']}]" for r in options]
+        rule_by_label = dict(zip(rule_labels, options))
+        rc1, rc2 = st.columns([4, 1])
+        sel_label = rc1.selectbox("Alert to reference", rule_labels, key=f"{key_prefix}_refrule")
+        if rc2.button("＋ Add condition", key=f"{key_prefix}_addbtn"):
+            return {"type": "rule", "rule_id": rule_by_label[sel_label]["id"], "logic": logic_choice}
+        return None
+
     metric_a_label = st.selectbox("Metric A", metric_names, key=f"{key_prefix}_a")
     metric_a_key = filterable_metrics[metric_a_label]
     categorical_options = CATEGORICAL_METRICS.get(metric_a_key)
@@ -1389,7 +1419,8 @@ def render_condition_builder(key_prefix, metric_names, filterable_metrics, logic
 
 def render_custom_filter_builder(market, filterable_metrics):
     st.markdown(
-        "**Custom filters** — compare any metric to another metric or a fixed value. "
+        "**Custom filters** — compare any metric to another metric or a fixed value, "
+        "or reference another saved alert. "
         "Add multiple conditions and chain each one with AND/OR against everything before it "
         "(e.g. cond1 AND cond2 AND cond3 OR cond4), evaluated left to right."
     )
@@ -1397,15 +1428,18 @@ def render_custom_filter_builder(market, filterable_metrics):
     metric_labels = {v: k for k, v in filterable_metrics.items()}
 
     active_filters = get_market_filters(market)
+    from alerts import load_rules as _load_rules_now
+    custom_rules = _load_rules_now()
+    rule_by_id_cf = {r["id"]: r for r in custom_rules}
 
     if active_filters:
         st.write("Active conditions:")
-        st.caption(describe_chain(active_filters, metric_labels))
+        st.caption(describe_chain(active_filters, metric_labels, rule_by_id_cf))
         remove_id = None
         for i, filt in enumerate(active_filters):
             cc1, cc2 = st.columns([5, 1])
             prefix = "" if i == 0 else f"{filt.get('logic', 'AND')}  "
-            cc1.write(f"{prefix}{describe_filter(filt, metric_labels)}")
+            cc1.write(f"{prefix}{describe_filter(filt, metric_labels, rule_by_id_cf)}")
             if cc2.button("Remove", key=f"cf_rm_{market}_{filt['id']}"):
                 remove_id = filt["id"]
         if remove_id:
@@ -1422,7 +1456,7 @@ def render_custom_filter_builder(market, filterable_metrics):
     else:
         logic_choice = "AND"
 
-    new_filter = render_condition_builder(f"cf_{market}", metric_names, filterable_metrics, logic_choice)
+    new_filter = render_condition_builder(f"cf_{market}", metric_names, filterable_metrics, logic_choice, available_rules=custom_rules)
     if new_filter:
         new_filter["id"] = uuid.uuid4().hex[:8]
         active_filters.append(new_filter)
@@ -2300,7 +2334,8 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
     # would flag. Rules are listed regardless of the market tab they were
     # created for or their scope (US/INDIA/ALL) -- a rule is just a reusable
     # bundle of conditions here, applicable from any tab.
-    scan_rules_all = [r for r in load_rules() if r.get("enabled", True) and r.get("conditions")]
+    market_rules_all = load_rules()
+    scan_rules_all = [r for r in market_rules_all if r.get("enabled", True) and r.get("conditions")]
     scan_rule_labels = [f"{r.get('name') or '(unnamed)'} [{r['id']}]" for r in scan_rules_all]
     scan_rule_by_label = dict(zip(scan_rule_labels, scan_rules_all))
     # Mode chosen first, then the alerts: selected rules combine per this mode.
@@ -2320,6 +2355,11 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
              f"Selected rules combine with {scan_mode} logic.",
     )
     selected_scans = [scan_rule_by_label[lbl] for lbl in selected_scan_labels]
+
+    # Resolve rule->rule references once for this market so the scan filter
+    # and custom-filter chains work even when a selected rule references
+    # another alert (passes_filter_chain needs the shared rule_truth map).
+    market_rule_truth, _ = compute_rule_truth(market_rules_all, results)
 
     def passes_ema(row, key, mode):
         if mode == "Any":
@@ -2371,7 +2411,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             continue
         # Selected alert rules combine per scan_mode: OR (any match) or AND (all match).
         if selected_scans:
-            rule_passes = [passes_filter_chain(row, sr.get("conditions", [])) for sr in selected_scans]
+            rule_passes = [passes_filter_chain(row, sr.get("conditions", []), market_rule_truth) for sr in selected_scans]
             if scan_mode == "OR":
                 if not any(rule_passes):
                     continue
@@ -2397,7 +2437,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
                 continue
         filtered.append(row)
 
-    filtered = apply_filters(filtered, active_custom_filters)
+    filtered = apply_filters(filtered, active_custom_filters, market_rule_truth)
     filtered = apply_sort(filtered, sort_field, sort_ascending)
 
     render_expert_analysis_control_bar(market, results)
@@ -2498,7 +2538,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         rule_number = {r["id"]: i + 1 for i, r in enumerate(numbered_rules)}
         alert_matches = {}
         if alert_rules_all:
-            for p in preview_rules(alert_rules_all, results):
+            for p in preview_rules(alert_rules_all, results)[0]:
                 if p["is_true_now"]:
                     num = rule_number.get(p["rule_id"])
                     if num is not None:
@@ -2705,12 +2745,13 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         if "Alerts" in df.columns and alert_matches:
             used_numbers = {n for nums in alert_matches.values() for n in nums}
             metric_labels_market = {v: k for k, v in filterable_metrics.items()}
+            rule_by_id_market = {r["id"]: r for r in numbered_rules}
             legend_bits = []
             for r in numbered_rules:
                 num = rule_number[r["id"]]
                 if num in used_numbers:
                     name = r.get("name") or "(unnamed)"
-                    legend_bits.append(f"**{num}** = {name} — {describe_chain(r['conditions'], metric_labels_market)}")
+                    legend_bits.append(f"**{num}** = {name} — {describe_chain(r['conditions'], metric_labels_market, rule_by_id_market)}")
             if legend_bits:
                 st.caption("Alert legend: " + " · ".join(legend_bits))
     else:
@@ -3386,6 +3427,7 @@ with tab_alerts:
     metric_labels_alert = {v: k for k, v in filterable_metrics_alert.items()}
 
     rules = load_rules()
+    rule_by_id_alert = {r["id"]: r for r in rules}
 
     # ── Rule builder ────────────────────────────────────────────────────────
     st.markdown("**Add a rule**")
@@ -3402,12 +3444,12 @@ with tab_alerts:
 
     if st.session_state.draft_rule_conditions:
         st.caption("Conditions in this rule so far:")
-        st.caption(describe_chain(st.session_state.draft_rule_conditions, metric_labels_alert))
+        st.caption(describe_chain(st.session_state.draft_rule_conditions, metric_labels_alert, rule_by_id_alert))
         remove_idx = None
         for i, cond in enumerate(st.session_state.draft_rule_conditions):
             cc1, cc2 = st.columns([5, 1])
             prefix = "" if i == 0 else f"{cond.get('logic', 'AND')}  "
-            cc1.write(f"{prefix}{describe_filter(cond, metric_labels_alert)}")
+            cc1.write(f"{prefix}{describe_filter(cond, metric_labels_alert, rule_by_id_alert)}")
             if cc2.button("Remove", key=f"dr_rm_{i}"):
                 remove_idx = i
         if remove_idx is not None:
@@ -3424,7 +3466,7 @@ with tab_alerts:
     else:
         dr_logic = "AND"
 
-    new_cond = render_condition_builder("dr", metric_names_alert, filterable_metrics_alert, dr_logic)
+    new_cond = render_condition_builder("dr", metric_names_alert, filterable_metrics_alert, dr_logic, available_rules=rules)
     if new_cond:
         st.session_state.draft_rule_conditions.append(new_cond)
         st.rerun()
@@ -3503,7 +3545,7 @@ with tab_alerts:
 
             with st.expander(expander_title, expanded=False):
                 if rule.get("conditions"):
-                    st.write(describe_chain(rule["conditions"], metric_labels_alert))
+                    st.write(describe_chain(rule["conditions"], metric_labels_alert, rule_by_id_alert))
                 else:
                     st.warning("This rule has no conditions (from an older rule format) — delete it and re-add with the current builder.")
                 if rule.get("scope") != "ALL" and rule.get("scope") not in market_scope_key_to_label:
@@ -3552,7 +3594,7 @@ with tab_alerts:
                     for i, cond in enumerate(edit_conds):
                         ec1, ec2 = st.columns([5, 1])
                         prefix = "" if i == 0 else f"{cond.get('logic', 'AND')}  "
-                        ec1.write(f"{prefix}{describe_filter(cond, metric_labels_alert)}")
+                        ec1.write(f"{prefix}{describe_filter(cond, metric_labels_alert, rule_by_id_alert)}")
                         if ec2.button("Remove", key=f"ec_rm_{rule['id']}_{i}"):
                             ec_remove_idx = i
                     if ec_remove_idx is not None:
@@ -3572,6 +3614,7 @@ with tab_alerts:
 
                 new_edit_cond = render_condition_builder(
                     f"ec_{rule['id']}", metric_names_alert, filterable_metrics_alert, ec_logic,
+                    available_rules=rules, exclude_rule_id=rule["id"],
                 )
                 if new_edit_cond:
                     edit_conds.append(new_edit_cond)
@@ -3623,8 +3666,16 @@ with tab_alerts:
     # ── Preview ─────────────────────────────────────────────────────────────
     st.divider()
     st.markdown("**Preview: what would fire right now**")
+    preview_cycle_ids = st.session_state.get("preview_cycle_ids", set())
+    if preview_cycle_ids:
+        cycle_names = [f"{rule_by_id_alert.get(rid, {}).get('name') or 'alert'} [{rid}]" for rid in sorted(preview_cycle_ids)]
+        st.warning(
+            f"⚠ Circular alert references detected: {', '.join(cycle_names)}. "
+            "Those rule references are treated as not matching — break the cycle to use them."
+        )
     if st.button("Run preview"):
-        preview = preview_rules(rules, combined_results)
+        preview, preview_cycle_ids = preview_rules(rules, combined_results)
+        st.session_state.preview_cycle_ids = preview_cycle_ids
         st.session_state.preview_active = [p for p in preview if p["is_true_now"]]
         st.session_state.preview_as_of = as_of
 
@@ -3641,7 +3692,7 @@ with tab_alerts:
                     "Ticker": tradingview_url(p["ticker"]),
                     "Watchlist": watchlist_label,
                     "Rule": p.get("rule_name") or "(unnamed)",
-                    "Conditions": describe_chain_with_values(p["row"], p["conditions"], metric_labels_alert),
+                    "Conditions": describe_chain_with_values(p["row"], p["conditions"], metric_labels_alert, rule_by_id_alert),
                 })
             pdf = pd.DataFrame(rows_preview)
             st.dataframe(pdf, width="stretch", column_config=LINK_COLUMN_CONFIG)

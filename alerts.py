@@ -291,10 +291,114 @@ def _applicable_tickers(rule, snapshot_results):
     return [scope] if any(r["ticker"] == scope for r in snapshot_results) else []
 
 
+def _rule_references(rule):
+    """rule_ids this rule references via rule-type conditions ({"type":
+    "rule", "rule_id": ...}), as a set."""
+    return {
+        c.get("rule_id")
+        for c in rule.get("conditions", [])
+        if c.get("type") == "rule" and c.get("rule_id")
+    }
+
+
+def _find_cycle_rule_ids(rules_by_id):
+    """Rule ids that participate in a circular reference (self-reference or a
+    strongly connected component of size > 1), via Tarjan's SCC. These are
+    the ones compute_rule_truth resolves to non-matching."""
+    refs = {rid: _rule_references(rule) for rid, rule in rules_by_id.items()}
+    index, lowlink = {}, {}
+    on_stack = set()
+    stack = []
+    sccs = []
+
+    def strongconnect(v):
+        index[v] = lowlink[v] = len(index)
+        stack.append(v)
+        on_stack.add(v)
+        for w in refs.get(v, ()):
+            if w not in rules_by_id:
+                continue
+            if w not in index:
+                strongconnect(w)
+                lowlink[v] = min(lowlink[v], lowlink[w])
+            elif w in on_stack:
+                lowlink[v] = min(lowlink[v], index[w])
+        if lowlink[v] == index[v]:
+            comp = []
+            while True:
+                w = stack.pop()
+                on_stack.discard(w)
+                comp.append(w)
+                if w == v:
+                    break
+            sccs.append(comp)
+
+    for v in rules_by_id:
+        if v not in index:
+            strongconnect(v)
+
+    return {
+        rid
+        for comp in sccs
+        for rid in comp
+        if len(comp) > 1 or rid in refs.get(rid, ())
+    }
+
+
+def compute_rule_truth(all_rules, snapshot_results):
+    """Which enabled rules are currently true for which ticker, resolving
+    rule->rule references ({"type": "rule", "rule_id": ...} conditions) to a
+    fixed point.
+
+    Returns (rule_truth, cycle_ids) where rule_truth is
+    {rule_id: {ticker: bool}} and cycle_ids is the set of rule ids involved in
+    a circular reference.
+
+    Conditions are monotone (AND/OR, no negation), so iterating from the empty
+    map converges to the LEAST fixed point -- which is exactly the chosen
+    cycle policy: a rule-reference caught inside a cycle resolves to False
+    (non-matching) while the rule's other conditions still evaluate normally.
+    No infinite loop is possible: each pass is monotone and #passes is capped.
+
+    A referenced rule is evaluated against its own scope (_applicable_tickers)
+    on the current snapshot, so a reference to a rule scoped to a different
+    watchlist is simply False for tickers outside its scope."""
+    enabled = [r for r in all_rules if r.get("enabled", True) and r.get("conditions")]
+    by_id = {r["id"]: r for r in enabled}
+    if not by_id:
+        return {}, set()
+
+    rows_by_ticker = {r["ticker"]: r for r in snapshot_results}
+
+    rule_truth = {}
+    max_iter = len(by_id) + 1
+    for _ in range(max_iter):
+        changed = False
+        for rid, rule in by_id.items():
+            prev = rule_truth.get(rid)
+            new_vals = {}
+            for t in _applicable_tickers(rule, snapshot_results):
+                row = rows_by_ticker.get(t)
+                if not row:
+                    continue
+                v = passes_filter_chain(row, rule["conditions"], rule_truth)
+                new_vals[t] = v
+                if prev is None or prev.get(t) != v:
+                    changed = True
+            rule_truth[rid] = new_vals
+        if not changed:
+            break
+
+    return rule_truth, _find_cycle_rule_ids(by_id)
+
+
 def preview_rules(rules, snapshot_results):
-    """Returns list of dicts describing current truth value of every rule x
-    ticker combo, WITHOUT touching alert_state.json. Used by the Streamlit
-    app to show 'what would fire right now'."""
+    """Returns (out, cycle_ids) -- out is a list of dicts describing current
+    truth value of every rule x ticker combo (WITHOUT touching
+    alert_state.json), used by the Streamlit app to show 'what would fire
+    right now'; cycle_ids is the set of rule ids trapped in a circular
+    reference so the UI can warn."""
+    rule_truth, cycle_ids = compute_rule_truth(rules, snapshot_results)
     by_ticker = {r["ticker"]: r for r in snapshot_results}
     out = []
     for rule in rules:
@@ -304,7 +408,7 @@ def preview_rules(rules, snapshot_results):
             row = by_ticker.get(ticker)
             if not row:
                 continue
-            is_true = passes_filter_chain(row, rule["conditions"])
+            is_true = passes_filter_chain(row, rule["conditions"], rule_truth)
             out.append({
                 "rule_id": rule["id"],
                 "rule_name": rule.get("name", ""),
@@ -313,30 +417,36 @@ def preview_rules(rules, snapshot_results):
                 "row": row,
                 "is_true_now": is_true,
             })
-    return out
+    return out, cycle_ids
 
 
-def evaluate_and_fire(rules, snapshot_results, state, metric_labels=None):
+def evaluate_and_fire(all_rules, snapshot_results, state, metric_labels=None, due_rules=None):
     """Edge-triggered evaluation used by the scheduled alert_check.py run.
-    Returns (messages list, updated_state dict). `messages` is one Discord-
-    ready table PER RULE that has at least one ticker newly triggering today
-    (false -> true transition) -- tickers that were already active stay
-    silent, matching the existing edge-triggered behavior exactly; only the
-    formatting (a table instead of one line per ticker) changed."""
+    Returns (messages list, updated_state dict). `all_rules` is the COMPLETE
+    ruleset -- needed so rule->rule references resolve even when the
+    referenced rule isn't due today. `due_rules` (default: all_rules) is the
+    subset that actually fires. `messages` is one Discord-ready table PER RULE
+    that has at least one ticker newly triggering today (false -> true
+    transition) -- tickers that were already active stay silent, matching the
+    existing edge-triggered behavior exactly; only the formatting (a table
+    instead of one line per ticker) changed."""
+    if due_rules is None:
+        due_rules = all_rules
     metric_labels = metric_labels or {}
+    rule_truth, cycle_ids = compute_rule_truth(all_rules, snapshot_results)
     by_ticker = {r["ticker"]: r for r in snapshot_results}
     today = date.today().isoformat()
     new_state = dict(state)
     newly_triggered_by_rule = {}  # rule_id -> [ticker, ...]
 
-    for rule in rules:
+    for rule in due_rules:
         if not rule.get("enabled", True) or not rule.get("conditions"):
             continue
         for ticker in _applicable_tickers(rule, snapshot_results):
             row = by_ticker.get(ticker)
             if not row:
                 continue
-            is_true = passes_filter_chain(row, rule["conditions"])
+            is_true = passes_filter_chain(row, rule["conditions"], rule_truth)
             key = f"{rule['id']}:{ticker}"
             prev = new_state.get(key, {"was_active": False, "last_triggered_date": None})
 
@@ -346,10 +456,15 @@ def evaluate_and_fire(rules, snapshot_results, state, metric_labels=None):
             else:
                 new_state[key] = {"was_active": is_true, "last_triggered_date": prev.get("last_triggered_date")}
 
-    rules_by_id = {r["id"]: r for r in rules}
+    if cycle_ids:
+        print(f"WARNING: circular alert references detected among rule(s): {sorted(cycle_ids)} -- those rule references are treated as not matching.")
+
+    rules_by_id = {r["id"]: r for r in all_rules}
     messages = []
     for rule_id, tickers in newly_triggered_by_rule.items():
-        messages.extend(build_discord_messages_for_rule(rules_by_id[rule_id], tickers, by_ticker, metric_labels))
+        rule = rules_by_id.get(rule_id)
+        if rule:
+            messages.extend(build_discord_messages_for_rule(rule, tickers, by_ticker, metric_labels))
 
     return messages, new_state
 
