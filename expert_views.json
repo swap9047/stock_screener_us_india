@@ -803,13 +803,13 @@
     "model_used": "gemini-3.5-flash-lite"
   },
   "RGEN": {
-    "verdict": "HOLD",
-    "headline": "Mixed technical signals and a formal downtrend keep RGEN in a holding pattern.",
-    "technical_summary": "RGEN trades above its 40 WEMA with a 6-week VStop uptrend, but the formal trend status remains classified as a downtrend alongside negative 10-day net volume distribution (-5.3%). Momentum RSI readings in the mid-50s confirm a lack of aggressive buying conviction.",
+    "verdict": "ACCUMULATE",
+    "headline": "RGEN shows solid technical accumulation with rising momentum and expanding volume.",
+    "technical_summary": "RGEN is in a confirmed uptrend with price above rising weekly and daily EMAs and positive Mansfield Relative Strength. Volume is exploding (10D volume significantly outpacing the 100D average) with net positive accumulation, supported by a 5-week weekly VStop trend.",
     "catalyst_summary": "No material news found; verdict based on technicals only.",
-    "actionable_take": "Maintain current positions while using the weekly VStop level of 119.1 as a trailing risk threshold. Defer new accumulation until the broader trend status formally transitions to an uptrend supported by positive volume accumulation.",
-    "as_of": "2026-08-04 14:54",
-    "news_used": "No material news or upcoming catalysts were found for Repligen Corporation (RGEN) for the specified period.",
+    "actionable_take": "Consider accumulating positions near current levels or on minor pullbacks toward the fast EMAs (~138-140). Maintain a trailing stop loss aligned with the weekly VStop level at 119.4 to manage downside risk effectively.",
+    "as_of": "2026-08-05 03:31",
+    "news_used": "No recent news found.",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
   },
