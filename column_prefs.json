@@ -37,6 +37,6 @@
     "note",
     "vstop_weekly"
   ],
-  "sort_by": "Company Name",
-  "sort_dir": "\u2191"
+  "sort_by": "% Chg",
+  "sort_dir": "\u2193"
 }
