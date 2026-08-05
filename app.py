@@ -3088,7 +3088,7 @@ with tab_news:
         mask = (closes.index >= cutoff) & (valid_counts > 0)
         if not mask.any(): return None, None
         
-        df_ema = pd.DataFrame({"Date": closes.index[mask], "% Above 200d SMA": ema_series[mask]})
+        df_ema = pd.DataFrame({"Date": closes.index[mask], "% Above 200d EMA": ema_series[mask]})
         df_hl = pd.DataFrame({"Date": closes.index[mask], "% New Highs": high_series[mask], "% New Lows": low_series[mask]})
         return df_ema, df_hl
 
@@ -3098,7 +3098,7 @@ with tab_news:
         
         # EMA
         hist = market_data.get("history", {})
-        df_ema = pd.DataFrame(list(hist.items()), columns=["Date", "% Above 200d SMA"]) if hist else pd.DataFrame()
+        df_ema = pd.DataFrame(list(hist.items()), columns=["Date", "% Above 200d EMA"]) if hist else pd.DataFrame()
         if not df_ema.empty:
             df_ema["Date"] = pd.to_datetime(df_ema["Date"])
             df_ema = df_ema[df_ema["Date"] >= cutoff]
@@ -3194,8 +3194,8 @@ with tab_news:
         total_ind = breadth_data.get("markets", {}).get("INDIA", {}).get("total", "--")
         total_us = breadth_data.get("markets", {}).get("US", {}).get("total", "--")
             
-        title_ema_ind = f"Nifty 500: % Above 200-Day SMA (Current: {get_val(df_ema_ind, '% Above 200d SMA')}%, Captured: {total_ind}/501)"
-        title_ema_us = f"S&P 500: % Above 200-Day SMA (Current: {get_val(df_ema_us, '% Above 200d SMA')}%, Captured: {total_us}/503)"
+        title_ema_ind = f"Nifty 500: % Above 200-Day EMA (Current: {get_val(df_ema_ind, '% Above 200d EMA')}%, Captured: {total_ind})"
+        title_ema_us = f"S&P 500: % Above 200-Day EMA (Current: {get_val(df_ema_us, '% Above 200d EMA')}%, Captured: {total_us})"
         
         title_hl_ind = f"Nifty 500: 52-Week Highs vs Lows (Highs: {get_val(df_hl_ind, '% New Highs')}%, Lows: {get_val(df_hl_ind, '% New Lows')}%)"
         title_hl_us = f"S&P 500: 52-Week Highs vs Lows (Highs: {get_val(df_hl_us, '% New Highs')}%, Lows: {get_val(df_hl_us, '% New Lows')}%)"
