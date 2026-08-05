@@ -138,6 +138,7 @@ def get_auth_credentials():
 
 
 REMEMBER_COOKIE_NAME = "swa_remember"
+REMEMBER_STORAGE_KEY = "swa_remember"
 REMEMBER_DAYS = 30
 
 
@@ -181,18 +182,21 @@ def _query_param_token_key():
 
 
 def _set_auth_token(token):
-    """Persists the remember-me token as a real browser cookie. Uses
+    """Persists the remember-me token on the device. Uses
     st.html(unsafe_allow_javascript=True) so the script runs in the app's own
-    top-level document (not a sandboxed iframe), which lets the cookie work
-    on Streamlit Cloud too. The token is also kept in session state and as a
-    URL query parameter as a fallback in case the browser blocks the cookie.
+    top-level document, writing both a real browser cookie and a localStorage
+    entry. Community Cloud strips cookies from what the server sees
+    (st.context.cookies is empty there), so the query param -- re-injected by
+    _restore_stored_token() on later visits -- is the reliable channel there.
     A short delayed reload lets the JS write finish before the page reruns."""
     from urllib.parse import quote
     encoded = quote(token, safe="")
+    js_token = json.dumps(token)
     st.html(
         f"<script>"
         f'document.cookie = "{REMEMBER_COOKIE_NAME}={encoded}; path=/; max-age={REMEMBER_DAYS * 86400}; SameSite=Lax";'
-        f'setTimeout(function() {{ window.location.reload(); }}, 150);'
+        f"try {{ localStorage.setItem({REMEMBER_STORAGE_KEY!r}, {js_token}); }} catch(e) {{}}"
+        f"setTimeout(function() {{ window.location.reload(); }}, 150);"
         f"</script>",
         unsafe_allow_javascript=True,
     )
@@ -202,29 +206,57 @@ def _set_auth_token(token):
 
 def _clear_auth_token():
     """Clears the remember-me token from wherever it was stored."""
-    # Clear from query params
     if _query_param_token_key() in st.query_params:
         del st.query_params[_query_param_token_key()]
     st.session_state.pop("_remember_token", None)
     st.html(
         f"<script>"
         f'document.cookie = "{REMEMBER_COOKIE_NAME}=; path=/; max-age=0; SameSite=Lax";'
-        f'setTimeout(function() {{ window.location.reload(); }}, 150);'
+        f"try {{ localStorage.removeItem({REMEMBER_STORAGE_KEY!r}); }} catch(e) {{}}"
+        f"setTimeout(function() {{ window.location.reload(); }}, 150);"
         f"</script>",
+        unsafe_allow_javascript=True,
+    )
+
+
+def _restore_stored_token():
+    """Renders an invisible script that, on a fresh visit, re-injects a
+    locally-stored remember-me token (localStorage or cookie) into the URL as
+    ?_swa_t=... and reloads. Community Cloud strips cookies from the server's
+    view, so the token is read back from the query param instead. Runs before
+    the login form renders to minimize any login-screen flash."""
+    qp_key = _query_param_token_key()
+    st.html(
+        "<script>"
+        "(function() {"
+        "  var tok = null;"
+        f"  try {{ tok = localStorage.getItem({REMEMBER_STORAGE_KEY!r}); }} catch(e) {{}}"
+        "  if (!tok) {"
+        f"    var m = document.cookie.match(/(?:^|;\\s*){REMEMBER_COOKIE_NAME}=([^;]*)/);"
+        "    if (m) tok = decodeURIComponent(m[1]);"
+        "  }"
+        f"  if (tok && !new URLSearchParams(window.location.search).has({qp_key!r})) {{"
+        "    var sep = window.location.href.indexOf('?') === -1 ? '?' : '&';"
+        "    window.location.replace(window.location.href + sep + "
+        f"{qp_key!r} + '=' + encodeURIComponent(tok));"
+        "  }"
+        "})();"
+        "</script>",
         unsafe_allow_javascript=True,
     )
 
 
 def _get_stored_token(username, password):
     """Retrieves and validates the stored remember-me token from all
-    possible locations: query params, session state, and browser cookies
-    (now set on both local and Streamlit Cloud via st.html).
+    possible locations: query params (the reliable channel on Cloud, re-
+    injected from localStorage by _restore_stored_token), session state, and
+    browser cookies (works locally; Community Cloud strips them server-side).
     Returns the token string if valid, or None."""
     from urllib.parse import unquote
 
     candidates = []
 
-    # 1. Query param (fallback when cookies are blocked)
+    # 1. Query param (primary channel on Streamlit Cloud)
     qp = st.query_params.get(_query_param_token_key())
     if qp:
         candidates.append(qp)
@@ -234,7 +266,7 @@ def _get_stored_token(username, password):
     if ss:
         candidates.append(ss)
 
-    # 3. Browser cookie (real persistence on all platforms)
+    # 3. Browser cookie (local dev; empty on Community Cloud)
     raw = st.context.cookies.get(REMEMBER_COOKIE_NAME)
     if raw:
         candidates.append(unquote(raw))
@@ -260,6 +292,11 @@ def require_login():
         st.session_state["_remember_token"] = token
         return
 
+    # No token seen yet. On Cloud the server can't read cookies, so if the
+    # device still holds a saved token (localStorage/cookie), re-inject it
+    # into the URL as ?_swa_t= and reload before showing the login form.
+    _restore_stored_token()
+
     st.title("Stock Watchlist")
     st.subheader("Sign in")
     with st.form("login_form"):
@@ -273,8 +310,8 @@ def require_login():
             if remember:
                 token = _make_remember_token(username, password)
                 _set_auth_token(token)
-                # JS writes the cookie and triggers a reload; session state
-                # keeps this session authenticated in the meantime.
+                # JS saves the token (cookie + localStorage) and reloads;
+                # session state keeps this session authenticated meanwhile.
                 st.stop()
             else:
                 st.rerun()
@@ -295,7 +332,7 @@ def render_logout_button():
     if st.sidebar.button("Log out", width="stretch"):
         st.session_state.authenticated = False
         # The click already triggered this rerun; _clear_auth_token's JS
-        # expires the cookie and reloads the page to the login screen.
+        # removes the token (cookie + localStorage) and reloads to login.
         _clear_auth_token()
 
 
