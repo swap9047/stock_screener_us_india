@@ -2303,12 +2303,21 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
     scan_rules_all = [r for r in load_rules() if r.get("enabled", True) and r.get("conditions")]
     scan_rule_labels = [f"{r.get('name') or '(unnamed)'} [{r['id']}]" for r in scan_rules_all]
     scan_rule_by_label = dict(zip(scan_rule_labels, scan_rules_all))
+    # Mode chosen first, then the alerts: selected rules combine per this mode.
+    scan_mode = st.segmented_control(
+        "Match mode",
+        options=["OR", "AND"],
+        default="OR",
+        key=f"f_scan_mode_{market}",
+        help="OR: keep tickers matching any selected alert. AND: keep tickers matching every selected alert.",
+    )
     selected_scan_labels = st.multiselect(
-        "Filter by Saved Scans / Alerts (combines with AND logic)",
+        "Filter by Saved Scans / Alerts",
         options=scan_rule_labels,
         key=f"f_scans_{market}",
         help="Applies the metric conditions from selected alert/scan rules to this watchlist, "
-             "regardless of which tab or scope the rule was originally set up under.",
+             f"regardless of which tab or scope the rule was originally set up under. "
+             f"Selected rules combine with {scan_mode} logic.",
     )
     selected_scans = [scan_rule_by_label[lbl] for lbl in selected_scan_labels]
 
@@ -2360,8 +2369,15 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             continue
         if f_tech_only and not row.get("tech_uptrend"):
             continue
-        if selected_scans and not all(passes_filter_chain(row, sr.get("conditions", [])) for sr in selected_scans):
-            continue
+        # Selected alert rules combine per scan_mode: OR (any match) or AND (all match).
+        if selected_scans:
+            rule_passes = [passes_filter_chain(row, sr.get("conditions", [])) for sr in selected_scans]
+            if scan_mode == "OR":
+                if not any(rule_passes):
+                    continue
+            else:
+                if not all(rule_passes):
+                    continue
         # Attach expert_take string to row dict so custom filters can access it directly
         ev = load_expert_views().get(row["ticker"], {})
         verdict = ev.get("verdict", "")
