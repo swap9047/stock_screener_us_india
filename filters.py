@@ -229,15 +229,36 @@ def passes_filter(row, filt):
     return OPERATORS[operator_symbol](a, b)
 
 
-def passes_filter_chain(row, conditions):
+def _passes_rule_cond(row, cond, rule_truth):
+    """Evaluates a rule-reference condition ({"type": "rule", "rule_id":
+    "..."}) against one row: true iff the referenced rule is true for this
+    ticker in the current snapshot. Without rule_truth context it can't be
+    resolved, so it fails (False) rather than guessing. rule_truth has the
+    shape {rule_id: {ticker: bool}} (see alerts.compute_rule_truth)."""
+    if rule_truth is None:
+        return False
+    ticker = row.get("ticker", "")
+    return bool(rule_truth.get(cond.get("rule_id"), {}).get(ticker, False))
+
+
+def passes_filter_chain(row, conditions, rule_truth=None):
     """Evaluates a list of conditions left-to-right, combining each with the
     running result via its own "logic" field. Empty list => True (no
-    restriction)."""
+    restriction). Conditions may be metric comparisons (passes_filter) or
+    rule references ({"type": "rule", "rule_id": ...}), which resolve against
+    `rule_truth` -- a {ticker: {rule_id: bool}} map computed once over the
+    whole ruleset (see alerts.compute_rule_truth)."""
     if not conditions:
         return True
-    result = passes_filter(row, conditions[0])
+    if conditions[0].get("type") == "rule":
+        result = _passes_rule_cond(row, conditions[0], rule_truth)
+    else:
+        result = passes_filter(row, conditions[0])
     for cond in conditions[1:]:
-        this_result = passes_filter(row, cond)
+        if cond.get("type") == "rule":
+            this_result = _passes_rule_cond(row, cond, rule_truth)
+        else:
+            this_result = passes_filter(row, cond)
         if cond.get("logic", "AND") == "OR":
             result = result or this_result
         else:
@@ -245,11 +266,11 @@ def passes_filter_chain(row, conditions):
     return result
 
 
-def apply_filters(rows, filter_list):
+def apply_filters(rows, filter_list, rule_truth=None):
     """Returns the subset of rows that satisfy the full condition chain."""
     if not filter_list:
         return rows
-    return [row for row in rows if passes_filter_chain(row, filter_list)]
+    return [row for row in rows if passes_filter_chain(row, filter_list, rule_truth)]
 
 
 def _metric_b_expr(filt, metric_labels):
@@ -275,28 +296,35 @@ def _metric_b_expr(filt, metric_labels):
     return expr
 
 
-def describe_filter(filt, metric_labels):
+def describe_filter(filt, metric_labels, rule_by_id=None):
+    if filt.get("type") == "rule":
+        rule = (rule_by_id or {}).get(filt.get("rule_id"))
+        name = (rule or {}).get("name") or filt.get("rule_id")
+        return f'Alert "{name}" matches'
     label_a = metric_labels.get(filt["metric_a"], filt["metric_a"])
     return f"{label_a} {filt['operator']} {_metric_b_expr(filt, metric_labels)}"
 
 
-def describe_chain(conditions, metric_labels):
+def describe_chain(conditions, metric_labels, rule_by_id=None):
     """Human-readable description of a full condition chain, e.g.
     '10 WEMA > 40 WEMA AND RSI Daily > 45 OR RSI Weekly < 30'."""
     parts = []
     for i, cond in enumerate(conditions):
         prefix = "" if i == 0 else f" {cond.get('logic', 'AND')} "
-        parts.append(f"{prefix}{describe_filter(cond, metric_labels)}")
+        parts.append(f"{prefix}{describe_filter(cond, metric_labels, rule_by_id)}")
     return "".join(parts)
 
 
-def describe_chain_with_values(row, conditions, metric_labels):
+def describe_chain_with_values(row, conditions, metric_labels, rule_by_id=None):
     """Like describe_chain, but appends the row's actual current metric
     values to each condition, e.g. '10 WEMA[42.3] > 40 WEMA[39.1]' -- used in
     the alert preview so you can see why a condition is/isn't true."""
     parts = []
     for i, cond in enumerate(conditions):
         prefix = "" if i == 0 else f" {cond.get('logic', 'AND')} "
+        if cond.get("type") == "rule":
+            parts.append(f"{prefix}{describe_filter(cond, metric_labels, rule_by_id)}")
+            continue
         label_a = metric_labels.get(cond["metric_a"], cond["metric_a"])
         val_a = _get_metric_val(row, cond["metric_a"])
         val_a_str = f"{val_a:.1f}" if isinstance(val_a, float) else str(val_a)

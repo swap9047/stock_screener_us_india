@@ -52,7 +52,9 @@ def main():
 
     metric_labels = {v: k for k, v in get_filterable_metrics(settings).items()}
     state = load_state()
-    messages, new_state = evaluate_and_fire(due_rules, combined, state, metric_labels=metric_labels)
+    # Pass the FULL ruleset so any rule-references inside due_rules can resolve
+    # against rules that aren't due today; only due_rules actually fires.
+    messages, new_state = evaluate_and_fire(all_rules, combined, state, due_rules=due_rules, metric_labels=metric_labels)
 
     # Every rule x ticker key that just flipped false->true this run (i.e. a
     # newly-triggered occurrence) -- derived by diffing new_state against the
