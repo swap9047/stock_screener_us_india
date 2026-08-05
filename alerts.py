@@ -218,7 +218,15 @@ def normalize_rule(rule):
     conditions, so you can see them and re-add with the new condition
     builder."""
     conditions = rule.get("conditions")
-    is_current_format = conditions is not None and (len(conditions) == 0 or "metric_a" in conditions[0])
+
+    def _is_current_condition(cond):
+        # Current-format conditions are metric comparisons (metric_a present)
+        # OR references to another alert ({"type": "rule", "rule_id": ...},
+        # which intentionally has no metric_a).
+        return "metric_a" in cond or cond.get("type") == "rule"
+
+    is_current_format = (conditions is not None
+                         and (len(conditions) == 0 or _is_current_condition(conditions[0])))
     if is_current_format:
         rule.setdefault("name", "")
         rule.setdefault("scope", "ALL")
