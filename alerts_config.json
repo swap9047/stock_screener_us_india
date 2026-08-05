@@ -240,5 +240,44 @@
       ],
       "time_et": "21:00"
     }
+  },
+  {
+    "id": "ed319eac",
+    "name": "uptrending, uptrending and below 10wema, green flag, early stage",
+    "scope": "ALL",
+    "conditions": [
+      {
+        "type": "rule",
+        "rule_id": "dccb5c72",
+        "logic": "AND"
+      },
+      {
+        "type": "rule",
+        "rule_id": "591b1f1f",
+        "logic": "OR"
+      },
+      {
+        "type": "rule",
+        "rule_id": "ae60c0b9",
+        "logic": "OR"
+      },
+      {
+        "type": "rule",
+        "rule_id": "09aea890",
+        "logic": "OR"
+      }
+    ],
+    "enabled": true,
+    "schedule": {
+      "type": "none",
+      "days": [
+        "MON",
+        "TUE",
+        "WED",
+        "THU",
+        "FRI"
+      ],
+      "time_et": "21:00"
+    }
   }
 ]
