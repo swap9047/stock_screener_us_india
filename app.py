@@ -375,6 +375,21 @@ def _bump_refresh():
     st.session_state.refresh_nonce = uuid.uuid4().hex
 
 
+def _persist_and_serve(per_market, as_of, settings):
+    """Writes a freshly-computed fetch result to data_snapshot.json AND stashes
+    it in session state so the rerun following the action serves this exact
+    result instead of fetching again. Called by the Refresh Data button and
+    watchlist-save: those actions are the allowed live-fetch triggers, and the
+    persisted snapshot also keeps later login/reloads clean."""
+    save_data_snapshot(as_of, per_market, settings=settings)
+    st.session_state["_served_snapshot"] = (as_of, per_market)
+    st.session_state["last_refresh_summary"] = {
+        "as_of": as_of,
+        "per_market_counts": {mkt: len(rows) for mkt, rows in per_market.items()},
+        "total": sum(len(rows) for rows in per_market.values()),
+    }
+
+
 def get_discord_webhook():
     try:
         if "DISCORD_WEBHOOK_URL" in st.secrets:
@@ -1149,13 +1164,20 @@ def _apply_watchlist_tickers(market, market_label, existing_tickers, candidate_t
 
     save_watchlist(market, valid_tickers)
     save_invested_weights(invested_weights)
+
+    # Saving a watchlist is an allowed refresh trigger: recompute + persist the
+    # snapshot so the post-save rerun (and later reloads) serve current data.
+    from stock_data import load_settings as _load_settings_now
+    _curr_settings = _load_settings_now()
+    _combined, _as_of, _per_market = fetch_all_markets(None, settings=_curr_settings)
+    _persist_and_serve(_per_market, _as_of, _curr_settings)
     _bump_refresh()
-    st.success(f"Saved {market_label} with {len(valid_tickers)} tickers.")
+    st.success(f"Saved {market_label} with {len(valid_tickers)} tickers and refreshed data.")
 
     gh_token, gh_repo, gh_branch = get_github_config(st.secrets)
     if gh_token and gh_repo:
         with st.spinner("Pushing watchlist to GitHub..."):
-            ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=["watchlist.json", "invested.json"], message=f"Update {market_label}")
+            ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=["watchlist.json", "invested.json", "data_snapshot.json"], message=f"Update {market_label}")
             if ok:
                 st.success("Successfully pushed to GitHub!")
             else:
@@ -2724,7 +2746,7 @@ sb1, sb2 = st.sidebar.columns(2)
 if sb1.button("Refresh Data", type="primary", width="stretch"):
     with st.spinner("Fetching latest prices & updating snapshot..."):
         combined, as_of, per_market = fetch_all_markets(watchlists_now, settings=settings_now)
-        save_data_snapshot(as_of, per_market, settings=settings_now)
+        _persist_and_serve(per_market, as_of, settings_now)
         token, repo, branch = get_github_config(st.secrets)
         if token and repo:
             ok, msg = push_all_config(token, repo, branch, filenames=["data_snapshot.json"], message=f"Refresh data snapshot via UI ({as_of})")
@@ -2734,11 +2756,6 @@ if sb1.button("Refresh Data", type="primary", width="stretch"):
                 st.toast(f"✓ Refreshed live prices! (GitHub sync: {msg})")
         else:
             st.toast(f"✓ Refreshed live prices for {len(combined)} tickers!")
-        st.session_state["last_refresh_summary"] = {
-            "as_of": as_of,
-            "per_market_counts": {mkt: len(rows) for mkt, rows in per_market.items()},
-            "total": len(combined),
-        }
         _bump_refresh()
         st.rerun()
 
@@ -2751,16 +2768,27 @@ if sb2.button("⚙️ Settings", width="stretch"):
     settings_dialog()
 render_logout_button()
 
-# Prefer the daily 7 AM ET snapshot (data_snapshot.json, built by
-# .github/workflows/data-refresh.yml) over a live yfinance fetch -- much
-# faster, and avoids every visitor re-fetching identical data. Only used
-# when the user hasn't clicked "Refresh Data" this session (refresh_token
-# == 0) and the snapshot actually covers the current watchlist/settings;
-# otherwise falls back to the live cached_fetch_all path exactly as before.
+# Resolve this run's per-market data WITHOUT ever hitting yfinance on a plain
+# login/reload. A live fetch is allowed ONLY after an explicit trigger
+# (Refresh Data button, saving a watchlist, saving calc Settings) -- all of
+# which set refresh_token > 0. At refresh_token == 0 we always serve the
+# on-disk snapshot (data_snapshot.json, built by the GitHub Actions data
+# refresh); if it's missing or stale we still serve its rows and ask the user
+# to click Refresh Data instead of silently re-fetching on every page load.
+#
+# A freshly-persisted result (Refresh button / watchlist save) is stashed in
+# session state so the rerun that follows those actions serves that exact
+# result -- no duplicate fetch on top of the one the action already did.
 using_snapshot = False
-if st.session_state.refresh_token == 0:
+snapshot_warning = None
+served = st.session_state.get("_served_snapshot")
+if served:
+    as_of, per_market = served
+    using_snapshot = True
+
+if st.session_state.refresh_token == 0 and not using_snapshot:
     snapshot = load_data_snapshot()
-    if snapshot_is_usable(snapshot, watchlists_now, settings_now):
+    if snapshot and snapshot_is_usable(snapshot, watchlists_now, settings_now):
         as_of = snapshot["as_of"]
         # Filter the snapshot to only include the tickers currently in the watchlist
         filtered_per_market = {}
@@ -2769,8 +2797,28 @@ if st.session_state.refresh_token == 0:
             filtered_per_market[mkt] = [r for r in snapshot["per_market"].get(mkt, []) if r.get("ticker") in wl]
         per_market = filtered_per_market
         using_snapshot = True
+    elif snapshot and snapshot.get("per_market"):
+        # Snapshot exists but is stale (settings/code changed or a ticker was
+        # added via GitHub since it was built). Still show the last-known data
+        # rather than fetching at login; prompt the user to refresh.
+        as_of = snapshot["as_of"]
+        filtered_per_market = {}
+        for mkt in watchlists_now.keys():
+            wl = set(watchlists_now.get(mkt, []))
+            filtered_per_market[mkt] = [r for r in snapshot["per_market"].get(mkt, []) if r.get("ticker") in wl]
+        per_market = filtered_per_market
+        using_snapshot = True
+        snapshot_warning = (
+            "Data snapshot is out of date (settings, code, or watchlist changed since it was built). "
+            "Showing last-known data — click **Refresh Data** to recompute."
+        )
+    else:
+        per_market = {}
+        using_snapshot = True
+        snapshot_warning = "No data snapshot found. Click **Refresh Data** to load the latest prices."
 
 if not using_snapshot:
+    # Only reachable when refresh_token > 0 -- i.e. after an explicit trigger.
     # Filter out pipeline/UI settings so changing a news model, sentiment
     # model, or note dropdown labels doesn't bust the cache and trigger a
     # live fetch when refresh_token > 0
@@ -2782,6 +2830,9 @@ if not using_snapshot:
         json.dumps(watchlists_now, sort_keys=True),
         json.dumps(calc_settings, sort_keys=True),
     )
+
+if snapshot_warning:
+    st.warning(snapshot_warning)
 
 # fetch_all_markets() already applies custom columns on the live-fetch path,
 # but the snapshot path loads raw JSON straight off disk and never touches
@@ -2925,63 +2976,6 @@ with tab_news:
         )
         st.plotly_chart(fig, width="stretch")
 
-    @st.cache_data(ttl=3600)
-    def fetch_performance_data(tickers, benchmark_ticker, weights=None):
-        import yfinance as yf
-        import io
-        import time
-        from contextlib import redirect_stderr
-        
-        all_tickers = list(tickers) + [benchmark_ticker]
-        
-        f = io.StringIO()
-        with redirect_stderr(f):
-            data = yf.download(all_tickers, period="5y", interval="1d", auto_adjust=True, progress=False, threads=False)
-            
-        if 'Close' not in data.columns:
-            if isinstance(data, pd.DataFrame) and not data.empty:
-                closes = data
-            else:
-                closes = pd.DataFrame()
-        else:
-            closes = data['Close']
-            
-        if isinstance(closes, pd.Series):
-            closes = closes.to_frame(name=all_tickers[0])
-            
-        failed_tickers = set(all_tickers) - set(closes.columns)
-        for col in closes.columns:
-            if closes[col].isna().all():
-                failed_tickers.add(col)
-                
-        for t in failed_tickers:
-            if t in closes.columns:
-                closes = closes.drop(columns=[t])
-                
-        if failed_tickers:
-            retry_series = []
-            for t in failed_tickers:
-                time.sleep(3)
-                with redirect_stderr(io.StringIO()):
-                    retry_data = yf.download(t, period="5y", interval="1d", auto_adjust=True, progress=False)
-                if not retry_data.empty and 'Close' in retry_data.columns:
-                    s = retry_data['Close']
-                    if isinstance(s, pd.DataFrame):
-                        s = s.iloc[:, 0]
-                    if not s.isna().all():
-                        s.name = t
-                        retry_series.append(s)
-                    
-            if retry_series:
-                if not closes.empty:
-                    closes = pd.concat([closes] + retry_series, axis=1)
-                else:
-                    closes = pd.concat(retry_series, axis=1)
-                    
-        closes = closes.dropna(how='all').ffill()
-        if closes.empty: return None
-        return closes
-
     def calculate_portfolio_returns(closes, tickers, benchmark_ticker, weights=None, filter_years=3):
         if closes is None or closes.empty: return None
         if closes.index.tzinfo is not None:
@@ -3072,6 +3066,30 @@ with tab_news:
     if os.path.exists(breadth_file):
         with open(breadth_file) as f:
             breadth_data = json.load(f)
+
+    # Dashboard portfolio-vs-benchmark curves come from dashboard_perf.json,
+    # built by the same GitHub Actions market-breadth workflow -- NO live
+    # yfinance at render. Each market stores {ticker: {date: close}}, and the
+    # benchmark ticker is included as its own column so calculate_portfolio_returns
+    # works exactly as when the data was fetched live.
+    perf_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard_perf.json")
+    perf_data = {}
+    perf_as_of = None
+    if os.path.exists(perf_file):
+        try:
+            with open(perf_file) as f:
+                perf_data = json.load(f)
+            perf_as_of = perf_data.get("as_of")
+        except Exception:
+            perf_data = {}
+
+    def _closes_from_perf(market):
+        series_map = perf_data.get("markets", {}).get(market, {})
+        if not series_map:
+            return None
+        df = pd.DataFrame({t: dict(s) for t, s in series_map.items()})
+        df.index = pd.to_datetime(df.index)
+        return df.sort_index()
             
     from stock_data import load_invested_weights
     invested_weights = load_invested_weights()
@@ -3092,16 +3110,21 @@ with tab_news:
         closes_ind = None
         df_perf_ind = None
         if india_portfolio_tickers:
-            closes_ind = fetch_performance_data(india_portfolio_tickers, "^CRSLDX")
+            closes_ind = _closes_from_perf("INDIA")
             # If we fall back to ind_tickers, we don't have invested_weights for them, so we pass None
             w = invested_weights if ind_invested else None
-            df_perf_ind = calculate_portfolio_returns(closes_ind, india_portfolio_tickers, "^CRSLDX", weights=w, filter_years=years)
+            if closes_ind is not None and "^CRSLDX" in closes_ind.columns:
+                df_perf_ind = calculate_portfolio_returns(closes_ind, india_portfolio_tickers, "^CRSLDX", weights=w, filter_years=years)
             
         closes_us = None
         df_perf_us = None
         if us_tickers:
-            closes_us = fetch_performance_data(us_tickers, "SPY")
-            df_perf_us = calculate_portfolio_returns(closes_us, us_tickers, "SPY", weights=None, filter_years=years)
+            closes_us = _closes_from_perf("US")
+            if closes_us is not None and "SPY" in closes_us.columns:
+                df_perf_us = calculate_portfolio_returns(closes_us, us_tickers, "SPY", weights=None, filter_years=years)
+            
+        if perf_as_of:
+            st.caption(f"Portfolio & breadth data as of {perf_as_of} — refreshed by the scheduled GitHub Action.")
             
         df_ema_ind, df_hl_ind = format_json_breadth(breadth_data.get("markets", {}).get("INDIA"), years)
         df_ema_us, df_hl_us = format_json_breadth(breadth_data.get("markets", {}).get("US"), years)
@@ -3123,7 +3146,8 @@ with tab_news:
         def get_perf(df):
             if df is not None and not df.empty and 'Portfolio' in df.columns and 'Benchmark' in df.columns:
                 ret_port = (df['Portfolio'].iloc[-1] / 100 - 1) * 100
-                ret_bench = (df['Benchmark'].iloc[-1] / 100 - 1) * 100
+                bench_valid = df['Benchmark'].dropna()
+                ret_bench = (bench_valid.iloc[-1] / 100 - 1) * 100 if not bench_valid.empty else float('nan')
                 return f"Watchlist: {ret_port:+.1f}%, Bench: {ret_bench:+.1f}%"
             return "--"
             

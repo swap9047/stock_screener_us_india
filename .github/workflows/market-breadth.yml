@@ -65,14 +65,19 @@ jobs:
         run: |
           python -u refresh_market_breadth.py
 
+      - name: Refresh Dashboard Performance Data
+        if: steps.time_check.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          python -u refresh_dashboard_perf.py
+
       - name: Commit and push changes
         if: steps.time_check.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git add market_breadth.json
+          git add market_breadth.json dashboard_perf.json
           if ! git diff --staged --quiet; then
-            git commit -m "Update market breadth [automated]"
+            git commit -m "Update market breadth & dashboard performance data [automated]"
             for i in {1..5}; do
               git fetch origin main
               git rebase -X theirs origin/main && git push origin main && break || {
