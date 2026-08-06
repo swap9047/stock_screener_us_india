@@ -83,6 +83,17 @@ DEFAULT_SETTINGS = {
     "rs_lookback_monthly": RS_LOOKBACK_MONTHLY,
     "vstop_length": VSTOP_LENGTH,
     "vstop_factor": VSTOP_FACTOR,
+    # VStop calculation engine. "tv" = exact port of TradingView's built-in
+    # Volatility Stop (hard-coded Source=close; stop anchors to the running
+    # close max/min since the last stop-and-reverse flip). "app" = legacy
+    # close-anchored Wilder stop, kept as an alternative.
+    "vstop_mode": "tv",
+    # When True, the trailing (in-progress) weekly bar is included in the
+    # VStop computation, matching TradingView's live Volatility Stop value.
+    # When False, VStop only uses fully completed weekly bars (avoids false
+    # stop-and-reverse flips from a partial week, but lags TradingView by one
+    # week mid-week).
+    "vstop_include_incomplete_week": True,
     "benchmark_us": BENCHMARKS["US"],
     "benchmark_india": BENCHMARKS["INDIA"],
     # -- Trend column (Strong Uptrend/Uptrend/Downtrend/Strong Downtrend) --
@@ -535,6 +546,79 @@ def compute_vstop(ohlc_df, length=VSTOP_LENGTH, factor=VSTOP_FACTOR):
     return vstop, direction
 
 
+def compute_vstop_tv(ohlc_df, length=VSTOP_LENGTH, factor=VSTOP_FACTOR):
+    """Exact port of TradingView's built-in 'Volatility Stop' indicator
+    (Pine v6 `volStop`, Source=close hard-coded, Length/Multiplier from
+    settings). This is the primary engine (vstop_mode="tv"); the legacy
+    compute_vstop() above remains available as vstop_mode="app".
+
+    Differences vs the legacy engine that make it match TradingView:
+      * The stop anchors to the running max/min of close SINCE the last
+        stop-and-reverse flip (not the current close), so a stop keeps
+        ratcheting with the trend instead of freezing at the flip price.
+      * On a flip the running max/min reset to the current close, so the
+        new stop starts right at close +/- factor*ATR and re-ratchets.
+      * ATR is Pine's ta.atr (Wilder RMA seeded with the SMA of the first
+        `length` true ranges) -- same convention as compute_atr().
+
+    Returns (vstop_series, direction_series) with the same 1/-1 direction
+    convention as compute_vstop(), so downstream flip/Up/Down logic is
+    shared.
+    """
+    atr = compute_atr(ohlc_df, length) * factor
+    close = ohlc_df["Close"].to_numpy(dtype=float)
+    atr_np = atr.to_numpy(dtype=float)
+    n = len(ohlc_df)
+
+    vstop = np.full(n, np.nan)
+    direction = np.full(n, np.nan)
+
+    rmax = rmin = None
+    stop = None
+    uptrend = True
+    started = False
+
+    for i in range(n):
+        src = close[i]
+        a = atr_np[i]
+        if np.isnan(a):
+            if rmax is not None:
+                rmax = max(rmax, src)
+                rmin = min(rmin, src)
+            continue
+
+        if not started:
+            started = True
+            rmax = rmin = src
+            stop = src - a
+            vstop[i] = stop
+            direction[i] = 1
+            continue
+
+        prev_stop = stop
+        prev_uptrend = uptrend
+        rmax = max(rmax, src)
+        rmin = min(rmin, src)
+
+        new_up = (src - prev_stop) >= 0.0
+
+        if prev_uptrend:
+            stop = max(prev_stop, rmax - a)
+        else:
+            stop = min(prev_stop, rmin + a)
+
+        uptrend = new_up
+
+        if uptrend != prev_uptrend:
+            rmax = rmin = src
+            stop = (rmax - a) if uptrend else (rmin + a)
+
+        vstop[i] = stop
+        direction[i] = 1 if uptrend else -1
+
+    return pd.Series(vstop, index=ohlc_df.index), pd.Series(direction, index=ohlc_df.index)
+
+
 def compute_trend(last_close, ema_slow_series, rs_weekly, week52_high, week52_low,
                    avg_volume_10d, avg_volume_100d, slope_lookback,
                    near_high_low_pct=0.10, volume_ratio=1.0, ema_fast=None):
@@ -943,20 +1027,27 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
             vstop_weekly_weeks_since_change = None
             vstop_weekly_flipped = False
 
-            # Only completed weekly bars may drive the VStop: a W-FRI bar whose
-            # Friday close hasn't actually printed is incomplete (e.g. the Friday
-            # bar was missing from the pull, or the trailing week is still
-            # forming). Its Close then anchors to an earlier trading day and can
-            # falsely breach the stop, flipping the stop-and-reverse. Trim any
-            # trailing bar(s) whose Friday label is not a printed trading day.
-            # RS/WEMA/RSI keep the full weekly series.
-            daily_days = set(df.index.normalize())
+            # By default the VStop includes the trailing (in-progress) weekly
+            # bar, matching TradingView's live Volatility Stop value. When
+            # vstop_include_incomplete_week is off, only completed weekly bars
+            # drive the VStop: a W-FRI bar whose Friday close hasn't actually
+            # printed is incomplete (e.g. the Friday bar was missing from the
+            # pull, or the trailing week is still forming). Its Close then
+            # anchors to an earlier trading day and can falsely breach the
+            # stop, flipping the stop-and-reverse. Trim any trailing bar(s)
+            # whose Friday label is not a printed trading day.
+            # RS/WEMA/RSI keep the full weekly series either way.
             weekly_complete = weekly
-            while len(weekly_complete) > 0 and weekly_complete.index[-1].normalize() not in daily_days:
-                weekly_complete = weekly_complete.iloc[:-1]
+            if not settings.get("vstop_include_incomplete_week", True):
+                daily_days = set(df.index.normalize())
+                while len(weekly_complete) > 0 and weekly_complete.index[-1].normalize() not in daily_days:
+                    weekly_complete = weekly_complete.iloc[:-1]
 
             if len(weekly_complete) >= vstop_length + 5:
-                vstop_series, dir_series = compute_vstop(weekly_complete, length=vstop_length, factor=vstop_factor)
+                if settings.get("vstop_mode", "tv") == "app":
+                    vstop_series, dir_series = compute_vstop(weekly_complete, length=vstop_length, factor=vstop_factor)
+                else:
+                    vstop_series, dir_series = compute_vstop_tv(weekly_complete, length=vstop_length, factor=vstop_factor)
                 valid_dir = dir_series.dropna()
                 if not valid_dir.empty:
                     vstop_weekly = round(float(vstop_series.iloc[-1]), 1)
