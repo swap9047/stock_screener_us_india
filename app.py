@@ -786,7 +786,8 @@ def column_definitions(settings, labels):
         "RS-D": f"Mansfield RS (daily) vs {bench_note}. Positive = outperforming, negative = underperforming.",
         "RS-W": f"Mansfield RS (weekly) vs {bench_note}. Positive = outperforming, negative = underperforming.",
         "RS-M": f"Mansfield RS (monthly) vs {bench_note}. Positive = outperforming, negative = underperforming.",
-        "VStop-W": f"Weekly Volatility Stop (Wilder's ATR stop-and-reverse, length={settings['vstop_length']}, factor={settings['vstop_factor']}).",
+        "VStop-W": (f"Weekly Volatility Stop (ATR stop-and-reverse, length={settings['vstop_length']}, factor={settings['vstop_factor']}). "
+                    f"Engine: {'TradingView-exact (Source=close)' if settings.get('vstop_mode', 'tv') == 'tv' else 'legacy app formula'}."),
         "VStop Dir": "Current direction of the weekly VStop: Up or Down.",
         "VStop Weeks Ago": "Weeks since the weekly VStop last flipped direction.",
         "Trend": (
@@ -936,6 +937,27 @@ def settings_dialog():
     v1, v2 = st.columns(2)
     vstop_length = v1.number_input("11. VStop length", min_value=2, step=1, value=int(settings["vstop_length"]), key="set_vstop_length")
     vstop_factor = v2.number_input("12. VStop ATR factor", min_value=0.1, step=0.1, format="%.1f", value=float(settings["vstop_factor"]), key="set_vstop_factor")
+    vstop_include_incomplete = st.checkbox(
+        "Include the in-progress (partial) week in VStop — matches TradingView's live value",
+        value=bool(settings.get("vstop_include_incomplete_week", True)),
+        key="set_vstop_include_incomplete",
+        help=("ON (default): the current, not-yet-closed week is included, so VStop-W matches "
+              "TradingView's Volatility Stop at any point during the week. OFF: only fully completed "
+              "weekly bars are used, which avoids a false stop flip from a partial Friday bar but "
+              "makes VStop-W lag TradingView by one week until Friday's close."),
+    )
+    _vstop_mode_labels = {"tv": "TradingView exact (default)", "app": "Legacy (app)"}
+    vstop_mode = st.radio(
+        "13. VStop engine",
+        options=["tv", "app"],
+        index=0 if settings.get("vstop_mode", "tv") != "app" else 1,
+        key="set_vstop_mode",
+        format_func=lambda m: _vstop_mode_labels[m],
+        help=("TV (default): exact port of TradingView's built-in Volatility Stop (Source=close, "
+              "using the length/factor above). The stop anchors to the running close max/min since "
+              "the last stop-and-reverse flip, so it keeps ratcheting with the trend exactly like "
+              "TradingView. Legacy: the app's older close-anchored Wilder stop."),
+    )
 
     st.markdown("**Watchlists**")
     st.caption(
@@ -1081,6 +1103,8 @@ def settings_dialog():
                 "rs_lookback_monthly": int(rs_monthly),
                 "vstop_length": int(vstop_length),
                 "vstop_factor": float(vstop_factor),
+                "vstop_mode": vstop_mode,
+                "vstop_include_incomplete_week": bool(vstop_include_incomplete),
                 "trend_slope_lookback": int(trend_slope_lookback),
                 "trend_near_high_low_pct": float(trend_near_pct),
                 "trend_volume_ratio": float(trend_vol_ratio),
@@ -2766,8 +2790,10 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         f"Mansfield RS = ((price/{bench} ratio today ÷ SMA of that ratio, n) − 1) × 100. "
         "Positive = outperforming the benchmark's trend, negative = underperforming. "
         "WEMA = weekly EMA, DSMA = daily EMA. "
-        f"VStop-W = weekly Volatility Stop (Wilder's ATR stop-and-reverse system, "
-        f"length={settings['vstop_length']}, factor={settings['vstop_factor']}) — not independently "
+        f"VStop-W = weekly Volatility Stop (ATR stop-and-reverse system, "
+        f"length={settings['vstop_length']}, factor={settings['vstop_factor']}, "
+        f"{'TradingView-exact engine, Source=close' if settings.get('vstop_mode', 'tv') == 'tv' else 'legacy app engine'}"
+        f"{', incl. in-progress week (matches TradingView)' if settings.get('vstop_include_incomplete_week', True) else ', completed weeks only'}) — not independently "
         "cross-checked against your chart the way RS/RSI were, so compare a few readings before relying "
         "on it. Trend = a 4-level read (Strong Uptrend / Uptrend / Downtrend / Strong Downtrend). Uptrend "
         "requires ALL of: price above the slow WEMA, that WEMA's "
