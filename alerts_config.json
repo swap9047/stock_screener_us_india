@@ -233,6 +233,13 @@
         "compare_type": "metric",
         "metric_b": "ema10",
         "logic": "AND"
+      },
+      {
+        "metric_a": "ema10",
+        "operator": ">",
+        "compare_type": "metric",
+        "metric_b": "ema40",
+        "logic": "AND"
       }
     ],
     "enabled": true,
