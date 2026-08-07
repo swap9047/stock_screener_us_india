@@ -226,6 +226,13 @@
         "compare_type": "value",
         "value": 1.0,
         "logic": "AND"
+      },
+      {
+        "metric_a": "last_close",
+        "operator": ">",
+        "compare_type": "metric",
+        "metric_b": "ema10",
+        "logic": "AND"
       }
     ],
     "enabled": true,
