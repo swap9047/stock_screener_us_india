@@ -24,11 +24,30 @@ def get_nifty500_tickers():
     df = pd.read_csv(io.StringIO(r.text))
     return [f"{sym}.NS" for sym in df['Symbol'].tolist()]
 
-def calculate_breadth(tickers, label):
+def trim_to_completed_session(closes, tz, close_hhmm):
+    """Drop the trailing row when it is today's still-forming bar.
+
+    The job is scheduled for the US close, but the throttled downloads push the
+    India leg to roughly 11:30 IST -- mid-NSE-session -- so yfinance hands back a
+    live intraday bar for today. Dropping it only when the exchange has not yet
+    closed in its own timezone keeps the US leg (which runs ~22:00 ET, well after
+    the 16:00 close) on its freshest settled bar.
+    """
+    if closes.empty:
+        return closes
+    now = pd.Timestamp.now(tz=tz)
+    close_h, close_m = close_hhmm
+    # +30m of slack so Yahoo has settled the closing print before we trust it.
+    cutoff = now.normalize() + pd.Timedelta(hours=close_h, minutes=close_m + 30)
+    if closes.index[-1].date() == now.date() and now < cutoff:
+        return closes.iloc[:-1]
+    return closes
+
+def calculate_breadth(tickers, label, tz, close_hhmm):
     import io
     from contextlib import redirect_stderr
-    
-    print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Downloading 6y data (for 5y breadth + EMA warmup) for {len(tickers)} {label} tickers...")
+
+    print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Downloading 6y data (for 5y breadth + SMA warmup) for {len(tickers)} {label} tickers...")
     batch_size = 50
     all_data = []
     failed_tickers = set(tickers)
@@ -38,7 +57,11 @@ def calculate_breadth(tickers, label):
         batch = tickers[i:i+batch_size]
         f = io.StringIO()
         with redirect_stderr(f):
-            data = yf.download(batch, period="6y", interval="1d", auto_adjust=True, progress=False, threads=False)
+            # auto_adjust=False -> Yahoo's Close is still split-adjusted but keeps
+            # dividends in the price, matching how public 200-DMA screeners compute
+            # breadth. Back-adjusting for dividends drags the 200d average down and
+            # inflates the % above by roughly a point.
+            data = yf.download(batch, period="6y", interval="1d", auto_adjust=False, progress=False, threads=False)
             
         if 'Close' in data.columns:
             closes = data['Close']
@@ -75,7 +98,7 @@ def calculate_breadth(tickers, label):
         
         for t in list(failed_tickers):
             with redirect_stderr(io.StringIO()):
-                retry_data = yf.download(t, period="6y", interval="1d", auto_adjust=True, progress=False)
+                retry_data = yf.download(t, period="6y", interval="1d", auto_adjust=False, progress=False)
             if not retry_data.empty and 'Close' in retry_data.columns and not retry_data['Close'].isna().all():
                 s = retry_data['Close']
                 s.name = t
@@ -90,7 +113,7 @@ def calculate_breadth(tickers, label):
         
         for t in list(failed_tickers):
             with redirect_stderr(io.StringIO()):
-                retry_data = yf.download(t, period="6y", interval="1d", auto_adjust=True, progress=False)
+                retry_data = yf.download(t, period="6y", interval="1d", auto_adjust=False, progress=False)
             if not retry_data.empty and 'Close' in retry_data.columns and not retry_data['Close'].isna().all():
                 s = retry_data['Close']
                 s.name = t
@@ -103,25 +126,41 @@ def calculate_breadth(tickers, label):
         
     print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Calculating Historical Metrics...")
     closes = pd.concat(all_data, axis=1)
-    
-    # Calculate 200d EMA
-    ema200 = closes.ewm(span=200, adjust=False).mean()
-    is_above = closes > ema200
-    
+    closes = closes.dropna(how="all")
+    closes = trim_to_completed_session(closes, tz, close_hhmm)
+    if closes.empty:
+        return None
+
+    # Calculate 200d SMA. This is the simple 200-day average -- the "200 DSMA"
+    # convention used everywhere else in the app (stock_data.py) and by public
+    # breadth screeners.
+    #
+    # min_periods=190 rather than 200: the panel is a union of every ticker's
+    # calendar, so a name that simply had no print on a few days carries sporadic
+    # NaNs. Demanding all 200 would drop ~190 perfectly good Nifty names over gaps
+    # of 1-10 days. Averaging 190+ of the last 200 closes is the same number to
+    # within rounding; what we actually want to exclude is recent listings, which
+    # the cumulative-history mask below handles directly.
+    sma200 = closes.rolling(window=200, min_periods=190).mean()
+    sma200 = sma200.where(closes.notna().cumsum() >= 200)
+    is_above = closes > sma200
+
     # Calculate 52w High/Low (252 trading days)
     high52 = closes.rolling(window=252, min_periods=126).max()
     low52 = closes.rolling(window=252, min_periods=126).min()
-    
+
     is_new_high = closes >= high52
     is_new_low = closes <= low52
-    
+
     valid_counts = closes.notna().sum(axis=1)
-    
-    breadth_series = (is_above.sum(axis=1) / valid_counts) * 100
+    # Breadth needs its own denominator: only stocks that actually have a 200d SMA.
+    ma_counts = (closes.notna() & sma200.notna()).sum(axis=1)
+
+    breadth_series = (is_above.sum(axis=1) / ma_counts) * 100
     highs_series = (is_new_high.sum(axis=1) / valid_counts) * 100
     lows_series = (is_new_low.sum(axis=1) / valid_counts) * 100
-    
-    valid_mask = valid_counts > 0
+
+    valid_mask = (valid_counts > 0) & (ma_counts > 0)
     breadth_series = breadth_series[valid_mask]
     highs_series = highs_series[valid_mask]
     lows_series = lows_series[valid_mask]
@@ -149,17 +188,15 @@ def calculate_breadth(tickers, label):
         highs_dict[date_str] = round(float(highs_series[date]), 1)
         lows_dict[date_str] = round(float(lows_series[date]), 1)
         
-    valid_closes = closes.dropna(how="all")
-    if valid_closes.empty:
-        return None
-    last_valid_idx = valid_closes.index[-1]
+    last_valid_idx = closes.index[-1]
     latest_close = closes.loc[last_valid_idx]
-    latest_ema = ema200.loc[last_valid_idx]
-    above_now = (latest_close > latest_ema).sum()
-    total_now = len(latest_close.dropna())
+    latest_sma = sma200.loc[last_valid_idx]
+    has_ma = latest_close.notna() & latest_sma.notna()
+    above_now = int((latest_close > latest_sma).sum())
+    total_now = int(has_ma.sum())
     pct_above_now = float(above_now / total_now * 100) if total_now > 0 else 0.0
-    
-    print(f"{label}: Latest {above_now}/{total_now} ({pct_above_now:.1f}%) above 200d EMA")
+
+    print(f"{label}: {last_valid_idx.date()} -- {above_now}/{total_now} ({pct_above_now:.1f}%) above 200d SMA")
     return {
         "above": int(above_now),
         "below": int(total_now - above_now),
@@ -179,13 +216,13 @@ def main():
     
     try:
         sp500 = get_sp500_tickers()
-        results["markets"]["US"] = calculate_breadth(sp500, "S&P 500")
+        results["markets"]["US"] = calculate_breadth(sp500, "S&P 500", "America/New_York", (16, 0))
     except Exception as e:
         print(f"Error processing US breadth: {e}")
         
     try:
         nifty = get_nifty500_tickers()
-        results["markets"]["INDIA"] = calculate_breadth(nifty, "Nifty 500")
+        results["markets"]["INDIA"] = calculate_breadth(nifty, "Nifty 500", "Asia/Kolkata", (15, 30))
     except Exception as e:
         print(f"Error processing India breadth: {e}")
         

@@ -3098,36 +3098,13 @@ with tab_news:
             return pd.DataFrame({"Portfolio": portfolio, "Benchmark": bench})
         return None
 
-    def calculate_watchlist_breadth(closes, filter_years):
-        if closes is None or closes.empty: return None, None
-        ema200 = closes.ewm(span=200, adjust=False).mean()
-        high52 = closes.rolling(window=252, min_periods=126).max()
-        low52 = closes.rolling(window=252, min_periods=126).min()
-        
-        valid_counts = closes.notna().sum(axis=1)
-        ema_series = ((closes > ema200).sum(axis=1) / valid_counts) * 100
-        high_series = ((closes >= high52).sum(axis=1) / valid_counts) * 100
-        low_series = ((closes <= low52).sum(axis=1) / valid_counts) * 100
-        
-        if closes.index.tzinfo is not None:
-            cutoff = pd.Timestamp.now(tz=closes.index.tz) - pd.DateOffset(years=filter_years)
-        else:
-            cutoff = pd.Timestamp.now().normalize() - pd.DateOffset(years=filter_years)
-            
-        mask = (closes.index >= cutoff) & (valid_counts > 0)
-        if not mask.any(): return None, None
-        
-        df_ema = pd.DataFrame({"Date": closes.index[mask], "% Above 200d EMA": ema_series[mask]})
-        df_hl = pd.DataFrame({"Date": closes.index[mask], "% New Highs": high_series[mask], "% New Lows": low_series[mask]})
-        return df_ema, df_hl
-
     def format_json_breadth(market_data, filter_years):
         if not market_data: return None, None
         cutoff = pd.Timestamp.now().normalize() - pd.DateOffset(years=filter_years)
         
-        # EMA
+        # SMA
         hist = market_data.get("history", {})
-        df_ema = pd.DataFrame(list(hist.items()), columns=["Date", "% Above 200d EMA"]) if hist else pd.DataFrame()
+        df_ema = pd.DataFrame(list(hist.items()), columns=["Date", "% Above 200d SMA"]) if hist else pd.DataFrame()
         if not df_ema.empty:
             df_ema["Date"] = pd.to_datetime(df_ema["Date"])
             df_ema = df_ema[df_ema["Date"] >= cutoff]
@@ -3223,8 +3200,8 @@ with tab_news:
         total_ind = breadth_data.get("markets", {}).get("INDIA", {}).get("total", "--")
         total_us = breadth_data.get("markets", {}).get("US", {}).get("total", "--")
             
-        title_ema_ind = f"Nifty 500: % Above 200-Day EMA (Current: {get_val(df_ema_ind, '% Above 200d EMA')}%, Captured: {total_ind})"
-        title_ema_us = f"S&P 500: % Above 200-Day EMA (Current: {get_val(df_ema_us, '% Above 200d EMA')}%, Captured: {total_us})"
+        title_ema_ind = f"Nifty 500: % Above 200-Day SMA (Current: {get_val(df_ema_ind, '% Above 200d SMA')}%, Captured: {total_ind})"
+        title_ema_us = f"S&P 500: % Above 200-Day SMA (Current: {get_val(df_ema_us, '% Above 200d SMA')}%, Captured: {total_us})"
         
         title_hl_ind = f"Nifty 500: 52-Week Highs vs Lows (Highs: {get_val(df_hl_ind, '% New Highs')}%, Lows: {get_val(df_hl_ind, '% New Lows')}%)"
         title_hl_us = f"S&P 500: 52-Week Highs vs Lows (Highs: {get_val(df_hl_us, '% New Highs')}%, Lows: {get_val(df_hl_us, '% New Lows')}%)"
@@ -3258,7 +3235,7 @@ with tab_news:
         
         colors = ['#2ecc71', '#e74c3c', '#f39c12']
         
-        # Row 1: EMA Breadth
+        # Row 1: SMA Breadth
         if df_ema_ind is not None and not df_ema_ind.empty:
             for i, col in enumerate([c for c in df_ema_ind.columns if c != 'Date']):
                 fig.add_trace(go.Scatter(x=df_ema_ind['Date'], y=df_ema_ind[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5), showlegend=False), row=1, col=1)
