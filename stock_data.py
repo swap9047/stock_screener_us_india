@@ -314,6 +314,7 @@ def get_filterable_metrics(settings=None):
         "Vol 100D": "avg_volume_100d",
         "% Chg": "pct_change_1d",
         "Qtr Profit Growth %": "qtr_profit_growth",
+        "Qtr EPS Growth %": "qtr_eps_growth",
         "Qtr Revenue Growth %": "qtr_revenue_growth",
         "VStop Weeks Ago": "vstop_weekly_weeks_since_change",
         "10/30 W Golden Cross (weeks ago)": "gc_weeks_10_30",
@@ -838,6 +839,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
         company_name = t
         qtr_profit_growth = None
         qtr_revenue_growth = None
+        qtr_eps_growth = None
         roe = cfo_op_5yr = roce = None
         perf_1m = perf_3m = perf_6m = perf_1y = perf_3y = None
         trailing_pe = forward_pe = pb_ratio = ev_ebitda = p_cashflow = reported_qtr = None
@@ -891,6 +893,20 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
             cf  = _safe_fetch(lambda: yf_t.cash_flow,    label=f"[{t}] cash_flow")
             inc = _safe_fetch(lambda: yf_t.income_stmt,   label=f"[{t}] income_stmt")
             bs  = _safe_fetch(lambda: yf_t.balance_sheet, label=f"[{t}] balance_sheet")
+            qinc = _safe_fetch(lambda: yf_t.quarterly_income_stmt,
+                               label=f"[{t}] quarterly_income_stmt")
+
+            # Diluted EPS YoY for the most recent quarter. Unlike Yahoo's
+            # earningsQuarterlyGrowth (which is net income, and drives
+            # qtr_profit_growth above), this nets out share issuance -- profit
+            # growth funded by a QIP or warrant conversion doesn't accrue per
+            # share. Columns come back newest-first, so iloc[4] is the same
+            # quarter a year earlier. A non-positive base makes percentage
+            # growth meaningless, so leave it blank rather than emit nonsense.
+            if qinc is not None and "Diluted EPS" in qinc.index:
+                eps_q = qinc.loc["Diluted EPS"].dropna()
+                if len(eps_q) >= 5 and eps_q.iloc[4] > 0:
+                    qtr_eps_growth = round((eps_q.iloc[0] / eps_q.iloc[4] - 1) * 100, 1)
 
             if cf is not None and inc is not None:
                 if "Operating Cash Flow" in cf.index and "Operating Income" in inc.index:
@@ -1172,6 +1188,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 "perf_1y": perf_1y,
                 "perf_3y": perf_3y,
                 "qtr_profit_growth": qtr_profit_growth,
+                "qtr_eps_growth": qtr_eps_growth,
                 "qtr_revenue_growth": qtr_revenue_growth,
                 "trailing_pe": trailing_pe,
                 "forward_pe": forward_pe,

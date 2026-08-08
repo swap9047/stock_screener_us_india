@@ -842,13 +842,13 @@ def ratio_cols():
 
 
 VOLUME_COLS = ["Vol 10D", "Vol 100D"]
-PCT_COLS = ["% Chg", "Qtr Profit Growth %", "Qtr Revenue Growth %", "ROE %", "ROCE %"]
+PCT_COLS = ["% Chg", "Qtr Profit Growth %", "Qtr EPS Growth %", "Qtr Revenue Growth %", "ROE %", "ROCE %"]
 PERF_PCT_COLS = ["Perf 1M %", "Perf 3M %", "Perf 6M %", "Perf 1Y %", "Perf 3Y %"]
 
 # Column keys considered "fundamental" (company financials/valuation, as
 # opposed to technical/price-derived) -- hideable as a group via the
 # "Show fundamental columns" toggle, independent of the per-column picker.
-FUNDAMENTAL_COLUMN_KEYS = {"fundamentals", "qtr_profit_growth", "qtr_revenue_growth", "trailing_pe", "forward_pe", "pb_ratio", "ev_ebitda", "p_cashflow", "reported_qtr", "roe", "cfo_op_5yr", "roce"}
+FUNDAMENTAL_COLUMN_KEYS = {"fundamentals", "qtr_profit_growth", "qtr_eps_growth", "qtr_revenue_growth", "trailing_pe", "forward_pe", "pb_ratio", "ev_ebitda", "p_cashflow", "reported_qtr", "roe", "cfo_op_5yr", "roce"}
 
 
 LINK_COLUMN_CONFIG = {
@@ -983,7 +983,8 @@ def column_definitions(settings, labels):
         ),
         "Notes": "Your free-text note for this ticker, set via the sidebar 'Ticker Notes' panel. Hover/tap a truncated note to see the full text.",
         "Invested": "Whether this ticker is marked Invested in the watchlist editor's Invested/Weight table.",
-        "Qtr Profit Growth %": "Year-over-year net income growth for the most recent reported quarter, vs. the same quarter a year ago (Yahoo Finance).",
+        "Qtr Profit Growth %": "Year-over-year net income growth for the most recent reported quarter, vs. the same quarter a year ago (Yahoo Finance). Ignores share count -- compare against Qtr EPS Growth % to spot dilution.",
+        "Qtr EPS Growth %": "Year-over-year growth in DILUTED earnings per share for the most recent reported quarter, vs. the same quarter a year ago. Same profit figure as Qtr Profit Growth % but divided by share count, so growth funded by issuing equity (QIP, warrant conversion) shows up lower here -- a materially smaller number than Qtr Profit Growth % means shareholders were diluted. Blank when Yahoo has fewer than 5 quarters of statements or the year-ago quarter was loss-making (growth undefined), which is why it is sparser than Qtr Profit Growth %.",
         "Qtr Revenue Growth %": "Year-over-year revenue growth for the most recent reported quarter, vs. the same quarter a year ago (Yahoo Finance).",
         "P/E (TTM)": "Trailing 12-month Price to Earnings ratio (Yahoo Finance).",
         "P/E (Fwd)": "Forward Price to Earnings ratio based on analyst estimates for the next fiscal year (Yahoo Finance).",
@@ -1688,6 +1689,7 @@ def build_column_defs(labels, custom_columns=None):
         ("tech_uptrend_label", "Tech Uptrend"),
         ("fundamentals", "Sentiment"),
         ("qtr_profit_growth", "Qtr Profit Growth %"),
+        ("qtr_eps_growth", "Qtr EPS Growth %"),
         ("qtr_revenue_growth", "Qtr Revenue Growth %"),
         ("reported_qtr", "Reported Qtr"),
         ("trailing_pe", "P/E (TTM)"),
@@ -1854,10 +1856,19 @@ def render_shared_column_picker(labels):
     for fund_key in fund_keys_in_order:
         if fund_key in label_by_key and fund_key not in st.session_state[SHARED_ORDER_KEY]:
             order = st.session_state[SHARED_ORDER_KEY]
-            # Insert after the last existing fundamental column, so new ones land
-            # at the end of the group rather than right after tech_uptrend_label.
+            # Land the new column in its declared optional_defs position rather
+            # than at the end of the fundamental group: sit it right after the
+            # nearest fundamental column that already precedes it in
+            # optional_defs. That keeps siblings together (Qtr EPS Growth %
+            # belongs beside Qtr Profit Growth %, not eight slots away after
+            # ROE %). Falls back to the end of the group when no such
+            # predecessor is on screen.
+            preceding = [k for k in fund_keys_in_order[:fund_keys_in_order.index(fund_key)]
+                         if k in order]
             fund_positions = [order.index(k) for k in FUNDAMENTAL_COLUMN_KEYS if k in order]
-            if fund_positions:
+            if preceding:
+                idx = order.index(preceding[-1])
+            elif fund_positions:
                 idx = max(fund_positions)
             elif "tech_uptrend_label" in order:
                 idx = order.index("tech_uptrend_label")
