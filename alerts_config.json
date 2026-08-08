@@ -523,9 +523,9 @@
         "value": 8
       }
     ],
-    "enabled": false,
+    "enabled": true,
     "schedule": {
-      "type": "scheduled",
+      "type": "none",
       "days": [
         "MON",
         "TUE",
@@ -566,9 +566,9 @@
         "value": 50
       }
     ],
-    "enabled": false,
+    "enabled": true,
     "schedule": {
-      "type": "scheduled",
+      "type": "none",
       "days": [
         "MON",
         "TUE",
@@ -603,9 +603,9 @@
         "value": 3
       }
     ],
-    "enabled": false,
+    "enabled": true,
     "schedule": {
-      "type": "scheduled",
+      "type": "none",
       "days": [
         "MON",
         "TUE",
@@ -654,9 +654,9 @@
         "value": 20
       }
     ],
-    "enabled": false,
+    "enabled": true,
     "schedule": {
-      "type": "scheduled",
+      "type": "none",
       "days": [
         "MON",
         "TUE",
@@ -697,9 +697,9 @@
         "value": 50
       }
     ],
-    "enabled": false,
+    "enabled": true,
     "schedule": {
-      "type": "scheduled",
+      "type": "none",
       "days": [
         "MON",
         "TUE",
@@ -761,9 +761,9 @@
         "value": 20
       }
     ],
-    "enabled": false,
+    "enabled": true,
     "schedule": {
-      "type": "scheduled",
+      "type": "none",
       "days": [
         "MON",
         "TUE",
