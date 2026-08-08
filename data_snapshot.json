@@ -1,6 +1,6 @@
 {
-  "as_of": "2026-08-08 17:53 ET",
-  "generated_at": "2026-08-08T21:53:34.175536+00:00",
+  "as_of": "2026-08-08 18:36 ET",
+  "generated_at": "2026-08-08T22:36:48.341584+00:00",
   "code_version": "6d6b96502535bdb3",
   "per_market": {
     "INDIA": [
@@ -140,7 +140,7 @@
         "ev_ebitda": 20.32,
         "p_cashflow": 30.99,
         "roe": 17.3,
-        "cfo_op_5yr": 0.53,
+        "cfo_op_5yr": 0.68,
         "roce": 21.0,
         "reported_qtr": "Q4 FY26",
         "last_price": 1183.9000244140625,
@@ -2513,7 +2513,7 @@
         "rsi14_monthly": 75.1,
         "rsi12_monthly": 75.9,
         "adx_weekly_14": 34.1,
-        "adx_monthly_12": 57.4,
+        "adx_monthly_12": 57.5,
         "rs_daily": 8.0,
         "rs_weekly": 15.4,
         "rs_monthly": 27.6,
@@ -6004,7 +6004,7 @@
         "net_volume_10d_ratio": 11.5,
         "week52_high": 1779.8,
         "week52_low": 981.1,
-        "week52_high_age": 239,
+        "week52_high_age": 240,
         "overhead_supply": 16.6,
         "week26_distance": 7.1,
         "week52_distance": 23.3,
