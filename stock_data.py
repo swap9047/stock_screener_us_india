@@ -94,6 +94,16 @@ BREAKOUT_PIVOT_WIDTH = 10
 # framing the distance metrics already use.
 OVERHEAD_LOOKBACK = 252
 
+# Periods pinned by the stockscans.in scan definitions these metrics exist to
+# serve (Turbo Surge: ADX 14W / VSTOP 14W 2; Alpha Leaders: ADX 12M / RSI 12M).
+# Deliberately NOT settings-driven, unlike rsi_period or vstop_length: a rule
+# written against "ADX 14W" means period 14, and letting Settings move it would
+# silently redefine the screen rather than tune it.
+ADX_WEEKLY_PERIOD = 14
+ADX_MONTHLY_PERIOD = 12
+RSI_MONTHLY_12_PERIOD = 12
+VSTOP_LENGTH_14W = 14
+
 DEFAULT_SETTINGS = {
     "ema_weekly": [10, 20, 40],   # weekly EMA fast/mid/slow periods
     "ema_daily": [10, 50, 200],   # daily SMA fast/mid/slow periods
@@ -338,9 +348,32 @@ def get_filterable_metrics(settings=None):
         "52WH Distance": "week52_distance",
         "52W High Age": "week52_high_age",
         "Overhead Supply": "overhead_supply",
+        "5Y High": "high_5y",
+        "5Y High Distance": "high_5y_distance",
         "Vol 10D": "avg_volume_10d",
+        "Vol 20D": "avg_volume_20d",
         "Vol 100D": "avg_volume_100d",
+        # Scan-driven metrics: periods are pinned by the scan definitions
+        # (see ADX_WEEKLY_PERIOD and friends), not by Settings.
+        "ADX-W": "adx_weekly_14",
+        "ADX-M": "adx_monthly_12",
+        "RSI-M (12)": "rsi12_monthly",
+        "VStop-W (14)": "vstop_weekly_14",
+        "1M Ret vs Nifty 500": "rel_ret_1m_n500",
+        "6M Ret vs Nifty 500": "rel_ret_6m_n500",
+        "PAT Growth TTM %": "ttm_profit_growth",
+        "Revenue Growth TTM %": "ttm_revenue_growth",
         "% Chg": "pct_change_1d",
+        # Trailing price returns. These were computed and stored (and shown as
+        # app columns) long before they were filterable -- registering them
+        # here is what lets a rule reference them. Labels must match the
+        # app.build_column_defs labels exactly so the glossary and the
+        # condition-builder caption resolve them.
+        "Perf 1M %": "perf_1m",
+        "Perf 3M %": "perf_3m",
+        "Perf 6M %": "perf_6m",
+        "Perf 1Y %": "perf_1y",
+        "Perf 3Y %": "perf_3y",
         "Qtr Profit Growth %": "qtr_profit_growth",
         "Qtr EPS Growth %": "qtr_eps_growth",
         "Qtr Revenue Growth %": "qtr_revenue_growth",
@@ -476,6 +509,77 @@ def compute_rsi(series, period=14):
 
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
+
+
+def compute_adx(ohlc_df, period=14):
+    """Wilder's ADX (trend STRENGTH, direction-agnostic -- 25+ is the classic
+    "trending" threshold; it says nothing about which way).
+
+    Two-stage Wilder smoothing:
+      1. TR / +DM / -DM are smoothed by wilder_smooth(), whose "seed from
+         bars 1..period, nothing before that" convention is exactly right
+         here -- bar 0 has no prior close, so all three are undefined there.
+         +DI and -DI first exist at bar `period`.
+      2. ADX is a SECOND Wilder smoothing, of DX. This one cannot reuse
+         wilder_smooth(): that helper seeds from raw[1:period+1], skipping
+         index 0, which is correct for a .diff()-derived series but would
+         drop the first genuine DX value here. Wilder seeds ADX from the mean
+         of the FIRST `period` DX values, so the recursion is written out.
+
+    First non-NaN ADX therefore lands at bar 2*period - 1 (bar 27 for the
+    default 14), matching TradingView. Returns an all-NaN series when there
+    isn't enough history rather than raising.
+    """
+    high = ohlc_df["High"].astype(float)
+    low = ohlc_df["Low"].astype(float)
+    close = ohlc_df["Close"].astype(float)
+    n = len(ohlc_df)
+
+    nan_series = pd.Series(np.nan, index=ohlc_df.index)
+    if n < 2 * period:
+        return nan_series
+
+    up_move = high.diff()
+    down_move = -low.diff()
+    # Only the LARGER of the two moves counts, and only when positive --
+    # an inside bar contributes no directional movement at all.
+    plus_dm = pd.Series(np.where((up_move > down_move) & (up_move > 0), up_move, 0.0),
+                        index=ohlc_df.index)
+    minus_dm = pd.Series(np.where((down_move > up_move) & (down_move > 0), down_move, 0.0),
+                         index=ohlc_df.index)
+
+    prev_close = close.shift(1)
+    true_range = pd.concat([high - low,
+                            (high - prev_close).abs(),
+                            (low - prev_close).abs()], axis=1).max(axis=1)
+
+    # np.where turned bar 0's NaN comparisons into 0.0; restore the NaN so
+    # wilder_smooth's seed window is bars 1..period, not 0..period-1.
+    plus_dm.iloc[0] = np.nan
+    minus_dm.iloc[0] = np.nan
+    true_range.iloc[0] = np.nan
+
+    atr = wilder_smooth(true_range, period)
+    # A zero ATR (a dead, gapless stretch) would make DI infinite; NaN
+    # propagates through to ADX as "unknown", which is the honest answer.
+    atr = atr.replace(0, np.nan)
+    plus_di = 100 * wilder_smooth(plus_dm, period) / atr
+    minus_di = 100 * wilder_smooth(minus_dm, period) / atr
+
+    di_sum = (plus_di + minus_di).replace(0, np.nan)
+    dx = 100 * (plus_di - minus_di).abs() / di_sum
+
+    dx_valid = dx.iloc[period:]
+    if len(dx_valid) < period or pd.isna(dx_valid.iloc[:period]).any():
+        return nan_series
+
+    seed = dx_valid.iloc[:period].mean()
+    tail = pd.concat([pd.Series([seed]), dx_valid.iloc[period:]], ignore_index=True)
+    smoothed = tail.ewm(alpha=1 / period, adjust=False).mean()
+
+    result = nan_series.copy()
+    result.iloc[2 * period - 1:] = smoothed.values
+    return result
 
 
 def weekly_resample(daily_df):
@@ -868,6 +972,10 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
         qtr_profit_growth = None
         qtr_revenue_growth = None
         qtr_eps_growth = None
+        # Assigned inside the statements try/except below; without a default
+        # here a ticker whose statement fetch raises would NameError at
+        # results.append instead of reporting blanks.
+        ttm_profit_growth = ttm_revenue_growth = None
         roe = cfo_op_5yr = roce = None
         perf_1m = perf_3m = perf_6m = perf_1y = perf_3y = None
         trailing_pe = forward_pe = pb_ratio = ev_ebitda = p_cashflow = reported_qtr = None
@@ -936,6 +1044,39 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 if len(eps_q) >= 5 and eps_q.iloc[4] > 0:
                     qtr_eps_growth = round((eps_q.iloc[0] / eps_q.iloc[4] - 1) * 100, 1)
 
+            # Trailing-twelve-month growth: the last 4 quarters against the 4
+            # before them. This is NOT the same number as qtr_profit_growth /
+            # qtr_revenue_growth above, which are Yahoo's SINGLE-quarter YoY
+            # reads -- one soft quarter swings those hard, while TTM averages
+            # the seasonality out. The Turbo Surge scan specifies TTM, so
+            # substituting the quarterly figure would quietly change the screen.
+            #
+            # Needs 8 quarters, and Yahoo returns only ~5 for every ticker
+            # checked (US and India alike), so in practice BOTH of these are
+            # None today. Kept because they are correct as written and light
+            # up automatically if a deeper statement source is ever wired in;
+            # the Turbo Surge rule uses qtr_profit_growth/qtr_revenue_growth
+            # (single-quarter YoY) as the working substitute meanwhile.
+            #
+            # None, never 0, when the history is short -- a missing
+            # denominator must not read as "no growth".
+            def _ttm_growth(row_name):
+                if qinc is None or row_name not in qinc.index:
+                    return None
+                q = qinc.loc[row_name].dropna()
+                if len(q) < 8:
+                    return None
+                recent = float(q.iloc[0:4].sum())
+                prior = float(q.iloc[4:8].sum())
+                # A non-positive base makes percentage growth meaningless
+                # (and sign-flips it), same guard as qtr_eps_growth above.
+                if prior <= 0:
+                    return None
+                return round((recent / prior - 1) * 100, 1)
+
+            ttm_profit_growth = _ttm_growth("Net Income")
+            ttm_revenue_growth = _ttm_growth("Total Revenue")
+
             if cf is not None and inc is not None:
                 if "Operating Cash Flow" in cf.index and "Operating Income" in inc.index:
                     cfo_s = cf.loc["Operating Cash Flow"].dropna()
@@ -998,6 +1139,30 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 rsi14_monthly_series = compute_rsi(monthly["Close"], rsi_period)
                 if pd.notna(rsi14_monthly_series.iloc[-1]):
                     rsi14_monthly = round(float(rsi14_monthly_series.iloc[-1]), 1)
+
+            # Period-12 monthly RSI, kept SEPARATE from rsi14_monthly above:
+            # the Alpha Leaders scan specifies RSI 12M, and on ~60 monthly bars
+            # a period change of 2 moves the reading by several points, so
+            # reusing the period-14 value would quietly shift the screen.
+            # rsi_period stays settings-driven; RSI_MONTHLY_12_PERIOD does not,
+            # because it is pinned by the scan definition, not a preference.
+            rsi12_monthly = None
+            if len(monthly) >= RSI_MONTHLY_12_PERIOD + 1:
+                rsi12_monthly_series = compute_rsi(monthly["Close"], RSI_MONTHLY_12_PERIOD)
+                if pd.notna(rsi12_monthly_series.iloc[-1]):
+                    rsi12_monthly = round(float(rsi12_monthly_series.iloc[-1]), 1)
+
+            # ADX -- trend STRENGTH, direction-agnostic. Weekly period 14 and
+            # monthly period 12, as the Turbo Surge and Alpha Leaders scans
+            # specify. compute_adx needs 2*period bars before it yields
+            # anything, so it self-guards on short history and returns NaN.
+            adx_weekly_14 = adx_monthly_12 = None
+            adx_w_series = compute_adx(weekly, ADX_WEEKLY_PERIOD)
+            if len(adx_w_series) and pd.notna(adx_w_series.iloc[-1]):
+                adx_weekly_14 = round(float(adx_w_series.iloc[-1]), 1)
+            adx_m_series = compute_adx(monthly, ADX_MONTHLY_PERIOD)
+            if len(adx_m_series) and pd.notna(adx_m_series.iloc[-1]):
+                adx_monthly_12 = round(float(adx_m_series.iloc[-1]), 1)
 
             # Weekly EMAs (fast/mid/slow, e.g. 10/20/40)
             ema10 = ema20 = ema40 = None
@@ -1105,6 +1270,23 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                         vstop_weekly_weeks_since_change = int(weeks_since)
                         vstop_weekly_flipped = bool(weeks_since == 0)
 
+            # Length-14 weekly VStop, for the Turbo Surge scan's "Close >=
+            # VSTOP 14W 2". Rides the same engine and the same weekly_complete
+            # frame as the length-10 stop above -- only the length differs --
+            # so the incomplete-week trimming and the vstop_mode choice both
+            # carry over rather than being re-decided here. Only the level is
+            # kept; the scan tests price against it and needs nothing else.
+            vstop_weekly_14 = None
+            if len(weekly_complete) >= VSTOP_LENGTH_14W + 5:
+                if settings.get("vstop_mode", "tv") == "app":
+                    vstop14_series, _ = compute_vstop(
+                        weekly_complete, length=VSTOP_LENGTH_14W, factor=vstop_factor)
+                else:
+                    vstop14_series, _ = compute_vstop_tv(
+                        weekly_complete, length=VSTOP_LENGTH_14W, factor=vstop_factor)
+                if pd.notna(vstop14_series.iloc[-1]):
+                    vstop_weekly_14 = round(float(vstop14_series.iloc[-1]), 1)
+
             last_close = float(daily_close.iloc[-1])
             pct_change_1d = None
             if len(daily_close) >= 2 and daily_close.iloc[-2]:
@@ -1116,6 +1298,12 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
             daily_volume = df["Volume"].dropna()
             avg_volume_10d = round(float(daily_volume.tail(10).mean())) if len(daily_volume) >= 10 else None
             avg_volume_100d = round(float(daily_volume.tail(100).mean())) if len(daily_volume) >= 100 else None
+            # 20-session average volume, the denominator of the Volume Rocketing
+            # surge test (10D >= 1.3x 20D). Deliberately a separate short-window
+            # baseline from avg_volume_100d: against 100 days a stock that has
+            # been busy for a month already looks normal, which is exactly the
+            # move that scan is trying to catch.
+            avg_volume_20d = round(float(daily_volume.tail(20).mean())) if len(daily_volume) >= 20 else None
 
             # Share of the last year's VOLUME that changed hands above today's
             # close -- how much stock is underwater and liable to sell into a
@@ -1217,6 +1405,21 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 week26_distance = round(max(0.0, (week26_high - last_close) / week26_high * 100), 1)
             if week52_high:
                 week52_distance = round(max(0.0, (week52_high - last_close) / week52_high * 100), 1)
+
+            # 5-year high and the distance below it, same intraday-High basis
+            # and same clamped-positive convention as the 26w/52w pair above.
+            # The whole frame IS the 5-year window -- fetch_snapshot requests
+            # period="5y" -- so this is a plain max, not a tail() slice.
+            #
+            # Pairs with week52_high to separate "at a 1-year high" from "at a
+            # 5-year high": a name whose 5Y high sits well above its 52W high
+            # still has a multi-year ceiling overhead, which is the setup the
+            # Breakout Horizon scan screens for.
+            high_5y = high_5y_distance = None
+            if df["High"].notna().any():
+                high_5y = round(float(df["High"].max()), 1)
+                if high_5y:
+                    high_5y_distance = round(max(0.0, (high_5y - last_close) / high_5y * 100), 1)
 
             # Age of the overhead resistance: trading days back to the level
             # price is now testing. A reading of 250 means price is back at a
@@ -1355,6 +1558,37 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 except (ZeroDivisionError, IndexError):
                     rel_ret_1w_n50 = None
 
+            # Same relative-return idea at 1 month and 6 months, for the Turbo
+            # Surge and Alpha Leaders scans. Uses the SAME trading-day offsets
+            # as _perf() above (22 / 126) so "Perf 1M %" and this metric always
+            # span the same window and can be reasoned about together.
+            #
+            # Both legs are measured over an INNER-JOINED calendar (the same
+            # technique as mansfield_rs), not by slicing each series
+            # positionally. The two series are dropna()'d independently and a
+            # benchmark can be missing sessions the stock traded -- ^CRSLDX
+            # runs 10 bars short of TATVA.NS over 5 years -- so counting 126
+            # bars back on each lands on DIFFERENT dates (2026-02-05 vs
+            # 2026-02-02 there) and silently compares mismatched windows. The
+            # drift grows with the lookback, which is why the pre-existing
+            # 1-week metric never showed it.
+            aligned_rel = pd.concat([daily_close, bench_daily], axis=1, join="inner").dropna()
+
+            def _rel_ret(n):
+                if len(aligned_rel) <= n:
+                    return None
+                stock_s = aligned_rel.iloc[:, 0]
+                bench_s = aligned_rel.iloc[:, 1]
+                try:
+                    stock_r = float(stock_s.iloc[-1]) / float(stock_s.iloc[-n - 1]) - 1
+                    bench_r = float(bench_s.iloc[-1]) / float(bench_s.iloc[-n - 1]) - 1
+                except (ZeroDivisionError, IndexError):
+                    return None
+                return round((stock_r - bench_r) * 100, 1)
+
+            rel_ret_1m_n500 = _rel_ret(22)
+            rel_ret_6m_n500 = _rel_ret(126)
+
             results.append({
                 "ticker": t,
                 "company_name": company_name,
@@ -1368,6 +1602,8 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 "qtr_profit_growth": qtr_profit_growth,
                 "qtr_eps_growth": qtr_eps_growth,
                 "qtr_revenue_growth": qtr_revenue_growth,
+                "ttm_profit_growth": ttm_profit_growth,
+                "ttm_revenue_growth": ttm_revenue_growth,
                 "trailing_pe": trailing_pe,
                 "forward_pe": forward_pe,
                 "pb_ratio": pb_ratio,
@@ -1382,6 +1618,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 "data_end": data_end,
                 "data_end_age_days": data_end_age_days,
                 "avg_volume_10d": avg_volume_10d,
+                "avg_volume_20d": avg_volume_20d,
                 "avg_volume_100d": avg_volume_100d,
                 "volume_trend": volume_trend,
                 "net_volume_10d_dir": net_volume_10d_dir,
@@ -1392,6 +1629,8 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 "overhead_supply": overhead_supply,
                 "week26_distance": week26_distance,
                 "week52_distance": week52_distance,
+                "high_5y": high_5y,
+                "high_5y_distance": high_5y_distance,
                 "breakout_window": breakout_window,
                 "trend": trend,
                 "trend_rank": trend_rank,
@@ -1422,16 +1661,22 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 "rsi14_daily": rsi14_daily,
                 "rsi14_weekly": rsi14_weekly,
                 "rsi14_monthly": rsi14_monthly,
+                "rsi12_monthly": rsi12_monthly,
+                "adx_weekly_14": adx_weekly_14,
+                "adx_monthly_12": adx_monthly_12,
                 "rs_daily": rs_daily,
                 "rs_weekly": rs_weekly,
                 "rs_monthly": rs_monthly,
                 "vstop_weekly": vstop_weekly,
+                "vstop_weekly_14": vstop_weekly_14,
                 "vstop_weekly_direction": vstop_weekly_direction,
                 "vstop_weekly_last_change": vstop_weekly_last_change,
                 "vstop_weekly_weeks_since_change": vstop_weekly_weeks_since_change,
                 "vstop_weekly_flipped": vstop_weekly_flipped,
                 "gc_weeks_10_30": gc_weeks_10_30,
                 "rel_ret_1w_n50": rel_ret_1w_n50,
+                "rel_ret_1m_n500": rel_ret_1m_n500,
+                "rel_ret_6m_n500": rel_ret_6m_n500,
             })
         except Exception as e:
             print(f"  {t}: ERROR {e}")

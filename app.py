@@ -836,30 +836,37 @@ def price_cols(ema_labels):
     since sub-dollar/rupee precision isn't meaningful at a glance here."""
     return ["Last", ema_labels["w_fast"], ema_labels["w_mid"], ema_labels["w_slow"],
             ema_labels["d_fast"], ema_labels["d_mid"], ema_labels["d_slow"],
-            "VStop-W", "52W High", "52W Low"]
+            "VStop-W", "VStop-W (14)", "52W High", "52W Low", "5Y High"]
 
 
 def ratio_cols():
     """Oscillator/ratio columns -- kept at 1 decimal (whole numbers would
     lose meaningful resolution for RSI/RS reads)."""
-    return ["RSI-D", "RSI-W", "RSI-M", "RS-D", "RS-W", "RS-M", "P/E (TTM)", "P/E (Fwd)", "P/B", "EV/EBITDA", "P/Cashflow"]
+    return ["RSI-D", "RSI-W", "RSI-M", "RSI-M (12)", "ADX-W", "ADX-M",
+            "RS-D", "RS-W", "RS-M", "P/E (TTM)", "P/E (Fwd)", "P/B", "EV/EBITDA", "P/Cashflow"]
 
 
-VOLUME_COLS = ["Vol 10D", "Vol 100D"]
-PCT_COLS = ["% Chg", "Qtr Profit Growth %", "Qtr EPS Growth %", "Qtr Revenue Growth %", "ROE %", "ROCE %"]
+VOLUME_COLS = ["Vol 10D", "Vol 20D", "Vol 100D"]
+PCT_COLS = ["% Chg", "Qtr Profit Growth %", "Qtr EPS Growth %", "Qtr Revenue Growth %", "ROE %", "ROCE %",
+            "PAT Growth TTM %", "Revenue Growth TTM %"]
 PERF_PCT_COLS = ["Perf 1M %", "Perf 3M %", "Perf 6M %", "Perf 1Y %", "Perf 3Y %"]
+# Signed like PERF_PCT_COLS (+ = ahead of the benchmark) but kept at 1
+# decimal, not 0: these are scan inputs tested against thresholds as tight
+# as ">= 1", where PERF_PCT_COLS' whole-number rounding would render a 0.4
+# and a 1.4 identically.
+REL_PCT_COLS = ["1M Ret vs Nifty 500", "6M Ret vs Nifty 500"]
 # Unsigned percentages -- always >= 0, so formatted WITHOUT a sign prefix.
 # PCT_COLS' "+12.5%" would read as 12.5% ABOVE the high for the distances,
 # the exact opposite of what they mean, and a signed share-of-volume makes
 # no sense either.
-DIST_PCT_COLS = ["26WH Distance", "52WH Distance", "Overhead Supply"]
+DIST_PCT_COLS = ["26WH Distance", "52WH Distance", "Overhead Supply", "5Y High Distance"]
 # A count of trading days, not a price or a ratio -- whole numbers only.
 COUNT_COLS = ["Breakout Window", "52W High Age"]
 
 # Column keys considered "fundamental" (company financials/valuation, as
 # opposed to technical/price-derived) -- hideable as a group via the
 # "Show fundamental columns" toggle, independent of the per-column picker.
-FUNDAMENTAL_COLUMN_KEYS = {"fundamentals", "qtr_profit_growth", "qtr_eps_growth", "qtr_revenue_growth", "trailing_pe", "forward_pe", "pb_ratio", "ev_ebitda", "p_cashflow", "reported_qtr", "roe", "cfo_op_5yr", "roce"}
+FUNDAMENTAL_COLUMN_KEYS = {"fundamentals", "qtr_profit_growth", "qtr_eps_growth", "qtr_revenue_growth", "ttm_profit_growth", "ttm_revenue_growth", "trailing_pe", "forward_pe", "pb_ratio", "ev_ebitda", "p_cashflow", "reported_qtr", "roe", "cfo_op_5yr", "roce"}
 
 
 LINK_COLUMN_CONFIG = {
@@ -1058,6 +1065,17 @@ def column_definitions(settings, labels):
         "Perf 6M %": "Price return over the past ~6 months (126 trading days).",
         "Perf 1Y %": "Price return over the past ~1 year (252 trading days).",
         "Perf 3Y %": "Price return over the past ~3 years (756 trading days). Blank when fewer than 3 years of daily data are available.",
+        "5Y High": "Highest intraday high over the full 5 years of daily history. Sits at or above 52W High by definition, and the gap between the two is what separates a stock at a 1-year high from one at a genuine multi-year high.",
+        "5Y High Distance": "How far below the 5-year high price is now, as a positive percent: 0 = at the 5-year high, 20 = 20% below it. Same sign convention as 26WH/52WH Distance (and the opposite of the '% Off 52W High' custom column).",
+        "Vol 20D": "Average daily volume over the last 20 sessions. A short-window baseline: paired with Vol 10D it detects a volume surge that Vol 100D would already have absorbed.",
+        "ADX-W": "Average Directional Index on WEEKLY bars, Wilder period 14. Measures trend STRENGTH only and says nothing about direction — 25+ is the classic 'trending' threshold, below 20 is chop. Needs 28 weekly bars before it reports anything.",
+        "ADX-M": "Average Directional Index on MONTHLY bars, Wilder period 12. Same strength-not-direction reading as ADX-W but over a multi-year horizon. Needs 24 monthly bars.",
+        "RSI-M (12)": "Monthly RSI at period 12, kept separate from RSI-M (period 14). On the ~60 monthly bars most tickers have, the two periods differ by several points, so they are not interchangeable.",
+        "VStop-W (14)": "Weekly Volatility Stop at length 14, factor 2 — the same engine and settings as VStop-W, which uses length 10. A longer length sits further from price and flips less often.",
+        "1M Ret vs Nifty 500": "Stock's 1-month return minus the benchmark's, in percentage points. Positive = outperforming. Measured over a date-aligned calendar, so both sides span exactly the same sessions.",
+        "6M Ret vs Nifty 500": "Stock's 6-month return minus the benchmark's, in percentage points. Positive = outperforming.",
+        "PAT Growth TTM %": "Net income over the trailing four quarters versus the four before that — needs eight quarters of income-statement history. CURRENTLY BLANK FOR EVERY TICKER: yfinance returns only about five quarters, so the comparison cannot be made. Use Qtr Profit Growth % (single quarter, year-on-year) instead; this column populates automatically if a deeper data source is ever wired in.",
+        "Revenue Growth TTM %": "Total revenue over the trailing four quarters versus the four before that — needs eight quarters of income-statement history. CURRENTLY BLANK FOR EVERY TICKER: yfinance returns only about five quarters. Use Qtr Revenue Growth % instead; this column populates automatically if a deeper data source is ever wired in.",
     }
     return defs
 
@@ -1780,6 +1798,8 @@ def build_column_defs(labels, custom_columns=None):
         ("week52_distance", "52WH Distance"),
         ("week52_high_age", "52W High Age"),
         ("overhead_supply", "Overhead Supply"),
+        ("high_5y", "5Y High"),
+        ("high_5y_distance", "5Y High Distance"),
         ("data_end", "Data Thru"),
         ("ema10", labels["w_fast"]),
         ("ema20", labels["w_mid"]),
@@ -1790,10 +1810,14 @@ def build_column_defs(labels, custom_columns=None):
         ("rsi14_daily", "RSI-D"),
         ("rsi14_weekly", "RSI-W"),
         ("rsi14_monthly", "RSI-M"),
+        ("rsi12_monthly", "RSI-M (12)"),
+        ("adx_weekly_14", "ADX-W"),
+        ("adx_monthly_12", "ADX-M"),
         ("rs_daily", "RS-D"),
         ("rs_weekly", "RS-W"),
         ("rs_monthly", "RS-M"),
         ("vstop_weekly", "VStop-W"),
+        ("vstop_weekly_14", "VStop-W (14)"),
         ("vstop_weekly_direction", "VStop Dir"),
         ("vstop_change", "VStop Weeks Ago"),
         ("volume_trend", "Vol Trend"),
@@ -1803,6 +1827,8 @@ def build_column_defs(labels, custom_columns=None):
         ("qtr_profit_growth", "Qtr Profit Growth %"),
         ("qtr_eps_growth", "Qtr EPS Growth %"),
         ("qtr_revenue_growth", "Qtr Revenue Growth %"),
+        ("ttm_profit_growth", "PAT Growth TTM %"),
+        ("ttm_revenue_growth", "Revenue Growth TTM %"),
         ("reported_qtr", "Reported Qtr"),
         ("trailing_pe", "P/E (TTM)"),
         ("forward_pe", "P/E (Fwd)"),
@@ -1813,7 +1839,10 @@ def build_column_defs(labels, custom_columns=None):
         ("cfo_op_5yr", "CFO/OP 5Y"),
         ("roce", "ROCE %"),
         ("avg_volume_10d", "Vol 10D"),
+        ("avg_volume_20d", "Vol 20D"),
         ("avg_volume_100d", "Vol 100D"),
+        ("rel_ret_1m_n500", "1M Ret vs Nifty 500"),
+        ("rel_ret_6m_n500", "6M Ret vs Nifty 500"),
         ("perf_1m", "Perf 1M %"),
         ("perf_3m", "Perf 3M %"),
         ("perf_6m", "Perf 6M %"),
@@ -1829,16 +1858,25 @@ def build_column_defs(labels, custom_columns=None):
     label_by_key = dict(optional_defs)
     key_by_label = {lbl: k for k, lbl in optional_defs}
     all_labels = list(label_by_key.values())
-    # Raw 10D/100D volume are hidden by default (Vol Trend already
+    # Raw 10D/20D/100D volume are hidden by default (Vol Trend already
     # summarizes them); Flag and Invested are personal annotations shown
     # via the ticker-flag marker/watchlist editor already, so they're
     # opt-in here too; the breakout trio are primarily alert/scan inputs
     # (and 52WH Distance duplicates the "% Off 52W High" custom column with
     # the opposite sign), so they're offered in the picker but stay off
     # until asked for; everything else shows by default.
-    default_hidden = {"Vol 10D", "Vol 100D", "Flag", "Invested",
+    #
+    # The scan-driven family (5Y High pair, ADX, RSI-M (12), VStop-W (14),
+    # the relative-return pair, the TTM growth pair) follows the same rule:
+    # each exists to back a specific stockscans rule, and defaulting nine
+    # more columns on would push the table sideways for everyone who never
+    # runs those scans.
+    default_hidden = {"Vol 10D", "Vol 20D", "Vol 100D", "Flag", "Invested",
                       "Breakout Window", "26WH Distance", "52WH Distance", "52W High Age",
-                      "Overhead Supply"}
+                      "Overhead Supply",
+                      "5Y High", "5Y High Distance", "ADX-W", "ADX-M", "RSI-M (12)",
+                      "VStop-W (14)", "1M Ret vs Nifty 500", "6M Ret vs Nifty 500",
+                      "PAT Growth TTM %", "Revenue Growth TTM %"}
     default_visible = [lbl for lbl in all_labels if lbl not in default_hidden]
     return optional_defs, label_by_key, key_by_label, all_labels, default_visible
 
@@ -1968,7 +2006,16 @@ def render_shared_column_picker(labels):
     # in that case -- nothing to force back in).
     # Iterate in optional_defs order (not the set) so multiple new fundamental
     # columns are inserted in the correct sequence (sets have no guaranteed order).
-    fund_keys_in_order = [k for k, _ in optional_defs if k in FUNDAMENTAL_COLUMN_KEYS]
+    #
+    # Restricted to columns that are VISIBLE by default. A saved order is the
+    # visible-column list, so force-inserting here turns a column on in every
+    # existing layout -- which is right for a genuinely new everyday column,
+    # but wrong for a fundamental that ships hidden on purpose (PAT/Revenue
+    # Growth TTM are scan inputs, and blank on any ticker whose data source
+    # doesn't reach back eight quarters). Without this filter, declaring such
+    # a column in FUNDAMENTAL_COLUMN_KEYS silently overrides default_hidden.
+    fund_keys_in_order = [k for k, lbl in optional_defs
+                          if k in FUNDAMENTAL_COLUMN_KEYS and lbl in default_visible]
     inserted = False
     for fund_key in fund_keys_in_order:
         if fund_key in label_by_key and fund_key not in st.session_state[SHARED_ORDER_KEY]:
@@ -3179,6 +3226,9 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         perf_pct_cols = [c for c in PERF_PCT_COLS if c in df.columns]
         if perf_pct_cols:
             styled = styled.format(lambda v: f"{v:+.0f}%" if pd.notna(v) else "—", subset=perf_pct_cols)
+        rel_pct_cs = [c for c in REL_PCT_COLS if c in df.columns]
+        if rel_pct_cs:
+            styled = styled.format(lambda v: f"{v:+.1f}%" if pd.notna(v) else "—", subset=rel_pct_cs)
         dist_pct_cs = [c for c in DIST_PCT_COLS if c in df.columns]
         if dist_pct_cs:
             styled = styled.format(lambda v: f"{v:.1f}%" if pd.notna(v) else "—", subset=dist_pct_cs)
