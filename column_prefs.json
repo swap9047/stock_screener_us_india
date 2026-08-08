@@ -26,6 +26,7 @@
     "reported_qtr",
     "qtr_revenue_growth",
     "qtr_profit_growth",
+    "qtr_eps_growth",
     "trailing_pe",
     "forward_pe",
     "pb_ratio",
