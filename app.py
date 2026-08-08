@@ -61,6 +61,10 @@ from stock_data import (
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE, send_discord,
                      build_discord_messages_for_rule, describe_schedule, DAY_CODES, DAY_LABELS,
                      DEFAULT_DAYS, ALLOWED_HOURS, HOUR_LABELS, compute_rule_truth)
+from weekly_wrapup import (
+    build_wrapup, eligible_rules, load_wrapup_state, _pretty_date,
+    build_discord_messages as build_wrapup_messages,
+)
 from filters import (get_market_filters, save_market_filters, apply_filters, describe_filter,
                      describe_chain, describe_chain_with_values, passes_filter_chain, CATEGORICAL_METRICS)
 from github_sync import get_github_config, push_all_config, trigger_github_workflow, SYNCABLE_FILES
@@ -844,6 +848,12 @@ def ratio_cols():
 VOLUME_COLS = ["Vol 10D", "Vol 100D"]
 PCT_COLS = ["% Chg", "Qtr Profit Growth %", "Qtr EPS Growth %", "Qtr Revenue Growth %", "ROE %", "ROCE %"]
 PERF_PCT_COLS = ["Perf 1M %", "Perf 3M %", "Perf 6M %", "Perf 1Y %", "Perf 3Y %"]
+# Distance BELOW a trailing high: always >= 0, so formatted WITHOUT a sign
+# prefix. PCT_COLS' "+12.5%" would read as 12.5% ABOVE the high -- the exact
+# opposite of what these mean.
+DIST_PCT_COLS = ["26WH Distance", "52WH Distance"]
+# A count of trading days, not a price or a ratio -- whole numbers only.
+COUNT_COLS = ["Breakout Window"]
 
 # Column keys considered "fundamental" (company financials/valuation, as
 # opposed to technical/price-derived) -- hideable as a group via the
@@ -960,6 +970,29 @@ def column_definitions(settings, labels):
         "% Chg": "1-day close-to-close percent change.",
         "52W High": "Trailing 52-week (~252 trading day) intraday high.",
         "52W Low": "Trailing 52-week (~252 trading day) intraday low.",
+        "Breakout Window": (
+            "Trading days since the last close at or ABOVE today's close — i.e. how old the "
+            "overhead resistance is. 250 means price is back at a level it last saw ~250 days ago "
+            "and is testing it. 0 means no prior close was ever this high (blue sky, nothing left "
+            "to break out of), which is also what an all-time high reads. This is a SETUP measure, "
+            "not a confirmation: a stock that actually clears its old level drops to 0 that same "
+            "day. Powers the Long-term breakout scan (≥200 with 52WH Distance <10%) and the "
+            "Short-term one (40–200 with 26WH Distance <10%)."
+        ),
+        "26WH Distance": (
+            "Percent BELOW the trailing 26-week (~126 trading day) intraday high, as a POSITIVE "
+            "number: 0 = sitting at the high, 12.5 = 12.5% below it. Positive on purpose so scans "
+            "read literally as '26WH Distance < 10'."
+        ),
+        "52WH Distance": (
+            "Percent BELOW the trailing 52-week (~252 trading day) intraday high, as a POSITIVE "
+            "number: 0 = sitting at the high, 12.5 = 12.5% below it. Positive on purpose so scans "
+            "read literally as '52WH Distance < 10'. This is the same distance the '% Off 52W High' "
+            "custom column reports as a negative (-12.5%), so showing both gives you one number "
+            "twice with opposite signs — they can disagree by up to ~0.2pp on low-priced stocks, "
+            "because this metric uses the exact close while that column recomputes from the "
+            "rounded stored close."
+        ),
         "Data Thru": "Most recent date with price data for this ticker. Shown in red if 3+ days stale.",
         "Vol Trend": (
             f"Exploding: 10D avg volume ≥ {settings.get('volume_explode_ratio', 1.4)}× the 100D avg. "
@@ -1026,6 +1059,42 @@ def custom_column_tooltips(custom_columns=None):
         if col.get("enabled", True):
             tooltips[col["name"]] = f"Custom column. Formula: {col.get('formula', '')}"
     return tooltips
+
+
+def metric_definitions(settings, labels, custom_columns=None):
+    """metric field key -> definition, for the surfaces that pick a METRIC
+    (the condition builders, the sidebar glossary) rather than a table
+    column.
+
+    column_definitions() is keyed by COLUMN LABEL, and several metrics carry
+    a different label in each place -- "Last Close" vs "Last", "10 WEMA" vs
+    labels["w_fast"] -- so this bridges through build_column_defs' key->label
+    map instead of matching label strings, which would silently lose those
+    metrics and break again on any future label rename.
+
+    A metric with no definition is simply ABSENT from the result; callers
+    must render nothing for it rather than treat it as an error."""
+    col_defs = column_definitions(settings, labels)
+    _, label_by_key, *_ = build_column_defs(labels, custom_columns)
+    out = {key: col_defs[lbl] for key, lbl in label_by_key.items() if lbl in col_defs}
+
+    # Second pass by metric label, for metrics whose FIELD KEY differs from
+    # the column key backing them -- "Tech Uptrend" is the metric tech_uptrend
+    # but the column tech_uptrend_label, and "VStop Weeks Ago" is
+    # vstop_weekly_weeks_since_change vs the column vstop_change. Both already
+    # have definitions; keying only on the column key silently dropped them.
+    for label, key in get_all_filterable_metrics(settings, custom_columns).items():
+        if key not in out and label in col_defs:
+            out[key] = col_defs[label]
+
+    # Ticker/Last are mandatory columns and so aren't in build_column_defs,
+    # but last_close IS a filterable metric -- map it explicitly.
+    if col_defs.get("Last"):
+        out.setdefault("last_close", col_defs["Last"])
+    for col in (custom_columns if custom_columns is not None else load_custom_columns()):
+        if col.get("enabled", True):
+            out[column_key(col)] = f"Custom column. Formula: {col.get('formula', '')}"
+    return {k: v for k, v in out.items() if v}
 
 
 def add_header_tooltips(html_str, definitions):
@@ -1499,7 +1568,7 @@ def render_watchlist_editor(market, watchlists):
         _apply_watchlist_tickers(market, market_label, tickers, new_tickers, invested_weights)
 
 
-def render_condition_builder(key_prefix, metric_names, filterable_metrics, logic_choice, available_rules=None, exclude_rule_id=None):
+def render_condition_builder(key_prefix, metric_names, filterable_metrics, logic_choice, available_rules=None, exclude_rule_id=None, definitions=None):
     """Renders one full condition-builder row (Metric A / Operator / Compare
     to / Value / Add button) shared by the watchlist custom-filter builder,
     the new-rule builder, and each existing rule's inline condition editor
@@ -1519,9 +1588,20 @@ def render_condition_builder(key_prefix, metric_names, filterable_metrics, logic
     `exclude_rule_id` hides the rule being edited so it can't reference
     itself.
 
+    `definitions` (metric key -> text, from metric_definitions()) drives a
+    caption under each metric picker explaining the currently-selected
+    metric. Optional and sparse by design: metrics without an entry just get
+    no caption, so a metric that has never been documented is still usable.
+
     Returns a finished condition dict (with "logic" set to `logic_choice`,
     ready to append to a conditions list) the moment "Add" is clicked with
     valid inputs, else None."""
+    definitions = definitions or {}
+
+    def _explain(metric_key, container=st):
+        text = definitions.get(metric_key)
+        if text:
+            container.caption(f"ℹ️ {text}")
     condition_type = st.radio(
         "Condition type",
         ["Metric comparison", "Reference another alert"],
@@ -1548,6 +1628,7 @@ def render_condition_builder(key_prefix, metric_names, filterable_metrics, logic
 
     metric_a_label = st.selectbox("Metric A", metric_names, key=f"{key_prefix}_a")
     metric_a_key = filterable_metrics[metric_a_label]
+    _explain(metric_a_key)
     categorical_options = CATEGORICAL_METRICS.get(metric_a_key)
 
     if categorical_options:
@@ -1571,6 +1652,7 @@ def render_condition_builder(key_prefix, metric_names, filterable_metrics, logic
     compare_type = c2.radio("Compare to", ["Metric", "Fixed value"], key=f"{key_prefix}_ctype", horizontal=True)
     if compare_type == "Metric":
         metric_b_label = c3.selectbox("Metric B", metric_names, key=f"{key_prefix}_b")
+        _explain(filterable_metrics[metric_b_label], container=c3)
         mc1, mc2, mc3 = st.columns([1, 1, 1])
         multiplier = mc1.number_input(
             "× Multiplier (optional)", value=1.0, step=0.1, format="%.2f", key=f"{key_prefix}_mult",
@@ -1602,7 +1684,7 @@ def render_condition_builder(key_prefix, metric_names, filterable_metrics, logic
         return None
 
 
-def render_custom_filter_builder(market, filterable_metrics):
+def render_custom_filter_builder(market, filterable_metrics, definitions=None):
     st.markdown(
         "**Custom filters** — compare any metric to another metric or a fixed value, "
         "or reference another saved alert. "
@@ -1641,7 +1723,7 @@ def render_custom_filter_builder(market, filterable_metrics):
     else:
         logic_choice = "AND"
 
-    new_filter = render_condition_builder(f"cf_{market}", metric_names, filterable_metrics, logic_choice, available_rules=custom_rules)
+    new_filter = render_condition_builder(f"cf_{market}", metric_names, filterable_metrics, logic_choice, available_rules=custom_rules, definitions=definitions)
     if new_filter:
         new_filter["id"] = uuid.uuid4().hex[:8]
         active_filters.append(new_filter)
@@ -1668,6 +1750,9 @@ def build_column_defs(labels, custom_columns=None):
         ("pct_change_1d", "% Chg"),
         ("week52_high", "52W High"),
         ("week52_low", "52W Low"),
+        ("breakout_window", "Breakout Window"),
+        ("week26_distance", "26WH Distance"),
+        ("week52_distance", "52WH Distance"),
         ("data_end", "Data Thru"),
         ("ema10", labels["w_fast"]),
         ("ema20", labels["w_mid"]),
@@ -1720,8 +1805,12 @@ def build_column_defs(labels, custom_columns=None):
     # Raw 10D/100D volume are hidden by default (Vol Trend already
     # summarizes them); Flag and Invested are personal annotations shown
     # via the ticker-flag marker/watchlist editor already, so they're
-    # opt-in here too; everything else shows by default.
-    default_hidden = {"Vol 10D", "Vol 100D", "Flag", "Invested"}
+    # opt-in here too; the breakout trio are primarily alert/scan inputs
+    # (and 52WH Distance duplicates the "% Off 52W High" custom column with
+    # the opposite sign), so they're offered in the picker but stay off
+    # until asked for; everything else shows by default.
+    default_hidden = {"Vol 10D", "Vol 100D", "Flag", "Invested",
+                      "Breakout Window", "26WH Distance", "52WH Distance"}
     default_visible = [lbl for lbl in all_labels if lbl not in default_hidden]
     return optional_defs, label_by_key, key_by_label, all_labels, default_visible
 
@@ -1939,10 +2028,64 @@ def render_shared_column_picker(labels):
                 save_column_prefs(new_order)
                 st.rerun()
 
+    render_metric_glossary(labels, custom_columns, key_by_label)
     render_custom_columns_manager()
     render_ticker_notes_manager()
 
     return st.session_state[SHARED_ORDER_KEY], label_by_key, sort_field, sort_ascending
+
+
+def render_metric_glossary(labels, custom_columns, column_key_by_label):
+    """Sidebar reference for every metric the filter/alert builders offer,
+    sitting right under the column picker -- which is where you look when a
+    metric name means nothing to you.
+
+    Deliberately keyed off get_all_filterable_metrics rather than the column
+    list, because the two differ: a metric can be filterable without being a
+    table column (the breakout metrics were exactly that, which is why
+    'Breakout Window' was findable in the alert builder but nowhere else).
+    Those are marked so it's clear why they're missing from the picker
+    above. Metrics with no definition still get listed, by label alone --
+    hiding them would disguise the gap."""
+    settings = load_settings()
+    metrics = get_all_filterable_metrics(settings, custom_columns)
+    defs = metric_definitions(settings, labels, custom_columns)
+
+    def _is_a_column(label, key):
+        """A metric shows up as a column under EITHER the same label
+        ("Tech Uptrend" is the metric tech_uptrend but the column
+        tech_uptrend_label) OR the same key (the EMA columns, whose label
+        tracks the configured period). last_close is the mandatory "Last"
+        column, which build_column_defs deliberately omits. Matching on only
+        one of the three mislabels real columns as alert-only."""
+        return (label in column_key_by_label
+                or key in set(column_key_by_label.values())
+                or key == "last_close")
+
+    with st.sidebar.expander("Metric glossary", expanded=False):
+        st.caption(
+            "Every metric available in the custom filter and alert condition builders. "
+            "‘Not a table column’ means it can be filtered/alerted on but isn't offered in "
+            "the column picker above."
+        )
+        query = st.text_input(
+            "Search metrics", "", key="metric_glossary_search",
+            placeholder="e.g. breakout",
+        ).strip().lower()
+
+        shown = 0
+        for label in sorted(metrics):
+            key = metrics[label]
+            text = defs.get(key, "")
+            if query and query not in label.lower() and query not in text.lower():
+                continue
+            shown += 1
+            note = "" if _is_a_column(label, key) else " · *not a table column*"
+            st.markdown(f"**{label}**{note}")
+            st.caption(text or "_No definition written yet._")
+
+        if not shown:
+            st.caption(f"No metric matches “{query}”.")
 
 
 def render_custom_columns_manager():
@@ -2592,7 +2735,9 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
     search = st.text_input("Ticker search", "", key=f"search_{market}").strip().upper()
 
     with st.expander("Custom filters (metric vs metric, or metric vs fixed value; chain with AND/OR)", expanded=False):
-        active_custom_filters = render_custom_filter_builder(market, filterable_metrics)
+        active_custom_filters = render_custom_filter_builder(
+            market, filterable_metrics, definitions=metric_definitions(settings, labels, custom_columns)
+        )
 
     # Filter this watchlist by any saved rule from the Alert Rules tab --
     # reuses the exact same condition-chain engine (filters.passes_filter_chain)
@@ -3006,6 +3151,12 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         perf_pct_cols = [c for c in PERF_PCT_COLS if c in df.columns]
         if perf_pct_cols:
             styled = styled.format(lambda v: f"{v:+.0f}%" if pd.notna(v) else "—", subset=perf_pct_cols)
+        dist_pct_cs = [c for c in DIST_PCT_COLS if c in df.columns]
+        if dist_pct_cs:
+            styled = styled.format(lambda v: f"{v:.1f}%" if pd.notna(v) else "—", subset=dist_pct_cs)
+        count_cs = [c for c in COUNT_COLS if c in df.columns]
+        if count_cs:
+            styled = styled.format("{:,.0f}", subset=count_cs, na_rep="—")
         header_tooltips = {**column_definitions(settings, labels), **custom_column_tooltips(custom_columns)}
         table_html = add_header_tooltips(sticky_header_html(styled), header_tooltips)
         st.markdown(table_html, unsafe_allow_html=True)
@@ -3728,6 +3879,7 @@ with tab_alerts:
     filterable_metrics_alert = get_all_filterable_metrics(settings_now)
     metric_names_alert = list(filterable_metrics_alert.keys())
     metric_labels_alert = {v: k for k, v in filterable_metrics_alert.items()}
+    metric_defs_alert = metric_definitions(settings_now, ema_col_labels(settings_now))
 
     rules = load_rules()
     rule_by_id_alert = {r["id"]: r for r in rules}
@@ -3769,7 +3921,8 @@ with tab_alerts:
     else:
         dr_logic = "AND"
 
-    new_cond = render_condition_builder("dr", metric_names_alert, filterable_metrics_alert, dr_logic, available_rules=rules)
+    new_cond = render_condition_builder("dr", metric_names_alert, filterable_metrics_alert, dr_logic,
+                                        available_rules=rules, definitions=metric_defs_alert)
     if new_cond:
         st.session_state.draft_rule_conditions.append(new_cond)
         st.rerun()
@@ -3917,7 +4070,7 @@ with tab_alerts:
 
                 new_edit_cond = render_condition_builder(
                     f"ec_{rule['id']}", metric_names_alert, filterable_metrics_alert, ec_logic,
-                    available_rules=rules, exclude_rule_id=rule["id"],
+                    available_rules=rules, exclude_rule_id=rule["id"], definitions=metric_defs_alert,
                 )
                 if new_edit_cond:
                     edit_conds.append(new_edit_cond)
@@ -4031,6 +4184,124 @@ with tab_alerts:
                         )
                     else:
                         st.error("Failed to send — check the webhook URL in the Discord section below.")
+
+    # ── Weekly wrap-up ──────────────────────────────────────────────────────
+    st.divider()
+    st.markdown("**📅 Weekly wrap-up**")
+    st.caption(
+        "A Sunday digest over the alerts you pick here: one table per alert (its own condition "
+        "metrics, plus **Wk** = weeks since that ticker entered the list, 0 = this week), then a "
+        "roll-up counting how many of these alerts each stock appears in — the most active names "
+        "first. Sent to Discord every Sunday 9:00 PM ET by the Weekly Wrap-up workflow. "
+        "Running it here is **read-only** — it never advances the Wk counters, so preview as often "
+        "as you like."
+    )
+
+    wrapup_eligible = eligible_rules(rules)
+    if not wrapup_eligible:
+        st.info("No enabled rules with conditions yet — add one above to use the weekly wrap-up.")
+    else:
+        def _wrapup_label(r):
+            scope = {"ALL": "All watchlist", **market_scope_key_to_label}.get(r.get("scope"), r.get("scope"))
+            scan = "  🔍 scan only" if r.get("schedule", {}).get("type") == "none" else ""
+            return f"{r.get('name') or '(unnamed)'} — {scope}{scan}"
+
+        wrapup_label_to_id = {_wrapup_label(r): r["id"] for r in wrapup_eligible}
+        wrapup_defaults = [_wrapup_label(r) for r in wrapup_eligible if r.get("weekly_wrapup")]
+        wrapup_picked = st.multiselect(
+            "Alerts included in the weekly wrap-up",
+            options=list(wrapup_label_to_id.keys()),
+            default=wrapup_defaults,
+            key="wrapup_pick",
+            help="Scan-only rules are allowed — a rule too noisy for a daily Discord ping can "
+                 "still earn its place in the weekly digest.",
+        )
+        picked_ids = {wrapup_label_to_id[lbl] for lbl in wrapup_picked}
+        if picked_ids != {r["id"] for r in wrapup_eligible if r.get("weekly_wrapup")}:
+            for r in rules:
+                r["weekly_wrapup"] = r["id"] in picked_ids
+            save_rules(rules)
+            st.rerun()
+
+        if not picked_ids:
+            st.caption("Pick at least one alert above to build a wrap-up.")
+        else:
+            if st.button("Build wrap-up now"):
+                st.session_state.wrapup_report = build_wrapup(
+                    rules, combined_results, load_wrapup_state(),
+                    metric_labels=metric_labels_alert,
+                    registry=markets_registry_now,
+                    as_of=as_of,
+                )
+
+            report = st.session_state.get("wrapup_report")
+            if report is not None:
+                anchor = report.get("state_last_run")
+                st.caption(
+                    f"**{_pretty_date(report['run_date'])}** · {len(report['alerts'])} alert(s) · "
+                    f"{report['total_stocks']} stock(s) · data as of {report.get('as_of') or as_of} · "
+                    + (f"Wk measured from the {_pretty_date(anchor)} run."
+                       if anchor else
+                       "no previous run recorded yet, so every stock reads Wk 0.")
+                )
+                if report["cycle_ids"]:
+                    cyc = [f"{rule_by_id_alert.get(rid, {}).get('name') or 'alert'} [{rid}]"
+                           for rid in sorted(report["cycle_ids"])]
+                    st.warning(
+                        f"⚠ Circular alert references detected: {', '.join(cyc)}. "
+                        "Those rule references are treated as not matching."
+                    )
+
+                st.markdown("  ·  ".join(
+                    f"**{a['num']}.** {a['name']} ({len(a['rows'])})" for a in report["alerts"]
+                ))
+
+                for a in report["alerts"]:
+                    st.markdown(
+                        f"**{a['num']}. {a['name']}** — {a['scope_label']} · "
+                        f"{len(a['rows'])} stock{'s' if len(a['rows']) != 1 else ''}"
+                        + ("  🔍 scan only" if a["scan_only"] else "")
+                    )
+                    if not a["rows"]:
+                        st.caption("No matches right now.")
+                        continue
+                    # Ticker column carries a TradingView link, so the rendered
+                    # cell differs from the raw symbol used in the Discord table.
+                    adf = pd.DataFrame(
+                        [[tradingview_url(r[0])] + r[1:] for r in a["rows"]],
+                        columns=a["headers"],
+                    )
+                    st.dataframe(adf, width="stretch", hide_index=True,
+                                 column_config=LINK_COLUMN_CONFIG)
+
+                st.markdown("**🔥 Most active stocks** — across the alerts above")
+                if not report["rollup"]:
+                    st.caption("No stock matched any of the selected alerts.")
+                else:
+                    rdf = pd.DataFrame([
+                        {
+                            "Ticker": tradingview_url(r["ticker"]),
+                            "Watchlist": r["market"],
+                            "# Alerts": r["count"],
+                            "Alerts#": ", ".join(str(n) for n in r["alert_nums"]),
+                            "Oldest Wk": r["oldest_weeks"],
+                        }
+                        for r in report["rollup"]
+                    ])
+                    st.dataframe(rdf, width="stretch", hide_index=True,
+                                 column_config=LINK_COLUMN_CONFIG)
+
+                if st.button("📤 Send this wrap-up to Discord"):
+                    webhook = get_discord_webhook()
+                    if not webhook:
+                        st.error("No Discord webhook configured yet — set one in the Discord section below.")
+                    else:
+                        msgs = build_wrapup_messages(report)
+                        if all(send_discord(webhook, m) for m in msgs):
+                            st.success(f"Sent {len(msgs)} message(s) to Discord. "
+                                       "Wk counters were not advanced — only the Sunday run does that.")
+                        else:
+                            st.error("Failed to send — check the webhook URL in the Discord section below.")
 
     # ── Discord ───────────────────────────────────────────────────────────────
     st.divider()

@@ -1,0 +1,103 @@
+name: Weekly Wrap-up
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+# Runs once a week, Sunday 9:00 PM ET -- the same hour as the daily alert
+# check (alerts.ALLOWED_HOURS), and ~6:30 AM IST Monday, so the digest lands
+# just before the India open. On a Sunday evening the snapshot is Friday's
+# close, which is exactly the end-of-week status the wrap-up reports.
+#
+# Sunday 9:00 PM ET is MONDAY in UTC -- 01:00 UTC during EDT (mid-Mar to
+# early Nov) and 02:00 UTC during EST -- so both cron lines use day-of-week
+# 1 (Monday), not 0. GitHub Actions cron is UTC-only and does not adjust for
+# daylight saving, hence two lines; the gate job below checks the real
+# America/New_York wall-clock at run time so only the correct one for the
+# current season proceeds (same pattern as daily-alerts.yml).
+on:
+  schedule:
+    - cron: "0 1 * * 1"   # 01:00 UTC Mon = 9:00 PM ET Sun during EDT
+    - cron: "0 2 * * 1"   # 02:00 UTC Mon = 9:00 PM ET Sun during EST
+  workflow_dispatch: {}   # run manually from the Actions tab anytime, bypasses the gate
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # needed to commit weekly_wrapup_state.json back to the repo
+
+jobs:
+  # Cheap gate: installs only `requests` (all alerts.py needs) and asks the
+  # SAME is_rule_due() the app's schedule picker is built around, using a
+  # synthetic Sunday-21:00 schedule. Reusing it rather than reimplementing
+  # the check inline means we inherit the DST cron test and the "landed
+  # after midnight, so the nominal day was yesterday" rollback for free.
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      due: ${{ steps.check.outputs.due }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install lightweight deps for schedule check
+        run: pip install requests
+
+      - id: check
+        name: Is it ~9 PM ET on Sunday right now?
+        env:
+          CRON_SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          python - <<'EOF' >> "$GITHUB_OUTPUT"
+          import os
+          from alerts import is_rule_due
+          synthetic = {"schedule": {"type": "scheduled", "days": ["SUN"], "time_et": "21:00"}}
+          due = is_rule_due(synthetic, cron_schedule=os.environ.get("CRON_SCHEDULE"))
+          print(f"due={'true' if due else 'false'}")
+          EOF
+
+  wrapup:
+    needs: gate
+    if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.due == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build weekly wrap-up and send to Discord
+        run: python -u weekly_wrapup_check.py
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+      # weekly_wrapup_state.json is committed rather than cached: it is the
+      # only record of when each ticker entered each alert, and losing it
+      # (cache eviction) would silently reset every Wk to 0. It is
+      # deliberately NOT in github_sync.SYNCABLE_FILES -- the app must never
+      # be able to push a stale local copy over this one.
+      - name: Commit updated weekly_wrapup_state.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add weekly_wrapup_state.json
+          if ! git diff --staged --quiet; then
+            git commit -m "Update weekly_wrapup_state.json [automated]"
+            for i in {1..5}; do
+              git fetch origin main
+              git rebase -X theirs origin/main && git push origin main && break || {
+                git rebase --abort 2>/dev/null || true
+                sleep 2
+              }
+            done
+          else
+            echo "No changes to commit"
+          fi
