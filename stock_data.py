@@ -310,6 +310,11 @@ def get_filterable_metrics(settings=None):
         "VStop Dir": "vstop_weekly_direction",
         "52W High": "week52_high",
         "52W Low": "week52_low",
+        # Alert/filter-only -- deliberately absent from build_column_defs so
+        # they never appear as table columns.
+        "Breakout Window": "breakout_window",
+        "26WH Distance": "week26_distance",
+        "52WH Distance": "week52_distance",
         "Vol 10D": "avg_volume_10d",
         "Vol 100D": "avg_volume_100d",
         "% Chg": "pct_change_1d",
@@ -1122,6 +1127,47 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
             week52_high = round(float(window_252["High"].max()), 1) if window_252["High"].notna().any() else None
             week52_low = round(float(window_252["Low"].min()), 1) if window_252["Low"].notna().any() else None
 
+            # Assigned conditionally below, unlike week52_high/low which always
+            # get a value -- without these defaults a ticker missing the inputs
+            # would NameError at the results.append rather than reporting blanks.
+            week26_distance = week52_distance = breakout_window = None
+
+            # 26-week high (~126 trading days), same intraday-High basis as the 52w figures.
+            window_126 = df.tail(126)
+            week26_high = round(float(window_126["High"].max()), 1) if window_126["High"].notna().any() else None
+
+            # Distance BELOW the trailing high as a POSITIVE percent: 0 = at the
+            # high, 12.5 = 12.5% below. Deliberately the opposite sign to the
+            # "% Off 52W High" custom column (which is negative below the high),
+            # so breakout rules read literally as "52WH Distance < 10". That
+            # custom column is intentionally left alone.
+            if week26_high:
+                week26_distance = round((week26_high - last_close) / week26_high * 100, 1)
+            if week52_high:
+                week52_distance = round((week52_high - last_close) / week52_high * 100, 1)
+
+            # Age of the overhead resistance: trading days since the last close
+            # >= today's close. A reading of 250 means price is back at a level
+            # it last saw ~250 days ago and is testing it, which is the breakout
+            # SETUP these scans look for.
+            #
+            # 0 means no prior close was ever this high -- blue sky, nothing left
+            # to break out of. That sentinel is also what keeps the number
+            # bounded: reporting "never exceeded" as a count would return the
+            # ticker's entire listing history (SANSERA gave 1206, encoding its
+            # 2021 IPO date rather than anything about a breakout).
+            #
+            # Positional numpy search rather than index.get_loc -- get_loc
+            # returns a slice/array if the date index ever holds duplicates,
+            # which would silently yield a wrong count.
+            closes = daily_close.to_numpy()
+            if len(closes) >= 2:
+                prior_closes = closes[:-1]
+                at_or_above = np.nonzero(prior_closes >= closes[-1])[0]
+                breakout_window = (
+                    int(len(prior_closes) - at_or_above[-1]) if len(at_or_above) else 0
+                )
+
             trend = trend_rank = trend_detail = None
             if ema40_series is not None:
                 trend, trend_rank, trend_detail = compute_trend(
@@ -1210,6 +1256,9 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 "net_volume_10d_ratio": net_volume_10d_ratio,
                 "week52_high": week52_high,
                 "week52_low": week52_low,
+                "week26_distance": week26_distance,
+                "week52_distance": week52_distance,
+                "breakout_window": breakout_window,
                 "trend": trend,
                 "trend_rank": trend_rank,
                 "trend_detail": trend_detail,

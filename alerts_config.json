@@ -293,5 +293,82 @@
       ],
       "time_et": "21:00"
     }
+  },
+  {
+    "id": "b2b65277",
+    "name": "Long-term breakout",
+    "scope": "ALL",
+    "conditions": [
+      {
+        "metric_a": "breakout_window",
+        "operator": ">=",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": 200
+      },
+      {
+        "metric_a": "week52_distance",
+        "operator": "<",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": 10
+      }
+    ],
+    "enabled": false,
+    "schedule": {
+      "type": "scheduled",
+      "days": [
+        "MON",
+        "TUE",
+        "WED",
+        "THU",
+        "FRI",
+        "SAT",
+        "SUN"
+      ],
+      "time_et": "21:00"
+    }
+  },
+  {
+    "id": "2fb0f581",
+    "name": "Short-term breakout",
+    "scope": "ALL",
+    "conditions": [
+      {
+        "metric_a": "breakout_window",
+        "operator": ">=",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": 40
+      },
+      {
+        "metric_a": "breakout_window",
+        "operator": "<",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": 200
+      },
+      {
+        "metric_a": "week26_distance",
+        "operator": "<",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": 10
+      }
+    ],
+    "enabled": false,
+    "schedule": {
+      "type": "scheduled",
+      "days": [
+        "MON",
+        "TUE",
+        "WED",
+        "THU",
+        "FRI",
+        "SAT",
+        "SUN"
+      ],
+      "time_et": "21:00"
+    }
   }
 ]
