@@ -65,8 +65,11 @@ from filters import (get_market_filters, save_market_filters, apply_filters, des
                      describe_chain, describe_chain_with_values, passes_filter_chain, CATEGORICAL_METRICS)
 from github_sync import get_github_config, push_all_config, trigger_github_workflow, SYNCABLE_FILES
 from news_summary import load_news_summary, MARKET_LABELS, get_gemini_api_key, get_nvidia_api_key
-from expert_views import load_expert_views, save_expert_views, analyze_single_ticker, generate_expert_view, _is_valid_view
-from fundamentals_eval import load_fundamentals, _validate_sentiment, SENTIMENT_STALE_DAYS
+from expert_views import load_expert_views, save_expert_views, analyze_single_ticker, generate_expert_view, _is_valid_view, VERDICT_RULES
+from fundamentals_eval import (
+    load_fundamentals, _validate_sentiment, SENTIMENT_STALE_DAYS,
+    analyze_single_ticker_sentiment,
+)
 from custom_columns import (
     load_custom_columns, save_custom_columns, validate_formula, column_key,
     FORMAT_CHOICES, CUSTOM_COLUMNS_FILE, apply_custom_columns_to_rows,
@@ -668,6 +671,160 @@ def tech_uptrend_tooltip(row, settings, labels):
         f"→ {'Yes' if row.get('tech_uptrend') else 'No'}",
     ]
     return "\n".join(lines)
+
+
+def sentiment_flag_note(flag, as_of):
+    """Plain-English note for a _validate_sentiment guard flag, or "" when the
+    view passed clean. Shared by the Sentiment cell tooltip and the AI-review
+    payload so the two can't drift apart."""
+    if flag == "STALE":
+        return f"[STALE: as_of {as_of} is older than {SENTIMENT_STALE_DAYS} days]"
+    if flag == "STALE_QUARTER":
+        return "[STALE_QUARTER: a confirmed earnings report exists that the news used didn't verifiably account for]"
+    if flag == "NO_DATA":
+        return "[NO_DATA: earnings, guidance and analyst coverage are all N/A]"
+    if flag == "PARTIAL":
+        return "[PARTIAL: only revenue/soft data — no EPS, guidance or analyst action; capped at Neutral]"
+    return ""
+
+
+# The deterministic guard _validate_sentiment applies on top of whatever the
+# model wrote. Spelled out for the AI-review payload so the reader knows the
+# displayed Sentiment isn't raw model output.
+SENTIMENT_GUARD_RULES = f"""A deterministic guard runs after the model answers and can override it:
+- View older than {SENTIMENT_STALE_DAYS} days -> Unknown (STALE)
+- Earnings, guidance and analyst coverage all missing/N/A -> Unknown (NO_DATA)
+- A confirmed earnings report the news didn't account for -> Unknown (STALE_QUARTER)
+- Positive/Negative without hard evidence (no EPS figure, no guidance change, no
+  analyst action) -> capped at Neutral (PARTIAL)"""
+
+AI_REVIEW_INSTRUCTION = (
+    "Do a thorough analysis from an investment perspective, considering valuation, "
+    "technicals, future guidance etc."
+)
+
+
+def _fmt_ai_value(v):
+    """Render a cell value for the payload: trim float noise, drop empties."""
+    if v is None or v == "" or v == "—":
+        return None
+    if isinstance(v, float):
+        if pd.isna(v):
+            return None
+        return f"{v:,.2f}".rstrip("0").rstrip(".")
+    if isinstance(v, bool):
+        return "Yes" if v else "No"
+    return str(v)
+
+
+def build_ai_review_payload(
+    rows, *, market, settings, labels, visible_keys, label_by_key, definitions,
+    export_value, expert_views, fundamentals, alert_hits, metric_labels, rule_by_id,
+):
+    """One markdown blob describing the selected tickers, for pasting into a chat.
+
+    Per-ticker sections carry values, the signal breakdowns that are otherwise
+    only reachable by hovering a cell, the alert rules that actually fired, and
+    the stored Expert Take / Sentiment text. Everything that is identical across
+    tickers -- column definitions and the rules governing Expert Take and
+    Sentiment -- is hoisted into a single reference section at the end, so
+    selecting five tickers doesn't repeat ~7KB of boilerplate five times.
+    """
+    show_expert = "expert_take" in visible_keys
+    show_sentiment = "fundamentals" in visible_keys
+    out = []
+
+    if len(rows) == 1:
+        r = rows[0]
+        who = f"{r.get('company_name') or r['ticker']} ({r['ticker']})"
+    else:
+        who = f"the following {len(rows)} companies: " + ", ".join(
+            f"{r.get('company_name') or r['ticker']} ({r['ticker']})" for r in rows
+        )
+    out.append(f"Included data captures metrics for {who}. {AI_REVIEW_INSTRUCTION}\n")
+
+    out.append("# Ticker data")
+    for r in rows:
+        t = r["ticker"]
+        out.append(f"\n## {t} — {r.get('company_name') or t}")
+        meta = [f"Market: {market}"]
+        if r.get("last_close") is not None:
+            meta.append(f"Last close: {_fmt_ai_value(r['last_close'])}")
+        if r.get("data_end"):
+            meta.append(f"Price data through: {r['data_end']}")
+        out.append(" · ".join(meta))
+
+        out.append("\n### Metrics")
+        for k in visible_keys:
+            val = _fmt_ai_value(export_value(r, k))
+            if val is not None:
+                out.append(f"- **{label_by_key[k]}**: {val}")
+
+        breakdowns = []
+        if "trend" in visible_keys:
+            breakdowns.append(("Trend", trend_tooltip(r, labels)))
+        if "volume_trend" in visible_keys:
+            breakdowns.append(("Vol Trend", vol_trend_tooltip(r, settings)))
+        if "tech_uptrend_label" in visible_keys:
+            breakdowns.append(("Tech Uptrend", tech_uptrend_tooltip(r, settings, labels)))
+        if breakdowns:
+            out.append("\n### Signal breakdowns")
+            for name, text in breakdowns:
+                out.append(f"\n**{name}**\n{text}")
+
+        hits = alert_hits.get(t) or []
+        if hits:
+            out.append("\n### Triggered alerts")
+            for p in hits:
+                out.append(f"\n**{p['rule_name'] or '(unnamed)'}**")
+                out.append(describe_chain_with_values(
+                    p["row"], p["conditions"], metric_labels, rule_by_id))
+
+        if show_expert:
+            v = expert_views.get(t) or {}
+            out.append("\n### Expert Take")
+            if v.get("verdict"):
+                out.append(f"Verdict: {v['verdict']} — {v.get('headline', '')}")
+                for fld in ("technical_summary", "catalyst_summary", "actionable_take"):
+                    if v.get(fld):
+                        out.append(f"- {fld.replace('_', ' ').title()}: {v[fld]}")
+                out.append(f"(model: {v.get('model_used', '?')}, as of {v.get('as_of', '?')})")
+            else:
+                out.append("No AI analysis stored for this ticker yet.")
+
+        if show_sentiment:
+            v = fundamentals.get(t) or {}
+            sentiment, flag = _validate_sentiment(v)
+            out.append("\n### Sentiment")
+            out.append(f"Sentiment: {sentiment}" + (f" ({flag})" if flag else ""))
+            note = sentiment_flag_note(flag, v.get("as_of", "unknown"))
+            if note:
+                out.append(note)
+            for lbl, fld in (("Earnings", "earnings_summary"), ("Guidance", "future_guidance"),
+                             ("Analyst Coverage", "analyst_coverage"), ("Reasoning", "reasoning")):
+                if v.get(fld):
+                    out.append(f"- {lbl}: {v[fld]}")
+            if v.get("as_of"):
+                out.append(f"(model: {v.get('model_used', '?')}, as of {v['as_of']})")
+
+    out.append("\n\n# Reference — how to read the above")
+    out.append("\n## Column definitions")
+    for k in visible_keys:
+        lbl = label_by_key[k]
+        d = definitions.get(lbl)
+        if d:
+            out.append(f"- **{lbl}**: {d}")
+    if show_expert:
+        out.append('\n## How "Expert Take" is decided')
+        out.append("An LLM assigns the verdict under these rules:\n")
+        out.append(VERDICT_RULES)
+    if show_sentiment:
+        out.append('\n## How "Sentiment" is decided')
+        out.append("An LLM reads recent earnings/guidance/analyst news and returns "
+                   "Positive / Neutral / Negative / Unknown.\n")
+        out.append(SENTIMENT_GUARD_RULES)
+
+    return "\n".join(out)
 
 
 def price_cols(ema_labels):
@@ -1979,20 +2136,54 @@ def render_ticker_notes_manager():
                 st.markdown(line)
 
 
-def sync_expert_views_to_github(message):
+def sync_ai_views_to_github(message, filenames=("expert_views.json", "fundamentals.json")):
+    """Push the AI result files back to GitHub.
+
+    Covers fundamentals.json as well as expert_views.json: the re-analyze
+    buttons now refresh Sentiment too, and a local-only fundamentals.json would
+    be silently overwritten by the next pull.
+    """
     token, repo, branch = get_github_config(st.secrets)
     if token and repo:
         ok, msg = push_all_config(
             token, repo, branch,
-            filenames=["expert_views.json"],
+            filenames=list(filenames),
             message=message
         )
         if ok:
-            st.toast("✓ Saved & committed updated AI Expert Views to GitHub!")
+            st.toast("✓ Saved & committed updated AI views to GitHub!")
         else:
             st.toast(f"✓ Saved locally! (GitHub sync: {msg})")
     else:
-        st.toast("✓ Saved updated AI Expert Views!")
+        st.toast("✓ Saved updated AI views!")
+
+
+def trigger_ai_refresh_workflows(label):
+    """Kick off the background refresh for BOTH AI columns.
+
+    Expert Take and Sentiment are separate workflows. These buttons used to
+    trigger expert-views.yml only, so Sentiment was left to the nightly job and
+    the two columns drifted out of step.
+    """
+    try:
+        from github_sync import trigger_github_workflow, get_github_config
+        token, repo, _ = get_github_config(getattr(st, "secrets", None))
+        if not token or not repo:
+            st.error("GitHub credentials not found.")
+            return
+        outcomes = [
+            (name, *trigger_github_workflow(token, repo, wf))
+            for wf, name in (("expert-views.yml", "Expert Views"),
+                             ("fundamentals.yml", "Sentiment"))
+        ]
+        started = [name for name, ok, _ in outcomes if ok]
+        if started:
+            st.success(f"{label}: {' + '.join(started)} refresh triggered in background.")
+        for name, ok, msg in outcomes:
+            if not ok:
+                st.error(f"{name} refresh failed: {msg}")
+    except Exception as e:
+        st.error(f"Failed to start refresh: {e}")
 
 
 def render_expert_analysis_control_bar(market, results):
@@ -2012,7 +2203,10 @@ def render_expert_analysis_control_bar(market, results):
         for tk in stale_keys:
             del expert_views[tk]
         save_expert_views(expert_views)
-        sync_expert_views_to_github(f"Auto-cleanup: removed {len(stale_keys)} deleted ticker(s) from expert_views")
+        sync_ai_views_to_github(
+            f"Auto-cleanup: removed {len(stale_keys)} deleted ticker(s) from expert_views",
+            filenames=("expert_views.json",),  # cleanup touches only this file
+        )
 
     # --- Detect failed/pending tickers (includes newly added ones with no entry) ---
     failed_tickers = [
@@ -2020,193 +2214,182 @@ def render_expert_analysis_control_bar(market, results):
         if not _is_valid_view(expert_views.get(tk))
     ]
 
-    st.markdown("##### 🤖 AI Stock Expert Analysis Controls")
-    
+    # Folded by default: these are set-once controls, and leaving them open
+    # pushed the watchlist table below the fold on every visit. The loads and
+    # the stale-ticker cleanup above stay outside -- they are side effects that
+    # must run whether or not the panel is open.
     from stock_data import load_settings, save_settings
     settings_now = load_settings()
-    
-    col1, col2, col3 = st.columns([4, 3, 3])
-    with col1:
-        st.caption("Search is powered by gemma-4-26b-a4b-it")
-    with col2:
-        reason_choices = ["models/gemini-3.5-flash-lite", "models/gemma-4-31b-it", "models/gemma-4-26b-a4b-it"]
-        current_reason = settings_now.get("expert_reasoning_model", "models/gemini-3.5-flash-lite")
-        if current_reason == "gemini-3.5-flash-lite":
-            current_reason = "models/gemini-3.5-flash-lite"
-        new_reason = st.selectbox(
-            "Reasoning Model", reason_choices,
-            index=reason_choices.index(current_reason) if current_reason in reason_choices else 0,
-            key=f"expert_reasoning_model_select_{market}"
-        )
-        saved_reason = settings_now.get("expert_reasoning_model", "models/gemini-3.5-flash-lite")
-        if saved_reason == "gemini-3.5-flash-lite":
-            saved_reason = "models/gemini-3.5-flash-lite"
-        if new_reason != saved_reason:
-            settings_now["expert_reasoning_model"] = new_reason
-            save_settings(settings_now)
-            st.rerun()
-            
-    with col3:
-        is_gemma = "gemma" in settings_now.get("expert_reasoning_model", "")
-        if is_gemma:
-            budget_choices = ["LOW", "MEDIUM", "HIGH"]
-            default_val = "HIGH"
-        else:
-            budget_choices = [1024, 2048, 4096, 8192]
-            default_val = 8192
-            
-        current_val = settings_now.get("expert_thinking_budget", default_val)
-        
-        if is_gemma and current_val not in budget_choices:
-            current_val = default_val
-        elif not is_gemma:
-            try:
-                current_val = int(current_val)
-            except (ValueError, TypeError):
-                current_val = default_val
-            if current_val not in budget_choices:
-                current_val = default_val
-                
-        new_budget = st.selectbox(
-            "Thinking Budget / Level", budget_choices,
-            index=budget_choices.index(current_val),
-            key=f"expert_reasoning_budget_select_{market}"
-        )
-        if new_budget != current_val:
-            settings_now["expert_thinking_budget"] = new_budget
-            save_settings(settings_now)
-            st.rerun()
 
-    st.markdown("##### 🧠 AI Sentiment Analysis Controls")
-
-    scol1, scol2 = st.columns([3, 3])
-    with scol1:
-        s_reason_choices = ["models/gemini-3.5-flash-lite", "models/gemma-4-31b-it", "models/gemma-4-26b-a4b-it"]
-        s_current_reason = settings_now.get("sentiment_reasoning_model", "models/gemini-3.5-flash-lite")
-        s_new_reason = st.selectbox(
-            "Reasoning Model", s_reason_choices,
-            index=s_reason_choices.index(s_current_reason) if s_current_reason in s_reason_choices else 0,
-            key=f"sentiment_reasoning_model_select_{market}"
-        )
-        if s_new_reason != settings_now.get("sentiment_reasoning_model", "models/gemini-3.5-flash-lite"):
-            settings_now["sentiment_reasoning_model"] = s_new_reason
-            save_settings(settings_now)
-            st.rerun()
-
-    with scol2:
-        s_is_gemma = "gemma" in settings_now.get("sentiment_reasoning_model", "")
-        if s_is_gemma:
-            s_budget_choices = ["LOW", "MEDIUM", "HIGH"]
-            s_default_val = "HIGH"
-        else:
-            s_budget_choices = [1024, 2048, 4096, 8192]
-            s_default_val = 8192
-
-        s_current_val = settings_now.get("sentiment_thinking_budget", s_default_val)
-
-        if s_is_gemma and s_current_val not in s_budget_choices:
-            s_current_val = s_default_val
-        elif not s_is_gemma:
-            try:
-                s_current_val = int(s_current_val)
-            except (ValueError, TypeError):
-                s_current_val = s_default_val
-            if s_current_val not in s_budget_choices:
-                s_current_val = s_default_val
-
-        s_new_budget = st.selectbox(
-            "Thinking Budget / Level", s_budget_choices,
-            index=s_budget_choices.index(s_current_val),
-            key=f"sentiment_reasoning_budget_select_{market}"
-        )
-        if s_new_budget != s_current_val:
-            settings_now["sentiment_thinking_budget"] = s_new_budget
-            save_settings(settings_now)
-            st.rerun()
-
-    c1, c2, c3, c4 = st.columns([3.5, 1.3, 1.8, 1.4])
-
-    selected_to_reanalyze = c1.multiselect(
-        "Select tickers to re-analyze",
-        options=all_tickers,
-        key=f"ev_multisel_{market}",
-        placeholder="Choose tickers to re-analyze...",
-        label_visibility="collapsed",
-    )
-
-    if c2.button(
-        f"⚡ Re-analyze ({len(selected_to_reanalyze)})",
-        key=f"btn_re_sel_{market}",
-        disabled=not selected_to_reanalyze or not api_key,
-        width="stretch",
-    ):
-        progress_bar = st.progress(0, text="Starting selective AI re-analysis...")
-        from google import genai
-        client = genai.Client(api_key=api_key)
-        updated_views = load_expert_views()
-
-        for idx, tk in enumerate(selected_to_reanalyze):
-            row = next(r for r in results if r["ticker"] == tk)
-            company_name = row.get("company_name", tk)
-            progress_bar.progress(
-                (idx + 1) / len(selected_to_reanalyze),
-                text=f"Analyzing {company_name} ({idx+1}/{len(selected_to_reanalyze)})...",
+    with st.expander("🤖 AI Stock Expert Analysis Controls", expanded=False):
+        col1, col2, col3 = st.columns([4, 3, 3])
+        with col1:
+            st.caption("Search is powered by gemma-4-26b-a4b-it")
+        with col2:
+            reason_choices = ["models/gemini-3.5-flash-lite", "models/gemma-4-31b-it", "models/gemma-4-26b-a4b-it"]
+            current_reason = settings_now.get("expert_reasoning_model", "models/gemini-3.5-flash-lite")
+            if current_reason == "gemini-3.5-flash-lite":
+                current_reason = "models/gemini-3.5-flash-lite"
+            new_reason = st.selectbox(
+                "Reasoning Model", reason_choices,
+                index=reason_choices.index(current_reason) if current_reason in reason_choices else 0,
+                key=f"expert_reasoning_model_select_{market}"
             )
-            view = generate_expert_view(client, row, nvidia_api_key=nvidia_api_key)
-            if _is_valid_view(view):
-                updated_views[tk] = view
-                save_expert_views(updated_views)
+            saved_reason = settings_now.get("expert_reasoning_model", "models/gemini-3.5-flash-lite")
+            if saved_reason == "gemini-3.5-flash-lite":
+                saved_reason = "models/gemini-3.5-flash-lite"
+            if new_reason != saved_reason:
+                settings_now["expert_reasoning_model"] = new_reason
+                save_settings(settings_now)
+                st.rerun()
+            
+        with col3:
+            is_gemma = "gemma" in settings_now.get("expert_reasoning_model", "")
+            if is_gemma:
+                budget_choices = ["LOW", "MEDIUM", "HIGH"]
+                default_val = "HIGH"
             else:
+                budget_choices = [1024, 2048, 4096, 8192]
+                default_val = 8192
+            
+            current_val = settings_now.get("expert_thinking_budget", default_val)
+        
+            if is_gemma and current_val not in budget_choices:
+                current_val = default_val
+            elif not is_gemma:
+                try:
+                    current_val = int(current_val)
+                except (ValueError, TypeError):
+                    current_val = default_val
+                if current_val not in budget_choices:
+                    current_val = default_val
+                
+            new_budget = st.selectbox(
+                "Thinking Budget / Level", budget_choices,
+                index=budget_choices.index(current_val),
+                key=f"expert_reasoning_budget_select_{market}"
+            )
+            if new_budget != current_val:
+                settings_now["expert_thinking_budget"] = new_budget
+                save_settings(settings_now)
+                st.rerun()
+
+        c1, c2, c3, c4 = st.columns([3.5, 1.3, 1.8, 1.4])
+
+        selected_to_reanalyze = c1.multiselect(
+            "Select tickers to re-analyze",
+            options=all_tickers,
+            key=f"ev_multisel_{market}",
+            placeholder="Choose tickers to re-analyze...",
+            label_visibility="collapsed",
+        )
+
+        if c2.button(
+            f"⚡ Re-analyze ({len(selected_to_reanalyze)})",
+            key=f"btn_re_sel_{market}",
+            disabled=not selected_to_reanalyze or not api_key,
+            width="stretch",
+        ):
+            progress_bar = st.progress(0, text="Starting selective AI re-analysis...")
+            from google import genai
+            client = genai.Client(api_key=api_key)
+            updated_views = load_expert_views()
+
+            for idx, tk in enumerate(selected_to_reanalyze):
+                row = next(r for r in results if r["ticker"] == tk)
+                company_name = row.get("company_name", tk)
                 progress_bar.progress(
                     (idx + 1) / len(selected_to_reanalyze),
-                    text=f"⚠️ {tk} still rate-limited, keeping existing result.",
+                    text=f"Analyzing {company_name} ({idx+1}/{len(selected_to_reanalyze)})...",
                 )
-            time.sleep(5)
-
-        sync_expert_views_to_github(f"Re-analyze selected tickers ({len(selected_to_reanalyze)}) via UI")
-        st.rerun()
-
-    failed_count = len(failed_tickers)
-    if c3.button(
-        f"⚠️ Retry Failed / Pending ({failed_count})",
-        key=f"btn_re_failed_{market}",
-        disabled=failed_count == 0 or not api_key,
-        type="primary" if failed_count > 0 else "secondary",
-        width="stretch",
-    ):
-        try:
-            from github_sync import trigger_github_workflow, get_github_config
-            token, repo, _ = get_github_config(getattr(st, "secrets", None))
-            if not token or not repo:
-                st.error("GitHub credentials not found.")
-            else:
-                ok, msg = trigger_github_workflow(token, repo, "expert-views.yml")
-                if ok:
-                    st.success(f"Expert Views refresh triggered in background: {msg}")
+                view = generate_expert_view(client, row, nvidia_api_key=nvidia_api_key)
+                if _is_valid_view(view):
+                    updated_views[tk] = view
+                    save_expert_views(updated_views)
                 else:
-                    st.error(f"Failed: {msg}")
-        except Exception as e:
-            st.error(f"Failed to start refresh: {e}")
+                    progress_bar.progress(
+                        (idx + 1) / len(selected_to_reanalyze),
+                        text=f"⚠️ {tk} still rate-limited, keeping existing result.",
+                    )
+                # Sentiment in the same pass, so the two AI columns don't drift
+                # apart. A failure here keeps the prior view (see
+                # analyze_single_ticker_sentiment) and must not abort the loop.
+                progress_bar.progress(
+                    (idx + 1) / len(selected_to_reanalyze),
+                    text=f"Sentiment for {company_name} ({idx+1}/{len(selected_to_reanalyze)})...",
+                )
+                try:
+                    analyze_single_ticker_sentiment(tk, row, api_key)
+                except Exception as e:
+                    print(f"[re-analyze] sentiment failed for {tk}: {e}")
+                time.sleep(5)
 
-    if c4.button(
-        f"🔄 Re-analyze All ({len(all_tickers)})",
-        key=f"btn_re_all_{market}",
-        disabled=not api_key,
-        width="stretch",
-    ):
-        try:
-            from github_sync import trigger_github_workflow, get_github_config
-            token, repo, _ = get_github_config(getattr(st, "secrets", None))
-            if not token or not repo:
-                st.error("GitHub credentials not found.")
+            sync_ai_views_to_github(f"Re-analyze selected tickers ({len(selected_to_reanalyze)}) via UI")
+            st.rerun()
+
+        failed_count = len(failed_tickers)
+        if c3.button(
+            f"⚠️ Retry Failed / Pending ({failed_count})",
+            key=f"btn_re_failed_{market}",
+            disabled=failed_count == 0 or not api_key,
+            type="primary" if failed_count > 0 else "secondary",
+            width="stretch",
+        ):
+            trigger_ai_refresh_workflows(f"Retry Failed / Pending ({failed_count})")
+
+        if c4.button(
+            f"🔄 Re-analyze All ({len(all_tickers)})",
+            key=f"btn_re_all_{market}",
+            disabled=not api_key,
+            width="stretch",
+        ):
+            trigger_ai_refresh_workflows(f"Re-analyze All ({len(all_tickers)})")
+
+    with st.expander("🧠 AI Sentiment Analysis Controls", expanded=False):
+        scol1, scol2 = st.columns([3, 3])
+        with scol1:
+            s_reason_choices = ["models/gemini-3.5-flash-lite", "models/gemma-4-31b-it", "models/gemma-4-26b-a4b-it"]
+            s_current_reason = settings_now.get("sentiment_reasoning_model", "models/gemini-3.5-flash-lite")
+            s_new_reason = st.selectbox(
+                "Reasoning Model", s_reason_choices,
+                index=s_reason_choices.index(s_current_reason) if s_current_reason in s_reason_choices else 0,
+                key=f"sentiment_reasoning_model_select_{market}"
+            )
+            if s_new_reason != settings_now.get("sentiment_reasoning_model", "models/gemini-3.5-flash-lite"):
+                settings_now["sentiment_reasoning_model"] = s_new_reason
+                save_settings(settings_now)
+                st.rerun()
+
+        with scol2:
+            s_is_gemma = "gemma" in settings_now.get("sentiment_reasoning_model", "")
+            if s_is_gemma:
+                s_budget_choices = ["LOW", "MEDIUM", "HIGH"]
+                s_default_val = "HIGH"
             else:
-                ok, msg = trigger_github_workflow(token, repo, "expert-views.yml")
-                if ok:
-                    st.success(f"Expert Views refresh triggered in background: {msg}")
-                else:
-                    st.error(f"Failed: {msg}")
-        except Exception as e:
-            st.error(f"Failed to start refresh: {e}")
+                s_budget_choices = [1024, 2048, 4096, 8192]
+                s_default_val = 8192
+
+            s_current_val = settings_now.get("sentiment_thinking_budget", s_default_val)
+
+            if s_is_gemma and s_current_val not in s_budget_choices:
+                s_current_val = s_default_val
+            elif not s_is_gemma:
+                try:
+                    s_current_val = int(s_current_val)
+                except (ValueError, TypeError):
+                    s_current_val = s_default_val
+                if s_current_val not in s_budget_choices:
+                    s_current_val = s_default_val
+
+            s_new_budget = st.selectbox(
+                "Thinking Budget / Level", s_budget_choices,
+                index=s_budget_choices.index(s_current_val),
+                key=f"sentiment_reasoning_budget_select_{market}"
+            )
+            if s_new_budget != s_current_val:
+                settings_now["sentiment_thinking_budget"] = s_new_budget
+                save_settings(settings_now)
+                st.rerun()
 
 
 def render_expert_view_expander(market, filtered_rows, settings):
@@ -2218,6 +2401,9 @@ def render_expert_view_expander(market, filtered_rows, settings):
     v_colors = {"ACCUMULATE": "#1a7a3a", "HOLD": "#7a6a00", "CAUTION": "#7a1a1a"}
     v_badges = {"ACCUMULATE": "🟢 ACCUMULATE / ADD", "HOLD": "🟡 HOLD / WATCH", "CAUTION": "🔴 CAUTION / EXIT"}
     api_key = get_gemini_api_key(st.secrets)
+    # Was missing entirely, so the per-ticker re-analyze button below raised
+    # NameError the moment it was clicked.
+    nvidia_api_key = get_nvidia_api_key(st.secrets)
 
     with st.expander(f"🤖 AI Stock Expert Views ({market} — {len(tickers)} tickers)", expanded=False):
         # Scrollable container for all ticker cards
@@ -2227,18 +2413,38 @@ def render_expert_view_expander(market, filtered_rows, settings):
         )
         st.markdown(scroll_html_open, unsafe_allow_html=True)
 
+        def _reanalyze_button(ticker, row):
+            """Per-ticker re-analyze. Refreshes Expert Take AND Sentiment so one
+            click doesn't leave the two AI columns describing different runs."""
+            if not api_key:
+                return
+            if not st.button(f"⚡ Re-analyze {ticker}", key=f"re_ev_{market}_{ticker}",
+                             width="content"):
+                return
+            with st.spinner(f"Re-analyzing {ticker} (Expert Take + Sentiment)..."):
+                analyze_single_ticker(ticker, row, api_key, nvidia_api_key=nvidia_api_key)
+                try:
+                    analyze_single_ticker_sentiment(ticker, row, api_key)
+                except Exception as e:
+                    st.warning(f"Expert Take updated; Sentiment refresh failed: {e}")
+                sync_ai_views_to_github(f"Re-analyze single ticker ({ticker}) via UI")
+                st.rerun()
+
         for ticker in tickers:
             view = expert_views.get(ticker)
             row = next(r for r in filtered_rows if r["ticker"] == ticker)
 
             if not view or not _is_valid_view(view):
-                # Compact pending card
+                # Compact pending card. It gets a re-analyze button too -- these
+                # are precisely the tickers worth re-running, and the early
+                # `continue` used to deny them one.
                 st.markdown(
                     f"<div style='padding:10px 14px; margin-bottom:8px; border-radius:8px; "
                     f"border:1px solid rgba(128,128,128,0.25); background:rgba(128,128,128,0.05);'>"
                     f"<b>{ticker}</b> &nbsp;⚪ Pending — no AI analysis yet.</div>",
                     unsafe_allow_html=True,
                 )
+                _reanalyze_button(ticker, row)
                 continue
 
             verdict = view.get("verdict", "")
@@ -2269,12 +2475,7 @@ def render_expert_view_expander(market, filtered_rows, settings):
             st.markdown(card_html, unsafe_allow_html=True)
 
             # Per-ticker re-analyze button
-            if api_key:
-                if st.button(f"⚡ Re-analyze {ticker}", key=f"re_ev_{market}_{ticker}", width="content"):
-                    with st.spinner(f"Analyzing {ticker} with deepseek-v4-flash..."):
-                        analyze_single_ticker(ticker, row, api_key, nvidia_api_key=nvidia_api_key)
-                        sync_expert_views_to_github(f"Re-analyze single ticker ({ticker}) via UI")
-                        st.rerun()
+            _reanalyze_button(ticker, row)
 
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -2321,36 +2522,63 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         st.info(f"No {market} tickers with enough data yet. Add tickers above.")
         return
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    f_ema10 = c1.selectbox(labels["w_fast"], ["Any", "Above", "Below"], key=f"f_ema10_{market}")
-    f_ema20 = c2.selectbox(labels["w_mid"], ["Any", "Above", "Below"], key=f"f_ema20_{market}")
-    f_ema40 = c3.selectbox(labels["w_slow"], ["Any", "Above", "Below"], key=f"f_ema40_{market}")
-    f_ema10d = c4.selectbox(labels["d_fast"], ["Any", "Above", "Below"], key=f"f_ema10d_{market}")
-    f_ema50 = c5.selectbox(labels["d_mid"], ["Any", "Above", "Below"], key=f"f_ema50_{market}")
-    f_ema200 = c6.selectbox(labels["d_slow"], ["Any", "Above", "Below"], key=f"f_ema200_{market}")
+    # These get set once and rarely touched, so they live folded away -- only
+    # the ticker search and the saved-scan filter below stay on screen. The
+    # label carries a count of what's active, because a filter you forgot you
+    # set would otherwise silently narrow the table from inside a closed panel.
+    # Counted from session_state, not the widget return values: the label has to
+    # be decided when the expander is built, which is before its contents run.
+    _filter_defaults = {
+        **{f"f_{k}_{market}": "Any" for k in
+           ("ema10", "ema20", "ema40", "ema10d", "ema50", "ema200",
+            "trend", "voltrend", "expert")},
+        **{f"f_{k}_{market}": (0, 100) for k in ("rsid", "rsiw", "rsim")},
+        **{f"f_{k}_{market}": (-150, 150) for k in ("rsd", "rsw", "rsm")},
+        f"f_tech_{market}": False,
+    }
+    _active = 0
+    for _key, _default in _filter_defaults.items():
+        if _key not in st.session_state:
+            continue  # first render -- widget hasn't been created yet
+        _current = st.session_state[_key]
+        # Sliders hand back a list or a tuple depending on Streamlit version.
+        if isinstance(_default, tuple):
+            _current = tuple(_current)
+        if _current != _default:
+            _active += 1
 
-    c7, c8, c9, c10, c11, c12 = st.columns(6)
-    f_rsi_d = c7.slider("RSI Daily", 0, 100, (0, 100), key=f"f_rsid_{market}")
-    f_rsi_w = c8.slider("RSI Weekly", 0, 100, (0, 100), key=f"f_rsiw_{market}")
-    f_rsi_m = c9.slider("RSI Monthly", 0, 100, (0, 100), key=f"f_rsim_{market}")
-    f_rs_d = c10.slider("RS Daily", -150, 150, (-150, 150), key=f"f_rsd_{market}")
-    f_rs_w = c11.slider("RS Weekly", -150, 150, (-150, 150), key=f"f_rsw_{market}")
-    f_rs_m = c12.slider("RS Monthly", -150, 150, (-150, 150), key=f"f_rsm_{market}")
+    with st.expander(f"Filters ({_active} active)" if _active else "Filters", expanded=False):
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        f_ema10 = c1.selectbox(labels["w_fast"], ["Any", "Above", "Below"], key=f"f_ema10_{market}")
+        f_ema20 = c2.selectbox(labels["w_mid"], ["Any", "Above", "Below"], key=f"f_ema20_{market}")
+        f_ema40 = c3.selectbox(labels["w_slow"], ["Any", "Above", "Below"], key=f"f_ema40_{market}")
+        f_ema10d = c4.selectbox(labels["d_fast"], ["Any", "Above", "Below"], key=f"f_ema10d_{market}")
+        f_ema50 = c5.selectbox(labels["d_mid"], ["Any", "Above", "Below"], key=f"f_ema50_{market}")
+        f_ema200 = c6.selectbox(labels["d_slow"], ["Any", "Above", "Below"], key=f"f_ema200_{market}")
 
-    src1, src2, src3, src4, src5 = st.columns([2.5, 1.2, 1.2, 1.3, 0.8])
-    search = src1.text_input("Ticker search", "", key=f"search_{market}").strip().upper()
-    f_trend = src2.selectbox(
-        "Trend", ["Any", "Strong Uptrend", "Uptrend", "Downtrend", "Strong Downtrend"],
-        key=f"f_trend_{market}",
-    )
-    f_vol_trend = src3.selectbox(
-        "Vol Trend", ["Any", "Exploding", "In-line", "Declining"], key=f"f_voltrend_{market}",
-    )
-    f_expert_take = src4.selectbox(
-        "Expert Take", ["Any", "🟢 Accumulate", "🟡 Hold", "🔴 Caution", "⚪ Pending"],
-        key=f"f_expert_{market}",
-    )
-    f_tech_only = src5.checkbox("Tech Uptrend only", key=f"f_tech_{market}")
+        c7, c8, c9, c10, c11, c12 = st.columns(6)
+        f_rsi_d = c7.slider("RSI Daily", 0, 100, (0, 100), key=f"f_rsid_{market}")
+        f_rsi_w = c8.slider("RSI Weekly", 0, 100, (0, 100), key=f"f_rsiw_{market}")
+        f_rsi_m = c9.slider("RSI Monthly", 0, 100, (0, 100), key=f"f_rsim_{market}")
+        f_rs_d = c10.slider("RS Daily", -150, 150, (-150, 150), key=f"f_rsd_{market}")
+        f_rs_w = c11.slider("RS Weekly", -150, 150, (-150, 150), key=f"f_rsw_{market}")
+        f_rs_m = c12.slider("RS Monthly", -150, 150, (-150, 150), key=f"f_rsm_{market}")
+
+        fc1, fc2, fc3, fc4 = st.columns([1.2, 1.2, 1.3, 0.8])
+        f_trend = fc1.selectbox(
+            "Trend", ["Any", "Strong Uptrend", "Uptrend", "Downtrend", "Strong Downtrend"],
+            key=f"f_trend_{market}",
+        )
+        f_vol_trend = fc2.selectbox(
+            "Vol Trend", ["Any", "Exploding", "In-line", "Declining"], key=f"f_voltrend_{market}",
+        )
+        f_expert_take = fc3.selectbox(
+            "Expert Take", ["Any", "🟢 Accumulate", "🟡 Hold", "🔴 Caution", "⚪ Pending"],
+            key=f"f_expert_{market}",
+        )
+        f_tech_only = fc4.checkbox("Tech Uptrend only", key=f"f_tech_{market}")
+
+    search = st.text_input("Ticker search", "", key=f"search_{market}").strip().upper()
 
     with st.expander("Custom filters (metric vs metric, or metric vs fixed value; chain with AND/OR)", expanded=False):
         active_custom_filters = render_custom_filter_builder(market, filterable_metrics)
@@ -2564,12 +2792,17 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         numbered_rules = [r for r in alert_rules_all if r.get("enabled", True) and r.get("conditions")]
         rule_number = {r["id"]: i + 1 for i, r in enumerate(numbered_rules)}
         alert_matches = {}
+        # alert_hits keeps the full preview item (rule name, conditions, and the
+        # row the rule was evaluated against) so the AI-review payload can render
+        # each firing rule with its live values, without re-running the engine.
+        alert_hits = {}
         if alert_rules_all:
             for p in preview_rules(alert_rules_all, results)[0]:
                 if p["is_true_now"]:
                     num = rule_number.get(p["rule_id"])
                     if num is not None:
                         alert_matches.setdefault(p["ticker"], []).append(num)
+                        alert_hits.setdefault(p["ticker"], []).append(p)
         raw_df["matched_alerts"] = [
             ", ".join(str(n) for n in sorted(alert_matches.get(r["ticker"], []))) or "—" for r in filtered
         ]
@@ -2610,14 +2843,9 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             # Deterministic guard: never let a stale or data-less entry show a
             # confident directional verdict, regardless of what the model wrote.
             sentiment, flag = _validate_sentiment(v)
-            if flag == "STALE":
-                reasoning = f"{reasoning}\n\n[STALE: as_of {as_of} is older than {SENTIMENT_STALE_DAYS} days]"
-            elif flag == "STALE_QUARTER":
-                reasoning = f"{reasoning}\n\n[STALE_QUARTER: a confirmed earnings report exists that the news used didn't verifiably account for]"
-            elif flag == "NO_DATA":
-                reasoning = f"{reasoning}\n\n[NO_DATA: earnings, guidance and analyst coverage are all N/A]"
-            elif flag == "PARTIAL":
-                reasoning = f"{reasoning}\n\n[PARTIAL: only revenue/soft data — no EPS, guidance or analyst action; capped at Neutral]"
+            note = sentiment_flag_note(flag, as_of)
+            if note:
+                reasoning = f"{reasoning}\n\n{note}"
 
             if sentiment == "Positive":
                 color = "#00C853"
@@ -2698,8 +2926,13 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             if key == "vstop_change":
                 return vstop_change_str(r)
             if key == "fundamentals":
-                v = fundamentals.get(r["ticker"], {})
-                return v.get("sentiment", "Unknown")
+                # Guarded value, not the raw model one -- _validate_sentiment
+                # downgrades a stale/evidence-free view, and the table shows the
+                # downgraded result, so returning v["sentiment"] disagreed with
+                # the screen. Bare sentiment with no flag suffix: keeps this
+                # column's domain to Positive/Negative/Neutral/Unknown so
+                # downstream exact-match filters keep working.
+                return _validate_sentiment(fundamentals.get(r["ticker"], {}))[0]
             if key == "matched_alerts":
                 return ", ".join(str(n) for n in sorted(alert_matches.get(r["ticker"], [])))
             return r.get(key)
@@ -2772,7 +3005,9 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         if "Alerts" in df.columns and alert_matches:
             used_numbers = {n for nums in alert_matches.values() for n in nums}
             metric_labels_market = {v: k for k, v in filterable_metrics.items()}
-            rule_by_id_market = {r["id"]: r for r in numbered_rules}
+            # All rules, so a condition referencing a disabled alert still
+            # resolves to its name instead of a bare id (see describe_filter).
+            rule_by_id_market = {r["id"]: r for r in alert_rules_all}
             legend_bits = []
             for r in numbered_rules:
                 num = rule_number[r["id"]]
@@ -2781,6 +3016,57 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
                     legend_bits.append(f"**{num}** = {name} — {describe_chain(r['conditions'], metric_labels_market, rule_by_id_market)}")
             if legend_bits:
                 st.caption("Alert legend: " + " · ".join(legend_bits))
+
+        # Pull one or more rows out as markdown to hand to a chat assistant.
+        # This lives below the table rather than in the table: the table is a
+        # static HTML block (see sticky_header_html), so it can't host a real
+        # per-row button. st.code's built-in copy icon does the clipboard work
+        # with no JS, and the same string feeds the download button.
+        with st.expander("🧠 Copy / download tickers for AI review", expanded=False):
+            ai_sel = st.multiselect(
+                "Tickers", [r["ticker"] for r in filtered],
+                default=[filtered[0]["ticker"]],
+                key=f"ai_review_tickers_{market}",
+            )
+            # Guard on the resolved rows, not the raw selection: Streamlit
+            # already drops selections that fall out of `options`, but this way
+            # the builder is never handed an empty list whatever the widget does.
+            ai_rows = [r for r in filtered if r["ticker"] in ai_sel]
+            if not ai_rows:
+                st.caption("Pick at least one ticker.")
+            else:
+                ai_payload = build_ai_review_payload(
+                    ai_rows,
+                    market=market,
+                    settings=settings,
+                    labels=labels,
+                    visible_keys=safe_keys,
+                    label_by_key=label_by_key,
+                    definitions=header_tooltips,
+                    export_value=_export_value,
+                    expert_views=expert_views,
+                    fundamentals=fundamentals,
+                    alert_hits=alert_hits,
+                    metric_labels={v: k for k, v in filterable_metrics.items()},
+                    # All rules, not just numbered_rules: a condition can
+                    # reference another alert by id, and describe_filter falls
+                    # back to printing the raw id when that rule is missing --
+                    # which is exactly what happens to a disabled one.
+                    rule_by_id={r["id"]: r for r in alert_rules_all},
+                )
+                st.caption(f"{len(ai_rows)} ticker(s) · ~{max(1, len(ai_payload) // 1024)} KB")
+                st.code(ai_payload, language="markdown", wrap_lines=True, height=400)
+                # From ai_rows, not ai_sel, so the filename can't disagree with
+                # the caption and payload when a selection stops resolving.
+                stem = (ai_rows[0]["ticker"].replace(".", "_") if len(ai_rows) == 1
+                        else f"{market}_{len(ai_rows)}_tickers")
+                st.download_button(
+                    "⬇ Download .md",
+                    data=ai_payload,
+                    file_name=f"{stem}_{date.today()}.md",
+                    mime="text/markdown",
+                    key=f"ai_review_dl_{market}",
+                )
     else:
         st.info("No tickers match the current filters.")
 
