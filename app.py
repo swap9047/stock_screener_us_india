@@ -853,7 +853,7 @@ PERF_PCT_COLS = ["Perf 1M %", "Perf 3M %", "Perf 6M %", "Perf 1Y %", "Perf 3Y %"
 # opposite of what these mean.
 DIST_PCT_COLS = ["26WH Distance", "52WH Distance"]
 # A count of trading days, not a price or a ratio -- whole numbers only.
-COUNT_COLS = ["Breakout Window"]
+COUNT_COLS = ["Breakout Window", "52W High Age"]
 
 # Column keys considered "fundamental" (company financials/valuation, as
 # opposed to technical/price-derived) -- hideable as a group via the
@@ -971,13 +971,27 @@ def column_definitions(settings, labels):
         "52W High": "Trailing 52-week (~252 trading day) intraday high.",
         "52W Low": "Trailing 52-week (~252 trading day) intraday low.",
         "Breakout Window": (
-            "Trading days since the last close at or ABOVE today's close — i.e. how old the "
-            "overhead resistance is. 250 means price is back at a level it last saw ~250 days ago "
-            "and is testing it. 0 means no prior close was ever this high (blue sky, nothing left "
-            "to break out of), which is also what an all-time high reads. This is a SETUP measure, "
-            "not a confirmation: a stock that actually clears its old level drops to 0 that same "
-            "day. Powers the Long-term breakout scan (≥200 with 52WH Distance <10%) and the "
+            "Trading days back to the level price is now testing — i.e. how old the overhead "
+            "resistance is. 250 means price is back at a level it last saw ~250 days ago. "
+            "Resistance is measured against 105% of today's close, not today's close, so a minor "
+            "overshoot part-way through a base doesn't reset the window: the count runs past every "
+            "close within 5% above today, back to the last one that genuinely exceeded it. A close "
+            "below today was never overhead, so it never interrupts the count. It does NOT skip "
+            "over a >5% spike to reach an older level — a stock that peaked 7% above today last "
+            "week reads a few days, because that peak is live overhead rather than a stale level. "
+            "0 means no prior close was ever this high (blue sky, nothing left to break out of), "
+            "which is what an all-time high reads. This is a SETUP measure, not a confirmation: a "
+            "stock that actually clears its old level drops to 0 that same day. Looks back at most "
+            "5 years. Powers the Long-term breakout scan (≥200 with 52WH Distance <10%) and the "
             "Short-term one (40–200 with 26WH Distance <10%)."
+        ),
+        "52W High Age": (
+            "Trading days since the 52-week high was SET — 0 means the high is today's bar. Pairs "
+            "with 52WH Distance to tell apart two setups that otherwise look identical: a small "
+            "age means the stock is making new highs right now (breaking out), while a large age "
+            "means it is climbing back to a high set months ago (still approaching). Uses the same "
+            "trailing 252-day intraday High that 52W High and 52WH Distance use, so they always "
+            "agree on which bar the high is. If several bars share the high, reports the oldest."
         ),
         "26WH Distance": (
             "Percent BELOW the trailing 26-week (~126 trading day) intraday high, as a POSITIVE "
@@ -1753,6 +1767,7 @@ def build_column_defs(labels, custom_columns=None):
         ("breakout_window", "Breakout Window"),
         ("week26_distance", "26WH Distance"),
         ("week52_distance", "52WH Distance"),
+        ("week52_high_age", "52W High Age"),
         ("data_end", "Data Thru"),
         ("ema10", labels["w_fast"]),
         ("ema20", labels["w_mid"]),
@@ -1810,7 +1825,7 @@ def build_column_defs(labels, custom_columns=None):
     # the opposite sign), so they're offered in the picker but stay off
     # until asked for; everything else shows by default.
     default_hidden = {"Vol 10D", "Vol 100D", "Flag", "Invested",
-                      "Breakout Window", "26WH Distance", "52WH Distance"}
+                      "Breakout Window", "26WH Distance", "52WH Distance", "52W High Age"}
     default_visible = [lbl for lbl in all_labels if lbl not in default_hidden]
     return optional_defs, label_by_key, key_by_label, all_labels, default_visible
 
