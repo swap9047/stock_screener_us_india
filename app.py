@@ -3723,7 +3723,19 @@ with dash2:
 
 market_keys_now = list(markets_registry_now.keys())
 market_tab_labels = [markets_registry_now[mkt]["label"] for mkt in market_keys_now]
-all_tabs = st.tabs(market_tab_labels + ["News", "Alert Rules"])
+# key= + on_change="rerun" is what makes the tab strip TRACK its selection.
+# Without them st.tabs re-selects its first tab on every script run, so any
+# st.rerun() -- and the Alert Rules tab fires one on nearly every interaction
+# -- dumped you back on the first watchlist. The rule expander underneath was
+# still open (it keeps its own state); you just weren't on that tab any more,
+# which reads exactly like the alert collapsing.
+#
+# Tab bodies still all execute: with on_change="rerun" they run unless each is
+# individually guarded on `.open`, and skipping hidden tabs would change what
+# the visible one shows (the market tabs populate alert_matches). Persistence
+# only, deliberately -- laziness is a separate job.
+all_tabs = st.tabs(market_tab_labels + ["News", "Alert Rules"],
+                   key="main_tabs", on_change="rerun")
 market_tabs = dict(zip(market_keys_now, all_tabs[:-2]))
 tab_news, tab_alerts = all_tabs[-2], all_tabs[-1]
 
@@ -4307,6 +4319,28 @@ with tab_alerts:
             else:
                 status_icon = "✅"
 
+            exp_key = f"rule_exp_{rule['id']}"
+
+            # Re-open a rule that asked to stay open before it reran.
+            #
+            # Streamlit keeps the expander's open/closed state under `key`,
+            # which survives an ordinary st.rerun() -- but NOT a rerun in
+            # which `icon` changes value. Changing icon re-creates the
+            # element and its tracked state goes with it. Toggling Enabled
+            # flips the icon (⏸️ <-> ✅), so the single most common action
+            # collapsed the very rule you were working on. Verified in a
+            # browser: a rerun that leaves the icon alone (Run preview,
+            # editing a condition) keeps the rule open; only the icon change
+            # closes it.
+            #
+            # The flag is a SEPARATE key, and is consumed here BEFORE the
+            # expander is created -- Streamlit forbids writing a widget's own
+            # session_state key once that widget exists in the current run,
+            # so the handlers below can't set exp_key themselves.
+            if st.session_state.get("_reopen_rule") == rule["id"]:
+                st.session_state[exp_key] = True
+                del st.session_state["_reopen_rule"]
+
             # key= + on_change="rerun" keeps the open/closed state in
             # st.session_state, so it survives the st.rerun() that every
             # action in this body triggers -- previously the expander
@@ -4314,8 +4348,16 @@ with tab_alerts:
             # guard also means the 16 rules you AREN'T looking at skip
             # building a full condition builder each (a 50+ option metric
             # selectbox, two radios and two number inputs apiece).
-            exp = st.expander(expander_title, key=f"rule_exp_{rule['id']}",
+            exp = st.expander(expander_title, key=exp_key,
                               on_change="rerun", icon=status_icon)
+            # Set by each handler that is about to st.rerun(), so the rule
+            # comes back open. Deliberately NOT set unconditionally here:
+            # collapsing the expander yourself also reruns, and a blanket
+            # flag would force it straight back open and make the rule
+            # impossible to close.
+            def keep_open(_rid=rule["id"]):
+                st.session_state["_reopen_rule"] = _rid
+
             with exp:
                 if not exp.open:
                     continue
@@ -4332,6 +4374,7 @@ with tab_alerts:
                 if enabled != rule.get("enabled", True):
                     rule["enabled"] = enabled
                     save_rules(rules)
+                    keep_open()
                     st.rerun()
                 if dup_col.button("⧉ Duplicate", key=f"dup_{rule['id']}",
                                   help="Copy this rule and its conditions into a new, disabled rule"):
@@ -4378,6 +4421,7 @@ with tab_alerts:
                     if ec_changed:
                         rule["conditions"] = edit_conds
                         save_rules(rules)
+                        keep_open()
                         st.rerun()
 
                 st.caption("Add a condition to this rule:" if not edit_conds else "Add another condition:")
@@ -4397,6 +4441,7 @@ with tab_alerts:
                     edit_conds.append(new_edit_cond)
                     rule["conditions"] = edit_conds
                     save_rules(rules)
+                    keep_open()
                     st.rerun()
 
                 st.markdown("**Alert mode & schedule**")
@@ -4449,6 +4494,7 @@ with tab_alerts:
                     else:
                         rule["schedule"] = {"type": "none", "days": curr_days_codes, "time_et": curr_time}
                     save_rules(rules)
+                    keep_open()
                     st.success("Saved name, scope and schedule.")
                     st.rerun()
 
