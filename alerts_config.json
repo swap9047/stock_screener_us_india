@@ -186,7 +186,7 @@
       },
       {
         "metric_a": "last_close",
-        "operator": ">=",
+        "operator": "<=",
         "compare_type": "metric",
         "metric_b": "ema10",
         "logic": "AND",
@@ -523,7 +523,7 @@
         "value": 8
       }
     ],
-    "enabled": true,
+    "enabled": false,
     "schedule": {
       "type": "none",
       "days": [
@@ -761,7 +761,7 @@
         "value": 20
       }
     ],
-    "enabled": true,
+    "enabled": false,
     "schedule": {
       "type": "none",
       "days": [
