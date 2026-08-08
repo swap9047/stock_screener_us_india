@@ -34,6 +34,7 @@ already active) -- secrets persist across redeploys, a local file doesn't.
 If no login is configured anywhere, the app is open.
 """
 
+import copy
 import hashlib
 import hmac
 import html
@@ -1611,7 +1612,41 @@ def render_watchlist_editor(market, watchlists):
         _apply_watchlist_tickers(market, market_label, tickers, new_tickers, invested_weights)
 
 
-def render_condition_builder(key_prefix, metric_names, filterable_metrics, logic_choice, available_rules=None, exclude_rule_id=None, definitions=None):
+OPERATOR_CHOICES = [">", "<", ">=", "<=", "=="]
+
+
+def reset_builder_keys(key_prefix):
+    """Drops every st.session_state entry belonging to one condition
+    builder.
+
+    Needed because Streamlit applies a widget's index=/value=/default= only
+    the FIRST time it sees that widget's key -- after that, whatever is in
+    session_state wins. So opening the edit form on a condition would show
+    leftovers from the last time that same key rendered (the previous
+    condition edited in that slot, or a half-typed value someone cancelled
+    out of) instead of the condition actually being edited. Clearing the
+    keys first makes the next render a genuine first render, so the
+    initial= defaults land.
+
+    Call on ENTERING and on LEAVING edit mode: leaving matters too, or the
+    edit form's values would leak into the plain "add a condition" builder,
+    which shares the widget-key namespace by design."""
+    for k in [k for k in st.session_state if k.startswith(f"{key_prefix}_")]:
+        del st.session_state[k]
+
+
+def _initial_index(options, value, default=0):
+    """index= for a selectbox/radio, tolerating a value that isn't in the
+    list (a metric hidden by a settings toggle, a referenced alert since
+    deleted). Falls back rather than raising, so a stale condition stays
+    editable instead of breaking the whole tab."""
+    try:
+        return options.index(value)
+    except (ValueError, AttributeError):
+        return default
+
+
+def render_condition_builder(key_prefix, metric_names, filterable_metrics, logic_choice, available_rules=None, exclude_rule_id=None, definitions=None, initial=None, submit_label="＋ Add condition"):
     """Renders one full condition-builder row (Metric A / Operator / Compare
     to / Value / Add button) shared by the watchlist custom-filter builder,
     the new-rule builder, and each existing rule's inline condition editor
@@ -1636,18 +1671,27 @@ def render_condition_builder(key_prefix, metric_names, filterable_metrics, logic
     metric. Optional and sparse by design: metrics without an entry just get
     no caption, so a metric that has never been documented is still usable.
 
+    `initial` pre-fills every widget from an existing condition, turning the
+    builder into an edit form (pair it with submit_label="💾 Save changes").
+    The caller must call reset_builder_keys(key_prefix) when entering edit
+    mode -- see that function for why the defaults alone aren't enough.
+
     Returns a finished condition dict (with "logic" set to `logic_choice`,
-    ready to append to a conditions list) the moment "Add" is clicked with
-    valid inputs, else None."""
+    ready to append to a conditions list) the moment the submit button is
+    clicked with valid inputs, else None."""
     definitions = definitions or {}
+    initial = initial or {}
+    label_by_metric = {v: k for k, v in filterable_metrics.items()}
 
     def _explain(metric_key, container=st):
         text = definitions.get(metric_key)
         if text:
             container.caption(f"ℹ️ {text}")
+    condtype_options = ["Metric comparison", "Reference another alert"]
     condition_type = st.radio(
         "Condition type",
-        ["Metric comparison", "Reference another alert"],
+        condtype_options,
+        index=1 if initial.get("type") == "rule" else 0,
         key=f"{key_prefix}_condtype",
         horizontal=True,
         help="A metric comparison tests a metric value; 'Reference another alert' is true "
@@ -1663,24 +1707,40 @@ def render_condition_builder(key_prefix, metric_names, filterable_metrics, logic
             return None
         rule_labels = [f"{r.get('name') or '(unnamed)'} [{r['id']}]" for r in options]
         rule_by_label = dict(zip(rule_labels, options))
+        # The referenced alert may since have been disabled, emptied or
+        # deleted, which drops it out of `options` -- fall back to the first
+        # rather than raising, so the condition stays editable.
+        init_ref = next((lbl for lbl, r in rule_by_label.items()
+                         if r["id"] == initial.get("rule_id")), None)
         rc1, rc2 = st.columns([4, 1])
-        sel_label = rc1.selectbox("Alert to reference", rule_labels, key=f"{key_prefix}_refrule")
-        if rc2.button("＋ Add condition", key=f"{key_prefix}_addbtn"):
+        sel_label = rc1.selectbox("Alert to reference", rule_labels,
+                                  index=_initial_index(rule_labels, init_ref),
+                                  key=f"{key_prefix}_refrule")
+        if rc2.button(submit_label, key=f"{key_prefix}_addbtn"):
             return {"type": "rule", "rule_id": rule_by_label[sel_label]["id"], "logic": logic_choice}
         return None
 
-    metric_a_label = st.selectbox("Metric A", metric_names, key=f"{key_prefix}_a")
+    init_a_label = label_by_metric.get(initial.get("metric_a"))
+    metric_a_label = st.selectbox("Metric A", metric_names,
+                                  index=_initial_index(metric_names, init_a_label),
+                                  key=f"{key_prefix}_a")
     metric_a_key = filterable_metrics[metric_a_label]
     _explain(metric_a_key)
     categorical_options = CATEGORICAL_METRICS.get(metric_a_key)
 
     if categorical_options:
+        # Only reuse the stored value as the default when it belongs to THIS
+        # metric's option list -- switching Metric A mid-edit (Trend ->
+        # Vol Trend) must not carry "Strong Uptrend" into a list that has no
+        # such option, which Streamlit would reject.
+        init_cat = [v for v in (initial.get("value") or []) if v in categorical_options] \
+            if isinstance(initial.get("value"), list) else []
         c1, c2 = st.columns([4, 1])
         selected = c1.multiselect(
             "Value(s) — matches if Trend/Vol Trend/etc. is ANY of these",
-            options=categorical_options, key=f"{key_prefix}_catval",
+            options=categorical_options, default=init_cat, key=f"{key_prefix}_catval",
         )
-        if c2.button("＋ Add condition", key=f"{key_prefix}_addbtn"):
+        if c2.button(submit_label, key=f"{key_prefix}_addbtn"):
             if not selected:
                 st.warning("Select at least one value.")
                 return None
@@ -1691,18 +1751,30 @@ def render_condition_builder(key_prefix, metric_names, filterable_metrics, logic
         return None
 
     c1, c2, c3 = st.columns([1, 1.5, 2])
-    operator_choice = c1.selectbox("Op", [">", "<", ">=", "<=", "=="], key=f"{key_prefix}_op")
-    compare_type = c2.radio("Compare to", ["Metric", "Fixed value"], key=f"{key_prefix}_ctype", horizontal=True)
+    operator_choice = c1.selectbox("Op", OPERATOR_CHOICES,
+                                   index=_initial_index(OPERATOR_CHOICES, initial.get("operator")),
+                                   key=f"{key_prefix}_op")
+    ctype_options = ["Metric", "Fixed value"]
+    # Defaults to "Metric" for a fresh add, matching the pre-edit-mode
+    # behaviour where this radio simply took its first option.
+    ctype_index = 1 if initial.get("compare_type") == "value" else 0
+    compare_type = c2.radio("Compare to", ctype_options, index=ctype_index,
+                            key=f"{key_prefix}_ctype", horizontal=True)
     if compare_type == "Metric":
-        metric_b_label = c3.selectbox("Metric B", metric_names, key=f"{key_prefix}_b")
+        init_b_label = label_by_metric.get(initial.get("metric_b"))
+        metric_b_label = c3.selectbox("Metric B", metric_names,
+                                      index=_initial_index(metric_names, init_b_label),
+                                      key=f"{key_prefix}_b")
         _explain(filterable_metrics[metric_b_label], container=c3)
         mc1, mc2, mc3 = st.columns([1, 1, 1])
         multiplier = mc1.number_input(
-            "× Multiplier (optional)", value=1.0, step=0.1, format="%.2f", key=f"{key_prefix}_mult",
+            "× Multiplier (optional)", value=float(initial.get("multiplier") or 1.0),
+            step=0.1, format="%.2f", key=f"{key_prefix}_mult",
             help="e.g. set to 1.4 for 'Vol 10D Avg >= 1.4 × Vol 100D Avg'.",
         )
-        offset = mc2.number_input("+ Offset (optional)", value=0.0, step=0.1, format="%.2f", key=f"{key_prefix}_off")
-        if mc3.button("＋ Add condition", key=f"{key_prefix}_addbtn"):
+        offset = mc2.number_input("+ Offset (optional)", value=float(initial.get("offset") or 0.0),
+                                  step=0.1, format="%.2f", key=f"{key_prefix}_off")
+        if mc3.button(submit_label, key=f"{key_prefix}_addbtn"):
             cond = {
                 "metric_a": metric_a_key, "operator": operator_choice, "compare_type": "metric",
                 "metric_b": filterable_metrics[metric_b_label], "logic": logic_choice,
@@ -1715,16 +1787,146 @@ def render_condition_builder(key_prefix, metric_names, filterable_metrics, logic
         return None
     else:
         vc1, vc2 = st.columns([2, 1])
+        # A stored 45.0 must come back as "45", not "45.0" -- round-tripping
+        # through parse_filter_value_text would otherwise rewrite every
+        # untouched integer threshold the first time a condition is edited.
+        init_val = initial.get("value") if initial.get("compare_type") == "value" else None
+        if isinstance(init_val, float) and init_val.is_integer():
+            init_val_text = str(int(init_val))
+        elif init_val is None or isinstance(init_val, list):
+            init_val_text = "0"
+        else:
+            init_val_text = str(init_val)
         value_text = vc1.text_input(
-            "Value", value="0", key=f"{key_prefix}_val",
+            "Value", value=init_val_text, key=f"{key_prefix}_val",
             help="A number (e.g. 45) or a word for boolean-like metrics, e.g. Yes / No for Tech Uptrend.",
         )
-        if vc2.button("＋ Add condition", key=f"{key_prefix}_addbtn"):
+        if vc2.button(submit_label, key=f"{key_prefix}_addbtn"):
             return {
                 "metric_a": metric_a_key, "operator": operator_choice, "compare_type": "value",
                 "value": parse_filter_value_text(value_text), "logic": logic_choice,
             }
         return None
+
+
+def render_condition_list(conditions, key_prefix, metric_labels, filterable_metrics,
+                          rule_by_id=None, available_rules=None, exclude_rule_id=None,
+                          definitions=None):
+    """Renders a saved condition chain with per-condition edit / reorder /
+    remove controls, and returns (conditions, changed).
+
+    Shared by the three places that hold a chain -- the new-rule draft, an
+    existing rule's editor, and the watchlist custom-filter builder -- which
+    previously each carried their own copy of a describe-and-Remove loop.
+    Same consolidation as render_condition_builder (see its docstring). The
+    three copies had already drifted: two printed the chain summary right
+    above the list, while the rule editor printed it further up at the top
+    of the expander, so it read as a description of the rule rather than of
+    the list underneath. They now all show it in the same place.
+
+    `conditions` is mutated in place and also returned. `changed` is True
+    when the chain DATA differs from what was passed in, so the CALLER
+    decides how to persist -- save_rules, save_market_filters, or just
+    leaving it in session_state. This function never writes to disk.
+
+    It does call st.rerun() for the two transitions that are pure UI state
+    and carry no data change (entering edit mode, cancelling out of it),
+    since the caller has nothing to persist for those and would only be
+    forwarding a second flag back.
+
+    Order is semantic, not cosmetic: chains evaluate left to right, so
+    moving a condition across an OR changes what the rule matches. That is
+    why reordering is offered at all.
+    """
+    if not conditions:
+        return conditions, False
+
+    editing_key = f"{key_prefix}_editing"
+    editing_idx = st.session_state.get(editing_key)
+
+    st.caption(describe_chain(conditions, metric_labels, rule_by_id))
+
+    changed = False
+    remove_idx = None
+    swap = None
+    for i, cond in enumerate(conditions):
+        if editing_idx == i:
+            with st.container(border=True):
+                st.caption(f"Editing condition {i + 1} of {len(conditions)}")
+                # The AND/OR joiner belongs to this condition, so it is
+                # editable here rather than only at append time -- flipping
+                # it used to require deleting and rebuilding the condition.
+                if i == 0:
+                    st.caption("First condition — joins nothing above it.")
+                    edit_logic = cond.get("logic", "AND")
+                else:
+                    edit_logic = st.radio(
+                        "Combine with the condition(s) above using", ["AND", "OR"],
+                        index=0 if cond.get("logic", "AND") == "AND" else 1,
+                        key=f"{key_prefix}_editlogic_{i}", horizontal=True,
+                    )
+                updated = render_condition_builder(
+                    f"{key_prefix}_edit", list(filterable_metrics.keys()), filterable_metrics,
+                    edit_logic, available_rules=available_rules,
+                    exclude_rule_id=exclude_rule_id, definitions=definitions,
+                    initial=cond, submit_label="💾 Save changes",
+                )
+                if st.button("Cancel", key=f"{key_prefix}_editcancel_{i}"):
+                    # Clear on the way out as well as on the way in, or a
+                    # cancelled edit's half-typed values would surface in the
+                    # plain "add a condition" builder, which shares this
+                    # widget-key namespace.
+                    reset_builder_keys(f"{key_prefix}_edit")
+                    del st.session_state[editing_key]
+                    st.rerun()
+                if updated:
+                    # Custom filters carry a stable "id" that the builder
+                    # doesn't produce; carry it across so an edit doesn't
+                    # silently mint a different filter. Only "id" is
+                    # preserved -- copying every unknown key would resurrect
+                    # a stale metric_b when switching metric -> fixed value.
+                    if "id" in cond:
+                        updated["id"] = cond["id"]
+                    conditions[i] = updated
+                    reset_builder_keys(f"{key_prefix}_edit")
+                    del st.session_state[editing_key]
+                    changed = True
+            continue
+
+        c_txt, c_up, c_dn, c_ed, c_rm = st.columns([7, 0.6, 0.6, 0.8, 0.8])
+        prefix = "" if i == 0 else f"**{cond.get('logic', 'AND')}**  "
+        c_txt.write(f"{prefix}{describe_filter(cond, metric_labels, rule_by_id)}")
+        if c_up.button("▲", key=f"{key_prefix}_up_{i}", disabled=(i == 0),
+                       help="Move up"):
+            swap = (i - 1, i)
+        if c_dn.button("▼", key=f"{key_prefix}_dn_{i}", disabled=(i == len(conditions) - 1),
+                       help="Move down"):
+            swap = (i, i + 1)
+        if c_ed.button("✏️", key=f"{key_prefix}_ed_{i}", help="Edit this condition",
+                       disabled=editing_idx is not None):
+            reset_builder_keys(f"{key_prefix}_edit")
+            st.session_state[editing_key] = i
+            st.rerun()
+        if c_rm.button("🗑", key=f"{key_prefix}_rm_{i}", help="Remove this condition",
+                       disabled=editing_idx is not None):
+            remove_idx = i
+
+    if swap:
+        a, b = swap
+        conditions[a], conditions[b] = conditions[b], conditions[a]
+        # The first condition's logic is never shown or evaluated, so a
+        # chain that starts on an OR after a swap would silently read as
+        # something the UI can't display. Normalise it.
+        if conditions and conditions[0].get("logic") == "OR":
+            conditions[0] = {**conditions[0], "logic": "AND"}
+        changed = True
+    if remove_idx is not None:
+        conditions.pop(remove_idx)
+        if conditions and conditions[0].get("logic") == "OR":
+            conditions[0] = {**conditions[0], "logic": "AND"}
+        changed = True
+
+    return conditions, changed
 
 
 def render_custom_filter_builder(market, filterable_metrics, definitions=None):
@@ -1744,17 +1946,12 @@ def render_custom_filter_builder(market, filterable_metrics, definitions=None):
 
     if active_filters:
         st.write("Active conditions:")
-        st.caption(describe_chain(active_filters, metric_labels, rule_by_id_cf))
-        remove_id = None
-        for i, filt in enumerate(active_filters):
-            cc1, cc2 = st.columns([5, 1])
-            prefix = "" if i == 0 else f"{filt.get('logic', 'AND')}  "
-            cc1.write(f"{prefix}{describe_filter(filt, metric_labels, rule_by_id_cf)}")
-            if cc2.button("Remove", key=f"cf_rm_{market}_{filt['id']}"):
-                remove_id = filt["id"]
-        if remove_id:
-            remaining = [f for f in active_filters if f["id"] != remove_id]
-            save_market_filters(market, remaining)
+        active_filters, cf_changed = render_condition_list(
+            active_filters, f"cf_{market}", metric_labels, filterable_metrics,
+            rule_by_id=rule_by_id_cf, available_rules=custom_rules, definitions=definitions,
+        )
+        if cf_changed:
+            save_market_filters(market, active_filters)
             st.rerun()
 
     st.markdown("Add a condition:" if not active_filters else "Add another condition:")
@@ -3977,16 +4174,14 @@ with tab_alerts:
 
     if st.session_state.draft_rule_conditions:
         st.caption("Conditions in this rule so far:")
-        st.caption(describe_chain(st.session_state.draft_rule_conditions, metric_labels_alert, rule_by_id_alert))
-        remove_idx = None
-        for i, cond in enumerate(st.session_state.draft_rule_conditions):
-            cc1, cc2 = st.columns([5, 1])
-            prefix = "" if i == 0 else f"{cond.get('logic', 'AND')}  "
-            cc1.write(f"{prefix}{describe_filter(cond, metric_labels_alert, rule_by_id_alert)}")
-            if cc2.button("Remove", key=f"dr_rm_{i}"):
-                remove_idx = i
-        if remove_idx is not None:
-            st.session_state.draft_rule_conditions.pop(remove_idx)
+        st.session_state.draft_rule_conditions, dr_changed = render_condition_list(
+            st.session_state.draft_rule_conditions, "dr", metric_labels_alert,
+            filterable_metrics_alert, rule_by_id=rule_by_id_alert,
+            available_rules=rules, definitions=metric_defs_alert,
+        )
+        if dr_changed:
+            # Draft lives in session_state only -- nothing to persist until
+            # "Save rule".
             st.rerun()
 
     st.markdown("Add a condition to this rule:" if not st.session_state.draft_rule_conditions
@@ -4070,26 +4265,88 @@ with tab_alerts:
     if not rules:
         st.info("No rules yet — add one above.")
     else:
-        for rule in rules:
+        search_col, count_col = st.columns([3, 1])
+        rule_search = search_col.text_input(
+            "Search rules", key="rule_search", placeholder="name, scope, or a metric it uses",
+            help="Matches the rule name, its scope, and the labels of every metric its "
+                 "conditions reference — so searching 'adx' finds any rule built on ADX.",
+        )
+
+        def _rule_haystack(r):
+            """Name + scope + every metric label the rule references, so a
+            search can find a rule by what it TESTS and not just what it was
+            named -- most of these names don't mention their metrics."""
+            bits = [r.get("name") or "", str(r.get("scope") or "")]
+            for c in r.get("conditions", []):
+                for mk in (c.get("metric_a"), c.get("metric_b")):
+                    if mk:
+                        bits.append(metric_labels_alert.get(mk, mk))
+                if c.get("type") == "rule":
+                    ref = rule_by_id_alert.get(c.get("rule_id"), {})
+                    bits.append(ref.get("name") or "")
+            return " ".join(bits).lower()
+
+        visible_rules = ([r for r in rules if rule_search.strip().lower() in _rule_haystack(r)]
+                         if rule_search.strip() else rules)
+        count_col.metric("Shown", f"{len(visible_rules)}/{len(rules)}")
+        if not visible_rules:
+            st.info(f"No rule matches “{rule_search}”.")
+
+        for rule in visible_rules:
             scope_label = {"ALL": "All watchlist", **market_scope_key_to_label}.get(rule.get("scope"), rule.get("scope"))
             name_label = rule.get("name") or "(unnamed)"
             n_conds = len(rule.get("conditions", []))
             sched_summary = describe_schedule(rule)
             expander_title = f"{name_label} — {scope_label} ({n_conds} condition{'s' if n_conds != 1 else ''}) | {sched_summary}"
+            # Status the title never carried: a disabled rule and a scan-only
+            # rule used to look identical when collapsed.
+            if not rule.get("enabled", True):
+                status_icon = "⏸️"
+            elif rule.get("schedule", {}).get("type") == "none":
+                status_icon = "🔍"
+            else:
+                status_icon = "✅"
 
-            with st.expander(expander_title, expanded=False):
-                if rule.get("conditions"):
-                    st.write(describe_chain(rule["conditions"], metric_labels_alert, rule_by_id_alert))
-                else:
+            # key= + on_change="rerun" keeps the open/closed state in
+            # st.session_state, so it survives the st.rerun() that every
+            # action in this body triggers -- previously the expander
+            # slammed shut on each one and you lost your place. The .open
+            # guard also means the 16 rules you AREN'T looking at skip
+            # building a full condition builder each (a 50+ option metric
+            # selectbox, two radios and two number inputs apiece).
+            exp = st.expander(expander_title, key=f"rule_exp_{rule['id']}",
+                              on_change="rerun", icon=status_icon)
+            with exp:
+                if not exp.open:
+                    continue
+                # The chain summary used to render here too; it now lives in
+                # render_condition_list below, next to the controls that act
+                # on it, instead of appearing twice per rule.
+                if not rule.get("conditions"):
                     st.warning("This rule has no conditions (from an older rule format) — delete it and re-add with the current builder.")
                 if rule.get("scope") != "ALL" and rule.get("scope") not in market_scope_key_to_label:
                     st.markdown(f"Ticker: [{rule['scope']}]({tradingview_url(rule['scope'])})")
 
-                en_col, del_col = st.columns([1, 1])
+                en_col, dup_col, del_col = st.columns([1, 1, 1])
                 enabled = en_col.checkbox("Enabled", value=rule.get("enabled", True), key=f"en_{rule['id']}")
                 if enabled != rule.get("enabled", True):
                     rule["enabled"] = enabled
                     save_rules(rules)
+                    st.rerun()
+                if dup_col.button("⧉ Duplicate", key=f"dup_{rule['id']}",
+                                  help="Copy this rule and its conditions into a new, disabled rule"):
+                    clone = copy.deepcopy(rule)
+                    clone["id"] = uuid.uuid4().hex[:8]
+                    clone["name"] = f"{rule.get('name') or '(unnamed)'} (copy)"
+                    # Disabled, and out of the weekly wrap-up: a copy exists
+                    # to be edited, and shouldn't start pinging Discord (or
+                    # double-counting a stock in the Sunday roll-up) with
+                    # whatever conditions it was cloned from.
+                    clone["enabled"] = False
+                    clone["weekly_wrapup"] = False
+                    rules.insert(rules.index(rule) + 1, clone)
+                    save_rules(rules)
+                    st.session_state[f"rule_exp_{clone['id']}"] = True
                     st.rerun()
                 if del_col.button("🗑 Delete rule", key=f"del_{rule['id']}"):
                     rules = [r for r in rules if r["id"] != rule["id"]]
@@ -4108,31 +4365,17 @@ with tab_alerts:
                     "Scope", scope_edit_options, index=scope_edit_options.index(current_scope_label),
                     key=f"sc_{rule['id']}",
                 )
-                if st.button("Save name/scope", key=f"nmsc_save_{rule['id']}"):
-                    if edit_scope_label == "All watchlist":
-                        edit_scope_val = "ALL"
-                    elif edit_scope_label in market_scope_label_to_key:
-                        edit_scope_val = market_scope_label_to_key[edit_scope_label]
-                    else:
-                        edit_scope_val = edit_scope_label
-                    rule["name"] = edit_name.strip()
-                    rule["scope"] = edit_scope_val
-                    save_rules(rules)
-                    st.success("Name/scope saved.")
-                    st.rerun()
 
                 st.markdown("**Conditions**")
                 edit_conds = rule.get("conditions", [])
                 if edit_conds:
-                    ec_remove_idx = None
-                    for i, cond in enumerate(edit_conds):
-                        ec1, ec2 = st.columns([5, 1])
-                        prefix = "" if i == 0 else f"{cond.get('logic', 'AND')}  "
-                        ec1.write(f"{prefix}{describe_filter(cond, metric_labels_alert, rule_by_id_alert)}")
-                        if ec2.button("Remove", key=f"ec_rm_{rule['id']}_{i}"):
-                            ec_remove_idx = i
-                    if ec_remove_idx is not None:
-                        edit_conds.pop(ec_remove_idx)
+                    edit_conds, ec_changed = render_condition_list(
+                        edit_conds, f"ec_{rule['id']}", metric_labels_alert,
+                        filterable_metrics_alert, rule_by_id=rule_by_id_alert,
+                        available_rules=rules, exclude_rule_id=rule["id"],
+                        definitions=metric_defs_alert,
+                    )
+                    if ec_changed:
                         rule["conditions"] = edit_conds
                         save_rules(rules)
                         st.rerun()
@@ -4183,7 +4426,19 @@ with tab_alerts:
                 else:
                     es_days_labels, es_hour = curr_days_labels, h_norm
 
-                if st.button("Save schedule", key=f"es_save_{rule['id']}"):
+                # ONE save for every field that isn't already immediate.
+                # Enabled and the conditions save on click; name, scope and
+                # schedule used to need two SEPARATE buttons, so it was easy
+                # to rename a rule, hit "Save schedule", and lose the rename.
+                if st.button("💾 Save rule", key=f"rule_save_{rule['id']}", type="primary"):
+                    if edit_scope_label == "All watchlist":
+                        edit_scope_val = "ALL"
+                    elif edit_scope_label in market_scope_label_to_key:
+                        edit_scope_val = market_scope_label_to_key[edit_scope_label]
+                    else:
+                        edit_scope_val = edit_scope_label
+                    rule["name"] = edit_name.strip()
+                    rule["scope"] = edit_scope_val
                     if es_mode == "Scheduled Discord alert":
                         new_sched_days = [day_code_map[d] for d in es_days_labels] if es_days_labels else list(DEFAULT_DAYS)
                         rule["schedule"] = {
@@ -4194,7 +4449,7 @@ with tab_alerts:
                     else:
                         rule["schedule"] = {"type": "none", "days": curr_days_codes, "time_et": curr_time}
                     save_rules(rules)
-                    st.success("Schedule saved.")
+                    st.success("Saved name, scope and schedule.")
                     st.rerun()
 
     # ── Preview ─────────────────────────────────────────────────────────────
