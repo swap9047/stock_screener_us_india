@@ -312,6 +312,23 @@
         "compare_type": "value",
         "logic": "AND",
         "value": 10
+      },
+      {
+        "metric_a": "trend",
+        "operator": "in",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": [
+          "Uptrend",
+          "Strong Uptrend"
+        ]
+      },
+      {
+        "metric_a": "rs_weekly",
+        "operator": ">",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": 0
       }
     ],
     "enabled": false,
@@ -354,6 +371,82 @@
         "compare_type": "value",
         "logic": "AND",
         "value": 10
+      },
+      {
+        "metric_a": "trend",
+        "operator": "in",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": [
+          "Uptrend",
+          "Strong Uptrend"
+        ]
+      },
+      {
+        "metric_a": "rs_weekly",
+        "operator": ">",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": 0
+      }
+    ],
+    "enabled": false,
+    "schedule": {
+      "type": "scheduled",
+      "days": [
+        "MON",
+        "TUE",
+        "WED",
+        "THU",
+        "FRI",
+        "SAT",
+        "SUN"
+      ],
+      "time_et": "21:00"
+    }
+  },
+  {
+    "id": "1c4f7ae2",
+    "name": "Breaking out now",
+    "scope": "ALL",
+    "conditions": [
+      {
+        "metric_a": "breakout_window",
+        "operator": ">=",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": 40
+      },
+      {
+        "metric_a": "week52_distance",
+        "operator": "<",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": 10
+      },
+      {
+        "metric_a": "week52_high_age",
+        "operator": "<",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": 10
+      },
+      {
+        "metric_a": "trend",
+        "operator": "in",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": [
+          "Uptrend",
+          "Strong Uptrend"
+        ]
+      },
+      {
+        "metric_a": "rs_weekly",
+        "operator": ">",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": 0
       }
     ],
     "enabled": false,

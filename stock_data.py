@@ -74,6 +74,23 @@ RS_LOOKBACK_MONTHLY = 12
 VSTOP_LENGTH = 10
 VSTOP_FACTOR = 2
 
+# Breakout Window (see the block that computes it in fetch_snapshot).
+# A prior close up to 5% above today counts as a level price has already
+# reached, not as overhead resistance -- so a minor overshoot part-way
+# through a base no longer resets the window to that day.
+BREAKOUT_TOLERANCE = 1.05
+# ~5 years x 252 trading days. fetch_snapshot already requests period="5y",
+# so this is a no-op on today's data; it exists so the metric stays bounded
+# if that period is ever widened.
+BREAKOUT_LOOKBACK = 1260
+# Half-width of the swing-high test: a bar is resistance only if its close is
+# the highest over the +/-10 bars around it. Without this the walk-back
+# happily references a bar that price merely passed through on the way DOWN,
+# which is not resistance at all -- 13 of the 18 scan-relevant windows landed
+# on such a bar. It also means a brand-new high is not treated as an
+# established level until 10 sessions have confirmed it.
+BREAKOUT_PIVOT_WIDTH = 10
+
 DEFAULT_SETTINGS = {
     "ema_weekly": [10, 20, 40],   # weekly EMA fast/mid/slow periods
     "ema_daily": [10, 50, 200],   # daily SMA fast/mid/slow periods
@@ -310,11 +327,13 @@ def get_filterable_metrics(settings=None):
         "VStop Dir": "vstop_weekly_direction",
         "52W High": "week52_high",
         "52W Low": "week52_low",
-        # Alert/filter-only -- deliberately absent from build_column_defs so
-        # they never appear as table columns.
+        # Breakout family. Also registered in app.build_column_defs as optional
+        # columns that default to hidden -- offered in the sidebar picker, off
+        # until asked for.
         "Breakout Window": "breakout_window",
         "26WH Distance": "week26_distance",
         "52WH Distance": "week52_distance",
+        "52W High Age": "week52_high_age",
         "Vol 10D": "avg_volume_10d",
         "Vol 100D": "avg_volume_100d",
         "% Chg": "pct_change_1d",
@@ -1127,6 +1146,23 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
             week52_high = round(float(window_252["High"].max()), 1) if window_252["High"].notna().any() else None
             week52_low = round(float(window_252["Low"].min()), 1) if window_252["Low"].notna().any() else None
 
+            # Trading days since the 52-week high was SET. Distinguishes a name
+            # breaking out right now (age 0-10) from one retesting a high set
+            # months ago -- both otherwise look identical on 52WH Distance.
+            #
+            # Derived from the same window_252 frame and the same "High" column
+            # week52_high comes from, so the two can never disagree about which
+            # bar is the high. Positional argmax rather than idxmax: idxmax
+            # returns a timestamp that would need a second lookup to turn into
+            # an age, and is ambiguous if the index ever holds duplicates.
+            # np.argmax returns the FIRST occurrence, so a high matched several
+            # times reports the oldest -- stable run to run rather than
+            # flip-flopping between equal bars.
+            week52_high_age = None
+            highs_252 = window_252["High"]
+            if highs_252.notna().any():
+                week52_high_age = int(len(highs_252) - 1 - int(np.argmax(highs_252.to_numpy())))
+
             # Assigned conditionally below, unlike week52_high/low which always
             # get a value -- without these defaults a ticker missing the inputs
             # would NameError at the results.append rather than reporting blanks.
@@ -1153,27 +1189,87 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
             if week52_high:
                 week52_distance = round(max(0.0, (week52_high - last_close) / week52_high * 100), 1)
 
-            # Age of the overhead resistance: trading days since the last close
-            # >= today's close. A reading of 250 means price is back at a level
-            # it last saw ~250 days ago and is testing it, which is the breakout
-            # SETUP these scans look for.
+            # Age of the overhead resistance: trading days back to the level
+            # price is now testing. A reading of 250 means price is back at a
+            # level it last saw ~250 days ago, which is the breakout SETUP
+            # these scans look for.
             #
-            # 0 means no prior close was ever this high -- blue sky, nothing left
-            # to break out of. That sentinel is also what keeps the number
-            # bounded: reporting "never exceeded" as a count would return the
-            # ticker's entire listing history (SANSERA gave 1206, encoding its
-            # 2021 IPO date rather than anything about a breakout).
+            # A bar counts as overhead only if BOTH hold:
+            #
+            #   (a) it is a confirmed swing high -- its close is the highest
+            #       over the +/-BREAKOUT_PIVOT_WIDTH bars around it, and
+            #   (b) its close exceeds BREAKOUT_TOLERANCE (105% of today).
+            #
+            # (b) means a minor overshoot part-way through a base doesn't reset
+            # the window: the walk-back runs past every close within the band
+            # to the last real breach. TATVA.NS read 1 under the old rule
+            # despite three years in a tight range; it reads 769 here. A close
+            # BELOW today was never overhead, so it never stops the walk and is
+            # already inside the window -- which is why the band's 97% floor
+            # needs no code.
+            #
+            # (a) is what stops the metric referencing a bar that price merely
+            # transited on the way DOWN. In a recovery through an old decline
+            # every price on the way up was touched on the way down, so without
+            # the pivot test the window drifts upward day after day and the
+            # scans fire on a retracement with no base behind it. Measured over
+            # the watchlist, 13 of the 18 scan-relevant windows landed on such
+            # a bar, and the pivot test cuts day-to-day churn by about 65%
+            # (2420 -> 838 jumps per 120 sessions) and re-firings with it.
+            #
+            # A corollary of (a): a brand-new high is not resistance until
+            # BREAKOUT_PIVOT_WIDTH sessions confirm it. That is deliberate --
+            # SAREGAMA.NS peaked 7% above today just two sessions ago, which
+            # the old rule treated as a wall (window 2) rather than as an
+            # unfinished move; it now reads 293, its real base.
+            #
+            # Three things here are load-bearing:
+            #
+            #  1. The blue-sky test runs BEFORE any of this, so 0 keeps meaning
+            #     "no prior close was ever this high" and nothing else. Testing
+            #     the band first hands 0 to any name whose entire overhead sits
+            #     within 5%, silently dropping it from every scan (UNIMECH.NS
+            #     397 -> 0, plus 10 others).
+            #  2. max() is the fallback when no bar satisfies (a) AND (b) --
+            #     keep the strict answer rather than reporting 0. This is what
+            #     holds UNIMECH.NS at 397 and STLTECH.NS at 35. Consequence:
+            #     the metric is NOT monotonic in the tolerance -- widening it
+            #     past a ticker's highest overhead drops the value back to
+            #     strict (CARYSIL.NS: 16 at 3%, 1 at 5%).
+            #  3. The lookback slice is applied AFTER dropping today's bar, so
+            #     it covers BREAKOUT_LOOKBACK *prior* sessions.
             #
             # Positional numpy search rather than index.get_loc -- get_loc
             # returns a slice/array if the date index ever holds duplicates,
             # which would silently yield a wrong count.
             closes = daily_close.to_numpy()
             if len(closes) >= 2:
-                prior_closes = closes[:-1]
-                at_or_above = np.nonzero(prior_closes >= closes[-1])[0]
-                breakout_window = (
-                    int(len(prior_closes) - at_or_above[-1]) if len(at_or_above) else 0
-                )
+                today_close = closes[-1]
+                prior_closes = closes[:-1][-BREAKOUT_LOOKBACK:]
+                n_prior = len(prior_closes)
+                at_or_above = np.nonzero(prior_closes >= today_close)[0]
+                if not len(at_or_above):
+                    breakout_window = 0
+                else:
+                    strict = n_prior - at_or_above[-1]
+
+                    # Confirmed swing highs. The first and last PIVOT_WIDTH
+                    # bars can't be evaluated (no full window either side), so
+                    # they're excluded -- which is exactly the confirmation lag
+                    # described above.
+                    span = 2 * BREAKOUT_PIVOT_WIDTH + 1
+                    tolerant = 0
+                    if n_prior >= span:
+                        windows = np.lib.stride_tricks.sliding_window_view(prior_closes, span)
+                        inner = prior_closes[BREAKOUT_PIVOT_WIDTH:n_prior - BREAKOUT_PIVOT_WIDTH]
+                        is_pivot = inner == windows.max(axis=1)
+                        resistance = np.nonzero(
+                            is_pivot & (inner > today_close * BREAKOUT_TOLERANCE)
+                        )[0]
+                        if len(resistance):
+                            tolerant = n_prior - (resistance[-1] + BREAKOUT_PIVOT_WIDTH)
+
+                    breakout_window = int(max(strict, tolerant))
 
             trend = trend_rank = trend_detail = None
             if ema40_series is not None:
@@ -1263,6 +1359,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 "net_volume_10d_ratio": net_volume_10d_ratio,
                 "week52_high": week52_high,
                 "week52_low": week52_low,
+                "week52_high_age": week52_high_age,
                 "week26_distance": week26_distance,
                 "week52_distance": week52_distance,
                 "breakout_window": breakout_window,
