@@ -25,7 +25,8 @@
         "SUN"
       ],
       "time_et": "21:00"
-    }
+    },
+    "weekly_wrapup": false
   },
   {
     "id": "591b1f1f",
@@ -62,7 +63,8 @@
         "SUN"
       ],
       "time_et": "21:00"
-    }
+    },
+    "weekly_wrapup": false
   },
   {
     "id": "1b91dbc4",
@@ -91,7 +93,8 @@
         "SUN"
       ],
       "time_et": "21:00"
-    }
+    },
+    "weekly_wrapup": false
   },
   {
     "id": "77f7a948",
@@ -121,7 +124,8 @@
         "SUN"
       ],
       "time_et": "21:00"
-    }
+    },
+    "weekly_wrapup": false
   },
   {
     "id": "09aea890",
@@ -151,7 +155,8 @@
         "SUN"
       ],
       "time_et": "21:00"
-    }
+    },
+    "weekly_wrapup": false
   },
   {
     "id": "ae60c0b9",
@@ -199,7 +204,8 @@
         "FRI"
       ],
       "time_et": "21:00"
-    }
+    },
+    "weekly_wrapup": false
   },
   {
     "id": "dccb5c72",
@@ -253,7 +259,8 @@
         "FRI"
       ],
       "time_et": "21:00"
-    }
+    },
+    "weekly_wrapup": false
   },
   {
     "id": "ed319eac",
@@ -292,7 +299,8 @@
         "FRI"
       ],
       "time_et": "21:00"
-    }
+    },
+    "weekly_wrapup": false
   },
   {
     "id": "b2b65277",
@@ -331,7 +339,7 @@
         "value": 0
       }
     ],
-    "enabled": false,
+    "enabled": true,
     "schedule": {
       "type": "scheduled",
       "days": [
@@ -344,7 +352,8 @@
         "SUN"
       ],
       "time_et": "21:00"
-    }
+    },
+    "weekly_wrapup": false
   },
   {
     "id": "2fb0f581",
@@ -390,7 +399,7 @@
         "value": 0
       }
     ],
-    "enabled": false,
+    "enabled": true,
     "schedule": {
       "type": "scheduled",
       "days": [
@@ -403,7 +412,8 @@
         "SUN"
       ],
       "time_et": "21:00"
-    }
+    },
+    "weekly_wrapup": false
   },
   {
     "id": "1c4f7ae2",
@@ -449,7 +459,7 @@
         "value": 0
       }
     ],
-    "enabled": false,
+    "enabled": true,
     "schedule": {
       "type": "scheduled",
       "days": [
@@ -462,6 +472,7 @@
         "SUN"
       ],
       "time_et": "21:00"
-    }
+    },
+    "weekly_wrapup": false
   }
 ]

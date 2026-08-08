@@ -36,7 +36,10 @@
     "p_cashflow",
     "roe",
     "note",
-    "vstop_weekly"
+    "vstop_weekly",
+    "breakout_window",
+    "week26_distance",
+    "week52_distance"
   ],
   "sort_by": "% Chg",
   "sort_dir": "\u2193"
