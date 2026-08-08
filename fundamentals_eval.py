@@ -344,3 +344,28 @@ Return ONLY a valid JSON object matching this schema:
     except Exception as e2:
         print(f"  [31b reasoning failed] {ticker}: {e2} -> Giving up")
         return _pending_fallback(str(e2))
+
+
+def analyze_single_ticker_sentiment(ticker, row_data, api_key):
+    """Regenerate one ticker's Sentiment view and persist it.
+
+    The single-ticker counterpart to refresh_fundamentals.py's batch loop, so
+    the UI's re-analyze buttons can refresh Sentiment alongside Expert Take
+    instead of leaving it to the nightly job. Mirrors
+    expert_views.analyze_single_ticker.
+
+    A failed generation is discarded rather than written: generate_fundamental_view
+    falls back to a "pending" stub on error, and persisting that would throw away
+    a perfectly good existing view. Returns the stored view, or None if the call
+    failed and the previous view was kept.
+    """
+    from google import genai
+
+    client = genai.Client(api_key=api_key)
+    view = generate_fundamental_view(client, row_data)
+    if not _is_valid_view(view):
+        return None
+    all_views = load_fundamentals()
+    all_views[ticker] = view
+    save_fundamentals(all_views)
+    return view

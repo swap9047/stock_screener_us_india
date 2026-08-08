@@ -139,6 +139,19 @@ def _view_age_days(view):
         return None
 
 
+# The decision rules the model must follow when picking a verdict. Kept as a
+# module constant rather than inline in build_expert_prompt because the
+# copy-for-AI payload in app.py quotes these same rules back to the user --
+# two copies would silently drift the moment the prompt is tuned, and the
+# payload would then be describing a decision rule the model never saw.
+VERDICT_RULES = """MANDATORY VERDICT RULES — apply these strictly before choosing a verdict:
+- HOLD is the DEFAULT. Use it whenever the picture is mixed, data is thin, or confidence is low.
+- ACCUMULATE requires ALL of: (a) Trend is "Uptrend" or "Strong Uptrend", (b) VStop direction is UP held ≥ 3 weeks, (c) RS is positive or N/A for very new data, (d) No negative news catalyst. If news is ABSENT, you may still give ACCUMULATE ONLY if ALL technical conditions above are clearly met — never give ACCUMULATE just because news is absent.
+- CAUTION requires AT LEAST TWO of the following five signals to agree — a single isolated signal (e.g. trend just not yet confirmed as an uptrend, with everything else neutral or positive) is NOT enough on its own and must fall through to HOLD instead: (1) Trend is Downtrend, (2) VStop flipped DOWN, (3) RSI > 80 on weekly or monthly (severely overbought), (4) heavy distribution (Net Volume 10D Negative with large ratio), (5) a clearly negative news catalyst.
+- NEVER give ACCUMULATE when news shows a negative catalyst (earnings miss, downgrade, regulatory issue, fraud, etc.).
+- NEVER give ACCUMULATE solely because news is absent or minimal — absent news → lean HOLD unless technicals fully satisfy the ACCUMULATE criteria above."""
+
+
 def build_expert_prompt(row_data, news_text, active_alerts_text="None"):
     ticker = row_data.get("ticker", "UNKNOWN")
     company_name = row_data.get("company_name", ticker)
@@ -228,12 +241,7 @@ EXPERT INSTRUCTIONS:
 ======================================================================
 Evaluate this stock from a disciplined growth-and-momentum investor perspective.
 
-MANDATORY VERDICT RULES — apply these strictly before choosing a verdict:
-- HOLD is the DEFAULT. Use it whenever the picture is mixed, data is thin, or confidence is low.
-- ACCUMULATE requires ALL of: (a) Trend is "Uptrend" or "Strong Uptrend", (b) VStop direction is UP held ≥ 3 weeks, (c) RS is positive or N/A for very new data, (d) No negative news catalyst. If news is ABSENT, you may still give ACCUMULATE ONLY if ALL technical conditions above are clearly met — never give ACCUMULATE just because news is absent.
-- CAUTION requires AT LEAST TWO of the following five signals to agree — a single isolated signal (e.g. trend just not yet confirmed as an uptrend, with everything else neutral or positive) is NOT enough on its own and must fall through to HOLD instead: (1) Trend is Downtrend, (2) VStop flipped DOWN, (3) RSI > 80 on weekly or monthly (severely overbought), (4) heavy distribution (Net Volume 10D Negative with large ratio), (5) a clearly negative news catalyst.
-- NEVER give ACCUMULATE when news shows a negative catalyst (earnings miss, downgrade, regulatory issue, fraud, etc.).
-- NEVER give ACCUMULATE solely because news is absent or minimal — absent news → lean HOLD unless technicals fully satisfy the ACCUMULATE criteria above.
+{VERDICT_RULES}
 
 Then:
 1. State the Verdict (ACCUMULATE / HOLD / CAUTION).
