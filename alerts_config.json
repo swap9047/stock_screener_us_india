@@ -64,7 +64,7 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": false
+    "weekly_wrapup": true
   },
   {
     "id": "1b91dbc4",
@@ -77,7 +77,7 @@
         "compare_type": "metric",
         "metric_b": "week52_high",
         "logic": "AND",
-        "multiplier": 0.98
+        "multiplier": 0.95
       }
     ],
     "enabled": true,
@@ -94,7 +94,7 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": false
+    "weekly_wrapup": true
   },
   {
     "id": "77f7a948",
@@ -125,7 +125,7 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": false
+    "weekly_wrapup": true
   },
   {
     "id": "09aea890",
@@ -156,7 +156,7 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": false
+    "weekly_wrapup": true
   },
   {
     "id": "ae60c0b9",
@@ -205,7 +205,7 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": false
+    "weekly_wrapup": true
   },
   {
     "id": "dccb5c72",
@@ -360,7 +360,7 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": false
+    "weekly_wrapup": true
   },
   {
     "id": "2fb0f581",
@@ -427,7 +427,7 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": false
+    "weekly_wrapup": true
   },
   {
     "id": "1c4f7ae2",
@@ -494,7 +494,7 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": false
+    "weekly_wrapup": true
   },
   {
     "id": "sc-cyclone",
@@ -537,7 +537,7 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": false
+    "weekly_wrapup": true
   },
   {
     "id": "sc-consolid",
@@ -580,7 +580,7 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": false
+    "weekly_wrapup": true
   },
   {
     "id": "sc-volrocket",
@@ -617,7 +617,7 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": false
+    "weekly_wrapup": true
   },
   {
     "id": "sc-bohorizon",
@@ -668,7 +668,7 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": false
+    "weekly_wrapup": true
   },
   {
     "id": "sc-alphalead",
@@ -711,7 +711,7 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": false
+    "weekly_wrapup": true
   },
   {
     "id": "sc-turbosurge",
@@ -775,6 +775,6 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": false
+    "weekly_wrapup": true
   }
 ]
