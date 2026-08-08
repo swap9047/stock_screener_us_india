@@ -231,6 +231,10 @@ def normalize_rule(rule):
         rule.setdefault("name", "")
         rule.setdefault("scope", "ALL")
         rule.setdefault("enabled", True)
+        # Opt-in to the Sunday weekly wrap-up digest (weekly_wrapup.py).
+        # Independent of "enabled" and of schedule.type -- a "Scan only" rule
+        # that never pings Discord daily can still be in the weekly digest.
+        rule.setdefault("weekly_wrapup", False)
         rule["schedule"] = normalize_schedule(rule.get("schedule"))
         return rule
     return {
@@ -239,6 +243,7 @@ def normalize_rule(rule):
         "scope": rule.get("scope", "ALL"),
         "conditions": [],
         "enabled": False,
+        "weekly_wrapup": False,
         "schedule": normalize_schedule(None),
     }
 
@@ -525,6 +530,39 @@ def _ascii_table(headers, rows):
     return "\n".join([fmt_row(headers), sep] + [fmt_row(r) for r in rows])
 
 
+def chunked_table_messages(title, headers, all_rows, limit=1900):
+    """One monospace table under `title`, split across as many Discord
+    messages as it takes to stay under `limit` chars. Every chunk repeats the
+    title (suffixed "(part N)") and the header row, so each one is readable
+    standalone. Returns [] for no rows."""
+    if not all_rows:
+        return []
+
+    def build_chunk(rows_subset, part=None):
+        table = _ascii_table(headers, rows_subset)
+        head = title + (f" (part {part})" if part else "")
+        return f"{head}\n```\n{table}\n```"
+
+    whole = build_chunk(all_rows)
+    if len(whole) <= limit:
+        return [whole]
+
+    # Doesn't fit in one message -- split rows across multiple, each with
+    # its own header/title so every chunk is readable standalone.
+    messages, current, part = [], [], 1
+    for r in all_rows:
+        trial = current + [r]
+        if len(build_chunk(trial, part)) > limit and current:
+            messages.append(build_chunk(current, part))
+            part += 1
+            current = [r]
+        else:
+            current = trial
+    if current:
+        messages.append(build_chunk(current, part))
+    return messages
+
+
 def build_discord_messages_for_rule(rule, tickers, snapshot_by_ticker, metric_labels, limit=1900):
     """Builds one or more Discord-ready messages for a single rule: a
     monospace table with Ticker as the first column, then a Watchlist column
@@ -559,30 +597,7 @@ def build_discord_messages_for_rule(rule, tickers, snapshot_by_ticker, metric_la
     name = rule.get("name") or "(unnamed)"
     scope_label = _scope_label(rule.get("scope"))
     title = f"**{name}** — {scope_label}"
-
-    def build_chunk(rows_subset, part=None):
-        table = _ascii_table(headers, rows_subset)
-        head = title + (f" (part {part})" if part else "")
-        return f"{head}\n```\n{table}\n```"
-
-    whole = build_chunk(all_rows)
-    if len(whole) <= limit:
-        return [whole]
-
-    # Doesn't fit in one message -- split rows across multiple, each with
-    # its own header/title so every chunk is readable standalone.
-    messages, current, part = [], [], 1
-    for r in all_rows:
-        trial = current + [r]
-        if len(build_chunk(trial, part)) > limit and current:
-            messages.append(build_chunk(current, part))
-            part += 1
-            current = [r]
-        else:
-            current = trial
-    if current:
-        messages.append(build_chunk(current, part))
-    return messages
+    return chunked_table_messages(title, headers, all_rows, limit=limit)
 
 
 def send_discord(webhook_url, content):

@@ -1141,10 +1141,17 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
             # "% Off 52W High" custom column (which is negative below the high),
             # so breakout rules read literally as "52WH Distance < 10". That
             # custom column is intentionally left alone.
+            #
+            # Clamped at 0: week26_high/week52_high are rounded to 1dp BEFORE
+            # this subtraction, so a close sitting marginally above the rounded
+            # high produces a tiny negative that rounds to -0.0 and renders as
+            # "-0.0%" -- a minus sign on a metric defined as always positive
+            # (SBCL.NS hit exactly this). A close cannot genuinely exceed its
+            # own trailing intraday high, so 0 is the correct floor.
             if week26_high:
-                week26_distance = round((week26_high - last_close) / week26_high * 100, 1)
+                week26_distance = round(max(0.0, (week26_high - last_close) / week26_high * 100), 1)
             if week52_high:
-                week52_distance = round((week52_high - last_close) / week52_high * 100, 1)
+                week52_distance = round(max(0.0, (week52_high - last_close) / week52_high * 100), 1)
 
             # Age of the overhead resistance: trading days since the last close
             # >= today's close. A reading of 250 means price is back at a level
