@@ -159,14 +159,6 @@
     "scope": "ALL",
     "conditions": [
       {
-        "metric_a": "last_close",
-        "operator": "<=",
-        "compare_type": "metric",
-        "metric_b": "ema10",
-        "logic": "AND",
-        "multiplier": 1.03
-      },
-      {
         "metric_a": "vstop_weekly_weeks_since_change",
         "operator": ">=",
         "compare_type": "value",
@@ -186,6 +178,14 @@
         "compare_type": "metric",
         "metric_b": "ema40",
         "logic": "AND"
+      },
+      {
+        "metric_a": "last_close",
+        "operator": ">=",
+        "compare_type": "metric",
+        "metric_b": "ema10",
+        "logic": "AND",
+        "multiplier": 1.04
       }
     ],
     "enabled": true,
