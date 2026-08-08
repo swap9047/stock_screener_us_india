@@ -337,6 +337,13 @@
         "compare_type": "value",
         "logic": "AND",
         "value": 0
+      },
+      {
+        "metric_a": "overhead_supply",
+        "operator": "<",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": 20
       }
     ],
     "enabled": true,
@@ -397,6 +404,13 @@
         "compare_type": "value",
         "logic": "AND",
         "value": 0
+      },
+      {
+        "metric_a": "overhead_supply",
+        "operator": "<",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": 20
       }
     ],
     "enabled": true,
@@ -457,6 +471,13 @@
         "compare_type": "value",
         "logic": "AND",
         "value": 0
+      },
+      {
+        "metric_a": "overhead_supply",
+        "operator": "<",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": 20
       }
     ],
     "enabled": true,

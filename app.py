@@ -848,10 +848,11 @@ def ratio_cols():
 VOLUME_COLS = ["Vol 10D", "Vol 100D"]
 PCT_COLS = ["% Chg", "Qtr Profit Growth %", "Qtr EPS Growth %", "Qtr Revenue Growth %", "ROE %", "ROCE %"]
 PERF_PCT_COLS = ["Perf 1M %", "Perf 3M %", "Perf 6M %", "Perf 1Y %", "Perf 3Y %"]
-# Distance BELOW a trailing high: always >= 0, so formatted WITHOUT a sign
-# prefix. PCT_COLS' "+12.5%" would read as 12.5% ABOVE the high -- the exact
-# opposite of what these mean.
-DIST_PCT_COLS = ["26WH Distance", "52WH Distance"]
+# Unsigned percentages -- always >= 0, so formatted WITHOUT a sign prefix.
+# PCT_COLS' "+12.5%" would read as 12.5% ABOVE the high for the distances,
+# the exact opposite of what they mean, and a signed share-of-volume makes
+# no sense either.
+DIST_PCT_COLS = ["26WH Distance", "52WH Distance", "Overhead Supply"]
 # A count of trading days, not a price or a ratio -- whole numbers only.
 COUNT_COLS = ["Breakout Window", "52W High Age"]
 
@@ -984,6 +985,16 @@ def column_definitions(settings, labels):
             "stock that actually clears its old level drops to 0 that same day. Looks back at most "
             "5 years. Powers the Long-term breakout scan (≥200 with 52WH Distance <10%) and the "
             "Short-term one (40–200 with 26WH Distance <10%)."
+        ),
+        "Overhead Supply": (
+            "Percent of the last year's TRADED VOLUME that changed hands at closes above today's "
+            "price — i.e. how much stock is underwater and liable to sell into a rally. 0 means "
+            "nothing above is trapped; 30 means roughly a third of a year's turnover is sitting on "
+            "a loss overhead. Weighs shares, not sessions, so a heavy distribution day counts for "
+            "far more than a quiet drift day. Complements Breakout Window rather than repeating it: "
+            "that gives the AGE of the nearest barrier, this gives the WEIGHT of all of it — "
+            "WINDLAS.NS shows a 190-day window but ~30% supply because ten more levels sit above, "
+            "while UFBL.NS has twelve levels above yet ~0% because all of them predate the year."
         ),
         "52W High Age": (
             "Trading days since the 52-week high was SET — 0 means the high is today's bar. Pairs "
@@ -1768,6 +1779,7 @@ def build_column_defs(labels, custom_columns=None):
         ("week26_distance", "26WH Distance"),
         ("week52_distance", "52WH Distance"),
         ("week52_high_age", "52W High Age"),
+        ("overhead_supply", "Overhead Supply"),
         ("data_end", "Data Thru"),
         ("ema10", labels["w_fast"]),
         ("ema20", labels["w_mid"]),
@@ -1825,7 +1837,8 @@ def build_column_defs(labels, custom_columns=None):
     # the opposite sign), so they're offered in the picker but stay off
     # until asked for; everything else shows by default.
     default_hidden = {"Vol 10D", "Vol 100D", "Flag", "Invested",
-                      "Breakout Window", "26WH Distance", "52WH Distance", "52W High Age"}
+                      "Breakout Window", "26WH Distance", "52WH Distance", "52W High Age",
+                      "Overhead Supply"}
     default_visible = [lbl for lbl in all_labels if lbl not in default_hidden]
     return optional_defs, label_by_key, key_by_label, all_labels, default_visible
 

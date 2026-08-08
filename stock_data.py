@@ -90,6 +90,9 @@ BREAKOUT_LOOKBACK = 1260
 # on such a bar. It also means a brand-new high is not treated as an
 # established level until 10 sessions have confirmed it.
 BREAKOUT_PIVOT_WIDTH = 10
+# Overhead Supply window: 252 trading days (~1 year), matching the 52-week
+# framing the distance metrics already use.
+OVERHEAD_LOOKBACK = 252
 
 DEFAULT_SETTINGS = {
     "ema_weekly": [10, 20, 40],   # weekly EMA fast/mid/slow periods
@@ -334,6 +337,7 @@ def get_filterable_metrics(settings=None):
         "26WH Distance": "week26_distance",
         "52WH Distance": "week52_distance",
         "52W High Age": "week52_high_age",
+        "Overhead Supply": "overhead_supply",
         "Vol 10D": "avg_volume_10d",
         "Vol 100D": "avg_volume_100d",
         "% Chg": "pct_change_1d",
@@ -1113,6 +1117,31 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
             avg_volume_10d = round(float(daily_volume.tail(10).mean())) if len(daily_volume) >= 10 else None
             avg_volume_100d = round(float(daily_volume.tail(100).mean())) if len(daily_volume) >= 100 else None
 
+            # Share of the last year's VOLUME that changed hands above today's
+            # close -- how much stock is underwater and liable to sell into a
+            # rally. Complements breakout_window rather than duplicating it:
+            # that measures the AGE of the nearest barrier, this measures the
+            # WEIGHT of all of it. WINDLAS.NS carries 10 confirmed pivots above
+            # today and ~30% of a year's volume trapped, while UFBL.NS has 12
+            # pivots above yet 0%, because all of its overhead predates the
+            # window -- counting levels misleads, weighing recent supply does not.
+            #
+            # Pairs Close and Volume with a SINGLE dropna. daily_close (:967)
+            # and daily_volume above are dropped independently, so a bar missing
+            # one field shifts them relative to each other and would pair a
+            # close with a different day's volume.
+            overhead_supply = None
+            close_vol = df[["Close", "Volume"]].dropna().tail(OVERHEAD_LOOKBACK)
+            if len(close_vol) >= 2:
+                vols = close_vol["Volume"].to_numpy()
+                total_vol_window = vols.sum()
+                # A window of entirely zero volume yields None, not 0 -- "no
+                # data" and "no overhead" must stay distinguishable, same rule
+                # as breakout_window's blue-sky sentinel.
+                if total_vol_window > 0:
+                    is_above = close_vol["Close"].to_numpy() > last_close
+                    overhead_supply = round(float(vols[is_above].sum() / total_vol_window * 100), 1)
+
             volume_trend = None
             if avg_volume_10d is not None and avg_volume_100d is not None and avg_volume_100d > 0:
                 vol_ratio = avg_volume_10d / avg_volume_100d
@@ -1360,6 +1389,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 "week52_high": week52_high,
                 "week52_low": week52_low,
                 "week52_high_age": week52_high_age,
+                "overhead_supply": overhead_supply,
                 "week26_distance": week26_distance,
                 "week52_distance": week52_distance,
                 "breakout_window": breakout_window,
