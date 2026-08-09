@@ -63,7 +63,7 @@ from stock_data import (
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE, send_discord,
                      send_discord_batch, build_discord_messages_for_rule, describe_schedule,
                      DAY_CODES, DAY_LABELS, DEFAULT_DAYS, ALLOWED_HOURS, HOUR_LABELS,
-                     compute_rule_truth, RULE_COLOR_HEX)
+                     compute_rule_truth, RULE_COLOR_HEX, _metrics_used_in_conditions)
 
 # Alerts-column color picker, shared by the add-rule builder and the
 # existing-rule editor -- UI label <-> stored rule["color"] value ("green"/
@@ -718,6 +718,20 @@ AI_REVIEW_INSTRUCTION = (
     "technicals, future guidance etc."
 )
 
+# Always included in the AI review payload's Metrics section, regardless of
+# which columns are currently toggled visible in the watchlist table. The
+# table's own default_hidden set (build_column_defs) exists to keep the
+# table narrow -- "convenient to look at" -- which is a different goal from
+# "what a thorough investment review needs", so a column toggled off the
+# table to save space shouldn't silently vanish from every AI review too.
+# Every key here already has a real entry in column_definitions(), so no
+# glossary work is needed alongside this list.
+AI_REVIEW_CORE_KEYS = [
+    "ema200", "rsi14_daily", "rs_daily", "rs_monthly", "adx_weekly_14",
+    "overhead_supply", "week52_high_age", "week52_high", "week52_low",
+    "high_5y", "high_5y_distance", "rel_ret_1m_n500", "rel_ret_6m_n500",
+]
+
 
 def _fmt_ai_value(v):
     """Render a cell value for the payload: trim float noise, drop empties."""
@@ -749,6 +763,18 @@ def build_ai_review_payload(
     show_sentiment = "fundamentals" in visible_keys
     out = []
 
+    # Metrics/definitions cover visible_keys PLUS the fixed AI_REVIEW_CORE_KEYS
+    # set (see its docstring) -- order: visible columns first (matches what
+    # you're already looking at in the table), then the core additions not
+    # already covered.
+    metric_keys = list(visible_keys) + [k for k in AI_REVIEW_CORE_KEYS if k not in visible_keys]
+    # Metrics a triggered alert's own conditions reference (e.g. "Alpha
+    # Leaders" testing ADX-M) aren't necessarily in metric_keys -- their live
+    # values already appear inline in the "Triggered alerts" text below, but
+    # without this they'd have no definition anywhere in the payload, and
+    # the AI would be left guessing what e.g. "ADX-M[32.5]" even measures.
+    referenced_alert_metrics = []
+
     if len(rows) == 1:
         r = rows[0]
         who = f"{r.get('company_name') or r['ticker']} ({r['ticker']})"
@@ -770,7 +796,7 @@ def build_ai_review_payload(
         out.append(" · ".join(meta))
 
         out.append("\n### Metrics")
-        for k in visible_keys:
+        for k in metric_keys:
             val = _fmt_ai_value(export_value(r, k))
             if val is not None:
                 out.append(f"- **{label_by_key[k]}**: {val}")
@@ -794,6 +820,9 @@ def build_ai_review_payload(
                 out.append(f"\n**{p['rule_name'] or '(unnamed)'}**")
                 out.append(describe_chain_with_values(
                     p["row"], p["conditions"], metric_labels, rule_by_id))
+                for mkey in _metrics_used_in_conditions(p["conditions"]):
+                    if mkey not in referenced_alert_metrics:
+                        referenced_alert_metrics.append(mkey)
 
         if show_expert:
             v = expert_views.get(t) or {}
@@ -824,8 +853,11 @@ def build_ai_review_payload(
 
     out.append("\n\n# Reference — how to read the above")
     out.append("\n## Column definitions")
-    for k in visible_keys:
-        lbl = label_by_key[k]
+    definition_keys = metric_keys + [k for k in referenced_alert_metrics if k not in metric_keys]
+    for k in definition_keys:
+        lbl = label_by_key.get(k)
+        if not lbl:
+            continue
         d = definitions.get(lbl)
         if d:
             out.append(f"- **{lbl}**: {d}")
@@ -1043,6 +1075,12 @@ def column_definitions(settings, labels):
             "rounded stored close."
         ),
         "Data Thru": "Most recent date with price data for this ticker. Shown in red if 3+ days stale.",
+        "Net Vol 10D": (
+            "Sums each of the last 10 trading days' volume as UP-volume (close higher than the "
+            "prior day) or DOWN-volume (close lower). Positive means more volume traded on up "
+            "days than down days over that window, Negative the reverse. Hover a cell for the "
+            "exact net/total ratio."
+        ),
         "Vol Trend": (
             f"Exploding: 10D avg volume ≥ {settings.get('volume_explode_ratio', 1.4)}× the 100D avg. "
             f"Declining: ≤ {settings.get('volume_decline_ratio', 0.7)}× the 100D avg. Otherwise In-line. "
