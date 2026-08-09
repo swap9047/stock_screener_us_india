@@ -223,9 +223,13 @@ def load_markets_registry():
     same pattern as column_prefs.json's bootstrap."""
     if not os.path.exists(MARKETS_FILE):
         settings = load_settings()
+        us_benchmark = settings.get("benchmark_us", BENCHMARKS["US"])
+        india_benchmark = settings.get("benchmark_india", BENCHMARKS["INDIA"])
         registry = {
-            "US": {"label": "US Watchlist", "benchmark": settings.get("benchmark_us", BENCHMARKS["US"])},
-            "INDIA": {"label": "India Watchlist", "benchmark": settings.get("benchmark_india", BENCHMARKS["INDIA"])},
+            "us_invested": {"label": "US Invested", "benchmark": us_benchmark},
+            "india_invested": {"label": "India Invested", "benchmark": india_benchmark},
+            "india_watchlist": {"label": "India Watchlist", "benchmark": india_benchmark},
+            "us_watchlist": {"label": "US Watchlist", "benchmark": us_benchmark},
         }
         save_markets_registry(registry)
         return registry
@@ -237,8 +241,10 @@ def load_markets_registry():
         return registry
     except Exception:
         return {
-            "US": {"label": "US Watchlist", "benchmark": BENCHMARKS["US"]},
-            "INDIA": {"label": "India Watchlist", "benchmark": BENCHMARKS["INDIA"]},
+            "us_invested": {"label": "US Invested", "benchmark": BENCHMARKS["US"]},
+            "india_invested": {"label": "India Invested", "benchmark": BENCHMARKS["INDIA"]},
+            "india_watchlist": {"label": "India Watchlist", "benchmark": BENCHMARKS["INDIA"]},
+            "us_watchlist": {"label": "US Watchlist", "benchmark": BENCHMARKS["US"]},
         }
 
 
@@ -491,8 +497,17 @@ def load_ticker_index():
     """Returns {"TICKER": {"index": "S&P 500", "benchmark": "SPY"}, ...} --
     each ticker's permanently-assigned index, set once by
     assign_ticker_index_if_missing() and never overwritten automatically.
-    Same flat "ticker -> small dict" shape as ticker_notes.json."""
+    Same flat "ticker -> small dict" shape as ticker_notes.json.
+
+    Bootstraps an empty file on first call if missing (same pattern as
+    load_markets_registry()/load_watchlist_groups()) -- not just for
+    consistency: github_sync.push_all_config() refuses to push ANY file in
+    its list that doesn't exist on disk, so this is what guarantees
+    ticker_index.json is always there once fetch_all_markets has run at
+    least once, even if every currently-registered ticker already has an
+    assignment and backfill_ticker_indices() has nothing new to write."""
     if not os.path.exists(TICKER_INDEX_FILE):
+        save_ticker_index({})
         return {}
     try:
         with open(TICKER_INDEX_FILE) as f:

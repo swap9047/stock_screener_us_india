@@ -56,6 +56,8 @@ SYNCABLE_FILES = [
     ("ticker_notes.json", "Per-ticker notes and flags"),
     ("expert_views.json", "AI Expert Views"),
     ("fundamentals.json", "AI Fundamental Views"),
+    ("ticker_index.json", "Per-ticker index assignment"),
+    ("watchlist_groups.json", "Combined-tab membership"),
 ]
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))

@@ -1483,7 +1483,7 @@ def _apply_watchlist_tickers(market, market_label, existing_tickers, candidate_t
     gh_token, gh_repo, gh_branch = get_github_config(st.secrets)
     if gh_token and gh_repo:
         with st.spinner("Pushing watchlist to GitHub..."):
-            ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=["watchlist.json", "invested.json", "data_snapshot.json"], message=f"Update {market_label}")
+            ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=["watchlist.json", "invested.json", "data_snapshot.json", "ticker_index.json"], message=f"Update {market_label}")
             if ok:
                 st.success("Successfully pushed to GitHub!")
             else:
@@ -2159,12 +2159,16 @@ def render_shared_sort_control(label_by_key, key_by_label):
     the primary key and offers "(default order)"; levels 2-3 are optional
     tie-breakers and offer "(none)", each only shown once the level above
     it has a real column chosen."""
-    # matched_alerts (Alerts) and vstop_change (VStop Weeks Ago) are
-    # computed AFTER filtering, inside render_market_tab -- not present on
-    # the raw row dict at sort time -- excluded rather than silently
-    # sorting wrong (or crashing on a missing key).
+    # matched_alerts (Alerts), vstop_change (VStop Weeks Ago), tech_uptrend_label
+    # (Tech Uptrend) and fundamentals (Sentiment) are all computed AFTER
+    # filtering, inside render_market_tab (tech_uptrend_label is a tooltip-
+    # wrapped display string built from raw_df; fundamentals is a separate
+    # per-ticker JSON lookup, never a field on the raw row dict at all) --
+    # none of them are present on the raw row dict at sort time -- excluded
+    # rather than silently sorting wrong (or crashing on a missing key).
     sort_labels = ["Ticker", "Company Name", "Last"] + [
-        lbl for key, lbl in label_by_key.items() if key not in ("matched_alerts", "vstop_change")
+        lbl for key, lbl in label_by_key.items()
+        if key not in ("matched_alerts", "vstop_change", "tech_uptrend_label", "fundamentals")
     ]
 
     prefs = load_column_prefs_full()
@@ -2293,6 +2297,17 @@ def render_shared_column_picker(labels):
                 continue
             order.insert(idx + 1, fund_key)
             inserted = True
+
+    # Index is a new, default-visible column (ea9f430) that predates most
+    # users' saved column_prefs.json -- without its own force-insert like the
+    # fundamentals block above, it silently never appears for anyone whose
+    # layout was saved before this feature shipped. Land it at the front
+    # (right after Ticker/Last, which aren't part of this order list) since
+    # it's a per-ticker identity column, not tied to any topical group.
+    if "index_name" in label_by_key and "index_name" not in st.session_state[SHARED_ORDER_KEY]:
+        st.session_state[SHARED_ORDER_KEY].insert(0, "index_name")
+        inserted = True
+
     if inserted:
         save_column_prefs(st.session_state[SHARED_ORDER_KEY])
 
@@ -3042,6 +3057,14 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
                 groups = load_watchlist_groups()
                 groups[market] = new_members
                 save_watchlist_groups(groups)
+                gh_token, gh_repo, gh_branch = get_github_config(getattr(st, "secrets", None))
+                if gh_token and gh_repo:
+                    ok, msg = push_all_config(
+                        gh_token, gh_repo, gh_branch, filenames=["watchlist_groups.json"],
+                        message=f"Update {market_display_label} membership",
+                    )
+                    if not ok:
+                        st.error(f"Failed to push to GitHub: {msg}")
                 st.rerun()
     else:
         watchlists = load_watchlists()
@@ -3703,7 +3726,7 @@ if sb1.button("Refresh Data", type="primary", width="stretch"):
         _persist_and_serve(per_market, as_of, settings_now)
         token, repo, branch = get_github_config(st.secrets)
         if token and repo:
-            ok, msg = push_all_config(token, repo, branch, filenames=["data_snapshot.json"], message=f"Refresh data snapshot via UI ({as_of})")
+            ok, msg = push_all_config(token, repo, branch, filenames=["data_snapshot.json", "ticker_index.json"], message=f"Refresh data snapshot via UI ({as_of})")
             if ok:
                 st.toast(f"✓ Refreshed {len(combined)} tickers & updated GitHub snapshot!")
             else:
@@ -3826,6 +3849,57 @@ st.sidebar.caption(
     )
 )
 
+market_keys_now = list(markets_registry_now.keys())
+market_tab_labels = [markets_registry_now[mkt]["label"] for mkt in market_keys_now]
+
+# Two combined views, sequenced first: "All Invested" and "All Watchlist".
+# Synthetic keys ("all_invested"/"all_watchlist") namespace their own widget
+# state -- see render_market_tab's combined_markets docstring -- and are
+# reserved names (not real market keys), so they can never collide with a
+# registry key. The KEY and LABEL of each group are fixed here (no UI to
+# create a 3rd/4th group, by design) -- only MEMBERSHIP is user-editable,
+# via the "Configure this view" expander rendered on each combined tab,
+# which reads/writes watchlist_groups.json through load_watchlist_groups().
+COMBINED_TAB_DEFS = [
+    ("all_invested", "All Invested"),
+    ("all_watchlist", "All Watchlist"),
+]
+combined_keys = [k for k, _ in COMBINED_TAB_DEFS]
+combined_tab_labels = [lbl for _, lbl in COMBINED_TAB_DEFS]
+combined_display_label_by_key = {k: lbl for k, lbl in COMBINED_TAB_DEFS}
+watchlist_groups_now = load_watchlist_groups()
+combined_markets_by_key = {k: watchlist_groups_now.get(k, []) for k in combined_keys}
+
+# key= + on_change="rerun" is what makes the tab strip TRACK its selection.
+# Without them st.tabs re-selects its first tab on every script run, so any
+# st.rerun() -- and the Alert Rules tab fires one on nearly every interaction
+# -- dumped you back on the first watchlist. The rule expander underneath was
+# still open (it keeps its own state); you just weren't on that tab any more,
+# which reads exactly like the alert collapsing.
+#
+# This block is instantiated as early as possible in the script -- BEFORE
+# render_shared_column_picker() and the dashboard shortcut controls below,
+# both of which have widgets (e.g. "Show fundamental columns") that call
+# st.rerun() immediately on change. A keyed widget's session_state entry is
+# only kept alive across a rerun if that widget is actually re-instantiated
+# during the run that precedes it; an st.rerun() fired from code positioned
+# BEFORE this point used to cut the script short before st.tabs() was ever
+# reached on that pass, silently orphaning "main_tabs" and dumping the user
+# back on the first tab (confirmed empirically -- session_state["main_tabs"]
+# read back as None immediately after such a rerun). Instantiating the tab
+# strip first closes that gap for every widget below it, not just one.
+#
+# Tab bodies still all execute: with on_change="rerun" they run unless each is
+# individually guarded on `.open`, and skipping hidden tabs would change what
+# the visible one shows (the market tabs populate alert_matches). Persistence
+# only, deliberately -- laziness is a separate job.
+all_tabs = st.tabs(combined_tab_labels + market_tab_labels + ["News", "Alert Rules"],
+                   key="main_tabs", on_change="rerun")
+n_combined = len(combined_keys)
+combined_tabs = dict(zip(combined_keys, all_tabs[:n_combined]))
+market_tabs = dict(zip(market_keys_now, all_tabs[n_combined:-2]))
+tab_news, tab_alerts = all_tabs[-2], all_tabs[-1]
+
 shared_visible_keys, shared_label_by_key, shared_sort_levels = render_shared_column_picker(
     ema_col_labels(settings_now)
 )
@@ -3865,45 +3939,6 @@ with dash2:
                 st.success(f"Added \"{dash_wl_label.strip()}\".")
                 time.sleep(1)
                 st.rerun()
-
-market_keys_now = list(markets_registry_now.keys())
-market_tab_labels = [markets_registry_now[mkt]["label"] for mkt in market_keys_now]
-
-# Two combined views, sequenced first: "All Invested" and "All Watchlist".
-# Synthetic keys ("all_invested"/"all_watchlist") namespace their own widget
-# state -- see render_market_tab's combined_markets docstring -- and are
-# reserved names (not real market keys), so they can never collide with a
-# registry key. The KEY and LABEL of each group are fixed here (no UI to
-# create a 3rd/4th group, by design) -- only MEMBERSHIP is user-editable,
-# via the "Configure this view" expander rendered on each combined tab,
-# which reads/writes watchlist_groups.json through load_watchlist_groups().
-COMBINED_TAB_DEFS = [
-    ("all_invested", "All Invested"),
-    ("all_watchlist", "All Watchlist"),
-]
-combined_keys = [k for k, _ in COMBINED_TAB_DEFS]
-combined_tab_labels = [lbl for _, lbl in COMBINED_TAB_DEFS]
-combined_display_label_by_key = {k: lbl for k, lbl in COMBINED_TAB_DEFS}
-watchlist_groups_now = load_watchlist_groups()
-combined_markets_by_key = {k: watchlist_groups_now.get(k, []) for k in combined_keys}
-
-# key= + on_change="rerun" is what makes the tab strip TRACK its selection.
-# Without them st.tabs re-selects its first tab on every script run, so any
-# st.rerun() -- and the Alert Rules tab fires one on nearly every interaction
-# -- dumped you back on the first watchlist. The rule expander underneath was
-# still open (it keeps its own state); you just weren't on that tab any more,
-# which reads exactly like the alert collapsing.
-#
-# Tab bodies still all execute: with on_change="rerun" they run unless each is
-# individually guarded on `.open`, and skipping hidden tabs would change what
-# the visible one shows (the market tabs populate alert_matches). Persistence
-# only, deliberately -- laziness is a separate job.
-all_tabs = st.tabs(combined_tab_labels + market_tab_labels + ["News", "Alert Rules"],
-                   key="main_tabs", on_change="rerun")
-n_combined = len(combined_keys)
-combined_tabs = dict(zip(combined_keys, all_tabs[:n_combined]))
-market_tabs = dict(zip(market_keys_now, all_tabs[n_combined:-2]))
-tab_news, tab_alerts = all_tabs[-2], all_tabs[-1]
 
 for ck in combined_keys:
     with combined_tabs[ck]:
