@@ -326,5 +326,9 @@
   "COHANCE.NS": {
     "index": "Nifty 500",
     "benchmark": "^CRSLDX"
+  },
+  "BECTORFOOD.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
   }
 }
