@@ -99,15 +99,14 @@
     "model_used": "gemini-3.5-flash-lite"
   },
   "NTRA": {
-    "verdict": "ACCUMULATE",
-    "headline": "NTRA exhibits robust momentum and a strong structural uptrend near 52-week highs.",
-    "technical_summary": "Natera trades firmly in a strong uptrend above rising moving averages with a 10-week VStop holding positive. Weekly and daily RSI reflect solid bullish momentum, supported by positive net volume accumulation.",
-    "catalyst_summary": "Executive insider selling was routine via a 10b5-1 plan, while the recent regulatory submission of the Signatera MRD test in Japan serves as a positive global expansion catalyst.",
-    "actionable_take": "Look to add on minor intraday pullbacks toward the short-term moving averages, utilizing the VStop level at 266.7 as a disciplined trailing stop guardrail to manage risk.",
-    "as_of": "2026-08-08 04:10",
-    "news_used": "* **Aug 7, 2026:** Executive Chairman Matthew Rabinowitz sold 2,000 shares ($641,800) under a 10b5-1 trading plan.\n* **Aug 7, 2026:** Natera submitted its Signatera MRD test to Japan's PMDA for use in muscle-invasive bladder cancer.",
-    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
-    "model_used": "gemini-3.5-flash-lite"
+    "verdict": "HOLD",
+    "headline": "test",
+    "technical_summary": "t",
+    "catalyst_summary": "c",
+    "actionable_take": "a",
+    "as_of": "2026-08-09 00:00",
+    "news_source": "test",
+    "model_used": "test-model"
   },
   "ORCL": {
     "verdict": "CAUTION",
