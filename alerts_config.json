@@ -1,35 +1,5 @@
 [
   {
-    "id": "fb030685",
-    "name": "stocks below 40w ema",
-    "scope": "ALL",
-    "conditions": [
-      {
-        "metric_a": "last_close",
-        "operator": "<=",
-        "compare_type": "metric",
-        "logic": "AND",
-        "metric_b": "ema40"
-      }
-    ],
-    "enabled": true,
-    "schedule": {
-      "type": "scheduled",
-      "days": [
-        "MON",
-        "TUE",
-        "WED",
-        "THU",
-        "FRI",
-        "SAT",
-        "SUN"
-      ],
-      "time_et": "21:00"
-    },
-    "weekly_wrapup": true,
-    "color": "red"
-  },
-  {
     "id": "591b1f1f",
     "name": "uptrending stocks",
     "scope": "ALL",
@@ -98,38 +68,6 @@
     },
     "weekly_wrapup": true,
     "color": "green"
-  },
-  {
-    "id": "77f7a948",
-    "name": "stocks with red flag",
-    "scope": "ALL",
-    "conditions": [
-      {
-        "metric_a": "flag",
-        "operator": "in",
-        "compare_type": "value",
-        "value": [
-          "Red"
-        ],
-        "logic": "AND"
-      }
-    ],
-    "enabled": true,
-    "schedule": {
-      "type": "scheduled",
-      "days": [
-        "MON",
-        "TUE",
-        "WED",
-        "THU",
-        "FRI",
-        "SAT",
-        "SUN"
-      ],
-      "time_et": "21:00"
-    },
-    "weekly_wrapup": true,
-    "color": "red"
   },
   {
     "id": "09aea890",
@@ -372,74 +310,6 @@
     "color": "green"
   },
   {
-    "id": "2fb0f581",
-    "name": "Short-term breakout",
-    "scope": "ALL",
-    "conditions": [
-      {
-        "metric_a": "breakout_window",
-        "operator": ">=",
-        "compare_type": "value",
-        "logic": "AND",
-        "value": 40
-      },
-      {
-        "metric_a": "breakout_window",
-        "operator": "<",
-        "compare_type": "value",
-        "logic": "AND",
-        "value": 200
-      },
-      {
-        "metric_a": "week26_distance",
-        "operator": "<",
-        "compare_type": "value",
-        "logic": "AND",
-        "value": 10
-      },
-      {
-        "metric_a": "trend",
-        "operator": "in",
-        "compare_type": "value",
-        "logic": "AND",
-        "value": [
-          "Uptrend",
-          "Strong Uptrend"
-        ]
-      },
-      {
-        "metric_a": "rs_weekly",
-        "operator": ">",
-        "compare_type": "value",
-        "logic": "AND",
-        "value": 0
-      },
-      {
-        "metric_a": "overhead_supply",
-        "operator": "<",
-        "compare_type": "value",
-        "logic": "AND",
-        "value": 20
-      }
-    ],
-    "enabled": false,
-    "schedule": {
-      "type": "scheduled",
-      "days": [
-        "MON",
-        "TUE",
-        "WED",
-        "THU",
-        "FRI",
-        "SAT",
-        "SUN"
-      ],
-      "time_et": "21:00"
-    },
-    "weekly_wrapup": true,
-    "color": "green"
-  },
-  {
     "id": "1c4f7ae2",
     "name": "Breaking out now",
     "scope": "ALL",
@@ -493,50 +363,6 @@
     "enabled": true,
     "schedule": {
       "type": "scheduled",
-      "days": [
-        "MON",
-        "TUE",
-        "WED",
-        "THU",
-        "FRI",
-        "SAT",
-        "SUN"
-      ],
-      "time_et": "21:00"
-    },
-    "weekly_wrapup": true,
-    "color": "green"
-  },
-  {
-    "id": "sc-cyclone",
-    "name": "Cyclone (scan)",
-    "scope": "ALL",
-    "conditions": [
-      {
-        "metric_a": "last_close",
-        "operator": ">=",
-        "logic": "AND",
-        "compare_type": "metric",
-        "metric_b": "vstop_weekly"
-      },
-      {
-        "metric_a": "rsi14_daily",
-        "operator": ">=",
-        "logic": "AND",
-        "compare_type": "value",
-        "value": 45
-      },
-      {
-        "metric_a": "vstop_weekly_weeks_since_change",
-        "operator": "<=",
-        "logic": "AND",
-        "compare_type": "value",
-        "value": 8
-      }
-    ],
-    "enabled": false,
-    "schedule": {
-      "type": "none",
       "days": [
         "MON",
         "TUE",
@@ -713,6 +539,180 @@
       }
     ],
     "enabled": true,
+    "schedule": {
+      "type": "none",
+      "days": [
+        "MON",
+        "TUE",
+        "WED",
+        "THU",
+        "FRI",
+        "SAT",
+        "SUN"
+      ],
+      "time_et": "21:00"
+    },
+    "weekly_wrapup": true,
+    "color": "green"
+  },
+  {
+    "id": "fb030685",
+    "name": "stocks below 40w ema",
+    "scope": "ALL",
+    "conditions": [
+      {
+        "metric_a": "last_close",
+        "operator": "<=",
+        "compare_type": "metric",
+        "logic": "AND",
+        "metric_b": "ema40"
+      }
+    ],
+    "enabled": true,
+    "schedule": {
+      "type": "scheduled",
+      "days": [
+        "MON",
+        "TUE",
+        "WED",
+        "THU",
+        "FRI",
+        "SAT",
+        "SUN"
+      ],
+      "time_et": "21:00"
+    },
+    "weekly_wrapup": true,
+    "color": "red"
+  },
+  {
+    "id": "77f7a948",
+    "name": "stocks with red flag",
+    "scope": "ALL",
+    "conditions": [
+      {
+        "metric_a": "flag",
+        "operator": "in",
+        "compare_type": "value",
+        "value": [
+          "Red"
+        ],
+        "logic": "AND"
+      }
+    ],
+    "enabled": true,
+    "schedule": {
+      "type": "scheduled",
+      "days": [
+        "MON",
+        "TUE",
+        "WED",
+        "THU",
+        "FRI",
+        "SAT",
+        "SUN"
+      ],
+      "time_et": "21:00"
+    },
+    "weekly_wrapup": true,
+    "color": "red"
+  },
+  {
+    "id": "2fb0f581",
+    "name": "Short-term breakout",
+    "scope": "ALL",
+    "conditions": [
+      {
+        "metric_a": "breakout_window",
+        "operator": ">=",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": 40
+      },
+      {
+        "metric_a": "breakout_window",
+        "operator": "<",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": 200
+      },
+      {
+        "metric_a": "week26_distance",
+        "operator": "<",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": 10
+      },
+      {
+        "metric_a": "trend",
+        "operator": "in",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": [
+          "Uptrend",
+          "Strong Uptrend"
+        ]
+      },
+      {
+        "metric_a": "rs_weekly",
+        "operator": ">",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": 0
+      },
+      {
+        "metric_a": "overhead_supply",
+        "operator": "<",
+        "compare_type": "value",
+        "logic": "AND",
+        "value": 20
+      }
+    ],
+    "enabled": false,
+    "schedule": {
+      "type": "scheduled",
+      "days": [
+        "MON",
+        "TUE",
+        "WED",
+        "THU",
+        "FRI",
+        "SAT",
+        "SUN"
+      ],
+      "time_et": "21:00"
+    },
+    "weekly_wrapup": true,
+    "color": "green"
+  },
+  {
+    "id": "sc-cyclone",
+    "name": "Cyclone (scan)",
+    "scope": "ALL",
+    "conditions": [
+      {
+        "metric_a": "last_close",
+        "operator": ">=",
+        "logic": "AND",
+        "compare_type": "metric",
+        "metric_b": "vstop_weekly"
+      },
+      {
+        "metric_a": "rsi14_daily",
+        "operator": ">=",
+        "logic": "AND",
+        "compare_type": "value",
+        "value": 45
+      },
+      {
+        "metric_a": "vstop_weekly_weeks_since_change",
+        "operator": "<=",
+        "logic": "AND",
+        "compare_type": "value",
+        "value": 8
+      }
+    ],
+    "enabled": false,
     "schedule": {
       "type": "none",
       "days": [
