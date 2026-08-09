@@ -26,7 +26,8 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": true
+    "weekly_wrapup": true,
+    "color": "red"
   },
   {
     "id": "591b1f1f",
@@ -64,7 +65,8 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": true
+    "weekly_wrapup": true,
+    "color": "green"
   },
   {
     "id": "1b91dbc4",
@@ -94,7 +96,8 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": true
+    "weekly_wrapup": true,
+    "color": "green"
   },
   {
     "id": "77f7a948",
@@ -125,7 +128,8 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": true
+    "weekly_wrapup": true,
+    "color": "red"
   },
   {
     "id": "09aea890",
@@ -156,7 +160,8 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": true
+    "weekly_wrapup": true,
+    "color": "green"
   },
   {
     "id": "ae60c0b9",
@@ -205,7 +210,8 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": true
+    "weekly_wrapup": true,
+    "color": "green"
   },
   {
     "id": "dccb5c72",
@@ -260,7 +266,8 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": true
+    "weekly_wrapup": true,
+    "color": "green"
   },
   {
     "id": "ed319eac",
@@ -300,7 +307,8 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": true
+    "weekly_wrapup": true,
+    "color": "green"
   },
   {
     "id": "b2b65277",
@@ -360,7 +368,8 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": true
+    "weekly_wrapup": true,
+    "color": "green"
   },
   {
     "id": "2fb0f581",
@@ -427,7 +436,8 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": true
+    "weekly_wrapup": true,
+    "color": "green"
   },
   {
     "id": "1c4f7ae2",
@@ -494,7 +504,8 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": true
+    "weekly_wrapup": true,
+    "color": "green"
   },
   {
     "id": "sc-cyclone",
@@ -537,7 +548,8 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": true
+    "weekly_wrapup": true,
+    "color": "green"
   },
   {
     "id": "sc-consolid",
@@ -580,7 +592,8 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": true
+    "weekly_wrapup": true,
+    "color": "green"
   },
   {
     "id": "sc-volrocket",
@@ -617,7 +630,8 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": true
+    "weekly_wrapup": true,
+    "color": "green"
   },
   {
     "id": "sc-bohorizon",
@@ -668,7 +682,8 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": true
+    "weekly_wrapup": true,
+    "color": "green"
   },
   {
     "id": "sc-alphalead",
@@ -711,7 +726,8 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": true
+    "weekly_wrapup": true,
+    "color": "green"
   },
   {
     "id": "sc-turbosurge",
@@ -775,6 +791,7 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": true
+    "weekly_wrapup": true,
+    "color": "green"
   }
 ]
