@@ -2,7 +2,7 @@
   "as_of": "2026-08-08",
   "generated_at": "2026-08-08T01:43:10.351622+00:00",
   "markets": {
-    "sajal_kapoor": {
+    "us_watchlist": {
       "summary": "* **Bloom Energy Corporation (BE)** - Shares dropped 6.35% amid supply chain concerns over Chinese scandium exposure and missed expectations, prompting multiple class action lawsuits.\n* **SNDK** - Stock fell 3.7% to $1,212.21 after Jefferies slashed its price target by nearly 50%.",
       "sources": [
         {
@@ -33,7 +33,7 @@
       "batch_count": 11,
       "ticker_count": 11
     },
-    "INDIA": {
+    "india_invested": {
       "summary": "* **Aarti Pharmalabs Limited (AARTIPHARM)** - Board approved Q1 financial results and appointed Rashesh C. Gogri as Managing Director and Hetal Gogri Gala as Executive Director effective October 1, 2026.\n* **Shivalik Bimetal Controls Limited (SBCL)** - Reported Q1FY27 consolidated net profit of \u20b933.01 crore (up 44.91% YoY) and revenue of \u20b9182.20 crore, alongside a ~20% stock surge and increased promoter/FII stakes.\n* **Solara Active Pharma Sciences Limited (SOLARA)** - Rescheduled the appointment of its CIO and Senior Management Personnel (Ajit Manocha) from August 10 to August 17, 2026.\n* **Steelcast Limited (STEELCAS)** - August 7, 2026 marked the record and ex-dividend date for a first interim dividend of \u20b90.45 per share for FY 2026-27.",
       "sources": [
         {
@@ -291,7 +291,7 @@
       "batch_count": 27,
       "ticker_count": 27
     },
-    "US": {
+    "us_invested": {
       "summary": "* **HIMS (HIMS)** - Facing securities investigations following an FTC lawsuit while analysts highlight valuation appeal ahead of Q2 earnings.\n* **iShares Gold Trust (IAU)** - Posted a 1.59% NAV increase amid shifting central bank demand and Middle East de-escalation forecasts.\n* **Johnson & Johnson (JNJ)** - Disclosed insider selling by EVP Elizabeth Forminard as shares ticked up to $259.03.\n* **META (META)** - Ordered by a judge to pay an additional $567 million into a teen mental health fund, bringing total liabilities in the case to $942 million.\n* **Natera, Inc. (NTRA)** - Surged ~20% following a Q2 revenue beat and an upward revision to full-year guidance.\n* **ORCL (ORCL)** - Sustained a 27% rally driven by an expanded cloud and AI partnership with Google.\n* **uniQure N.V. (QURE)** - Released its Q2 2026 earnings call transcript alongside a \"Moderate Buy\" analyst consensus.\n* **Rocket Lab Corporation (RKLB)** - Secured ~$663 million in U.S. Space Force contracts and an upgrade to \"Outperform,\" lifting shares ~9.5%.\n* **CYRX (CYRX)** - Reported Q2 earnings missing EPS estimates while achieving positive adjusted EBITDA and reaffirming full-year guidance.",
       "sources": [
         {

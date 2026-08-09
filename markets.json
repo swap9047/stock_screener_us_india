@@ -1,9 +1,9 @@
 {
-  "US": {
+  "us_invested": {
     "label": "US Invested",
     "benchmark": "SPY"
   },
-  "INDIA": {
+  "india_invested": {
     "label": "India Invested",
     "benchmark": "^CRSLDX"
   },
@@ -11,8 +11,8 @@
     "label": "India Watchlist",
     "benchmark": "^CRSLDX"
   },
-  "sajal_kapoor": {
+  "us_watchlist": {
     "label": "US Watchlist",
-    "benchmark": "^CRSLDX"
+    "benchmark": "SPY"
   }
 }

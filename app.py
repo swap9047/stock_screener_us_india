@@ -58,6 +58,7 @@ from stock_data import (
     load_watchlists, save_watchlist, fetch_all_markets, validate_ticker, tradingview_url,
     load_settings, save_settings, DEFAULT_SETTINGS, get_benchmarks, get_filterable_metrics,
     load_markets_registry, load_data_snapshot, snapshot_is_usable, save_data_snapshot,
+    load_watchlist_groups, save_watchlist_groups,
 )
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE, send_discord,
                      build_discord_messages_for_rule, describe_schedule, DAY_CODES, DAY_LABELS,
@@ -1581,7 +1582,7 @@ def render_watchlist_editor(market, watchlists):
         hide_index=True,
         column_config={
             "Ticker": st.column_config.TextColumn(
-                "Ticker" if market == "US" else ("Ticker (needs .NS/.BO)" if market == "INDIA" else "Ticker (as recognized by Yahoo Finance)"),
+                "Ticker" if market == "us_invested" else ("Ticker (needs .NS/.BO)" if market == "india_invested" else "Ticker (as recognized by Yahoo Finance)"),
                 required=True
             ),
             "Invested": st.column_config.CheckboxColumn("Invested"),
@@ -1982,6 +1983,7 @@ def build_column_defs(labels, custom_columns=None):
     end, using their stable custom_<id> key (see custom_columns.py)."""
     optional_defs = [
         ("expert_take", "Expert Take"),
+        ("index_name", "Index"),
         ("trend", "Trend"),
         ("flag", "Flag"),
         ("note", "Notes"),
@@ -2102,11 +2104,35 @@ def apply_sort(rows, sort_field, ascending):
     return sorted(present, key=keyfn, reverse=not ascending) + missing
 
 
+def apply_sort_levels(rows, levels):
+    """Multi-key sort: apply_sort is already a stable sort, so chaining it
+    once per level in REVERSE priority order (lowest-priority key first,
+    highest-priority key last) produces correct multi-key ordering without
+    any new sort logic -- each later pass only reorders rows that tied on
+    every higher-priority key so far, exactly the semantics 'Sort by X,
+    then by Y' implies. `levels` is a list of (sort_field, ascending)
+    tuples in priority order; an empty list is a no-op."""
+    for sort_field, ascending in reversed(levels):
+        rows = apply_sort(rows, sort_field, ascending)
+    return rows
+
+
+_SORT_LEVELS = 3
+
+
+def _sort_label_to_field(sort_label, key_by_label):
+    # "Invested" resolves to the raw boolean field ("invested"), not the
+    # display key ("invested_label") key_by_label would otherwise give --
+    # apply_sort operates on the row dict, which only ever carries the raw
+    # field, same reasoning as Ticker/Company Name/Last below.
+    return {"Ticker": "ticker", "Company Name": "company_name", "Last": "last_close", "Invested": "invested"}.get(sort_label) or key_by_label.get(sort_label)
+
+
 def render_shared_sort_control(label_by_key, key_by_label):
     """Shared 'Sort by' control, sidebar, always visible (not tucked into
     an expander -- used often enough to want one click, not two). Applied
-    identically to both the US and India tables, same reasoning as the
-    shared column picker above.
+    identically to every market tab, same reasoning as the shared column
+    picker above.
 
     True click-on-column-header sorting isn't feasible with the current
     table: it's rendered as a static HTML block (via st.markdown, needed
@@ -2114,44 +2140,65 @@ def render_shared_sort_control(label_by_key, key_by_label):
     docstring) and Streamlit's markdown renderer strips <script>/<style>
     tags outright even with unsafe_allow_html=True, so there's no way to
     attach a client-side click handler to a <th>. This dropdown gives the
-    same practical outcome -- sort the whole table by any column -- without
-    rearchitecting the table onto a JS-executing surface (e.g. st.iframe),
-    which would mean giving up the dynamic page-filling height that took
-    real effort to get right (see 'Make watchlist tables fill page height
-    with sticky header' in the project history) since iframes need a fixed
-    height. Returns (sort_field_key_or_None, ascending)."""
+    same practical outcome -- sort the whole table by up to 3 columns at
+    once, in priority order -- without rearchitecting the table onto a
+    JS-executing surface (e.g. st.iframe), which would mean giving up the
+    dynamic page-filling height that took real effort to get right (see
+    'Make watchlist tables fill page height with sticky header' in the
+    project history) since iframes need a fixed height.
+
+    Returns a list of up to 3 (sort_field_key, ascending) tuples, in
+    priority order (empty list = no sort, i.e. raw list order). Level 1 is
+    the primary key and offers "(default order)"; levels 2-3 are optional
+    tie-breakers and offer "(none)", each only shown once the level above
+    it has a real column chosen."""
     # matched_alerts (Alerts) and vstop_change (VStop Weeks Ago) are
     # computed AFTER filtering, inside render_market_tab -- not present on
     # the raw row dict at sort time -- excluded rather than silently
     # sorting wrong (or crashing on a missing key).
-    sort_labels = ["(default order)", "Ticker", "Company Name", "Last"] + [
+    sort_labels = ["Ticker", "Company Name", "Last"] + [
         lbl for key, lbl in label_by_key.items() if key not in ("matched_alerts", "vstop_change")
     ]
-    
+
     prefs = load_column_prefs_full()
-    if "shared_sort_field" not in st.session_state:
-        val = prefs.get("sort_by", "(default order)")
-        st.session_state["shared_sort_field"] = val if val in sort_labels else "(default order)"
-    if "shared_sort_dir" not in st.session_state:
-        st.session_state["shared_sort_dir"] = prefs.get("sort_dir", "↑")
+    levels = []
+    for i in range(1, _SORT_LEVELS + 1):
+        field_key = f"shared_sort_field_{i}"
+        dir_key = f"shared_sort_dir_{i}"
+        empty_option = "(default order)" if i == 1 else "(none)"
+        options = [empty_option] + sort_labels
+        if field_key not in st.session_state:
+            # Seamless upgrade from the old single sort_by/sort_dir prefs --
+            # only level 1 ever reads them; levels 2-3 start empty.
+            default_val = prefs.get(f"sort_by_{i}", prefs.get("sort_by") if i == 1 else None) or empty_option
+            st.session_state[field_key] = default_val if default_val in options else empty_option
+        if dir_key not in st.session_state:
+            st.session_state[dir_key] = prefs.get(f"sort_dir_{i}", prefs.get("sort_dir") if i == 1 else "↑") or "↑"
 
-    sc1, sc2 = st.sidebar.columns([3, 1])
-    sort_label = sc1.selectbox("Sort by", sort_labels, key="shared_sort_field")
-    sort_dir = sc2.selectbox("Dir", ["↑", "↓"], key="shared_sort_dir")
-    ascending = sort_dir == "↑"
-    
-    if sort_label != prefs.get("sort_by") or sort_dir != prefs.get("sort_dir"):
-        update_column_prefs("sort_by", sort_label)
-        update_column_prefs("sort_dir", sort_dir)
+        # A tie-breaker level only makes sense once the level above it is
+        # actually sorting on something -- otherwise it's a lower-priority
+        # key with nothing above it to break ties for, which is just level 1
+        # under a confusing label.
+        if i > 1 and not levels:
+            break
 
-    if sort_label == "(default order)":
-        return None, ascending
-    # "Invested" resolves to the raw boolean field ("invested"), not the
-    # display key ("invested_label") key_by_label would otherwise give --
-    # apply_sort operates on the row dict, which only ever carries the raw
-    # field, same reasoning as Ticker/Company Name/Last below.
-    sort_field = {"Ticker": "ticker", "Company Name": "company_name", "Last": "last_close", "Invested": "invested"}.get(sort_label) or key_by_label.get(sort_label)
-    return sort_field, ascending
+        sc1, sc2 = st.sidebar.columns([3, 1])
+        label = "Sort by" if i == 1 else "Then by"
+        sort_label = sc1.selectbox(label, options, key=field_key)
+        sort_dir = sc2.selectbox("Dir", ["↑", "↓"], key=dir_key, label_visibility="collapsed" if i > 1 else "visible")
+        ascending = sort_dir == "↑"
+
+        if sort_label != prefs.get(f"sort_by_{i}") or sort_dir != prefs.get(f"sort_dir_{i}"):
+            update_column_prefs(f"sort_by_{i}", sort_label)
+            update_column_prefs(f"sort_dir_{i}", sort_dir)
+
+        if sort_label == empty_option:
+            break
+        sort_field = _sort_label_to_field(sort_label, key_by_label)
+        if sort_field:
+            levels.append((sort_field, ascending))
+
+    return levels
 
 
 def render_shared_column_picker(labels):
@@ -2166,11 +2213,11 @@ def render_shared_column_picker(labels):
     THAT widget silently clobbers their pending change before the widget
     ever sees it (confirmed empirically, not just suspected). A single
     shared widget sidesteps the problem entirely rather than working around
-    it. Returns (visible_keys, label_by_key, sort_field, sort_ascending)."""
+    it. Returns (visible_keys, label_by_key, sort_levels)."""
     custom_columns = load_custom_columns()
     optional_defs, label_by_key, key_by_label, all_labels, default_visible = build_column_defs(labels, custom_columns)
 
-    sort_field, sort_ascending = render_shared_sort_control(label_by_key, key_by_label)
+    sort_levels = render_shared_sort_control(label_by_key, key_by_label)
 
     SHARED_ORDER_KEY = "shared_col_order"
     if SHARED_ORDER_KEY not in st.session_state:
@@ -2304,7 +2351,7 @@ def render_shared_column_picker(labels):
     render_custom_columns_manager()
     render_ticker_notes_manager()
 
-    return st.session_state[SHARED_ORDER_KEY], label_by_key, sort_field, sort_ascending
+    return st.session_state[SHARED_ORDER_KEY], label_by_key, sort_levels
 
 
 def render_metric_glossary(labels, custom_columns, column_key_by_label):
@@ -2906,17 +2953,38 @@ def render_expert_view_expander(market, filtered_rows, settings):
         st.markdown("</div>", unsafe_allow_html=True)
 
 
-def render_market_tab(market, results, settings, visible_keys, label_by_key, sort_field=None, sort_ascending=True):
+def render_market_tab(market, results, settings, visible_keys, label_by_key, sort_levels=None,
+                       combined_markets=None, combined_label=None):
+    """Renders one watchlist table tab. `market` is either a real registry
+    key (single-market tab) or a synthetic key like "all_invested" used only
+    for widget-key namespacing / CSV filenames when `combined_markets` is
+    set (a combined tab spanning several real markets' concatenated
+    `results`) -- see the module-level combined-tab wiring below for how
+    the two are told apart. A combined tab has no single benchmark, no
+    watchlist editor (ticker membership is edited from the real per-market
+    tabs, unaffected by this), and a friendlier empty-state message."""
     benchmarks = get_benchmarks(settings)
-    bench = benchmarks[market]
     labels = ema_col_labels(settings)
     custom_columns = load_custom_columns()
     filterable_metrics = get_all_filterable_metrics(settings, custom_columns)
 
+    if combined_markets is not None:
+        registry_now = load_markets_registry()
+        # Used both in the caption below and in the RS-formula footer glossary
+        # further down -- a combined tab has no single benchmark, so this is
+        # a legend of each underlying market's, not one ticker symbol. Empty
+        # when zero members are configured -- " · ".join of nothing is "".
+        bench = " · ".join(
+            f"{registry_now.get(m, {}).get('label', m)} vs {benchmarks.get(m, 'SPY')}" for m in combined_markets
+        ) or "no watchlists configured yet"
+        rs_caption = f"Mansfield RS vs each row's own index benchmark ({bench}) -- see the Index column"
+    else:
+        bench = benchmarks[market]
+        rs_caption = f"Mansfield RS vs {bench}"
     st.caption(
         f"{labels['w_fast']}/{labels['w_mid']}/{labels['w_slow']} · "
         f"{labels['d_fast']}/{labels['d_mid']}/{labels['d_slow']} · "
-        f"RSI({settings['rsi_period']}) D/W/M · Mansfield RS vs {bench} "
+        f"RSI({settings['rsi_period']}) D/W/M · {rs_caption} "
         f"(D lookback={settings['rs_lookback_daily']}, W lookback={settings['rs_lookback_weekly']}, "
         f"M lookback={settings['rs_lookback_monthly']})"
     )
@@ -2938,14 +3006,52 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
                     + ". See the 'Data Thru' column below for the exact date per ticker."
                 )
 
-    watchlists = load_watchlists()
-    market_display_label = load_markets_registry().get(market, {}).get("label", market)
-    _wl_empty = not watchlists.get(market)
-    with st.expander(f"Edit {market_display_label}", expanded=_wl_empty):
-        render_watchlist_editor(market, watchlists)
+    # combined_markets is a LIST for a combined tab (possibly empty, if every
+    # member was unchecked) and None for a real tab -- checked by identity,
+    # not truthiness, so an empty-but-configured combined tab doesn't fall
+    # through to the real-tab branch below (which would try to edit a
+    # watchlist named "all_invested"/"all_watchlist" and break).
+    is_combined = combined_markets is not None
+    if is_combined:
+        market_display_label = combined_label or market
+        registry_all = load_markets_registry()
+        # Every REAL market is a candidate member, regardless of whether it's
+        # currently in this group -- membership across the two combined tabs
+        # is independent (a watchlist can feed both, one, or neither).
+        member_label_to_key = {info["label"]: k for k, info in registry_all.items()}
+        member_key_to_label = {k: lbl for lbl, k in member_label_to_key.items()}
+        current_labels = [member_key_to_label[k] for k in combined_markets if k in member_key_to_label]
+        with st.expander(f"⚙️ Configure {market_display_label}", expanded=False):
+            st.caption(
+                "This view is a read-only, derived merge of the watchlists selected below -- "
+                "ticker lists are edited from each watchlist's own tab, not here."
+            )
+            selected_labels = st.multiselect(
+                "Watchlists feeding this view", options=list(member_label_to_key.keys()),
+                default=current_labels, key=f"group_members_{market}",
+            )
+            if st.button("Save", key=f"save_group_{market}"):
+                new_members = [member_label_to_key[lbl] for lbl in selected_labels]
+                groups = load_watchlist_groups()
+                groups[market] = new_members
+                save_watchlist_groups(groups)
+                st.rerun()
+    else:
+        watchlists = load_watchlists()
+        market_display_label = load_markets_registry().get(market, {}).get("label", market)
+        _wl_empty = not watchlists.get(market)
+        with st.expander(f"Edit {market_display_label}", expanded=_wl_empty):
+            render_watchlist_editor(market, watchlists)
 
     if not results:
-        st.info(f"No {market} tickers with enough data yet. Add tickers above.")
+        empty_msg = f"No {market_display_label} tickers with enough data yet."
+        if not is_combined:
+            empty_msg += " Add tickers above."
+        elif not combined_markets:
+            empty_msg += " No watchlists are feeding this view yet -- configure it above."
+        else:
+            empty_msg += " Add tickers from the individual tabs above."
+        st.info(empty_msg)
         return
 
     # These get set once and rarely touched, so they live folded away -- only
@@ -3121,7 +3227,16 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         filtered.append(row)
 
     filtered = apply_filters(filtered, active_custom_filters, market_rule_truth)
-    filtered = apply_sort(filtered, sort_field, sort_ascending)
+    effective_sort_levels = sort_levels or []
+    # All Watchlist's own fixed default -- Index ascending, then day's Change%
+    # descending -- applies ONLY when the shared sort control is untouched
+    # (its own "(default order)" state, i.e. sort_levels is empty) and ONLY
+    # for this specific combined tab. Every other tab's "(default order)"
+    # behavior (raw watchlist.json order) is unchanged; this doesn't alter
+    # the shared control's own default, which stays global.
+    if not effective_sort_levels and market == "all_watchlist":
+        effective_sort_levels = [("index_name", True), ("pct_change_1d", False)]
+    filtered = apply_sort_levels(filtered, effective_sort_levels)
 
     render_expert_analysis_control_bar(market, results)
     st.write(f"**Showing {len(filtered)} of {len(results)} tickers**")
@@ -3335,6 +3450,8 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         df.columns = dedup_cols
         if "Trend" in df.columns:
             df["Trend"] = df["Trend"].fillna("—")
+        if "Index" in df.columns:
+            df["Index"] = df["Index"].fillna("—")
 
         # CSV export built straight from `filtered` (plain values, pre-HTML)
         # rather than scraping raw_df's with_tooltip()-wrapped cells -- those
@@ -3681,7 +3798,7 @@ st.sidebar.caption(
     )
 )
 
-shared_visible_keys, shared_label_by_key, shared_sort_field, shared_sort_ascending = render_shared_column_picker(
+shared_visible_keys, shared_label_by_key, shared_sort_levels = render_shared_column_picker(
     ema_col_labels(settings_now)
 )
 
@@ -3723,6 +3840,25 @@ with dash2:
 
 market_keys_now = list(markets_registry_now.keys())
 market_tab_labels = [markets_registry_now[mkt]["label"] for mkt in market_keys_now]
+
+# Two combined views, sequenced first: "All Invested" and "All Watchlist".
+# Synthetic keys ("all_invested"/"all_watchlist") namespace their own widget
+# state -- see render_market_tab's combined_markets docstring -- and are
+# reserved names (not real market keys), so they can never collide with a
+# registry key. The KEY and LABEL of each group are fixed here (no UI to
+# create a 3rd/4th group, by design) -- only MEMBERSHIP is user-editable,
+# via the "Configure this view" expander rendered on each combined tab,
+# which reads/writes watchlist_groups.json through load_watchlist_groups().
+COMBINED_TAB_DEFS = [
+    ("all_invested", "All Invested"),
+    ("all_watchlist", "All Watchlist"),
+]
+combined_keys = [k for k, _ in COMBINED_TAB_DEFS]
+combined_tab_labels = [lbl for _, lbl in COMBINED_TAB_DEFS]
+combined_display_label_by_key = {k: lbl for k, lbl in COMBINED_TAB_DEFS}
+watchlist_groups_now = load_watchlist_groups()
+combined_markets_by_key = {k: watchlist_groups_now.get(k, []) for k in combined_keys}
+
 # key= + on_change="rerun" is what makes the tab strip TRACK its selection.
 # Without them st.tabs re-selects its first tab on every script run, so any
 # st.rerun() -- and the Alert Rules tab fires one on nearly every interaction
@@ -3734,16 +3870,28 @@ market_tab_labels = [markets_registry_now[mkt]["label"] for mkt in market_keys_n
 # individually guarded on `.open`, and skipping hidden tabs would change what
 # the visible one shows (the market tabs populate alert_matches). Persistence
 # only, deliberately -- laziness is a separate job.
-all_tabs = st.tabs(market_tab_labels + ["News", "Alert Rules"],
+all_tabs = st.tabs(combined_tab_labels + market_tab_labels + ["News", "Alert Rules"],
                    key="main_tabs", on_change="rerun")
-market_tabs = dict(zip(market_keys_now, all_tabs[:-2]))
+n_combined = len(combined_keys)
+combined_tabs = dict(zip(combined_keys, all_tabs[:n_combined]))
+market_tabs = dict(zip(market_keys_now, all_tabs[n_combined:-2]))
 tab_news, tab_alerts = all_tabs[-2], all_tabs[-1]
+
+for ck in combined_keys:
+    with combined_tabs[ck]:
+        combined_markets_here = combined_markets_by_key[ck]
+        combined_results = [r for m in combined_markets_here for r in per_market.get(m, [])]
+        render_market_tab(
+            ck, combined_results, settings_now, shared_visible_keys, shared_label_by_key,
+            shared_sort_levels, combined_markets=combined_markets_here,
+            combined_label=combined_display_label_by_key[ck],
+        )
 
 for mkt in market_keys_now:
     with market_tabs[mkt]:
         render_market_tab(
             mkt, per_market.get(mkt, []), settings_now, shared_visible_keys, shared_label_by_key,
-            shared_sort_field, shared_sort_ascending,
+            shared_sort_levels,
         )
 
 with tab_news:
@@ -3891,8 +4039,14 @@ with tab_news:
             
     from stock_data import load_invested_weights
     invested_weights = load_invested_weights()
-    us_tickers = watchlists_now.get("US", [])
-    ind_tickers = watchlists_now.get("INDIA", [])
+    # This panel specifically pairs the "US Invested"/"India Invested" watchlists
+    # (dashboard_perf.json's portfolio-vs-benchmark curves), keyed by their
+    # markets.json registry keys -- not to be confused with market_breadth.json's
+    # "US"/"INDIA" keys below, which represent national S&P 500/Nifty 500
+    # breadth and are unrelated to the watchlist registry (see that lookup's
+    # own comment).
+    us_tickers = watchlists_now.get("us_invested", [])
+    ind_tickers = watchlists_now.get("india_invested", [])
     ind_invested = [t for t in ind_tickers if t in invested_weights]
     
     st.divider()
@@ -3908,7 +4062,7 @@ with tab_news:
         closes_ind = None
         df_perf_ind = None
         if india_portfolio_tickers:
-            closes_ind = _closes_from_perf("INDIA")
+            closes_ind = _closes_from_perf("india_invested")
             # If we fall back to ind_tickers, we don't have invested_weights for them, so we pass None
             w = invested_weights if ind_invested else None
             if closes_ind is not None and "^CRSLDX" in closes_ind.columns:
@@ -3917,13 +4071,17 @@ with tab_news:
         closes_us = None
         df_perf_us = None
         if us_tickers:
-            closes_us = _closes_from_perf("US")
+            closes_us = _closes_from_perf("us_invested")
             if closes_us is not None and "SPY" in closes_us.columns:
                 df_perf_us = calculate_portfolio_returns(closes_us, us_tickers, "SPY", weights=None, filter_years=years)
             
         if perf_as_of:
             st.caption(f"Portfolio & breadth data as of {perf_as_of} — refreshed by the scheduled GitHub Action.")
             
+        # market_breadth.json's "INDIA"/"US" keys are fixed national-index
+        # breadth (Nifty 500 / S&P 500), independent of the watchlist
+        # registry -- NOT renamed alongside markets.json/watchlist.json, so
+        # these stay as the literal keys refresh_market_breadth.py writes.
         df_ema_ind, df_hl_ind = format_json_breadth(breadth_data.get("markets", {}).get("INDIA"), years)
         df_ema_us, df_hl_us = format_json_breadth(breadth_data.get("markets", {}).get("US"), years)
 
@@ -3949,10 +4107,10 @@ with tab_news:
                 return f"Watchlist: {ret_port:+.1f}%, Bench: {ret_bench:+.1f}%"
             return "--"
             
-        _ind_display_label = markets_registry_now.get("INDIA", {}).get("label", "India Watchlist")
-        _us_display_label = markets_registry_now.get("US", {}).get("label", "US Watchlist")
-        _ind_bench_label = markets_registry_now.get("INDIA", {}).get("benchmark", "Nifty 500")
-        _us_bench_label = markets_registry_now.get("US", {}).get("benchmark", "S&P 500")
+        _ind_display_label = markets_registry_now.get("india_invested", {}).get("label", "India Invested")
+        _us_display_label = markets_registry_now.get("us_invested", {}).get("label", "US Invested")
+        _ind_bench_label = markets_registry_now.get("india_invested", {}).get("benchmark", "Nifty 500")
+        _us_bench_label = markets_registry_now.get("us_invested", {}).get("benchmark", "S&P 500")
         title_perf_ind = f"{_ind_display_label} vs {_ind_bench_label} ({get_perf(df_perf_ind)})"
         title_perf_us = f"{_us_display_label} vs {_us_bench_label} ({get_perf(df_perf_us)})"
 
@@ -3991,8 +4149,8 @@ with tab_news:
                 fig.add_trace(go.Scatter(x=df_hl_us['Date'], y=df_hl_us[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5), showlegend=False), row=2, col=2)
                 
         # Row 3: Portfolio Performance
-        _ind_label = markets_registry_now.get("INDIA", {}).get("label", "India Watchlist")
-        _us_label = markets_registry_now.get("US", {}).get("label", "US Watchlist")
+        _ind_label = markets_registry_now.get("india_invested", {}).get("label", "India Invested")
+        _us_label = markets_registry_now.get("us_invested", {}).get("label", "US Invested")
         if df_perf_ind is not None and not df_perf_ind.empty:
             fig.add_trace(go.Scatter(x=df_perf_ind.index, y=df_perf_ind['Portfolio'], name=_ind_label, line=dict(color='#3498db', width=2), showlegend=False), row=3, col=1)
             fig.add_trace(go.Scatter(x=df_perf_ind.index, y=df_perf_ind['Benchmark'], name="Nifty 500", line=dict(color='#95a5a6', width=1.5, dash='dot'), showlegend=False), row=3, col=1)

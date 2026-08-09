@@ -155,7 +155,7 @@ VERDICT_RULES = """MANDATORY VERDICT RULES — apply these strictly before choos
 def build_expert_prompt(row_data, news_text, active_alerts_text="None"):
     ticker = row_data.get("ticker", "UNKNOWN")
     company_name = row_data.get("company_name", ticker)
-    market = row_data.get("market", "US")
+    market = row_data.get("market", "us_invested")
     last_close = row_data.get("last_close", "N/A")
     ema10 = row_data.get("ema10", "N/A")
     ema20 = row_data.get("ema20", "N/A")
@@ -267,7 +267,7 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
     from datetime import datetime, timezone
 
     ticker = row_data.get("ticker", "UNKNOWN")
-    market = row_data.get("market", "US")
+    market = row_data.get("market", "us_invested")
     company_name = row_data.get("company_name", ticker)
 
     if news_text is None:

@@ -42,5 +42,9 @@
     "week52_distance"
   ],
   "sort_by": "% Chg",
-  "sort_dir": "\u2193"
+  "sort_dir": "\u2193",
+  "sort_by_1": "% Chg",
+  "sort_dir_1": "\u2193",
+  "sort_by_2": "(none)",
+  "sort_dir_2": "\u2191"
 }

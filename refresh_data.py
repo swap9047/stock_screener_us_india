@@ -11,7 +11,7 @@ every visitor/session is wasteful). The app still has a manual "Refresh
 Data" button for on-demand live data -- this snapshot is just the default.
 
 Config (same folder):
-    watchlist.json      - {"US": [...], "INDIA": [...]}
+    watchlist.json      - {market_key: [tickers], ...} (see markets.json for the registered keys)
     settings.json        - calc parameters (EMA lengths, thresholds, etc.)
     data_snapshot.json    - auto-managed output, read by the app on load
 

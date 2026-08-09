@@ -1,0 +1,10 @@
+{
+  "all_invested": [
+    "us_invested",
+    "india_invested"
+  ],
+  "all_watchlist": [
+    "india_watchlist",
+    "us_watchlist"
+  ]
+}

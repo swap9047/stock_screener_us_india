@@ -1,5 +1,5 @@
 {
-  "sajal_kapoor": [
+  "us_watchlist": [
     "AKAM",
     "AMKR",
     "BE",
@@ -12,7 +12,7 @@
     "WOLF",
     "NKE"
   ],
-  "US": [
+  "us_invested": [
     "GRID",
     "HIMS",
     "IAU",
@@ -58,7 +58,7 @@
     "TATVA.NS",
     "UNIMECH.NS"
   ],
-  "INDIA": [
+  "india_invested": [
     "AARTIPHARM.NS",
     "CARYSIL.NS",
     "CYIENTDLM.NS",

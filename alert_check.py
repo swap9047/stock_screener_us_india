@@ -9,7 +9,7 @@ with edge-triggered logic (alert_state.json), and sends any newly
 triggered alerts to Discord.
 
 Config files (same folder):
-    watchlist.json        - {"US": [...], "INDIA": [...]}
+    watchlist.json        - {market_key: [tickers], ...} (see markets.json for the registered keys)
     alerts_config.json    - rules (add/edit via the Streamlit app's Alert Rules tab)
     discord_config.json   - {"webhook_url": "..."}
     alert_state.json      - auto-managed, tracks what's already fired

@@ -1,0 +1,326 @@
+{
+  "AKAM": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "AMKR": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "BE": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "KXIAY": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "MRAAY": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "Q": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "ROBO": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "SNDK": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "VSH": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "WOLF": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "NKE": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "GRID": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "HIMS": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "IAU": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "JNJ": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "KRYS": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "META": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "NTRA": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "ORCL": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "QURE": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "RKLB": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "TWST": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "ZS": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "CYRX": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "ASX": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "RGEN": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "UFBL.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "VISHNU.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "BLUEJET.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "ADVENZYMES.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "ANLON.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "AYE.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "BAJAJHCARE.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "BETA.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "BHAGYANGR.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "CONCORDBIO.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "DSSL.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "ENTERO.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "GRAVITA.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "INDGN.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "INNOVACAP.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "INTELLECT.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "JMFINANCIL.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "LANDMARK.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "MAMATA.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "MTARTECH.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "NEOGEN.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "NRBBEARING.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "ROSSTECH.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "SAILIFE.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "SFL.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "TATVA.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "UNIMECH.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "AARTIPHARM.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "CARYSIL.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "CYIENTDLM.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "EPACKPEB.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "EBGNG.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "INTERARCH.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "KMEW.BO": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "KRISHNADEF.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "LAURUSLABS.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "NH.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "PRIVISCL.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "QPOWER.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "RATEGAIN.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "SJS.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "SAKAR.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "SANSERA.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "SAREGAMA.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "SHILPAMED.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "SBCL.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "SHREEREF.BO": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "SOLARA.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "STEELCAS.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "TANFACIND.BO": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "TDPOWERSYS.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "VENUSPIPES.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "WINDLAS.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "LUMAXIND.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "STLTECH.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  }
+}
