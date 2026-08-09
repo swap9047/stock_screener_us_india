@@ -4493,6 +4493,21 @@ with tab_alerts:
         visible_rules = ([r for r in rules if rule_search.strip().lower() in _rule_haystack(r)]
                          if rule_search.strip() else rules)
         count_col.metric("Shown", f"{len(visible_rules)}/{len(rules)}")
+
+        def _arrange_bucket(r):
+            if not r.get("enabled", True):
+                return 3
+            return {"green": 0, "red": 2}.get(r.get("color"), 1)
+
+        if st.button(
+            "↕️ Auto-arrange: green → red → disabled", key="auto_arrange_rules",
+            help="One-click default order (each group keeps its current relative order). "
+                 "Use ▲/▼ on individual rules below to fine-tune from there.",
+        ):
+            rules = sorted(rules, key=_arrange_bucket)
+            save_rules(rules)
+            st.rerun()
+
         if not visible_rules:
             st.info(f"No rule matches “{rule_search}”.")
 
@@ -4561,10 +4576,31 @@ with tab_alerts:
                 if rule.get("scope") != "ALL" and rule.get("scope") not in market_scope_key_to_label:
                     st.markdown(f"Ticker: [{rule['scope']}]({tradingview_url(rule['scope'])})")
 
-                en_col, dup_col, del_col = st.columns([1, 1, 1])
+                en_col, up_col, dn_col, dup_col, del_col = st.columns([1, 0.6, 0.6, 1, 1])
                 enabled = en_col.checkbox("Enabled", value=rule.get("enabled", True), key=f"en_{rule['id']}")
                 if enabled != rule.get("enabled", True):
                     rule["enabled"] = enabled
+                    save_rules(rules)
+                    keep_open()
+                    st.rerun()
+                # Reorder acts on the FULL rules list (same rules.index(rule)
+                # lookup Duplicate below uses to place a clone), not the
+                # filtered visible_rules -- disabled while a search is active
+                # so "move up" always means the same thing as what's on
+                # screen: the whole, unfiltered list.
+                _searching = bool(rule_search.strip())
+                _idx = rules.index(rule)
+                if up_col.button("▲", key=f"ord_up_{rule['id']}",
+                                 disabled=(_idx == 0 or _searching),
+                                 help="Move up" if not _searching else "Clear the search box to reorder"):
+                    rules[_idx - 1], rules[_idx] = rules[_idx], rules[_idx - 1]
+                    save_rules(rules)
+                    keep_open()
+                    st.rerun()
+                if dn_col.button("▼", key=f"ord_dn_{rule['id']}",
+                                 disabled=(_idx == len(rules) - 1 or _searching),
+                                 help="Move down" if not _searching else "Clear the search box to reorder"):
+                    rules[_idx], rules[_idx + 1] = rules[_idx + 1], rules[_idx]
                     save_rules(rules)
                     keep_open()
                     st.rerun()
