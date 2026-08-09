@@ -378,88 +378,6 @@
     "color": "green"
   },
   {
-    "id": "sc-consolid",
-    "name": "The Consolidators (scan)",
-    "scope": "ALL",
-    "conditions": [
-      {
-        "metric_a": "perf_6m",
-        "operator": ">=",
-        "logic": "AND",
-        "compare_type": "value",
-        "value": -25
-      },
-      {
-        "metric_a": "perf_6m",
-        "operator": "<=",
-        "logic": "AND",
-        "compare_type": "value",
-        "value": 25
-      },
-      {
-        "metric_a": "perf_3y",
-        "operator": ">=",
-        "logic": "AND",
-        "compare_type": "value",
-        "value": 50
-      }
-    ],
-    "enabled": true,
-    "schedule": {
-      "type": "none",
-      "days": [
-        "MON",
-        "TUE",
-        "WED",
-        "THU",
-        "FRI",
-        "SAT",
-        "SUN"
-      ],
-      "time_et": "21:00"
-    },
-    "weekly_wrapup": true,
-    "color": "green"
-  },
-  {
-    "id": "sc-volrocket",
-    "name": "Volume Rocketing (scan)",
-    "scope": "ALL",
-    "conditions": [
-      {
-        "metric_a": "avg_volume_10d",
-        "operator": ">=",
-        "logic": "AND",
-        "compare_type": "metric",
-        "metric_b": "avg_volume_20d",
-        "multiplier": 1.3
-      },
-      {
-        "metric_a": "perf_1m",
-        "operator": ">=",
-        "logic": "AND",
-        "compare_type": "value",
-        "value": 3
-      }
-    ],
-    "enabled": true,
-    "schedule": {
-      "type": "none",
-      "days": [
-        "MON",
-        "TUE",
-        "WED",
-        "THU",
-        "FRI",
-        "SAT",
-        "SUN"
-      ],
-      "time_et": "21:00"
-    },
-    "weekly_wrapup": true,
-    "color": "green"
-  },
-  {
     "id": "sc-bohorizon",
     "name": "Breakout Horizon (scan)",
     "scope": "ALL",
@@ -492,6 +410,50 @@
         "logic": "AND",
         "compare_type": "value",
         "value": 20
+      }
+    ],
+    "enabled": true,
+    "schedule": {
+      "type": "scheduled",
+      "days": [
+        "MON",
+        "TUE",
+        "WED",
+        "THU",
+        "FRI",
+        "SAT",
+        "SUN"
+      ],
+      "time_et": "21:00"
+    },
+    "weekly_wrapup": false,
+    "color": "green"
+  },
+  {
+    "id": "sc-consolid",
+    "name": "The Consolidators (scan)",
+    "scope": "ALL",
+    "conditions": [
+      {
+        "metric_a": "perf_6m",
+        "operator": ">=",
+        "logic": "AND",
+        "compare_type": "value",
+        "value": -25
+      },
+      {
+        "metric_a": "perf_6m",
+        "operator": "<=",
+        "logic": "AND",
+        "compare_type": "value",
+        "value": 25
+      },
+      {
+        "metric_a": "perf_3y",
+        "operator": ">=",
+        "logic": "AND",
+        "compare_type": "value",
+        "value": 50
       }
     ],
     "enabled": true,
@@ -618,6 +580,44 @@
     "color": "red"
   },
   {
+    "id": "sc-volrocket",
+    "name": "Volume Rocketing (scan)",
+    "scope": "ALL",
+    "conditions": [
+      {
+        "metric_a": "avg_volume_10d",
+        "operator": ">=",
+        "logic": "AND",
+        "compare_type": "metric",
+        "metric_b": "avg_volume_20d",
+        "multiplier": 1.3
+      },
+      {
+        "metric_a": "perf_1m",
+        "operator": ">=",
+        "logic": "AND",
+        "compare_type": "value",
+        "value": 3
+      }
+    ],
+    "enabled": false,
+    "schedule": {
+      "type": "none",
+      "days": [
+        "MON",
+        "TUE",
+        "WED",
+        "THU",
+        "FRI",
+        "SAT",
+        "SUN"
+      ],
+      "time_et": "21:00"
+    },
+    "weekly_wrapup": true,
+    "color": "green"
+  },
+  {
     "id": "2fb0f581",
     "name": "Short-term breakout",
     "scope": "ALL",
@@ -682,7 +682,7 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": true,
+    "weekly_wrapup": false,
     "color": "green"
   },
   {
@@ -726,7 +726,7 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": true,
+    "weekly_wrapup": false,
     "color": "green"
   },
   {
@@ -791,7 +791,7 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": true,
+    "weekly_wrapup": false,
     "color": "green"
   }
 ]
