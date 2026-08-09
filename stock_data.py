@@ -94,6 +94,18 @@ RS_LOOKBACK_WEEKLY = 26
 RS_LOOKBACK_MONTHLY = 12
 VSTOP_LENGTH = 10
 VSTOP_FACTOR = 2
+# Both VStop engines are fully recursive -- every week's stop depends on the
+# entire flip history back to wherever the series starts -- so a short or
+# truncated weekly window doesn't just mean "less smoothing", it can put the
+# stop on a genuinely different path than a full history would (confirmed:
+# TDPOWERSYS.NS served a spurious 1317/Down stop from a run whose fetch
+# evidently returned less history than a clean pull, while `>= vstop_length
+# + 5` -- just 15 bars -- happily passed). Requiring roughly a year of
+# weekly bars before trusting the recursion doesn't fix a bad fetch, but it
+# stops the pipeline from quietly serving a VStop built on a suspiciously
+# short window -- same "blank rather than misleading" fallback the length
+# check already used, just a more meaningful floor.
+VSTOP_MIN_HISTORY_WEEKS = 52
 
 # Breakout Window (see the block that computes it in fetch_snapshot).
 # A prior close up to 5% above today counts as a level price has already
@@ -1402,7 +1414,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
                 while len(weekly_complete) > 0 and weekly_complete.index[-1].normalize() not in daily_days:
                     weekly_complete = weekly_complete.iloc[:-1]
 
-            if len(weekly_complete) >= vstop_length + 5:
+            if len(weekly_complete) >= max(vstop_length + 5, VSTOP_MIN_HISTORY_WEEKS):
                 if settings.get("vstop_mode", "tv") == "app":
                     vstop_series, dir_series = compute_vstop(weekly_complete, length=vstop_length, factor=vstop_factor)
                 else:
@@ -1427,7 +1439,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
             # carry over rather than being re-decided here. Only the level is
             # kept; the scan tests price against it and needs nothing else.
             vstop_weekly_14 = None
-            if len(weekly_complete) >= VSTOP_LENGTH_14W + 5:
+            if len(weekly_complete) >= max(VSTOP_LENGTH_14W + 5, VSTOP_MIN_HISTORY_WEEKS):
                 if settings.get("vstop_mode", "tv") == "app":
                     vstop14_series, _ = compute_vstop(
                         weekly_complete, length=VSTOP_LENGTH_14W, factor=vstop_factor)
