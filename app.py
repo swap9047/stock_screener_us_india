@@ -520,7 +520,8 @@ def style_row(row, ema_labels):
             color = trend_colors.get(val)
             if color:
                 styles[i] = f"color:{color};font-weight:700"
-        elif col in ("% Chg", "Qtr Profit Growth %", "Qtr Revenue Growth %") and pd.notna(val):
+        elif col in ("% Chg", "Qtr Profit Growth %", "Qtr Revenue Growth %",
+                     "Perf 1M %", "Perf 3M %", "Perf 6M %", "Perf 1Y %") and pd.notna(val):
             styles[i] = "color:#1e8449;font-weight:600" if val > 0 else ("color:#c0392b;font-weight:600" if val < 0 else "")
         elif col == "Vol Trend" and isinstance(val, str):
             vol_colors = {"Exploding": "#1e8449", "Declining": "#c0392b"}
@@ -872,6 +873,12 @@ REL_PCT_COLS = ["1M Ret vs Nifty 500", "6M Ret vs Nifty 500"]
 DIST_PCT_COLS = ["26WH Distance", "52WH Distance", "Overhead Supply", "5Y High Distance"]
 # A count of trading days, not a price or a ratio -- whole numbers only.
 COUNT_COLS = ["Breakout Window", "52W High Age"]
+# Stored as a raw ratio (e.g. 0.85), unlike PCT_COLS' ROE %/ROCE % which are
+# pre-multiplied by 100 at computation time (stock_data.py) -- formatted here
+# with Python's native "%" presentation type so the display multiplies by
+# 100 without touching the underlying stored value (any future alert/filter
+# threshold against cfo_op_5yr, e.g. ">= 1", stays meaningful in that scale).
+RATIO_PCT_COLS = ["CFO/OP 5Y"]
 
 # Column keys considered "fundamental" (company financials/valuation, as
 # opposed to technical/price-derived) -- hideable as a group via the
@@ -3596,6 +3603,9 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         dist_pct_cs = [c for c in DIST_PCT_COLS if c in df.columns]
         if dist_pct_cs:
             styled = styled.format(lambda v: f"{v:.1f}%" if pd.notna(v) else "—", subset=dist_pct_cs)
+        ratio_pct_cs = [c for c in RATIO_PCT_COLS if c in df.columns]
+        if ratio_pct_cs:
+            styled = styled.format(lambda v: f"{v:+.1%}" if pd.notna(v) else "—", subset=ratio_pct_cs)
         count_cs = [c for c in COUNT_COLS if c in df.columns]
         if count_cs:
             styled = styled.format("{:,.0f}", subset=count_cs, na_rep="—")
