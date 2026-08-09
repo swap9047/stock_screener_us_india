@@ -209,7 +209,7 @@
   },
   {
     "id": "ed319eac",
-    "name": "uptrending, uptrending and below 10wema, green flag, early stage",
+    "name": "uptrending, uptrending and below 10wema, green flag, early stage, tod fod volume",
     "scope": "ALL",
     "conditions": [
       {
@@ -231,6 +231,11 @@
         "type": "rule",
         "rule_id": "09aea890",
         "logic": "OR"
+      },
+      {
+        "type": "rule",
+        "rule_id": "sc-volrocket",
+        "logic": "OR"
       }
     ],
     "enabled": true,
@@ -245,7 +250,7 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": true,
+    "weekly_wrapup": false,
     "color": "green"
   },
   {
@@ -581,28 +586,28 @@
   },
   {
     "id": "sc-volrocket",
-    "name": "Volume Rocketing (scan)",
+    "name": "tod-fod volume",
     "scope": "ALL",
     "conditions": [
       {
         "metric_a": "avg_volume_10d",
         "operator": ">=",
-        "logic": "AND",
         "compare_type": "metric",
-        "metric_b": "avg_volume_20d",
-        "multiplier": 1.3
+        "metric_b": "avg_volume_100d",
+        "logic": "AND",
+        "multiplier": 2.0
       },
       {
         "metric_a": "perf_1m",
         "operator": ">=",
-        "logic": "AND",
         "compare_type": "value",
-        "value": 3
+        "value": 5.0,
+        "logic": "AND"
       }
     ],
-    "enabled": false,
+    "enabled": true,
     "schedule": {
-      "type": "none",
+      "type": "scheduled",
       "days": [
         "MON",
         "TUE",
@@ -614,7 +619,7 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": true,
+    "weekly_wrapup": false,
     "color": "green"
   },
   {

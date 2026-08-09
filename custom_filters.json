@@ -1,6 +1,7 @@
 {
-  "us_invested": [],
   "india_watchlist": [],
   "us_watchlist": [],
-  "india_invested": []
+  "india_invested": [],
+  "all_invested": [],
+  "us_invested": []
 }

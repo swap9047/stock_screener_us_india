@@ -1,5 +1,6 @@
 {
   "order": [
+    "index_name",
     "pct_change_1d",
     "expert_take",
     "trend",
