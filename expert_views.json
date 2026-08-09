@@ -887,5 +887,27 @@
     "as_of": "2026-08-09 00:00",
     "news_source": "test",
     "model_used": "test-model"
+  },
+  "COHANCE.NS": {
+    "verdict": "HOLD",
+    "headline": "Stock remains in a structural downtrend despite a long-held VStop and recent positive volume.",
+    "technical_summary": "COHANCE.NS is currently in a classified downtrend, trading below its 40 WEMA and 200 DEMA. However, a supportive VStop held for 17 weeks and positive 10-day net volume offer resilience, preventing a shift to outright caution.",
+    "catalyst_summary": "No material news found; verdict based on technicals only.",
+    "actionable_take": "Maintain a HOLD stance while the broader trend remains unconfirmed. Use the 398.0 VStop level as a strict trailing stop and wait for a reclaim of the 40 WEMA before establishing new long positions.",
+    "as_of": "2026-08-09 17:14",
+    "news_used": "No recent news found.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "BECTORFOOD.NS": {
+    "verdict": "HOLD",
+    "headline": "Solid Q1 earnings and positive relative strength offset by incomplete trend recovery.",
+    "technical_summary": "While price is above the 40 WEMA with positive relative strength and net accumulation, the official trend remains a Downtrend and VStop-W has only been held for 2 weeks, falling short of full accumulation criteria.",
+    "catalyst_summary": "Announced Q1 FY27 financial results featuring a 25.5% YoY growth in PAT alongside the appointment of a new CFO.",
+    "actionable_take": "Maintain a HOLD stance until the trend structure fully aligns with a technical uptrend and VStop duration reaches at least 3 weeks. Respect the VStop support level at 187.1 for existing risk management.",
+    "as_of": "2026-08-09 17:17",
+    "news_used": "* **2026-08-08**: Announced Q1 FY27 financial results (Revenue: \u20b9548.75 cr, PAT: \u20b938.76 cr; 25.5% YoY growth).\n* **2026-08-08**: Announced appointment of Anshul Rastogi as Chief Financial Officer (CFO).",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
   }
 }
