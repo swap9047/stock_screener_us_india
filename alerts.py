@@ -31,6 +31,7 @@ single day the condition remains true).
 
 import json
 import os
+import time
 from datetime import date
 
 import requests
@@ -611,17 +612,41 @@ def build_discord_messages_for_rule(rule, tickers, snapshot_by_ticker, metric_la
     return chunked_table_messages(title, headers, all_rows, limit=limit)
 
 
+# Discord webhooks throttle bursts (roughly 5 requests per 2 seconds). A
+# batch of many messages -- the weekly wrap-up alone can produce 15-25 --
+# sent back-to-back trips this well before running out of messages, and a
+# 429'd message used to just be dropped: the digest would visibly stop
+# partway through on the Discord side, reading exactly like truncation even
+# though every message was well under Discord's size limit. Retrying on 429
+# using Discord's own `retry_after` (seconds) fixes that at the root.
+DISCORD_MAX_RATE_LIMIT_RETRIES = 3
+DISCORD_DEFAULT_RETRY_WAIT = 1.0
+
+
 def _post_discord(webhook_url, content):
-    """Posts one message to `webhook_url`. Returns (ok, detail) -- detail is
-    '' on success, otherwise a short human-readable reason (the HTTP status
-    + response body, or the network exception text)."""
-    try:
-        resp = requests.post(webhook_url, json={"content": content}, timeout=10)
-    except requests.RequestException as e:
-        return False, str(e)
-    if resp.status_code not in (200, 204):
+    """Posts one message to `webhook_url`, retrying on a 429 rate-limit
+    response (see module note above). Returns (ok, detail) -- detail is ''
+    on success, otherwise a short human-readable reason (the HTTP status +
+    response body, or the network exception text) once retries (if any) are
+    exhausted."""
+    attempt = 0
+    while True:
+        try:
+            resp = requests.post(webhook_url, json={"content": content}, timeout=10)
+        except requests.RequestException as e:
+            return False, str(e)
+        if resp.status_code in (200, 204):
+            return True, ""
+        if resp.status_code == 429 and attempt < DISCORD_MAX_RATE_LIMIT_RETRIES:
+            wait = DISCORD_DEFAULT_RETRY_WAIT
+            try:
+                wait = float(resp.json().get("retry_after", wait))
+            except Exception:
+                pass
+            time.sleep(wait)
+            attempt += 1
+            continue
         return False, f"{resp.status_code}: {resp.text[:200]}"
-    return True, ""
 
 
 def send_discord(webhook_url, content):
@@ -636,15 +661,25 @@ def send_discord(webhook_url, content):
     return ok
 
 
+DISCORD_BATCH_PACING_SECONDS = 0.3
+
+
 def send_discord_batch(webhook_url, messages):
-    """Posts each of `messages` in order via _post_discord, stopping at the
-    first failure. Returns (ok, detail) -- detail is '' on full success,
-    otherwise the specific reason the failing message was rejected. Used by
-    the interactive Streamlit buttons (unlike send_discord, which only
-    returns a bool) so the UI can show the real cause instead of a generic
-    'check the webhook URL' message that's equally true whether the webhook
-    is dead or a specific message got rejected."""
-    for content in messages:
+    """Posts each of `messages` in order via _post_discord, pacing them
+    slightly (see DISCORD_BATCH_PACING_SECONDS) so a multi-message batch
+    -- the weekly wrap-up especially -- mostly avoids Discord's rate limit
+    in the first place, rather than relying solely on _post_discord's
+    retry-on-429. Stops at the first (non-retryable) failure. Returns
+    (ok, detail) -- detail is '' on full success, otherwise the specific
+    reason the failing message was rejected. Used by the interactive
+    Streamlit buttons and the weekly wrap-up's automated send (unlike
+    send_discord, which only returns a bool) so the caller can show/log the
+    real cause instead of a generic 'check the webhook URL' message that's
+    equally true whether the webhook is dead or a specific message got
+    rejected."""
+    for idx, content in enumerate(messages):
+        if idx > 0:
+            time.sleep(DISCORD_BATCH_PACING_SECONDS)
         ok, detail = _post_discord(webhook_url, content)
         if not ok:
             return False, detail
