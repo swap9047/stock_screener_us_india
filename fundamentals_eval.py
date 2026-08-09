@@ -12,7 +12,11 @@ FUNDAMENTALS_FILE = os.path.join(SCRIPT_DIR, "fundamentals.json")
 # post quarter-end vs ~2-3 weeks), so a US-calibrated window makes recent
 # Indian earnings look "not found" and pushes the guard toward Unknown less
 # often than it should for stale India cases. Widen the window per market.
-SEARCH_WINDOW_DAYS = {"INDIA": 45, "US": 25}
+# Keyed by markets.json's registry keys (india_invested/india_watchlist vs
+# us_invested/us_watchlist) -- an unrecognized/custom watchlist key falls
+# back to the US-calibrated default below, same as before this dict's keys
+# were renamed to match the current registry.
+SEARCH_WINDOW_DAYS = {"india_invested": 45, "india_watchlist": 45, "us_invested": 25, "us_watchlist": 25}
 
 def _generate_with_timeout(client, model, contents, config, timeout=120):
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
@@ -28,7 +32,7 @@ def fetch_fundamental_news(client, ticker, market, company_name, is_retry=False)
     from stock_data import get_exchange_label
 
     as_of_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    window = SEARCH_WINDOW_DAYS.get(market, SEARCH_WINDOW_DAYS["US"])
+    window = SEARCH_WINDOW_DAYS.get(market, SEARCH_WINDOW_DAYS["us_invested"])
     cutoff_date = (datetime.now(timezone.utc) - timedelta(days=window)).strftime("%Y-%m-%d")
     exchange = get_exchange_label(market)
     
@@ -211,7 +215,7 @@ def _check_quarter_freshness(model_earnings_date, real_last_earnings_date, marke
     """
     if real_last_earnings_date is None:
         return True
-    window = SEARCH_WINDOW_DAYS.get(market, SEARCH_WINDOW_DAYS["US"])
+    window = SEARCH_WINDOW_DAYS.get(market, SEARCH_WINDOW_DAYS["us_invested"])
     today = datetime.now(timezone.utc).date()
     if (today - real_last_earnings_date).days > window:
         return True  # nothing new expected within the search window either way
@@ -253,13 +257,13 @@ def _validate_sentiment(view):
 
 def generate_fundamental_view(client, row_data, news_text=None, news_source=None, is_retry=False):
     ticker = row_data.get("ticker", "UNKNOWN")
-    market = row_data.get("market", "US")
+    market = row_data.get("market", "us_invested")
     company_name = row_data.get("company_name", ticker)
 
     if news_text is None:
         news_text, news_source = fetch_fundamental_news(client, ticker, market, company_name, is_retry=is_retry)
 
-    window = SEARCH_WINDOW_DAYS.get(market, SEARCH_WINDOW_DAYS["US"])
+    window = SEARCH_WINDOW_DAYS.get(market, SEARCH_WINDOW_DAYS["us_invested"])
     prompt = f"""You are a fundamental equities analyst. Review the provided news facts for {company_name} (Ticker: {ticker}) and extract the current quarter's Earnings, Guidance, and Analyst Coverage. Evaluate the overall fundamental sentiment and provide your reasoning.
 
 ======================================================================

@@ -7,7 +7,7 @@ Rule schema (alerts_config.json):
   {
     "id": "a1b2c3",
     "name": "Stage 2 breakout",           # optional display label
-    "scope": "ALL" | "US" | "INDIA" | "<TICKER>",
+    "scope": "ALL" | "<any registered market key>" | "<TICKER>",
     "conditions": [
         {"metric_a": "ema10", "operator": ">", "compare_type": "value", "value": 40},
         {"metric_a": "rsi14_daily", "operator": ">", "compare_type": "value", "value": 45, "logic": "OR"}

@@ -57,6 +57,19 @@ SETTINGS_FILE = os.path.join(SCRIPT_DIR, "settings.json")
 DATA_SNAPSHOT_FILE = os.path.join(SCRIPT_DIR, "data_snapshot.json")
 INVESTED_FILE = os.path.join(SCRIPT_DIR, "invested.json")
 MARKETS_FILE = os.path.join(SCRIPT_DIR, "markets.json")
+TICKER_INDEX_FILE = os.path.join(SCRIPT_DIR, "ticker_index.json")
+WATCHLIST_GROUPS_FILE = os.path.join(SCRIPT_DIR, "watchlist_groups.json")
+
+# Default combined-tab membership -- group key -> member market keys. Group
+# keys/labels are fixed in app.py's COMBINED_TAB_DEFS (not user-creatable,
+# per the "reassignment only" design); only membership is user-editable via
+# load_watchlist_groups()/save_watchlist_groups() below. This is the mapping
+# an install had before that editor existed, so bootstrapping to it is a
+# no-op for behavior already in place.
+DEFAULT_WATCHLIST_GROUPS = {
+    "all_invested": ["us_invested", "india_invested"],
+    "all_watchlist": ["india_watchlist", "us_watchlist"],
+}
 
 # Legacy fallback list -- kept only for the one-off markets.json bootstrap
 # and any old code (e.g. debug_snap.py) that still imports it directly. Live
@@ -68,6 +81,14 @@ MARKETS = ["US", "INDIA"]
 # as safe fallbacks if a key is ever missing. All of these are editable at
 # runtime via the app's Settings dialog (see load_settings/save_settings).
 BENCHMARKS = {"US": "SPY", "INDIA": "^CRSLDX"}  # S&P 500 proxy / Nifty 500
+
+# Known indices a ticker can be assigned to (see detect_ticker_index below),
+# each mapped to the benchmark ticker used to compute RS/relative-return
+# metrics against it. Deliberately a small, flat table rather than derived
+# from the markets registry -- an index is a property of the TICKER, not of
+# whichever watchlist(s) it happens to be filed under.
+INDEX_DEFINITIONS = {"S&P 500": "SPY", "Nifty 500": "^CRSLDX"}
+
 RS_LOOKBACK_DAILY = 63
 RS_LOOKBACK_WEEKLY = 26
 RS_LOOKBACK_MONTHLY = 12
@@ -154,7 +175,7 @@ DEFAULT_SETTINGS = {
 
     # -- News scope (which watchlist keys to include in news generation) --
     # Empty list = all registered markets (backward-compatible default).
-    # Set to e.g. ["US"] to restrict the daily digest to one watchlist only.
+    # Set to e.g. ["us_invested"] to restrict the daily digest to one watchlist only.
     "news_watchlist_scope": [],
 
     # -- Fundamental columns (Sentiment, Qtr Profit/Revenue Growth %, etc.) --
@@ -226,6 +247,35 @@ def save_markets_registry(registry):
         json.dump(registry, f, indent=2)
 
 
+def load_watchlist_groups():
+    """Returns {group_key: [member market keys]} for the fixed combined
+    tabs (see DEFAULT_WATCHLIST_GROUPS). Bootstraps the file with today's
+    defaults the first time it's called on an install that predates this
+    editor, same pattern as load_markets_registry(). Member keys no longer
+    present in load_markets_registry() are dropped on read -- watchlist
+    deletion isn't exposed in the UI, but a stale reference (e.g. a market
+    key renamed outside the app) should never crash a combined tab, just
+    quietly stop counting toward it."""
+    if not os.path.exists(WATCHLIST_GROUPS_FILE):
+        save_watchlist_groups(DEFAULT_WATCHLIST_GROUPS)
+        groups = dict(DEFAULT_WATCHLIST_GROUPS)
+    else:
+        try:
+            with open(WATCHLIST_GROUPS_FILE) as f:
+                groups = json.load(f)
+            if not isinstance(groups, dict):
+                raise ValueError("not a dict")
+        except Exception:
+            groups = dict(DEFAULT_WATCHLIST_GROUPS)
+    registry_keys = set(load_markets_registry().keys())
+    return {gk: [m for m in members if m in registry_keys] for gk, members in groups.items()}
+
+
+def save_watchlist_groups(groups):
+    with open(WATCHLIST_GROUPS_FILE, "w") as f:
+        json.dump(groups, f, indent=2)
+
+
 def get_market_keys():
     """Live list of every registered market's stable key, in registry order.
     Prefer this over the legacy MARKETS constant -- it reflects watchlists
@@ -288,13 +338,14 @@ def get_benchmarks(settings=None):
 
 def get_exchange_label(market):
     """Human-readable 'X-listed' phrase for LLM search/reasoning prompts.
-    Preserves the exact existing wording for the two pre-registered markets
-    (US/INDIA) so their prompts don't change at all; any other market gets a
+    Preserves the exact existing wording for the two originally-pre-registered
+    markets (now keyed "us_invested"/"india_invested" after the markets.json
+    key rename) so their prompts don't change at all; any other market gets a
     generic fallback built from its registry label, since the minimal
     add-watchlist form doesn't collect a dedicated exchange phrase."""
-    if market == "INDIA":
+    if market == "india_invested":
         return "NSE/BSE-listed"
-    if market == "US":
+    if market == "us_invested":
         return "US-listed"
     label = load_markets_registry().get(market, {}).get("label", market)
     return f"{label}-listed"
@@ -302,12 +353,13 @@ def get_exchange_label(market):
 
 def get_benchmark_display(market):
     """Human-readable benchmark name for LLM prompts, e.g. "S&P 500 (SPY)".
-    Preserves exact existing wording for US/INDIA; any other market falls
-    back to just its benchmark ticker, since the minimal add-watchlist form
-    doesn't collect a separate display name."""
-    if market == "US":
+    Preserves exact existing wording for us_invested/india_invested (see
+    get_exchange_label); any other market falls back to just its benchmark
+    ticker, since the minimal add-watchlist form doesn't collect a separate
+    display name."""
+    if market == "us_invested":
         return "S&P 500 (SPY)"
-    if market == "INDIA":
+    if market == "india_invested":
         return "Nifty 500 (^CRSLDX)"
     return load_markets_registry().get(market, {}).get("benchmark", market)
 
@@ -433,6 +485,28 @@ def load_invested_weights():
 def save_invested_weights(weights):
     with open(INVESTED_FILE, "w") as f:
         json.dump(weights, f, indent=2)
+
+
+def load_ticker_index():
+    """Returns {"TICKER": {"index": "S&P 500", "benchmark": "SPY"}, ...} --
+    each ticker's permanently-assigned index, set once by
+    assign_ticker_index_if_missing() and never overwritten automatically.
+    Same flat "ticker -> small dict" shape as ticker_notes.json."""
+    if not os.path.exists(TICKER_INDEX_FILE):
+        return {}
+    try:
+        with open(TICKER_INDEX_FILE) as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return {}
+
+
+def save_ticker_index(data):
+    with open(TICKER_INDEX_FILE, "w") as f:
+        json.dump(data, f, indent=2)
 
 
 def tradingview_url(ticker):
@@ -894,6 +968,67 @@ def _fetch_info_with_retry(yf_t, ticker, attempts=3, base_delay=3):
             print(f"  [{ticker}] .info fetch failed: {e}")
             return {}
     return {}
+
+
+def detect_ticker_index(ticker):
+    """Best-effort, ONE-TIME index detection for a ticker that has no
+    ticker_index.json entry yet, via a live yfinance .info lookup (reusing
+    the same retry wrapper fetch_snapshot uses for company name/fundamentals).
+    Returns (index_name, benchmark) or (None, None) if it can't be classified
+    confidently -- callers fall back to the watchlist's registered benchmark
+    in that case, same as before this feature existed, rather than guessing
+    wrong and silently mis-benchmarking a ticker.
+
+    Currency is checked before exchange code: it's the more stable signal
+    (INR/USD), whereas yfinance's `exchange` field uses short, sometimes
+    ambiguous codes (NSI/BSE for India; NMS/NYQ/NGM/ASE/PCX/BATS for the
+    major US venues) that are only consulted as a fallback.
+    """
+    info = _fetch_info_with_retry(yf.Ticker(ticker), ticker)
+    currency = (info.get("currency") or "").upper()
+    exchange = (info.get("exchange") or "").upper()
+    if currency == "INR" or exchange in ("NSI", "BSE"):
+        return "Nifty 500", INDEX_DEFINITIONS["Nifty 500"]
+    if currency == "USD" or exchange in ("NMS", "NYQ", "NGM", "ASE", "PCX", "BATS"):
+        return "S&P 500", INDEX_DEFINITIONS["S&P 500"]
+    return None, None
+
+
+def assign_ticker_index_if_missing(ticker, ticker_index=None):
+    """Returns this ticker's index assignment, detecting and persisting it
+    the FIRST time it's ever seen and leaving it untouched on every call
+    after that -- the "pick it once at setup, never auto-change it again"
+    behavior. Pass an already-loaded `ticker_index` dict when assigning many
+    tickers in a row (see backfill_ticker_indices) to avoid re-reading the
+    file on every call; omit it for a one-off lookup."""
+    owns_dict = ticker_index is None
+    if owns_dict:
+        ticker_index = load_ticker_index()
+    existing = ticker_index.get(ticker)
+    if existing:
+        return existing
+    index_name, benchmark = detect_ticker_index(ticker)
+    if index_name is None:
+        return None
+    entry = {"index": index_name, "benchmark": benchmark}
+    ticker_index[ticker] = entry
+    if owns_dict:
+        save_ticker_index(ticker_index)
+    return entry
+
+
+def backfill_ticker_indices(tickers):
+    """Assigns an index to every ticker in `tickers` that doesn't already
+    have one, in a single load/save pass (not one file write per ticker).
+    Safe to call on every fetch_all_markets run -- already-assigned tickers
+    are skipped without a network call, so steady-state cost is zero."""
+    ticker_index = load_ticker_index()
+    missing = [t for t in tickers if t not in ticker_index]
+    if not missing:
+        return
+    for t in missing:
+        assign_ticker_index_if_missing(t, ticker_index=ticker_index)
+    save_ticker_index(ticker_index)
 
 
 def _download_with_retries(all_tickers, period, attempts=3, timeout=90, wait=30):
@@ -1691,28 +1826,78 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
 
 
 def fetch_all_markets(watchlists=None, period="5y", settings=None):
-    """Fetches both US and INDIA watchlists with their respective benchmarks
-    and returns a combined (results, as_of, per_market_results) tuple.
-    per_market_results is {"US": [...], "INDIA": [...]}."""
+    """Fetches every registered watchlist and returns a combined
+    (results, as_of, per_market_results) tuple. per_market_results is
+    {market_key: [...], ...}.
+
+    Benchmark grouping is by TICKER, not by market: each ticker carries its
+    own permanent index assignment (ticker_index.json, see
+    assign_ticker_index_if_missing) detected once via yfinance the first time
+    it's ever seen, independent of which watchlist(s) it's filed under. A
+    watchlist's registered benchmark (markets.json) is only the fallback for
+    a ticker detect_ticker_index couldn't classify. fetch_snapshot itself
+    cannot mix benchmarks within one call -- it downloads tickers+benchmark
+    in a single batched request and derives ONE bench_daily/weekly/monthly
+    series before its per-ticker loop starts -- so tickers are grouped by
+    their resolved benchmark and fetch_snapshot is called once per unique
+    benchmark, not once per market. This also means fewer total yfinance
+    calls in steady state than the old one-call-per-market approach, since
+    the ~handful of distinct benchmarks in use is normally smaller than the
+    number of watchlists."""
     if watchlists is None:
         watchlists = load_watchlists()
     settings = settings or load_settings()
     benchmarks = get_benchmarks(settings)
 
-    per_market = {}
+    all_tickers_ordered = []
+    seen_tickers = set()
+    for tickers in watchlists.values():
+        for t in tickers:
+            if t not in seen_tickers:
+                seen_tickers.add(t)
+                all_tickers_ordered.append(t)
+    backfill_ticker_indices(all_tickers_ordered)
+    ticker_index = load_ticker_index()
+
+    # Group every ticker (across ALL markets) by its resolved benchmark.
+    tickers_by_benchmark = {}
+    for market, tickers in watchlists.items():
+        fallback_bench = benchmarks.get(market, "SPY")
+        for t in tickers:
+            assignment = ticker_index.get(t)
+            bench = assignment["benchmark"] if assignment else fallback_bench
+            tickers_by_benchmark.setdefault(bench, [])
+            if t not in tickers_by_benchmark[bench]:
+                tickers_by_benchmark[bench].append(t)
+
+    results_by_ticker = {}
     as_of = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M ET")
-    for market in watchlists.keys():
-        tickers = watchlists.get(market, [])
-        bench = benchmarks.get(market, "SPY")
+    for bench, tickers in tickers_by_benchmark.items():
         try:
-            results, as_of = fetch_snapshot(tickers, benchmark=bench, period=period, settings=settings)
+            rows, as_of = fetch_snapshot(tickers, benchmark=bench, period=period, settings=settings)
         except Exception as e:
-            print(f"  [fetch_all_markets] skipping {market} (benchmark={bench}): {e}")
-            per_market[market] = []
+            print(f"  [fetch_all_markets] skipping benchmark group {bench} ({len(tickers)} tickers): {e}")
             continue
-        for r in results:
+        for r in rows:
+            results_by_ticker[r["ticker"]] = r
+
+    # Reassemble per-market results in each watchlist's original ticker
+    # order. Each market gets its OWN COPY of a shared ticker's row dict --
+    # a ticker present in two watchlists must not have one market's
+    # "market"/"index_name" tag leak into the other's.
+    per_market = {}
+    for market, tickers in watchlists.items():
+        rows = []
+        for t in tickers:
+            base = results_by_ticker.get(t)
+            if base is None:
+                continue
+            r = dict(base)
             r["market"] = market
-        per_market[market] = results
+            assignment = ticker_index.get(t)
+            r["index_name"] = assignment["index"] if assignment else None
+            rows.append(r)
+        per_market[market] = rows
 
     # Apply user-defined custom columns (custom_columns.py) here -- NOT in
     # app.py -- so every consumer of fetch_all_markets gets them

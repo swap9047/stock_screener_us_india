@@ -10,7 +10,7 @@ empty = all markets), then sends to Discord and saves to news_summary.json
 (which the Streamlit app's News tab reads).
 
 Config/env (same folder):
-    watchlist.json        - {"US": [...], "INDIA": [...]}
+    watchlist.json        - {market_key: [tickers], ...} (see markets.json for the registered keys)
     settings.json         - includes news_watchlist_scope (which watchlists to run)
     GEMINI_API_KEY (env)  - Gemini API key (GitHub Actions repo secret)
     DISCORD_WEBHOOK_URL (env) - Discord webhook (same secret alert_check.py uses)

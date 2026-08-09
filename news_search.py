@@ -146,6 +146,6 @@ def get_stock_news(ticker, market=None, max_results=4, timeout_sec=4, company_na
 
 if __name__ == "__main__":
     print("Testing get_stock_news for [ticker]...")
-    text, source = get_stock_news("[ticker]", market="INDIA")
+    text, source = get_stock_news("[ticker]", market="india_invested")
     print(f"Source: {source}")
     print(text)
