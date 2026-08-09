@@ -82,7 +82,7 @@ from news_summary import load_news_summary, MARKET_LABELS, get_gemini_api_key, g
 from expert_views import load_expert_views, save_expert_views, analyze_single_ticker, generate_expert_view, _is_valid_view, VERDICT_RULES
 from fundamentals_eval import (
     load_fundamentals, _validate_sentiment, SENTIMENT_STALE_DAYS,
-    analyze_single_ticker_sentiment,
+    analyze_single_ticker_sentiment, _is_valid_view as _is_valid_sentiment_view,
 )
 from custom_columns import (
     load_custom_columns, save_custom_columns, validate_formula, column_key,
@@ -2689,6 +2689,51 @@ def trigger_ai_refresh_workflows(label):
         st.error(f"Failed to start refresh: {e}")
 
 
+def _reanalyze_tickers_in_dashboard(tickers, results, api_key, nvidia_api_key, sync_message):
+    """Refreshes Expert Take + Sentiment for `tickers` synchronously, right
+    here in the dashboard -- no GitHub Actions workflow involved. Shared by
+    the "selected" and "Retry Failed / Pending" buttons so both scopes
+    refresh identically; kept out of the per-ticker re-analyze button (it
+    has its own st.spinner-based version) since that one's single-ticker
+    flow doesn't need a progress bar."""
+    progress_bar = st.progress(0, text="Starting selective AI re-analysis...")
+    from google import genai
+    client = genai.Client(api_key=api_key)
+    updated_views = load_expert_views()
+
+    for idx, tk in enumerate(tickers):
+        row = next(r for r in results if r["ticker"] == tk)
+        company_name = row.get("company_name", tk)
+        progress_bar.progress(
+            (idx + 1) / len(tickers),
+            text=f"Analyzing {company_name} ({idx+1}/{len(tickers)})...",
+        )
+        view = generate_expert_view(client, row, nvidia_api_key=nvidia_api_key)
+        if _is_valid_view(view):
+            updated_views[tk] = view
+            save_expert_views(updated_views)
+        else:
+            progress_bar.progress(
+                (idx + 1) / len(tickers),
+                text=f"⚠️ {tk} still rate-limited, keeping existing result.",
+            )
+        # Sentiment in the same pass, so the two AI columns don't drift
+        # apart. A failure here keeps the prior view (see
+        # analyze_single_ticker_sentiment) and must not abort the loop.
+        progress_bar.progress(
+            (idx + 1) / len(tickers),
+            text=f"Sentiment for {company_name} ({idx+1}/{len(tickers)})...",
+        )
+        try:
+            analyze_single_ticker_sentiment(tk, row, api_key)
+        except Exception as e:
+            print(f"[re-analyze] sentiment failed for {tk}: {e}")
+        time.sleep(5)
+
+    sync_ai_views_to_github(sync_message)
+    st.rerun()
+
+
 def render_expert_analysis_control_bar(market, results):
     expert_views = load_expert_views()
     api_key = get_gemini_api_key(st.secrets)
@@ -2712,9 +2757,16 @@ def render_expert_analysis_control_bar(market, results):
         )
 
     # --- Detect failed/pending tickers (includes newly added ones with no entry) ---
+    # Either AI column failing/pending counts -- "Retry Failed / Pending"
+    # refreshes both together (same as the selected-tickers and per-ticker
+    # re-analyze buttons), so a ticker whose Expert Take is fine but whose
+    # Sentiment is still pending must still show up here, or its Sentiment
+    # would never get retried by this button.
+    fundamentals_now = load_fundamentals()
     failed_tickers = [
         tk for tk in all_tickers
         if not _is_valid_view(expert_views.get(tk))
+        or not _is_valid_sentiment_view(fundamentals_now.get(tk))
     ]
 
     # Folded by default: these are set-once controls, and leaving them open
@@ -2793,42 +2845,10 @@ def render_expert_analysis_control_bar(market, results):
             disabled=not selected_to_reanalyze or not api_key,
             width="stretch",
         ):
-            progress_bar = st.progress(0, text="Starting selective AI re-analysis...")
-            from google import genai
-            client = genai.Client(api_key=api_key)
-            updated_views = load_expert_views()
-
-            for idx, tk in enumerate(selected_to_reanalyze):
-                row = next(r for r in results if r["ticker"] == tk)
-                company_name = row.get("company_name", tk)
-                progress_bar.progress(
-                    (idx + 1) / len(selected_to_reanalyze),
-                    text=f"Analyzing {company_name} ({idx+1}/{len(selected_to_reanalyze)})...",
-                )
-                view = generate_expert_view(client, row, nvidia_api_key=nvidia_api_key)
-                if _is_valid_view(view):
-                    updated_views[tk] = view
-                    save_expert_views(updated_views)
-                else:
-                    progress_bar.progress(
-                        (idx + 1) / len(selected_to_reanalyze),
-                        text=f"⚠️ {tk} still rate-limited, keeping existing result.",
-                    )
-                # Sentiment in the same pass, so the two AI columns don't drift
-                # apart. A failure here keeps the prior view (see
-                # analyze_single_ticker_sentiment) and must not abort the loop.
-                progress_bar.progress(
-                    (idx + 1) / len(selected_to_reanalyze),
-                    text=f"Sentiment for {company_name} ({idx+1}/{len(selected_to_reanalyze)})...",
-                )
-                try:
-                    analyze_single_ticker_sentiment(tk, row, api_key)
-                except Exception as e:
-                    print(f"[re-analyze] sentiment failed for {tk}: {e}")
-                time.sleep(5)
-
-            sync_ai_views_to_github(f"Re-analyze selected tickers ({len(selected_to_reanalyze)}) via UI")
-            st.rerun()
+            _reanalyze_tickers_in_dashboard(
+                selected_to_reanalyze, results, api_key, nvidia_api_key,
+                f"Re-analyze selected tickers ({len(selected_to_reanalyze)}) via UI",
+            )
 
         failed_count = len(failed_tickers)
         if c3.button(
@@ -2838,7 +2858,10 @@ def render_expert_analysis_control_bar(market, results):
             type="primary" if failed_count > 0 else "secondary",
             width="stretch",
         ):
-            trigger_ai_refresh_workflows(f"Retry Failed / Pending ({failed_count})")
+            _reanalyze_tickers_in_dashboard(
+                failed_tickers, results, api_key, nvidia_api_key,
+                f"Retry failed/pending tickers ({failed_count}) via UI",
+            )
 
         if c4.button(
             f"🔄 Re-analyze All ({len(all_tickers)})",
