@@ -19,7 +19,7 @@ Run: python3 weekly_wrapup_check.py [--dry-run]
 import sys
 from datetime import date
 
-from alerts import load_discord_webhook, load_rules, send_discord
+from alerts import load_discord_webhook, load_rules, send_discord_batch
 from stock_data import fetch_all_markets, get_filterable_metrics, load_markets_registry, load_settings
 from weekly_wrapup import (
     advance_state,
@@ -81,14 +81,14 @@ def main():
               "anywhere, and tenure counters were left unchanged.")
         return
 
-    ok = all([send_discord(webhook, m) for m in messages])
+    ok, detail = send_discord_batch(webhook, messages)
     if not ok:
         # Advancing on a run that didn't fully land would silently rebase
         # every Wk value with no way to recover the old entered dates, so a
         # partial send is treated as no send. Worst case next week's numbers
         # are one run stale, which is visible and self-correcting.
-        print("Failed to send one or more messages to Discord — tenure counters left "
-              "unchanged; will retry next run.")
+        print(f"Failed to send one or more messages to Discord ({detail}) — tenure "
+              "counters left unchanged; will retry next run.")
         return
 
     save_wrapup_state(advance_state(state, wrapup, run_date=run_date))
