@@ -44,6 +44,12 @@ DISCORD_CONFIG_FILE = os.path.join(SCRIPT_DIR, "discord_config.json")
 
 SCOPE_LABELS = {"ALL": "All watchlist", "US": "US watchlist", "INDIA": "India watchlist"}
 
+# Alerts-column number color, per rule -- "green"/"red"/None (unset, renders
+# plain). Reuses the exact hex values already used for the Sentiment
+# column's Bullish/Bearish styling (app.py's _fundamentals_cell), so the
+# color language is consistent across the app rather than a new palette.
+RULE_COLOR_HEX = {"green": "#00C853", "red": "#FF5252"}
+
 
 def _scope_label(scope):
     """Human-readable label for a rule's scope: "All watchlist", "<market
@@ -235,6 +241,11 @@ def normalize_rule(rule):
         # Independent of "enabled" and of schedule.type -- a "Scan only" rule
         # that never pings Discord daily can still be in the weekly digest.
         rule.setdefault("weekly_wrapup", False)
+        # Alerts-column number color -- "green"/"red"/None. None is a real,
+        # distinct state (renders unstyled, sorts between green and red),
+        # not "not yet migrated" -- so this is a plain setdefault, same as
+        # the fields above, not a value that needs further normalizing.
+        rule.setdefault("color", None)
         rule["schedule"] = normalize_schedule(rule.get("schedule"))
         return rule
     return {

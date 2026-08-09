@@ -62,7 +62,14 @@ from stock_data import (
 )
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE, send_discord,
                      build_discord_messages_for_rule, describe_schedule, DAY_CODES, DAY_LABELS,
-                     DEFAULT_DAYS, ALLOWED_HOURS, HOUR_LABELS, compute_rule_truth)
+                     DEFAULT_DAYS, ALLOWED_HOURS, HOUR_LABELS, compute_rule_truth, RULE_COLOR_HEX)
+
+# Alerts-column color picker, shared by the add-rule builder and the
+# existing-rule editor -- UI label <-> stored rule["color"] value ("green"/
+# "red"/None). One definition so the two pickers can never drift apart.
+RULE_COLOR_UI_OPTIONS = ["None", "🟢 Green", "🔴 Red"]
+RULE_COLOR_UI_TO_VALUE = {"None": None, "🟢 Green": "green", "🔴 Red": "red"}
+RULE_COLOR_VALUE_TO_UI = {v: k for k, v in RULE_COLOR_UI_TO_VALUE.items()}
 from weekly_wrapup import (
     build_wrapup, eligible_rules, load_wrapup_state, _pretty_date,
     build_discord_messages as build_wrapup_messages,
@@ -3334,6 +3341,9 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         alert_rules_all = load_rules()
         numbered_rules = [r for r in alert_rules_all if r.get("enabled", True) and r.get("conditions")]
         rule_number = {r["id"]: i + 1 for i, r in enumerate(numbered_rules)}
+        # Rule color -> number color, so the cell/legend builders below can
+        # go straight from a bare int to a color without re-walking rules.
+        number_color = {rule_number[r["id"]]: r.get("color") for r in numbered_rules}
         alert_matches = {}
         # alert_hits keeps the full preview item (rule name, conditions, and the
         # row the rule was evaluated against) so the AI-review payload can render
@@ -3346,9 +3356,25 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
                     if num is not None:
                         alert_matches.setdefault(p["ticker"], []).append(num)
                         alert_hits.setdefault(p["ticker"], []).append(p)
-        raw_df["matched_alerts"] = [
-            ", ".join(str(n) for n in sorted(alert_matches.get(r["ticker"], []))) or "—" for r in filtered
-        ]
+
+        def _color_sort_key(n):
+            # Green first, unset in the middle, red last -- within a bucket,
+            # ascending by number (today's order).
+            c = number_color.get(n)
+            bucket = 0 if c == "green" else (2 if c == "red" else 1)
+            return (bucket, n)
+
+        def _colored_alert_cell(ticker):
+            nums = alert_matches.get(ticker)
+            if not nums:
+                return "—"
+            parts = []
+            for n in sorted(nums, key=_color_sort_key):
+                hex_color = RULE_COLOR_HEX.get(number_color.get(n))
+                parts.append(f'<span style="color:{hex_color}">{n}</span>' if hex_color else str(n))
+            return ", ".join(parts)
+
+        raw_df["matched_alerts"] = [_colored_alert_cell(r["ticker"]) for r in filtered]
 
         expert_views = load_expert_views()
         def _expert_take_cell(ticker):
@@ -3563,11 +3589,13 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             # resolves to its name instead of a bare id (see describe_filter).
             rule_by_id_market = {r["id"]: r for r in alert_rules_all}
             legend_bits = []
+            legend_dot = {"green": "🟢 ", "red": "🔴 "}
             for r in numbered_rules:
                 num = rule_number[r["id"]]
                 if num in used_numbers:
                     name = r.get("name") or "(unnamed)"
-                    legend_bits.append(f"**{num}** = {name} — {describe_chain(r['conditions'], metric_labels_market, rule_by_id_market)}")
+                    dot = legend_dot.get(r.get("color"), "")
+                    legend_bits.append(f"{dot}**{num}** = {name} — {describe_chain(r['conditions'], metric_labels_market, rule_by_id_market)}")
             if legend_bits:
                 st.caption("Alert legend: " + " · ".join(legend_bits))
 
@@ -4335,12 +4363,17 @@ with tab_alerts:
     if "draft_rule_conditions" not in st.session_state:
         st.session_state.draft_rule_conditions = []
 
-    top1, top2 = st.columns([2, 3])
+    top1, top2, top3 = st.columns([2, 3, 1.3])
     market_scope_label_to_key = {f"{markets_registry_now[mkt]['label']} watchlist": mkt for mkt in market_keys_now}
     market_scope_key_to_label = {v: k for k, v in market_scope_label_to_key.items()}
     scope_options = ["All watchlist"] + list(market_scope_label_to_key.keys()) + combined_tickers
     scope_choice = top1.selectbox("Scope", scope_options, key="rule_scope")
     rule_name = top2.text_input("Name (optional)", key="rule_name", placeholder="e.g. Stage 2 breakout")
+    rule_color_ui = top3.selectbox(
+        "Color", RULE_COLOR_UI_OPTIONS, key="rule_color",
+        help="Colors the rule's number in every watchlist's Alerts column, and orders it "
+             "green-first/red-last within a ticker's cell.",
+    )
 
     if st.session_state.draft_rule_conditions:
         st.caption("Conditions in this rule so far:")
@@ -4420,6 +4453,7 @@ with tab_alerts:
                 "conditions": list(st.session_state.draft_rule_conditions),
                 "enabled": True,
                 "schedule": new_schedule,
+                "color": RULE_COLOR_UI_TO_VALUE[rule_color_ui],
             }
             rules.append(new_rule)
             save_rules(rules)
@@ -4555,7 +4589,7 @@ with tab_alerts:
                     st.rerun()
 
                 st.markdown("**Name & scope**")
-                nm_col, sc_col = st.columns([2, 2])
+                nm_col, sc_col, cl_col = st.columns([2, 2, 1.3])
                 edit_name = nm_col.text_input("Name", value=rule.get("name", ""), key=f"nm_{rule['id']}")
                 scope_label_map = {"ALL": "All watchlist", **market_scope_key_to_label}
                 scope_edit_options = ["All watchlist"] + list(market_scope_label_to_key.keys()) + combined_tickers
@@ -4565,6 +4599,11 @@ with tab_alerts:
                 edit_scope_label = sc_col.selectbox(
                     "Scope", scope_edit_options, index=scope_edit_options.index(current_scope_label),
                     key=f"sc_{rule['id']}",
+                )
+                edit_color_ui = cl_col.selectbox(
+                    "Color", RULE_COLOR_UI_OPTIONS,
+                    index=RULE_COLOR_UI_OPTIONS.index(RULE_COLOR_VALUE_TO_UI.get(rule.get("color"), "None")),
+                    key=f"cl_{rule['id']}",
                 )
 
                 st.markdown("**Conditions**")
@@ -4642,6 +4681,7 @@ with tab_alerts:
                         edit_scope_val = edit_scope_label
                     rule["name"] = edit_name.strip()
                     rule["scope"] = edit_scope_val
+                    rule["color"] = RULE_COLOR_UI_TO_VALUE[edit_color_ui]
                     if es_mode == "Scheduled Discord alert":
                         new_sched_days = [day_code_map[d] for d in es_days_labels] if es_days_labels else list(DEFAULT_DAYS)
                         rule["schedule"] = {
