@@ -611,13 +611,41 @@ def build_discord_messages_for_rule(rule, tickers, snapshot_by_ticker, metric_la
     return chunked_table_messages(title, headers, all_rows, limit=limit)
 
 
-def send_discord(webhook_url, content):
+def _post_discord(webhook_url, content):
+    """Posts one message to `webhook_url`. Returns (ok, detail) -- detail is
+    '' on success, otherwise a short human-readable reason (the HTTP status
+    + response body, or the network exception text)."""
     try:
         resp = requests.post(webhook_url, json={"content": content}, timeout=10)
     except requests.RequestException as e:
-        print(f"Discord send failed: {e}")
-        return False
+        return False, str(e)
     if resp.status_code not in (200, 204):
-        print(f"Discord send failed: {resp.status_code} {resp.text}")
-        return False
-    return True
+        return False, f"{resp.status_code}: {resp.text[:200]}"
+    return True, ""
+
+
+def send_discord(webhook_url, content):
+    """Bool-only convenience wrapper over _post_discord, used by every
+    automated/headless caller (alert_check.py, news_check.py,
+    weekly_wrapup_check.py) -- they only ever check success and already log
+    failures to the console, so the failure detail goes there, same as
+    before this function was split out."""
+    ok, detail = _post_discord(webhook_url, content)
+    if not ok:
+        print(f"Discord send failed: {detail}")
+    return ok
+
+
+def send_discord_batch(webhook_url, messages):
+    """Posts each of `messages` in order via _post_discord, stopping at the
+    first failure. Returns (ok, detail) -- detail is '' on full success,
+    otherwise the specific reason the failing message was rejected. Used by
+    the interactive Streamlit buttons (unlike send_discord, which only
+    returns a bool) so the UI can show the real cause instead of a generic
+    'check the webhook URL' message that's equally true whether the webhook
+    is dead or a specific message got rejected."""
+    for content in messages:
+        ok, detail = _post_discord(webhook_url, content)
+        if not ok:
+            return False, detail
+    return True, ""

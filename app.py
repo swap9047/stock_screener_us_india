@@ -61,8 +61,9 @@ from stock_data import (
     load_watchlist_groups, save_watchlist_groups,
 )
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE, send_discord,
-                     build_discord_messages_for_rule, describe_schedule, DAY_CODES, DAY_LABELS,
-                     DEFAULT_DAYS, ALLOWED_HOURS, HOUR_LABELS, compute_rule_truth, RULE_COLOR_HEX)
+                     send_discord_batch, build_discord_messages_for_rule, describe_schedule,
+                     DAY_CODES, DAY_LABELS, DEFAULT_DAYS, ALLOWED_HOURS, HOUR_LABELS,
+                     compute_rule_truth, RULE_COLOR_HEX)
 
 # Alerts-column color picker, shared by the add-rule builder and the
 # existing-rule editor -- UI label <-> stored rule["color"] value ("green"/
@@ -4824,14 +4825,14 @@ with tab_alerts:
                             build_discord_messages_for_rule(rule, tickers, by_ticker_preview, metric_labels_alert)
                         )
 
-                    ok = all(send_discord(webhook, m) for m in all_msgs)
+                    ok, detail = send_discord_batch(webhook, all_msgs)
                     if ok:
                         st.success(
                             f"Sent {len(active)} match(es) across {len(tickers_by_rule)} rule(s) to Discord "
                             f"({len(all_msgs)} message{'s' if len(all_msgs) != 1 else ''})."
                         )
                     else:
-                        st.error("Failed to send — check the webhook URL in the Discord section below.")
+                        st.error(f"Failed to send — {detail}")
 
     # ── Weekly wrap-up ──────────────────────────────────────────────────────
     st.divider()
@@ -4945,11 +4946,12 @@ with tab_alerts:
                         st.error("No Discord webhook configured yet — set one in the Discord section below.")
                     else:
                         msgs = build_wrapup_messages(report)
-                        if all(send_discord(webhook, m) for m in msgs):
+                        ok, detail = send_discord_batch(webhook, msgs)
+                        if ok:
                             st.success(f"Sent {len(msgs)} message(s) to Discord. "
                                        "Wk counters were not advanced — only the Sunday run does that.")
                         else:
-                            st.error("Failed to send — check the webhook URL in the Discord section below.")
+                            st.error(f"Failed to send — {detail}")
 
     # ── Discord ───────────────────────────────────────────────────────────────
     st.divider()
@@ -4968,8 +4970,8 @@ with tab_alerts:
         if not webhook_input:
             st.error("Enter a webhook URL first.")
         else:
-            ok = send_discord(webhook_input, "✅ Test alert from your Stock Watchlist app.")
-            st.success("Sent!") if ok else st.error("Failed to send — check the webhook URL.")
+            ok, detail = send_discord_batch(webhook_input, ["✅ Test alert from your Stock Watchlist app."])
+            st.success("Sent!") if ok else st.error(f"Failed to send — {detail}")
 
     st.divider()
     with st.expander("☁️ Push config to GitHub", expanded=False):
