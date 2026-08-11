@@ -1394,7 +1394,7 @@ def settings_dialog():
              "many weeks (in addition to close > VStop, close > slow WEMA, and the volume ratio below).",
     )
     tech_uptrend_vol_ratio = tu2.number_input(
-        "21. Min 10D ÷ 100D vol ratio", min_value=1.0, step=0.1, format="%.2f",
+        "21. Min 10D ÷ 100D vol ratio", min_value=0.0, step=0.1, format="%.2f",
         value=float(settings.get("tech_uptrend_volume_ratio", 1.4)), key="set_tech_vol_ratio",
         help="Tech Uptrend also requires 10-day average volume ≥ this many times the 100-day average. "
              "This column's own parameter — independent of Vol Trend's 'Exploding' ratio above, even "
