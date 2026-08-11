@@ -1460,5 +1460,22 @@
     "model_used": "gemini-3.5-flash-lite",
     "quarter_verified": true,
     "real_earnings_date": "2026-08-07"
+  },
+  "RKFORGE.NS": {
+    "earnings_summary": "Q1 FY27 Revenue: \u20b91,217 Cr, EPS: \u20b92.53, Net Profit: \u20b946.88 Cr",
+    "future_guidance": "FY27 Export Growth: 20%+",
+    "analyst_coverage": "Consensus: Neutral (0 Buy, 3 Hold, 1 Sell)",
+    "earnings_report_date": null,
+    "eps_value": "\u20b92.53",
+    "guidance_change": null,
+    "analyst_action": null,
+    "sentiment": "Neutral",
+    "reasoning": "Ramkrishna Forgings reported Q1 FY27 EPS of \u20b92.53 and revenue of \u20b91,217 Cr, with a projected export growth of 20%+ for FY27. However, analyst coverage is strictly Neutral with 3 Hold and 1 Sell ratings, leading to a balanced, neutral overall sentiment.",
+    "as_of": "2026-08-11 13:01",
+    "news_used": "**Q1 FY27 (ended June 30, 2026)**\n* **Revenue:** \u20b91,217 Cr\n* **EPS:** \u20b92.53\n* **Net Profit:** \u20b946.88 Cr\n\n**Guidance**\n* **FY27 Export Growth:** 20%+\n\n**Analyst Ratings (as of Aug 7, 2026)**\n* **Consensus:** Neutral (0 Buy, 3 Hold, 1 Sell)",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite",
+    "quarter_verified": true,
+    "real_earnings_date": "2025-05-31"
   }
 }

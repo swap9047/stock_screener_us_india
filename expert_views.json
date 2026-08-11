@@ -909,5 +909,16 @@
     "news_used": "* **2026-08-08**: Announced Q1 FY27 financial results (Revenue: \u20b9548.75 cr, PAT: \u20b938.76 cr; 25.5% YoY growth).\n* **2026-08-08**: Announced appointment of Anshul Rastogi as Chief Financial Officer (CFO).",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
+  },
+  "RKFORGE.NS": {
+    "verdict": "ACCUMULATE",
+    "headline": "Ramkrishna Forgings shows strong technical momentum, heavy accumulation, and a confirmed uptrend.",
+    "technical_summary": "The stock is in a confirmed Strong Uptrend with price trading well above rising weekly and daily EMAs. Volume is exploding at roughly twice its 100-day average with a strong 78% positive net accumulation ratio, backed by a 15-week VStop uptrend.",
+    "catalyst_summary": "No material news found; verdict based on technicals only.",
+    "actionable_take": "Consider accumulating on minor pullbacks toward the 10 DEMA or key support zones. Set a trailing stop loss aligned with the weekly VStop level at 657 to manage downside risk.",
+    "as_of": "2026-08-11 13:00",
+    "news_used": "No recent news found.",
+    "news_source": "\ud83d\udd0d Gemma-4-31B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
   }
 }
