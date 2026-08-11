@@ -27,7 +27,7 @@ from weekly_wrapup import (
     build_wrapup,
     load_wrapup_state,
     save_wrapup_state,
-    selected_rules,
+    eligible_rules,
 )
 
 
@@ -35,10 +35,9 @@ def main():
     dry_run = "--dry-run" in sys.argv
 
     all_rules = load_rules()
-    chosen = selected_rules(all_rules)
+    chosen = eligible_rules(all_rules)
     if not chosen:
-        print("No alert rules are flagged for the weekly wrap-up "
-              "(Alert Rules tab -> Weekly wrap-up). Nothing to do.")
+        print("No enabled alert rules with conditions found. Nothing to do.")
         return
 
     settings = load_settings()

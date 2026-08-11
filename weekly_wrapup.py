@@ -180,7 +180,11 @@ def build_wrapup(rules, snapshot_results, state, metric_labels=None,
     run_date = run_date or date.today()
     entries = state.get("entries", {})
 
-    chosen = selected_rules(rules)
+    # Build rule_number_map exactly as the dashboard does so numbers are consistent.
+    all_enabled = [r for r in rules if r.get("enabled", True) and r.get("conditions")]
+    rule_number_map = {r["id"]: i + 1 for i, r in enumerate(all_enabled)}
+    chosen = eligible_rules(rules)
+    
     rules_by_id = {r["id"]: r for r in rules}
     rule_truth, cycle_ids = compute_rule_truth(rules, snapshot_results)
     rows_by_ticker = {r["ticker"]: r for r in snapshot_results}
@@ -189,7 +193,8 @@ def build_wrapup(rules, snapshot_results, state, metric_labels=None,
     # ticker -> {"nums": [...], "weeks": [...], "market": ...}
     per_ticker = {}
 
-    for num, rule in enumerate(chosen, start=1):
+    for rule in chosen:
+        num = rule_number_map[rule["id"]]
         kind, keys = wrapup_columns(rule, rules_by_id)
         labels = _column_labels(kind, keys, metric_labels, rules_by_id)
         headers = ["Ticker", "Watchlist"] + labels + ["Wk"]
