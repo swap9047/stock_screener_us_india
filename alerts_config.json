@@ -501,7 +501,7 @@
     ],
     "enabled": true,
     "schedule": {
-      "type": "none",
+      "type": "scheduled",
       "days": [
         "MON",
         "TUE",
@@ -513,8 +513,8 @@
       ],
       "time_et": "21:00"
     },
-    "weekly_wrapup": true,
-    "color": "green"
+    "weekly_wrapup": false,
+    "color": null
   },
   {
     "id": "sc-alphalead",
@@ -543,7 +543,7 @@
         "value": 50
       }
     ],
-    "enabled": true,
+    "enabled": false,
     "schedule": {
       "type": "none",
       "days": [
