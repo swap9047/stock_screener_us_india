@@ -330,5 +330,9 @@
   "BECTORFOOD.NS": {
     "index": "Nifty 500",
     "benchmark": "^CRSLDX"
+  },
+  "RKFORGE.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
   }
 }
