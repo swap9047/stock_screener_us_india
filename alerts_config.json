@@ -365,7 +365,7 @@
         "value": 20
       }
     ],
-    "enabled": true,
+    "enabled": false,
     "schedule": {
       "type": "scheduled",
       "days": [
