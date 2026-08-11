@@ -4456,6 +4456,30 @@ with tab_alerts:
 
     combined_tickers = [t for mkt in market_keys_now for t in watchlists_now.get(mkt, [])]
     combined_results = [r for mkt in market_keys_now for r in per_market.get(mkt, [])]
+
+    # ── Market / playlist filter (shared by Preview and Weekly Wrap-up) ─────
+    # Lets users scope both sections to a subset of markets without changing
+    # the rule scopes themselves. Defaults to all markets selected.
+    _alert_mkt_label_to_key = {markets_registry_now[mkt]["label"]: mkt for mkt in market_keys_now}
+    _alert_mkt_all_labels = list(_alert_mkt_label_to_key.keys())
+    alert_market_filter = st.multiselect(
+        "🎵 Playlist — markets to scan in Preview & Wrap-up",
+        options=_alert_mkt_all_labels,
+        default=_alert_mkt_all_labels,
+        key="alert_market_filter",
+        help="Select which market(s) are included when you run a preview or build the weekly "
+             "wrap-up. Defaults to all markets. Changing this does not affect the rule scopes "
+             "themselves or the scheduled Discord sends.",
+    )
+    # Fall back to all markets if nothing is selected (graceful handling)
+    _selected_mkt_keys = (
+        [_alert_mkt_label_to_key[lbl] for lbl in alert_market_filter]
+        if alert_market_filter else market_keys_now
+    )
+    filtered_results = [r for mkt in _selected_mkt_keys for r in per_market.get(mkt, [])]
+    if not alert_market_filter:
+        st.caption("⚠ No markets selected — all markets will be used.")
+
     filterable_metrics_alert = get_all_filterable_metrics(settings_now)
     metric_names_alert = list(filterable_metrics_alert.keys())
     metric_labels_alert = {v: k for k, v in filterable_metrics_alert.items()}
@@ -4850,13 +4874,25 @@ with tab_alerts:
             "Those rule references are treated as not matching — break the cycle to use them."
         )
     if st.button("Run preview"):
-        preview, preview_cycle_ids = preview_rules(rules, combined_results)
+        preview, preview_cycle_ids = preview_rules(rules, filtered_results)
         st.session_state.preview_cycle_ids = preview_cycle_ids
         st.session_state.preview_active = [p for p in preview if p["is_true_now"]]
         st.session_state.preview_as_of = as_of
+        # Remember which markets were used so we can warn on stale results
+        st.session_state.preview_market_keys = list(_selected_mkt_keys)
 
     active = st.session_state.get("preview_active")
     if active is not None:
+        # Warn if the market filter changed since the last run
+        _prev_mkt_keys = st.session_state.get("preview_market_keys")
+        if _prev_mkt_keys is not None and sorted(_prev_mkt_keys) != sorted(_selected_mkt_keys):
+            _prev_labels = ", ".join(
+                markets_registry_now.get(k, {}).get("label", k) for k in _prev_mkt_keys
+            )
+            st.info(
+                f"ℹ Results below are from the previous filter: **{_prev_labels}**. "
+                "Click **Run preview** again to refresh with the current selection."
+            )
         if not active:
             st.write("No rule conditions are currently true.")
         else:
@@ -4948,14 +4984,28 @@ with tab_alerts:
         else:
             if st.button("Build wrap-up now"):
                 st.session_state.wrapup_report = build_wrapup(
-                    rules, combined_results, load_wrapup_state(),
+                    rules, filtered_results, load_wrapup_state(),
                     metric_labels=metric_labels_alert,
                     registry=markets_registry_now,
                     as_of=as_of,
                 )
+                # Remember which markets were used so we can warn on stale results
+                st.session_state.wrapup_market_keys = list(_selected_mkt_keys)
 
             report = st.session_state.get("wrapup_report")
             if report is not None:
+                # Warn if the market filter changed since the last build
+                _prev_wrapup_mkt_keys = st.session_state.get("wrapup_market_keys")
+                if (_prev_wrapup_mkt_keys is not None
+                        and sorted(_prev_wrapup_mkt_keys) != sorted(_selected_mkt_keys)):
+                    _prev_wrapup_labels = ", ".join(
+                        markets_registry_now.get(k, {}).get("label", k)
+                        for k in _prev_wrapup_mkt_keys
+                    )
+                    st.info(
+                        f"ℹ Wrap-up below was built with: **{_prev_wrapup_labels}**. "
+                        "Click **Build wrap-up now** to refresh with the current selection."
+                    )
                 anchor = report.get("state_last_run")
                 st.caption(
                     f"**{_pretty_date(report['run_date'])}** · {len(report['alerts'])} alert(s) · "

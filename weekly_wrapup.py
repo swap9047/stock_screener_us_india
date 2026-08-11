@@ -41,6 +41,7 @@ from alerts import (
     chunked_table_messages,
     compute_rule_truth,
 )
+from filters import describe_chain
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 WRAPUP_STATE_FILE = os.path.join(SCRIPT_DIR, "weekly_wrapup_state.json")
@@ -227,6 +228,14 @@ def build_wrapup(rules, snapshot_results, state, metric_labels=None,
             "rows": rows,
             "tickers": tickers,
             "weeks": weeks,
+            # Human-readable condition summary, e.g. "10 WEMA > 40 WEMA AND RSI > 45".
+            # metric_labels is passed in reverse (key=internal, value=display) so we
+            # build the forward map on the fly: {internal_key: display_label}.
+            "description": describe_chain(
+                rule.get("conditions", []),
+                {v: k for k, v in (metric_labels or {}).items()},
+                rules_by_id,
+            ),
         })
 
     # Most active first; ties broken by longest-standing, so a name that has
@@ -303,11 +312,20 @@ def build_discord_messages(wrapup, limit=1900):
     for a in wrapup["alerts"]:
         suffix = "" if a["rows"] else " — no matches"
         header.append(f"**{a['num']}.** {a['name']} — {a['scope_label']} ({len(a['rows'])}){suffix}")
+    if wrapup["rollup"]:
+        header.append("")
+        header.append(f"🔥 Most active stocks summary follows at the end ↓")
 
     messages = ["\n".join(header)]
 
     for a in matched:
+        # Title line: alert name + scope
         title = f"**{a['num']}. {a['name']}** — {a['scope_label']}"
+        # Append the human-readable condition description so Discord readers
+        # know what each alert is actually checking for (e.g. "10 WEMA > 40 WEMA").
+        desc = a.get("description", "").strip()
+        if desc:
+            title += f"\n_{desc}_"
         messages.extend(chunked_table_messages(title, a["headers"], a["rows"], limit=limit))
 
     if wrapup["rollup"]:
