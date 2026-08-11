@@ -57,6 +57,7 @@ SYNCABLE_FILES = [
     ("expert_views.json", "AI Expert Views"),
     ("fundamentals.json", "AI Fundamental Views"),
     ("ticker_index.json", "Per-ticker index assignment"),
+    ("data_snapshot.json", "Data snapshot (prices + indicators)"),
     ("watchlist_groups.json", "Combined-tab membership"),
 ]
 

@@ -1439,13 +1439,11 @@ def settings_dialog():
                 "tech_uptrend_volume_ratio": float(tech_uptrend_vol_ratio),
                 "note_dropdown_options": note_dropdown_options.strip(),
             })
-            _bump_refresh()
-            st.success("Settings saved.")
+            st.success("Settings saved. Click **Refresh Data** to recompute with the new settings.")
             st.rerun()
     if c2.button("Reset to defaults", width="stretch"):
         save_settings(dict(DEFAULT_SETTINGS))
-        _bump_refresh()
-        st.success("Reset to defaults.")
+        st.success("Reset to defaults. Click **Refresh Data** to recompute with default settings.")
         st.rerun()
 
     st.divider()
@@ -3802,7 +3800,10 @@ if sb1.button("Refresh Data", type="primary", width="stretch"):
             if ok:
                 st.toast(f"✓ Refreshed {len(combined)} tickers & updated GitHub snapshot!")
             else:
-                st.toast(f"✓ Refreshed live prices! (GitHub sync: {msg})")
+                st.sidebar.warning(
+                    f"Refreshed {len(combined)} tickers locally, but the GitHub snapshot push failed: {msg}. "
+                    "Click **Push to GitHub** in the Alert Rules tab to retry, so the next redeploy can't revert to the old snapshot."
+                )
         else:
             st.toast(f"✓ Refreshed live prices for {len(combined)} tickers!")
         _bump_refresh()
@@ -5095,8 +5096,8 @@ with tab_alerts:
             st.caption(f"Target: `{gh_repo}` @ `{gh_branch}`")
             st.caption(
                 "Pushes all configuration files (watchlists, filters, settings, alerts) "
-                "as one combined commit -- important on Streamlit Cloud, "
-                "which auto-redeploys the instant any commit lands."
+                "plus the current data snapshot as one combined commit -- important on "
+                "Streamlit Cloud, which auto-redeploys the instant any commit lands."
             )
             if st.button("Push to GitHub", width="stretch"):
                 targets = [fname for fname, label in SYNCABLE_FILES]
