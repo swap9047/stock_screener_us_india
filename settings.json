@@ -25,7 +25,7 @@
   "volume_explode_ratio": 1.4,
   "volume_decline_ratio": 0.7,
   "tech_uptrend_min_vstop_weeks": 3,
-  "tech_uptrend_volume_ratio": 0.8,
+  "tech_uptrend_volume_ratio": 0.7,
   "news_search_model": "models/gemma-4-26b-a4b-it",
   "news_reasoning_model": "models/gemini-3.5-flash-lite",
   "news_reasoning_budget": 8192,
