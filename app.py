@@ -4943,67 +4943,40 @@ with tab_alerts:
     st.divider()
     st.markdown("**📅 Weekly wrap-up**")
     st.caption(
-        "A Sunday digest over the alerts you pick here: one table per alert (its own condition "
-        "metrics, plus **Wk** = weeks since that ticker entered the list, 0 = this week), then a "
-        "roll-up counting how many of these alerts each stock appears in — the most active names "
-        "first. Sent to Discord every Sunday 9:00 PM ET by the Weekly Wrap-up workflow. "
-        "Running it here is **read-only** — it never advances the Wk counters, so preview as often "
-        "as you like."
+        "A Sunday digest over **all enabled alerts** (same set and numbers as the dashboard Alerts "
+        "column): one table per alert, then a roll-up counting how many alerts each stock matches "
+        "— the most active names first. Sent to Discord every Sunday 9:00 PM ET. "
+        "Running it here is **read-only** — it never advances the Wk counters."
     )
 
     wrapup_eligible = eligible_rules(rules)
     if not wrapup_eligible:
         st.info("No enabled rules with conditions yet — add one above to use the weekly wrap-up.")
     else:
-        def _wrapup_label(r):
-            scope = {"ALL": "All watchlist", **market_scope_key_to_label}.get(r.get("scope"), r.get("scope"))
-            scan = "  🔍 scan only" if r.get("schedule", {}).get("type") == "none" else ""
-            return f"{r.get('name') or '(unnamed)'} — {scope}{scan}"
-
-        wrapup_label_to_id = {_wrapup_label(r): r["id"] for r in wrapup_eligible}
-        wrapup_defaults = [_wrapup_label(r) for r in wrapup_eligible if r.get("weekly_wrapup")]
-        wrapup_picked = st.multiselect(
-            "Alerts included in the weekly wrap-up",
-            options=list(wrapup_label_to_id.keys()),
-            default=wrapup_defaults,
-            key="wrapup_pick",
-            help="Scan-only rules are allowed — a rule too noisy for a daily Discord ping can "
-                 "still earn its place in the weekly digest.",
+        # Playlist filter: scoped to this section, placed right above the button
+        _wrapup_mkt_filter = st.multiselect(
+            "🎵 Playlist",
+            options=_alert_mkt_all_labels,
+            default=_alert_mkt_all_labels,
+            key="wrapup_market_filter",
+            help="Select which market(s) to include in the wrap-up. Defaults to all markets.",
         )
-        picked_ids = {wrapup_label_to_id[lbl] for lbl in wrapup_picked}
-        if picked_ids != {r["id"] for r in wrapup_eligible if r.get("weekly_wrapup")}:
-            for r in rules:
-                r["weekly_wrapup"] = r["id"] in picked_ids
-            save_rules(rules)
-            st.rerun()
-
-        if not picked_ids:
-            st.caption("Pick at least one alert above to build a wrap-up.")
-        else:
-            # Playlist filter: scoped to this section, placed right above the button
-            _wrapup_mkt_filter = st.multiselect(
-                "🎵 Playlist",
-                options=_alert_mkt_all_labels,
-                default=_alert_mkt_all_labels,
-                key="wrapup_market_filter",
-                help="Select which market(s) to include in the wrap-up. Defaults to all markets.",
+        _wrapup_mkt_keys = (
+            [_alert_mkt_label_to_key[lbl] for lbl in _wrapup_mkt_filter]
+            if _wrapup_mkt_filter else market_keys_now
+        )
+        filtered_results_wrapup = [r for mkt in _wrapup_mkt_keys for r in per_market.get(mkt, [])]
+        if not _wrapup_mkt_filter:
+            st.caption("⚠ No markets selected — all markets will be used.")
+        if st.button("Build wrap-up now"):
+            st.session_state.wrapup_report = build_wrapup(
+                rules, filtered_results_wrapup, load_wrapup_state(),
+                metric_labels=metric_labels_alert,
+                registry=markets_registry_now,
+                as_of=as_of,
             )
-            _wrapup_mkt_keys = (
-                [_alert_mkt_label_to_key[lbl] for lbl in _wrapup_mkt_filter]
-                if _wrapup_mkt_filter else market_keys_now
-            )
-            filtered_results_wrapup = [r for mkt in _wrapup_mkt_keys for r in per_market.get(mkt, [])]
-            if not _wrapup_mkt_filter:
-                st.caption("⚠ No markets selected — all markets will be used.")
-            if st.button("Build wrap-up now"):
-                st.session_state.wrapup_report = build_wrapup(
-                    rules, filtered_results_wrapup, load_wrapup_state(),
-                    metric_labels=metric_labels_alert,
-                    registry=markets_registry_now,
-                    as_of=as_of,
-                )
-                # Remember which markets were used so we can warn on stale results
-                st.session_state.wrapup_market_keys = list(_wrapup_mkt_keys)
+            # Remember which markets were used so we can warn on stale results
+            st.session_state.wrapup_market_keys = list(_wrapup_mkt_keys)
 
             report = st.session_state.get("wrapup_report")
             if report is not None:
