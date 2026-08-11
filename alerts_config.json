@@ -435,6 +435,44 @@
     "color": "green"
   },
   {
+    "id": "sc-volrocket",
+    "name": "tod-fod volume",
+    "scope": "ALL",
+    "conditions": [
+      {
+        "metric_a": "avg_volume_10d",
+        "operator": ">=",
+        "compare_type": "metric",
+        "metric_b": "avg_volume_100d",
+        "logic": "AND",
+        "multiplier": 2.0
+      },
+      {
+        "metric_a": "perf_1m",
+        "operator": ">=",
+        "compare_type": "value",
+        "value": 5.0,
+        "logic": "AND"
+      }
+    ],
+    "enabled": true,
+    "schedule": {
+      "type": "scheduled",
+      "days": [
+        "MON",
+        "TUE",
+        "WED",
+        "THU",
+        "FRI",
+        "SAT",
+        "SUN"
+      ],
+      "time_et": "21:00"
+    },
+    "weekly_wrapup": false,
+    "color": "green"
+  },
+  {
     "id": "sc-consolid",
     "name": "The Consolidators (scan)",
     "scope": "ALL",
@@ -583,44 +621,6 @@
     },
     "weekly_wrapup": true,
     "color": "red"
-  },
-  {
-    "id": "sc-volrocket",
-    "name": "tod-fod volume",
-    "scope": "ALL",
-    "conditions": [
-      {
-        "metric_a": "avg_volume_10d",
-        "operator": ">=",
-        "compare_type": "metric",
-        "metric_b": "avg_volume_100d",
-        "logic": "AND",
-        "multiplier": 2.0
-      },
-      {
-        "metric_a": "perf_1m",
-        "operator": ">=",
-        "compare_type": "value",
-        "value": 5.0,
-        "logic": "AND"
-      }
-    ],
-    "enabled": true,
-    "schedule": {
-      "type": "scheduled",
-      "days": [
-        "MON",
-        "TUE",
-        "WED",
-        "THU",
-        "FRI",
-        "SAT",
-        "SUN"
-      ],
-      "time_et": "21:00"
-    },
-    "weekly_wrapup": false,
-    "color": "green"
   },
   {
     "id": "2fb0f581",
