@@ -78,5 +78,41 @@
   "NRBBEARING.NS": {
     "note": "wrap",
     "flag": ""
+  },
+  "AKAM": {
+    "note": "soic",
+    "flag": ""
+  },
+  "AMKR": {
+    "note": "wrap",
+    "flag": ""
+  },
+  "BE": {
+    "note": "soic",
+    "flag": ""
+  },
+  "KXIAY": {
+    "note": "self",
+    "flag": ""
+  },
+  "MRAAY": {
+    "note": "self",
+    "flag": ""
+  },
+  "Q": {
+    "note": "wrap",
+    "flag": ""
+  },
+  "SNDK": {
+    "note": "wrap",
+    "flag": ""
+  },
+  "VSH": {
+    "note": "self",
+    "flag": ""
+  },
+  "WOLF": {
+    "note": "self",
+    "flag": ""
   }
 }
