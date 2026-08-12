@@ -9,12 +9,15 @@ env:
 # redundant identical fetches across visitors. The app's "Refresh Data"
 # button still fetches live data on demand regardless of this snapshot.
 #
-# This workflow's own schedule is disabled -- data_snapshot.json is now
-# refreshed nightly (~11:00 PM ET) as the first step of expert-views.yml,
-# right before Expert Views generation, so both always work from the same
-# fresh snapshot. This file is kept workflow_dispatch-only for manual/
-# on-demand refreshes (e.g. after editing the watchlist).
+# Refreshes every 3 hours from 7:00 AM to 11:00 PM ET, Mon-Sat (7, 10, 13,
+# 16, 19, 22 ET). Because ET is UTC-4 (EDT) or UTC-5 (EST), the schedule
+# fires on a union of UTC hours covering both seasons and a gate keeps only
+# the runs whose current ET time lands on an allowed slot. expert-views.yml
+# still refreshes data_snapshot.json nightly (~11:00 PM ET) so Expert Views
+# always work from same-day data. Workflow_dispatch always bypasses the gate.
 on:
+  schedule:
+    - cron: "0 0,2,3,11,12,14,15,17,18,20,21,23 * * *"
   workflow_dispatch: {}    # run manually from the Actions tab anytime
 
 concurrency:
@@ -31,7 +34,7 @@ jobs:
       due: ${{ steps.check.outputs.due }}
     steps:
       - id: check
-        name: Is it ~7 AM ET right now?
+        name: Is it an allowed refresh slot right now?
         env:
           CRON_SCHEDULE: ${{ github.event.schedule }}
         run: |
@@ -40,23 +43,22 @@ jobs:
           from zoneinfo import ZoneInfo
           from datetime import datetime
           now_et = datetime.now(ZoneInfo("America/New_York"))
-          
-          rule_hour = 7
+
+          slots = {7, 10, 13, 16, 19, 22}   # every 3h, 7 AM - 11 PM ET
           cron = os.environ.get("CRON_SCHEDULE")
-          
+
           is_valid_cron = True
           if cron:
               try:
-                  cron_utc_hour = int(cron.split()[1])
-                  expected_utc_hour = int((rule_hour - (now_et.utcoffset().total_seconds() / 3600)) % 24)
-                  if cron_utc_hour != expected_utc_hour:
+                  cron_utc_hours = {int(h) for h in cron.split()[1].split(',')}
+                  expected_utc_hours = {int((slot - (now_et.utcoffset().total_seconds() / 3600)) % 24) for slot in slots}
+                  if not cron_utc_hours & expected_utc_hours:
                       is_valid_cron = False
               except Exception:
                   pass
-                  
-          hour_diff = min((now_et.hour - rule_hour) % 24, (rule_hour - now_et.hour) % 24)
-          due = is_valid_cron and (hour_diff <= 22)
-          
+
+          due = is_valid_cron and now_et.isoweekday() <= 6 and now_et.hour in slots
+
           print(f"due={'true' if due else 'false'}")
           EOF
 
