@@ -450,17 +450,6 @@
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
   },
-  "ADVENZYMES.NS": {
-    "verdict": "CAUTION",
-    "headline": "Persistent downtrend structure and downward V-Stop keep the stock under technical pressure.",
-    "technical_summary": "The stock remains in a confirmed downtrend, trading below its 40-week moving average with negative Mansfield Relative Strength across all timeframes. Additionally, the Volatility Stop remains in a downward direction, indicating continued intermediate weakness despite a modest short-term net volume accumulation.",
-    "catalyst_summary": "No material news found; verdict based on technicals only.",
-    "actionable_take": "Avoid initiating new long positions while the trend remains negative and price action sits below key resistance levels. Existing holders should enforce tight risk controls or wait for a decisive trend reversal and confirmation above major moving averages before adding exposure.",
-    "as_of": "2026-08-11 13:53",
-    "news_used": "No material news or upcoming catalysts found for Advanced Enzyme Technologies Limited (ADVENZYMES) for the specified period.",
-    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
-    "model_used": "gemini-3.5-flash-lite"
-  },
   "ANLON.NS": {
     "verdict": "HOLD",
     "headline": "Mixed technical picture with recent distribution and VStop pullback warrants patience.",
