@@ -2,11 +2,11 @@ name: Market Breadth Updater
 
 on:
   schedule:
-    # Run at 10:00 PM ET (after market close, before Expert Views at 11PM)
-    # Eastern is UTC-4 (summer) or UTC-5 (winter).
-    # 03:00 UTC = 11:00 PM EDT or 10:00 PM EST. Let's use 02:00 UTC for DST 10PM / EST 9PM
-    - cron: '0 2 * * 2-6' # Tue-Sat 02:00 UTC (Mon-Fri 10PM EDT)
-    - cron: '0 3 * * 2-6' # Tue-Sat 03:00 UTC (Mon-Fri 10PM EST)
+    # Runs at 10:00 PM ET (after market close, before Expert Views at 11PM)
+    # and 10:00 AM ET (mid-session). Eastern is UTC-4 (EDT) or UTC-5 (EST),
+    # so the cron covers both offsets (02/03 UTC = 10PM, 14/15 UTC = 10AM)
+    # and the time_check gate keeps only the runs on an allowed ET slot.
+    - cron: "0 2,3,14,15 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -29,30 +29,27 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Check Timezone / Duplicate Run Guard
+      - name: Check Timezone / Slot Guard
         id: time_check
         run: |
-          # Gate logic for DST:
-          # If it's DST (EDT), UTC is 4 hours ahead. 10PM EDT = 2:00 AM UTC.
-          # If it's Standard (EST), UTC is 5 hours ahead. 10PM EST = 3:00 AM UTC.
-          is_dst() {
-            local date_str=$(TZ="America/New_York" date '+%Z')
-            if [ "$date_str" = "EDT" ]; then return 0; else return 1; fi
-          }
-          current_utc_hour=$(date -u +%H)
-          if is_dst; then
-            if [ "$current_utc_hour" -eq "03" ]; then
-              echo "It is DST. The 03:00 UTC run is skipped (it already ran at 02:00)."
-              exit 0
-            fi
-          else
-            if [ "$current_utc_hour" -eq "02" ]; then
-              echo "It is Standard Time. The 02:00 UTC run is skipped (will run at 03:00)."
-              exit 0
-            fi
+          # Dedupe the dual-offset cron AND enforce the 10 AM / 10 PM ET slots
+          # (Mon-Sat) regardless of DST, using America/New_York wall-clock time.
+          run_slot=$(TZ="America/New_York" date '+%H %u')
+          hour=${run_slot% *}
+          day=${run_slot#* }
+          if [ "$day" -gt 6 ]; then
+            echo "Sunday - no market breadth run."
+            exit 0
           fi
-          echo "Proceeding with run."
-          echo "run=true" >> "$GITHUB_OUTPUT"
+          case "$hour" in
+            10|22)
+              echo "Proceeding with run."
+              echo "run=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Not an allowed ET slot ($hour)."
+              ;;
+          esac
 
       - name: Install dependencies
         if: steps.time_check.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
