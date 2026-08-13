@@ -338,5 +338,9 @@
   "VIYASH.NS": {
     "index": "Nifty 500",
     "benchmark": "^CRSLDX"
+  },
+  "CARBORUNIV.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
   }
 }

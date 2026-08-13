@@ -1,4 +1,21 @@
 {
+  "us_invested": [
+    "GRID",
+    "HIMS",
+    "IAU",
+    "JNJ",
+    "KRYS",
+    "META",
+    "NTRA",
+    "ORCL",
+    "QURE",
+    "RKLB",
+    "TWST",
+    "ZS",
+    "CYRX",
+    "ASX",
+    "RGEN"
+  ],
   "india_watchlist": [
     "UFBL.NS",
     "VISHNU.NS",
@@ -29,7 +46,8 @@
     "COHANCE.NS",
     "BECTORFOOD.NS",
     "RKFORGE.NS",
-    "VIYASH.NS"
+    "VIYASH.NS",
+    "CARBORUNIV.NS"
   ],
   "india_invested": [
     "AARTIPHARM.NS",
@@ -60,23 +78,6 @@
     "WINDLAS.NS",
     "LUMAXIND.NS",
     "STLTECH.NS"
-  ],
-  "us_invested": [
-    "GRID",
-    "HIMS",
-    "IAU",
-    "JNJ",
-    "KRYS",
-    "META",
-    "NTRA",
-    "ORCL",
-    "QURE",
-    "RKLB",
-    "TWST",
-    "ZS",
-    "CYRX",
-    "ASX",
-    "RGEN"
   ],
   "us_watchlist": [
     "AKAM",
