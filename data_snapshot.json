@@ -1,6 +1,6 @@
 {
-  "as_of": "2026-08-13 17:39 ET",
-  "generated_at": "2026-08-13T21:39:20.375833+00:00",
+  "as_of": "2026-08-13 17:47 ET",
+  "generated_at": "2026-08-13T21:47:23.885681+00:00",
   "code_version": "df3e774fe6a50358",
   "per_market": {
     "us_invested": [
@@ -1529,7 +1529,7 @@
         "ttm_revenue_growth": null,
         "trailing_pe": 48.93827,
         "forward_pe": 21.535284,
-        "pb_ratio": 7.207737,
+        "pb_ratio": 7.219911,
         "ev_ebitda": 2.189,
         "p_cashflow": 0.61,
         "roe": 17.0,
@@ -9964,7 +9964,7 @@
         "custom_w52lowdist": 53.30944748255706,
         "note": "",
         "flag": "Green",
-        "flag_reason": "3/4 bullish votes (Trend=Uptrend, Tech Uptrend=Yes, Sentiment=Bullish)"
+        "flag_reason": "3/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes)"
       }
     ]
   },
