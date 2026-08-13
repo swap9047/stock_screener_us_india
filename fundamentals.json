@@ -1511,5 +1511,22 @@
     "model_used": "gemini-3.5-flash-lite",
     "quarter_verified": false,
     "real_earnings_date": "2026-08-07"
+  },
+  "MANORAMA.NS": {
+    "earnings_summary": "Q1 FY27 Revenue of \u20b94,040.1 million (+39.5% YoY), PAT of \u20b9786.6 million (+67.6% YoY), and EBITDA of \u20b91,062.1 million.",
+    "future_guidance": "Strategic focus on FY28 capex cycle and international expansion in Chad, Burkina Faso, and Brazil following a \u20b9500 crore QIP.",
+    "analyst_coverage": "Consensus rating is Buy with price targets lifted up to \u20b92,003.",
+    "earnings_report_date": "2026-06-30",
+    "eps_value": null,
+    "guidance_change": null,
+    "analyst_action": "upgrade",
+    "sentiment": "Positive",
+    "reasoning": "The company delivered robust Q1 FY27 financial performance with strong double-digit growth in both revenue and PAT. Furthermore, analyst coverage shows price target hikes and a consensus Buy rating, justifying a Positive sentiment.",
+    "as_of": "2026-08-13 20:48",
+    "news_used": "**Most Recent Quarterly Earnings (Q1 FY27, ended June 30, 2026)**\n*   **Revenue:** \u20b94,040.1 million (+39.5% YoY)\n*   **PAT:** \u20b9786.6 million (+67.6% YoY)\n*   **EBITDA:** \u20b91,062.1 million (26.3% margin)\n\n**Forward Guidance**\n*   Strategic focus on FY28 capex cycle following a \u20b9500 crore QIP completed in July 2026.\n*   Expansion initiatives: New sourcing/processing facilities in Chad, Burkina Faso, and Brazil.\n\n**Recent Analyst Coverage/Ratings**\n*   **Aug 06, 2026:** Price target lifted from \u20b91,774 to \u20b92,003.\n*   **Jul 15, 2026:** Price target increased by 9.1% to \u20b91,914 (from \u20b91,755).\n*   **Aug 12, 2026:** Consensus rating: **Buy** (Target: \u20b92,003).",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite",
+    "quarter_verified": true,
+    "real_earnings_date": null
   }
 }
