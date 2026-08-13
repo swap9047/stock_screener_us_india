@@ -933,16 +933,5 @@
     "news_used": "- 2026-08-12: Consensus analyst price target increased 5.7% to \u20b91,031.",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
-  },
-  "MANORAMA.NS": {
-    "verdict": "ACCUMULATE",
-    "headline": "Manorama Industries displays robust technical momentum and a confirmed Stage 2 uptrend.",
-    "technical_summary": "The stock trades comfortably above rising weekly and daily EMAs, supported by a positive Mansfield Relative Strength and a 7-week ongoing Volatility Stop uptrend. Net volume analysis over the last 10 days confirms underlying accumulation.",
-    "catalyst_summary": "No material news found; verdict based on technicals only.",
-    "actionable_take": "Accumulate positions on minor pullbacks toward the 10 or 50 DEMA. Set your trailing stop-loss near the VStop level at 1,410 to manage downside risk.",
-    "as_of": "2026-08-13 20:52",
-    "news_used": "No material news or upcoming catalysts were found for Manorama Industries Limited (MANORAMA) between 2026-08-12 and 2026-08-13, or for the subsequent 3-4 days.",
-    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
-    "model_used": "gemini-3.5-flash-lite"
   }
 }
