@@ -12,9 +12,12 @@ env:
 # Refreshes every 3 hours from 7:00 AM to 11:00 PM ET, Mon-Sat (7, 10, 13,
 # 16, 19, 22 ET). Because ET is UTC-4 (EDT) or UTC-5 (EST), the schedule
 # fires on a union of UTC hours covering both seasons and a gate keeps only
-# the runs whose current ET time lands on an allowed slot. expert-views.yml
-# still refreshes data_snapshot.json nightly (~11:00 PM ET) so Expert Views
-# always work from same-day data. Workflow_dispatch always bypasses the gate.
+# the runs whose current ET time lands within a slot. A 6-hour grace window
+# past each slot absorbs GitHub's schedule delays (runs can fire minutes to
+# hours after the cron time), so a late fire is still honored instead of
+# silently dropped. expert-views.yml still refreshes data_snapshot.json
+# nightly (~11:00 PM ET) so Expert Views always work from same-day data.
+# Workflow_dispatch always bypasses the gate.
 on:
   schedule:
     - cron: "0 0,2,3,11,12,14,15,17,18,20,21,23 * * *"
@@ -45,6 +48,7 @@ jobs:
           now_et = datetime.now(ZoneInfo("America/New_York"))
 
           slots = {7, 10, 13, 16, 19, 22}   # every 3h, 7 AM - 11 PM ET
+          grace_h = 6                       # tolerate GitHub schedule delays
           cron = os.environ.get("CRON_SCHEDULE")
 
           is_valid_cron = True
@@ -57,7 +61,10 @@ jobs:
               except Exception:
                   pass
 
-          due = is_valid_cron and now_et.isoweekday() <= 6 and now_et.hour in slots
+          now_minutes = now_et.hour * 60 + now_et.minute
+          due = (is_valid_cron and now_et.isoweekday() <= 6 and
+                 any(s <= now_minutes < s + grace_h * 60
+                     for s in (slot * 60 for slot in slots)))
 
           print(f"due={'true' if due else 'false'}")
           EOF
