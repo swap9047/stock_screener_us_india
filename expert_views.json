@@ -922,5 +922,16 @@
     "news_used": "No recent news found.",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
+  },
+  "CARBORUNIV.NS": {
+    "verdict": "ACCUMULATE",
+    "headline": "Firm uptrend backed by positive momentum and steady accumulation",
+    "technical_summary": "Carborundum Universal exhibits a solid technical uptrend, trading comfortably above rising weekly and daily EMAs with strong positive Mansfield Relative Strength. The weekly Volatility Stop has been held upward for 18 weeks, supported by positive 10-day net accumulation.",
+    "catalyst_summary": "Analyst consensus price targets have recently been revised upward, with no negative fundamental catalysts present.",
+    "actionable_take": "Consider accumulating on minor pullbacks toward the 1,110-1,120 support zone or the rising 10-week EMA. Maintain a trailing risk stop beneath the VStop level of 1,070.8 to safeguard against trend shifts.",
+    "as_of": "2026-08-13 13:36",
+    "news_used": "- 2026-08-12: Consensus analyst price target increased 5.7% to \u20b91,031.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
   }
 }
