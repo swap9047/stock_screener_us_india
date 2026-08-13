@@ -334,5 +334,9 @@
   "RKFORGE.NS": {
     "index": "Nifty 500",
     "benchmark": "^CRSLDX"
+  },
+  "VIYASH.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
   }
 }
