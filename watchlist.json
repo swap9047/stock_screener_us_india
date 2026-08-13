@@ -16,6 +16,19 @@
     "ASX",
     "RGEN"
   ],
+  "us_watchlist": [
+    "AKAM",
+    "AMKR",
+    "BE",
+    "KXIAY",
+    "MRAAY",
+    "Q",
+    "ROBO",
+    "SNDK",
+    "VSH",
+    "WOLF",
+    "NKE"
+  ],
   "india_watchlist": [
     "UFBL.NS",
     "VISHNU.NS",
@@ -77,19 +90,7 @@
     "VENUSPIPES.NS",
     "WINDLAS.NS",
     "LUMAXIND.NS",
-    "STLTECH.NS"
-  ],
-  "us_watchlist": [
-    "AKAM",
-    "AMKR",
-    "BE",
-    "KXIAY",
-    "MRAAY",
-    "Q",
-    "ROBO",
-    "SNDK",
-    "VSH",
-    "WOLF",
-    "NKE"
+    "STLTECH.NS",
+    "MANORAMA.NS"
   ]
 }
