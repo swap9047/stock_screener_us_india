@@ -24,6 +24,18 @@ def _generate_with_timeout(client, model, contents, config, timeout=120):
     finally:
         executor.shutdown(wait=False)
 
+def _clean_json_text(text):
+    """Strip markdown code blocks from model JSON output."""
+    t = (text or "").strip()
+    if t.startswith("```json"):
+        t = t[7:]
+    elif t.startswith("```"):
+        t = t[3:]
+    if t.endswith("```"):
+        t = t[:-3]
+    return t.strip()
+
+
 def fetch_gemma_expert_news(client, ticker, market, company_name, is_retry=False):
     """Fetches news specifically for Expert Views using gemma-4-26b-a4b-it with Google Search.
     Falls back to 31b."""
@@ -271,7 +283,11 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
     company_name = row_data.get("company_name", ticker)
 
     if news_text is None:
-        news_text, news_source = fetch_gemma_expert_news(client, ticker, market, company_name, is_retry=is_retry)
+        try:
+            news_text, news_source = fetch_gemma_expert_news(client, ticker, market, company_name, is_retry=is_retry)
+        except Exception as e:
+            print(f"  [expert news fetch failed/timeout] {ticker}: {e} -> Proceeding with technical evaluation only")
+            news_text, news_source = "No recent news found.", "⚪ No Source"
 
     prompt = build_expert_prompt(row_data, news_text, active_alerts_text)
 
@@ -303,7 +319,7 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
 
         config = types.GenerateContentConfig(**config_kwargs)
         resp = _generate_with_timeout(client, model, prompt, config, timeout=120)
-        data = json.loads(resp.text)
+        data = json.loads(_clean_json_text(resp.text))
         data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         data["news_used"] = news_text
         data["news_source"] = news_source or "⚪ Unknown"
@@ -316,7 +332,7 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
     try:
         config = types.GenerateContentConfig(response_mime_type="application/json")
         resp = _generate_with_timeout(client, "models/gemma-4-31b-it", prompt, config, timeout=120)
-        data = json.loads(resp.text)
+        data = json.loads(_clean_json_text(resp.text))
         data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         data["news_used"] = news_text
         data["news_source"] = news_source or "⚪ Unknown"
@@ -329,7 +345,7 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
     try:
         config = types.GenerateContentConfig(response_mime_type="application/json")
         resp = _generate_with_timeout(client, "models/gemma-4-26b-a4b-it", prompt, config, timeout=120)
-        data = json.loads(resp.text)
+        data = json.loads(_clean_json_text(resp.text))
         data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         data["news_used"] = news_text
         data["news_source"] = news_source or "⚪ Unknown"
@@ -340,11 +356,11 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
         return _pending_fallback(str(e3))
 
 
-def analyze_single_ticker(ticker, row_data, api_key, active_alerts_text=None, nvidia_api_key=None):
+def analyze_single_ticker(ticker, row_data, api_key, active_alerts_text=None, nvidia_api_key=None, is_retry=True):
     from google import genai
 
     client = genai.Client(api_key=api_key)
-    view = generate_expert_view(client, row_data, active_alerts_text=active_alerts_text, nvidia_api_key=nvidia_api_key)
+    view = generate_expert_view(client, row_data, active_alerts_text=active_alerts_text, nvidia_api_key=nvidia_api_key, is_retry=is_retry)
     all_views = load_expert_views()
     all_views[ticker] = view
     save_expert_views(all_views)

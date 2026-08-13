@@ -28,6 +28,17 @@ def _generate_with_timeout(client, model, contents, config, timeout=120):
     finally:
         executor.shutdown(wait=False)
 
+def _clean_json_text(text):
+    """Strip markdown code blocks from model JSON output."""
+    t = (text or "").strip()
+    if t.startswith("```json"):
+        t = t[7:]
+    elif t.startswith("```"):
+        t = t[3:]
+    if t.endswith("```"):
+        t = t[:-3]
+    return t.strip()
+
 def fetch_fundamental_news(client, ticker, market, company_name, is_retry=False):
     from stock_data import get_exchange_label
 
@@ -261,7 +272,11 @@ def generate_fundamental_view(client, row_data, news_text=None, news_source=None
     company_name = row_data.get("company_name", ticker)
 
     if news_text is None:
-        news_text, news_source = fetch_fundamental_news(client, ticker, market, company_name, is_retry=is_retry)
+        try:
+            news_text, news_source = fetch_fundamental_news(client, ticker, market, company_name, is_retry=is_retry)
+        except Exception as e:
+            print(f"  [fundamental news fetch failed/timeout] {ticker}: {e} -> Proceeding with fallback")
+            news_text, news_source = "No recent fundamental news found.", "⚪ No Source"
 
     window = SEARCH_WINDOW_DAYS.get(market, SEARCH_WINDOW_DAYS["us_invested"])
     prompt = f"""You are a fundamental equities analyst. Review the provided news facts for {company_name} (Ticker: {ticker}) and extract the current quarter's Earnings, Guidance, and Analyst Coverage. Evaluate the overall fundamental sentiment and provide your reasoning.
@@ -334,7 +349,7 @@ Return ONLY a valid JSON object matching this schema:
 
         config = types.GenerateContentConfig(**config_kwargs)
         resp = _generate_with_timeout(client, model, prompt, config, timeout=120)
-        data = json.loads(resp.text)
+        data = json.loads(_clean_json_text(resp.text))
         return _finalize(data, model.split("/")[-1])
     except Exception as e:
         print(f"  [{model} reasoning failed] {ticker}: {e} -> Falling back to 31b")
@@ -343,14 +358,14 @@ Return ONLY a valid JSON object matching this schema:
     try:
         config = types.GenerateContentConfig(response_mime_type="application/json")
         resp = _generate_with_timeout(client, "models/gemma-4-31b-it", prompt, config, timeout=120)
-        data = json.loads(resp.text)
+        data = json.loads(_clean_json_text(resp.text))
         return _finalize(data, "gemma-4-31b-it (Fallback)")
     except Exception as e2:
         print(f"  [31b reasoning failed] {ticker}: {e2} -> Giving up")
         return _pending_fallback(str(e2))
 
 
-def analyze_single_ticker_sentiment(ticker, row_data, api_key):
+def analyze_single_ticker_sentiment(ticker, row_data, api_key, is_retry=True):
     """Regenerate one ticker's Sentiment view and persist it.
 
     The single-ticker counterpart to refresh_fundamentals.py's batch loop, so
@@ -366,7 +381,7 @@ def analyze_single_ticker_sentiment(ticker, row_data, api_key):
     from google import genai
 
     client = genai.Client(api_key=api_key)
-    view = generate_fundamental_view(client, row_data)
+    view = generate_fundamental_view(client, row_data, is_retry=is_retry)
     if not _is_valid_view(view):
         return None
     all_views = load_fundamentals()

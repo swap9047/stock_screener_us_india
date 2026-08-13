@@ -997,6 +997,8 @@ def column_definitions(settings, labels):
     bench_note = "your configured benchmark"
     defs = {
         "Ticker": "Click to open this symbol's chart on TradingView.",
+        "Company Name": "Full name of the company or ETF.",
+        "Index": "Benchmark or index the stock belongs to (e.g. S&P 500, Nasdaq 100, Nifty 500).",
         "Last": "Most recent daily closing price.",
         labels["w_fast"]: f"Weekly EMA, fast period ({settings['ema_weekly'][0]} weeks).",
         labels["w_mid"]: f"Weekly EMA, medium period ({settings['ema_weekly'][1]} weeks).",
@@ -2033,8 +2035,9 @@ def build_column_defs(labels, custom_columns=None):
     identical set of columns. Enabled custom columns are appended at the
     end, using their stable custom_<id> key (see custom_columns.py)."""
     optional_defs = [
-        ("expert_take", "Expert Take"),
+        ("company_name", "Company Name"),
         ("index_name", "Index"),
+        ("expert_take", "Expert Take"),
         ("trend", "Trend"),
         ("flag", "Flag"),
         ("note", "Notes"),
@@ -2175,8 +2178,14 @@ def _sort_label_to_field(sort_label, key_by_label):
     # "Invested" resolves to the raw boolean field ("invested"), not the
     # display key ("invested_label") key_by_label would otherwise give --
     # apply_sort operates on the row dict, which only ever carries the raw
-    # field, same reasoning as Ticker/Company Name/Last below.
-    return {"Ticker": "ticker", "Company Name": "company_name", "Last": "last_close", "Invested": "invested"}.get(sort_label) or key_by_label.get(sort_label)
+    # field, same reasoning as Ticker/Company Name/Index/Last below.
+    return {
+        "Ticker": "ticker",
+        "Company Name": "company_name",
+        "Index": "index_name",
+        "Last": "last_close",
+        "Invested": "invested"
+    }.get(sort_label) or key_by_label.get(sort_label)
 
 
 def render_shared_sort_control(label_by_key, key_by_label):
@@ -2210,9 +2219,9 @@ def render_shared_sort_control(label_by_key, key_by_label):
     # per-ticker JSON lookup, never a field on the raw row dict at all) --
     # none of them are present on the raw row dict at sort time -- excluded
     # rather than silently sorting wrong (or crashing on a missing key).
-    sort_labels = ["Ticker", "Company Name", "Last"] + [
+    sort_labels = ["Ticker", "Company Name", "Index", "Last"] + [
         lbl for key, lbl in label_by_key.items()
-        if key not in ("matched_alerts", "vstop_change", "tech_uptrend_label", "fundamentals")
+        if key not in ("matched_alerts", "vstop_change", "tech_uptrend_label", "fundamentals", "company_name", "index_name")
     ]
 
     prefs = load_column_prefs_full()
@@ -2341,16 +2350,6 @@ def render_shared_column_picker(labels):
                 continue
             order.insert(idx + 1, fund_key)
             inserted = True
-
-    # Index is a new, default-visible column (ea9f430) that predates most
-    # users' saved column_prefs.json -- without its own force-insert like the
-    # fundamentals block above, it silently never appears for anyone whose
-    # layout was saved before this feature shipped. Land it at the front
-    # (right after Ticker/Last, which aren't part of this order list) since
-    # it's a per-ticker identity column, not tied to any topical group.
-    if "index_name" in label_by_key and "index_name" not in st.session_state[SHARED_ORDER_KEY]:
-        st.session_state[SHARED_ORDER_KEY].insert(0, "index_name")
-        inserted = True
 
     if inserted:
         save_column_prefs(st.session_state[SHARED_ORDER_KEY])
@@ -2738,21 +2737,31 @@ def _reanalyze_tickers_in_dashboard(tickers, results, api_key, nvidia_api_key, s
     updated_views = load_expert_views()
 
     for idx, tk in enumerate(tickers):
-        row = next(r for r in results if r["ticker"] == tk)
+        row = next((r for r in results if r["ticker"] == tk), None)
+        if not row:
+            continue
         company_name = row.get("company_name", tk)
         progress_bar.progress(
             (idx + 1) / len(tickers),
-            text=f"Analyzing {company_name} ({idx+1}/{len(tickers)})...",
+            text=f"Expert Take for {company_name} ({idx+1}/{len(tickers)})...",
         )
-        view = generate_expert_view(client, row, nvidia_api_key=nvidia_api_key)
-        if _is_valid_view(view):
-            updated_views[tk] = view
-            save_expert_views(updated_views)
-        else:
+        try:
+            view = generate_expert_view(client, row, nvidia_api_key=nvidia_api_key, is_retry=True)
+            if _is_valid_view(view):
+                updated_views[tk] = view
+                save_expert_views(updated_views)
+            else:
+                progress_bar.progress(
+                    (idx + 1) / len(tickers),
+                    text=f"⚠️ {tk} expert analysis pending/fallback.",
+                )
+        except Exception as e:
+            print(f"[re-analyze] expert take failed for {tk}: {e}")
             progress_bar.progress(
                 (idx + 1) / len(tickers),
-                text=f"⚠️ {tk} still rate-limited, keeping existing result.",
+                text=f"⚠️ {tk} expert analysis error: {e}",
             )
+
         # Sentiment in the same pass, so the two AI columns don't drift
         # apart. A failure here keeps the prior view (see
         # analyze_single_ticker_sentiment) and must not abort the loop.
@@ -2761,10 +2770,10 @@ def _reanalyze_tickers_in_dashboard(tickers, results, api_key, nvidia_api_key, s
             text=f"Sentiment for {company_name} ({idx+1}/{len(tickers)})...",
         )
         try:
-            analyze_single_ticker_sentiment(tk, row, api_key)
+            analyze_single_ticker_sentiment(tk, row, api_key, is_retry=True)
         except Exception as e:
             print(f"[re-analyze] sentiment failed for {tk}: {e}")
-        time.sleep(5)
+        time.sleep(3)
 
     sync_ai_views_to_github(sync_message)
     st.rerun()
@@ -2984,11 +2993,19 @@ def render_expert_view_expander(market, filtered_rows, settings):
                              width="content"):
                 return
             with st.spinner(f"Re-analyzing {ticker} (Expert Take + Sentiment)..."):
-                analyze_single_ticker(ticker, row, api_key, nvidia_api_key=nvidia_api_key)
+                ev_ok = True
                 try:
-                    analyze_single_ticker_sentiment(ticker, row, api_key)
+                    analyze_single_ticker(ticker, row, api_key, nvidia_api_key=nvidia_api_key, is_retry=True)
                 except Exception as e:
-                    st.warning(f"Expert Take updated; Sentiment refresh failed: {e}")
+                    ev_ok = False
+                    st.error(f"Expert Take refresh failed: {e}")
+                try:
+                    analyze_single_ticker_sentiment(ticker, row, api_key, is_retry=True)
+                except Exception as e:
+                    if ev_ok:
+                        st.warning(f"Expert Take updated; Sentiment refresh failed: {e}")
+                    else:
+                        st.error(f"Sentiment refresh failed: {e}")
                 sync_ai_views_to_github(f"Re-analyze single ticker ({ticker}) via UI")
                 st.rerun()
 
@@ -3472,6 +3489,9 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             verdict = v.get("verdict")
             headline = v.get("headline", "")
             actionable = v.get("actionable_take", "")
+            as_of = v.get("as_of", "unknown")
+            news_source = v.get("news_source", "⚪ Unknown")
+            model_used = v.get("model_used", "⚪ Unknown")
             if verdict == "ACCUMULATE":
                 badge = "🟢 Accumulate"
             elif verdict == "HOLD":
@@ -3482,7 +3502,10 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
                 badge = "⚠️ Failed (Retry)"
             else:
                 badge = "⚪ Pending"
-            tooltip = f"{headline}\n\n{actionable}" if headline else "Click 'Retry Failed' in controls above to analyze."
+            if headline:
+                tooltip = f"{headline}\n\n{actionable}\n\nAs of: {as_of}  |  Source: {news_source}  |  Model: {model_used}"
+            else:
+                tooltip = "Click 'Retry Failed' in controls above to analyze."
             return with_tooltip(badge, tooltip)
 
         raw_df["expert_take"] = [_expert_take_cell(r["ticker"]) for r in filtered]
@@ -3550,12 +3573,12 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         # Guard: only select columns that actually exist in raw_df. New columns
         # won't be present in a snapshot built before this code was deployed;
         # selecting a missing column raises KeyError rather than showing blanks.
-        safe_keys = [k for k in visible_keys if k in raw_df.columns]
-        df = raw_df[["ticker_link", "company_name", "last_close"] + safe_keys].copy()
+        safe_keys = [k for k in visible_keys if k in raw_df.columns and k not in ("ticker_link", "last_close")]
+        df = raw_df[["ticker_link", "last_close"] + safe_keys].copy()
 
         # Deduplicate column names (append space) to prevent pandas Styler
         # crashing in to_html() when non-unique columns are present.
-        raw_cols = ["Ticker", "Company Name", "Last"] + [label_by_key[k] for k in safe_keys]
+        raw_cols = ["Ticker", "Last"] + [label_by_key[k] for k in safe_keys]
         seen = set()
         dedup_cols = []
         for c in raw_cols:
@@ -3564,6 +3587,8 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             seen.add(c)
             dedup_cols.append(c)
         df.columns = dedup_cols
+        if "Company Name" in df.columns:
+            df["Company Name"] = df["Company Name"].fillna("—")
         if "Trend" in df.columns:
             df["Trend"] = df["Trend"].fillna("—")
         if "Index" in df.columns:
@@ -3580,6 +3605,10 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         # same one-line lookups _fundamentals_cell/the alert-matching loop
         # above already use, minus the badge/tooltip formatting.
         def _export_value(r, key):
+            if key == "company_name":
+                return r.get("company_name", "")
+            if key == "index_name":
+                return r.get("index_name", "")
             if key == "tech_uptrend_label":
                 return "Yes" if r.get("tech_uptrend") else "No"
             if key == "invested_label":
@@ -3601,9 +3630,8 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         export_df = pd.DataFrame([
             {
                 "Ticker": r["ticker"],
-                "Company Name": r.get("company_name", ""),
                 "Last": r.get("last_close"),
-                **{label_by_key[k]: _export_value(r, k) for k in visible_keys},
+                **{label_by_key[k]: _export_value(r, k) for k in visible_keys if k in label_by_key},
             }
             for r in filtered
         ])
