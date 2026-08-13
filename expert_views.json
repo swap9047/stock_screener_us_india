@@ -933,16 +933,5 @@
     "news_used": "- 2026-08-12: Consensus analyst price target increased 5.7% to \u20b91,031.",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
-  },
-  "MANORAMA.NS": {
-    "verdict": "ACCUMULATE",
-    "headline": "Robust Q1 earnings growth backed by a strong Stage 2 technical uptrend and positive relative strength.",
-    "technical_summary": "Manorama Industries exhibits a confirmed uptrend with price holding above rising weekly and daily EMAs, supported by a 7-week VStop at 1410. Positive 10-day net volume and outperforming Mansfield RS confirm steady accumulation and institutional sponsorship.",
-    "catalyst_summary": "Q1 FY27 results released on August 13, 2026, showed exceptional performance with revenue up 39.5% YoY and PAT surging 67.6% YoY, alongside strategic global expansion via a new subsidiary in Chad.",
-    "actionable_take": "Consider accumulating positions on shallow pullbacks toward the 1575-1625 zone, while maintaining a strict trailing stop loss below the VStop level of 1410.",
-    "as_of": "2026-08-13 20:47",
-    "news_used": "- **Aug 13, 2026**: Reported Q1 FY27 results: Revenue \u20b94,040.1 million (+39.5% YoY), PAT \u20b9786.6 million (+67.6% YoY); announced incorporation of a subsidiary in Chad.\n- **Aug 14, 2026**: Expected release of earnings presentation slides.",
-    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
-    "model_used": "gemini-3.5-flash-lite"
   }
 }
