@@ -2,10 +2,12 @@ name: Market Breadth Updater
 
 on:
   schedule:
-    # Runs at 10:00 PM ET (after market close, before Expert Views at 11PM)
-    # and 10:00 AM ET (mid-session). Eastern is UTC-4 (EDT) or UTC-5 (EST),
-    # so the cron covers both offsets (02/03 UTC = 10PM, 14/15 UTC = 10AM)
-    # and the time_check gate keeps only the runs on an allowed ET slot.
+    # Runs at 10:00 AM and 10:00 PM ET, Mon-Sat. Eastern is UTC-4 (EDT) or
+    # UTC-5 (EST), so the cron covers both offsets (02/03 UTC = 10PM,
+    # 14/15 UTC = 10AM). The time_check gate keeps only the runs whose
+    # current ET time lands within a slot; a 6-hour grace window past each
+    # slot absorbs GitHub's schedule delays, and an is_valid_cron filter
+    # keeps exactly two in-season fires per day (10 AM and 10 PM ET).
     - cron: "0 2,3,14,15 * * *"
   workflow_dispatch:
 
@@ -31,25 +33,41 @@ jobs:
 
       - name: Check Timezone / Slot Guard
         id: time_check
+        env:
+          CRON_SCHEDULE: ${{ github.event.schedule }}
         run: |
-          # Dedupe the dual-offset cron AND enforce the 10 AM / 10 PM ET slots
-          # (Mon-Sat) regardless of DST, using America/New_York wall-clock time.
-          run_slot=$(TZ="America/New_York" date '+%H %u')
-          hour=${run_slot% *}
-          day=${run_slot#* }
-          if [ "$day" -gt 6 ]; then
-            echo "Sunday - no market breadth run."
-            exit 0
-          fi
-          case "$hour" in
-            10|22)
-              echo "Proceeding with run."
-              echo "run=true" >> "$GITHUB_OUTPUT"
-              ;;
-            *)
-              echo "Not an allowed ET slot ($hour)."
-              ;;
-          esac
+          # Keep only runs whose current ET time lands within the 10 AM / 10 PM
+          # ET slots (Mon-Sat), regardless of DST. A 6-hour grace window past
+          # each slot absorbs GitHub's schedule delays, and an is_valid_cron
+          # check filters the dual-offset cron down to the two in-season fires
+          # per day so the run fires once per slot, not twice.
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import os
+          from zoneinfo import ZoneInfo
+          from datetime import datetime
+          now_et = datetime.now(ZoneInfo("America/New_York"))
+
+          slots = {10, 22}                 # 10 AM and 10 PM ET
+          grace_h = 6                      # tolerate GitHub schedule delays
+          cron = os.environ.get("CRON_SCHEDULE")
+
+          is_valid_cron = True
+          if cron:
+              try:
+                  cron_utc_hours = {int(h) for h in cron.split()[1].split(',')}
+                  expected_utc_hours = {int((slot - (now_et.utcoffset().total_seconds() / 3600)) % 24) for slot in slots}
+                  if not cron_utc_hours & expected_utc_hours:
+                      is_valid_cron = False
+              except Exception:
+                  pass
+
+          now_minutes = now_et.hour * 60 + now_et.minute
+          run = (is_valid_cron and now_et.isoweekday() <= 6 and
+                 any(s <= now_minutes < s + grace_h * 60
+                     for s in (slot * 60 for slot in slots)))
+
+          print(f"run={'true' if run else 'false'}")
+          EOF
 
       - name: Install dependencies
         if: steps.time_check.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
