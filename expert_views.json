@@ -34,12 +34,12 @@
   },
   "GRID": {
     "verdict": "CAUTION",
-    "headline": "Clean Edge Smart Grid ETF triggers caution due to active downtrend and downward volatility stop.",
-    "technical_summary": "Although price remains above the rising 40-week moving average, the trend status is classified as a Downtrend and the weekly volatility stop remains in a downward direction at 195.0. Furthermore, Mansfield Relative Strength is negative across daily and weekly timeframes, signaling persistent underperformance.",
-    "catalyst_summary": "No material news found; verdict based on technicals only.",
-    "actionable_take": "Exercise caution and refrain from new accumulation until the trend status flips positive and the weekly VStop reverses upward. Protect existing positions by monitoring support levels near the 40-week EMA and the volatility stop threshold.",
-    "as_of": "2026-08-13 04:47",
-    "news_used": "No material news or upcoming catalysts were found for GRID for the period of 2026-08-12 to 2026-08-17.",
+    "headline": "GRID faces downward technical pressure and model portfolio removal, warranting a cautious stance.",
+    "technical_summary": "The fund shows conflicting technical signals with a designated Downtrend status, a weekly Volatility Stop flipped to Down at 195.2, and negative Mansfield Relative Strength despite trading above rising 40-week and 200-day EMAs. While net volume has been mildly positive, the lack of true trend confirmation keeps momentum unfavorable.",
+    "catalyst_summary": "Recently removed from the First Trust Thematic Focus Five Model after falling below its sell threshold, signaling ongoing relative underperformance.",
+    "actionable_take": "Refrain from initiating new long positions until the trend improves and the VStop flips back to an uptrend. Watch key support near the 50-day DEMA (185.0) and tighten risk management if price remains capped below 195.2.",
+    "as_of": "2026-08-13 21:17",
+    "news_used": "- 2026-08-12: Removed from the First Trust Thematic Focus Five Model (Total Return) after falling below the model's sell threshold.",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
   },
