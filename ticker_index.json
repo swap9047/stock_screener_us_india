@@ -346,5 +346,81 @@
   "MANORAMA.NS": {
     "index": "Nifty 500",
     "benchmark": "^CRSLDX"
+  },
+  "NVDA": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "SNOW": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "SE": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "CRWD": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "BABA": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "AMZN": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "LITE": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "TSM": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "ADYEY": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "MSFT": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "AVGO": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "MDB": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "ARM": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "RBRK": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "TCEHY": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "PWR": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "ASML": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "AMAT": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "ACMR": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
   }
 }
