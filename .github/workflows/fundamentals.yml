@@ -13,7 +13,15 @@ on:
   schedule:
     - cron: "0 7 * * *"   # 07:00 UTC = 3:00 AM ET during EDT
     - cron: "0 8 * * *"   # 08:00 UTC = 3:00 AM ET during EST
-  workflow_dispatch: {}
+  # `markets` lets the dashboard's "Re-analyze All" button scope a run to just
+  # the watchlist(s) behind the tab it was clicked from, instead of always
+  # re-running every watchlist. Blank (and every scheduled run) = all.
+  workflow_dispatch:
+    inputs:
+      markets:
+        description: "Comma-separated market keys to process (blank = all watchlists)"
+        required: false
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}
@@ -77,6 +85,9 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           PYTHONUNBUFFERED: "1"
+          # github.event.inputs (not `inputs`) so scheduled runs, which carry
+          # no inputs at all, resolve to an empty string = every watchlist.
+          REFRESH_MARKETS: ${{ github.event.inputs.markets }}
 
       - name: Commit updated fundamentals.json
         run: |

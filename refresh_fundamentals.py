@@ -75,14 +75,23 @@ def main():
     watchlists = load_watchlists()
     fundamentals = load_fundamentals()
 
+    # REFRESH_MARKETS scopes the run to specific watchlists -- set by the
+    # dashboard's per-tab "Re-analyze All" button (see the workflow's
+    # `markets` input). Blank/absent means every watchlist, which is what
+    # the nightly schedule always gets.
+    only_markets = {m.strip() for m in os.environ.get("REFRESH_MARKETS", "").split(",") if m.strip()}
+    print(f"[{_ts()}] Scope: {', '.join(sorted(only_markets)) if only_markets else 'all watchlists'}")
+
     total_processed = 0
     total_failed = 0
     retry_queue = []
 
     for market, mkt_tickers in watchlists.items():
+        if only_markets and market not in only_markets:
+            continue
         if market not in snapshot["per_market"]:
             continue
-            
+
         print(f"\n[{_ts()}] === {market} Watchlist ({len(mkt_tickers)} tickers) ===")
         results = snapshot["per_market"][market]
 
