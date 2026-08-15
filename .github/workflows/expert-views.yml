@@ -14,7 +14,16 @@ on:
   schedule:
     - cron: "0 3 * * *"   # 03:00 UTC = 11:00 PM ET during EDT
     - cron: "0 4 * * *"   # 04:00 UTC = 11:00 PM ET during EST
-  workflow_dispatch: {}    # run manually from the Actions tab anytime, bypasses the gate
+  # Run manually from the Actions tab anytime, bypasses the gate. `markets`
+  # lets the dashboard's "Re-analyze All" button scope a run to just the
+  # watchlist(s) behind the tab it was clicked from, instead of always
+  # re-running every watchlist. Blank (and every scheduled run) = all.
+  workflow_dispatch:
+    inputs:
+      markets:
+        description: "Comma-separated market keys to process (blank = all watchlists)"
+        required: false
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}
@@ -82,6 +91,9 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          # github.event.inputs (not `inputs`) so scheduled runs, which carry
+          # no inputs at all, resolve to an empty string = every watchlist.
+          REFRESH_MARKETS: ${{ github.event.inputs.markets }}
 
       - name: Commit updated data_snapshot.json and expert_views.json
         run: |

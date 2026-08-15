@@ -198,9 +198,14 @@ def _short(resp):
         return resp.text[:200]
 
 
-def trigger_github_workflow(token, repo, workflow_file="news-summary.yml", ref="main"):
+def trigger_github_workflow(token, repo, workflow_file="news-summary.yml", ref="main", inputs=None):
     """
     Triggers a workflow_dispatch event for the given workflow file using the GitHub API.
+
+    `inputs` is an optional dict matching the workflow's own `workflow_dispatch.inputs`
+    block (values must be strings -- GitHub rejects non-string input values). It's
+    omitted from the payload entirely when empty, so callers targeting a workflow
+    that declares no inputs are unaffected.
     """
     url = f"{GITHUB_API}/repos/{repo}/actions/workflows/{workflow_file}/dispatches"
     headers = {
@@ -209,6 +214,8 @@ def trigger_github_workflow(token, repo, workflow_file="news-summary.yml", ref="
         "X-GitHub-Api-Version": "2022-11-28",
     }
     payload = {"ref": ref}
+    if inputs:
+        payload["inputs"] = {k: str(v) for k, v in inputs.items()}
     resp = requests.post(url, headers=headers, json=payload)
     if resp.status_code == 204:
         return True, "Workflow triggered successfully."

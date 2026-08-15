@@ -2696,45 +2696,62 @@ def sync_ai_views_to_github(message, filenames=("expert_views.json", "fundamenta
         st.toast("✓ Saved updated AI views!")
 
 
-def trigger_ai_refresh_workflows(label):
-    """Kick off the background refresh for BOTH AI columns.
+def trigger_ai_refresh_workflow(workflow_file, name, label, markets):
+    """Kick off ONE background AI refresh workflow, scoped to `markets`.
 
-    Expert Take and Sentiment are separate workflows. These buttons used to
-    trigger expert-views.yml only, so Sentiment was left to the nightly job and
-    the two columns drifted out of step.
+    `markets` is the list of REAL registry keys behind the tab the button was
+    clicked from (a combined tab passes its member list). It's forwarded as the
+    workflow's `markets` input, which refresh_expert_views.py /
+    refresh_fundamentals.py read back as REFRESH_MARKETS to filter their
+    per-watchlist loop -- without it, a "Re-analyze All" clicked from one tab
+    re-ran every watchlist in the repo.
+
+    An empty `markets` is refused rather than sent: blank means "all
+    watchlists" to those scripts, i.e. exactly the behavior being fixed.
     """
+    if not markets:
+        st.error("No watchlists configured for this view -- nothing to refresh.")
+        return
     try:
         from github_sync import trigger_github_workflow, get_github_config
         token, repo, _ = get_github_config(getattr(st, "secrets", None))
         if not token or not repo:
             st.error("GitHub credentials not found.")
             return
-        outcomes = [
-            (name, *trigger_github_workflow(token, repo, wf))
-            for wf, name in (("expert-views.yml", "Expert Views"),
-                             ("fundamentals.yml", "Sentiment"))
-        ]
-        started = [name for name, ok, _ in outcomes if ok]
-        if started:
-            st.success(f"{label}: {' + '.join(started)} refresh triggered in background.")
-        for name, ok, msg in outcomes:
-            if not ok:
-                st.error(f"{name} refresh failed: {msg}")
+        ok, msg = trigger_github_workflow(
+            token, repo, workflow_file, inputs={"markets": ",".join(markets)}
+        )
+        if ok:
+            # "queued", not "running": concurrency group is per-workflow with
+            # cancel-in-progress false, so this waits out any nightly run.
+            st.success(f"{label}: {name} refresh queued in background for {', '.join(markets)}.")
+        else:
+            st.error(f"{name} refresh failed: {msg}")
     except Exception as e:
         st.error(f"Failed to start refresh: {e}")
 
 
-def _reanalyze_tickers_in_dashboard(tickers, results, api_key, nvidia_api_key, sync_message):
-    """Refreshes Expert Take + Sentiment for `tickers` synchronously, right
-    here in the dashboard -- no GitHub Actions workflow involved. Shared by
-    the "selected" and "Retry Failed / Pending" buttons so both scopes
-    refresh identically; kept out of the per-ticker re-analyze button (it
-    has its own st.spinner-based version) since that one's single-ticker
-    flow doesn't need a progress bar."""
-    progress_bar = st.progress(0, text="Starting selective AI re-analysis...")
+def _reanalyze_tickers_in_dashboard(tickers, results, api_key, nvidia_api_key, sync_message,
+                                    scope):
+    """Refreshes ONE AI column for `tickers` synchronously, right here in the
+    dashboard -- no GitHub Actions workflow involved.
+
+    `scope` is "expert" (Expert Take) or "sentiment" (Sentiment). The two
+    columns used to be refreshed together in a single pass, which meant a
+    ticker pending in only one of them still paid for both; the controls are
+    now split into per-column sections, so each button drives exactly one
+    column and syncs only the JSON file it touched.
+
+    Shared by each section's "selected" and "Retry Pending" buttons so both
+    scopes refresh identically; kept out of the per-ticker re-analyze button
+    (it has its own st.spinner-based version, and deliberately still does both
+    columns for its one ticker) since that flow doesn't need a progress bar.
+    """
+    label = "Expert Take" if scope == "expert" else "Sentiment"
+    progress_bar = st.progress(0, text=f"Starting selective {label} re-analysis...")
     from google import genai
-    client = genai.Client(api_key=api_key)
-    updated_views = load_expert_views()
+    client = genai.Client(api_key=api_key) if scope == "expert" else None
+    updated_views = load_expert_views() if scope == "expert" else None
 
     for idx, tk in enumerate(tickers):
         row = next((r for r in results if r["ticker"] == tk), None)
@@ -2743,43 +2760,46 @@ def _reanalyze_tickers_in_dashboard(tickers, results, api_key, nvidia_api_key, s
         company_name = row.get("company_name", tk)
         progress_bar.progress(
             (idx + 1) / len(tickers),
-            text=f"Expert Take for {company_name} ({idx+1}/{len(tickers)})...",
+            text=f"{label} for {company_name} ({idx+1}/{len(tickers)})...",
         )
-        try:
-            view = generate_expert_view(client, row, nvidia_api_key=nvidia_api_key, is_retry=True)
-            if _is_valid_view(view):
-                updated_views[tk] = view
-                save_expert_views(updated_views)
-            else:
+        if scope == "expert":
+            try:
+                view = generate_expert_view(client, row, nvidia_api_key=nvidia_api_key, is_retry=True)
+                if _is_valid_view(view):
+                    updated_views[tk] = view
+                    save_expert_views(updated_views)
+                else:
+                    progress_bar.progress(
+                        (idx + 1) / len(tickers),
+                        text=f"⚠️ {tk} expert analysis pending/fallback.",
+                    )
+            except Exception as e:
+                print(f"[re-analyze] expert take failed for {tk}: {e}")
                 progress_bar.progress(
                     (idx + 1) / len(tickers),
-                    text=f"⚠️ {tk} expert analysis pending/fallback.",
+                    text=f"⚠️ {tk} expert analysis error: {e}",
                 )
-        except Exception as e:
-            print(f"[re-analyze] expert take failed for {tk}: {e}")
-            progress_bar.progress(
-                (idx + 1) / len(tickers),
-                text=f"⚠️ {tk} expert analysis error: {e}",
-            )
-
-        # Sentiment in the same pass, so the two AI columns don't drift
-        # apart. A failure here keeps the prior view (see
-        # analyze_single_ticker_sentiment) and must not abort the loop.
-        progress_bar.progress(
-            (idx + 1) / len(tickers),
-            text=f"Sentiment for {company_name} ({idx+1}/{len(tickers)})...",
-        )
-        try:
-            analyze_single_ticker_sentiment(tk, row, api_key, is_retry=True)
-        except Exception as e:
-            print(f"[re-analyze] sentiment failed for {tk}: {e}")
+        else:
+            # A failure here keeps the prior view (see
+            # analyze_single_ticker_sentiment) and must not abort the loop.
+            try:
+                analyze_single_ticker_sentiment(tk, row, api_key, is_retry=True)
+            except Exception as e:
+                print(f"[re-analyze] sentiment failed for {tk}: {e}")
+                progress_bar.progress(
+                    (idx + 1) / len(tickers),
+                    text=f"⚠️ {tk} sentiment error: {e}",
+                )
         time.sleep(3)
 
-    sync_ai_views_to_github(sync_message)
+    # Only the one file this pass could have written -- a narrower commit than
+    # the old both-columns default.
+    filename = "expert_views.json" if scope == "expert" else "fundamentals.json"
+    sync_ai_views_to_github(sync_message, filenames=(filename,))
     st.rerun()
 
 
-def render_expert_analysis_control_bar(market, results):
+def render_expert_analysis_control_bar(market, results, combined_markets=None):
     expert_views = load_expert_views()
     api_key = get_gemini_api_key(st.secrets)
     nvidia_api_key = get_nvidia_api_key(st.secrets)
@@ -2801,18 +2821,26 @@ def render_expert_analysis_control_bar(market, results):
             filenames=("expert_views.json",),  # cleanup touches only this file
         )
 
-    # --- Detect failed/pending tickers (includes newly added ones with no entry) ---
-    # Either AI column failing/pending counts -- "Retry Failed / Pending"
-    # refreshes both together (same as the selected-tickers and per-ticker
-    # re-analyze buttons), so a ticker whose Expert Take is fine but whose
-    # Sentiment is still pending must still show up here, or its Sentiment
-    # would never get retried by this button.
+    # --- Detect pending tickers per AI column (includes newly added ones with
+    # no entry at all) ---
+    # Tracked separately, one list per column: the controls below are split
+    # into an Expert Take section and a Sentiment section, and each section's
+    # "Retry Pending" must only re-run the column it owns. A ticker whose
+    # Expert Take is fine but whose Sentiment is pending shows up in exactly
+    # one of these -- previously a single merged list forced both columns to
+    # be regenerated for it.
     fundamentals_now = load_fundamentals()
-    failed_tickers = [
-        tk for tk in all_tickers
-        if not _is_valid_view(expert_views.get(tk))
-        or not _is_valid_sentiment_view(fundamentals_now.get(tk))
+    expert_pending = [tk for tk in all_tickers if not _is_valid_view(expert_views.get(tk))]
+    sentiment_pending = [
+        tk for tk in all_tickers if not _is_valid_sentiment_view(fundamentals_now.get(tk))
     ]
+
+    # The REAL registry keys behind this tab, for scoping the background
+    # workflow. A combined tab spans its configured member watchlists; a real
+    # tab is just itself. Empty only for a combined tab with zero members --
+    # see the disabled "Re-analyze All" below, since an empty `markets` input
+    # would mean "every watchlist" to the refresh scripts.
+    scope_markets = list(combined_markets) if combined_markets is not None else [market]
 
     # Folded by default: these are set-once controls, and leaving them open
     # pushed the watchlist table below the fold on every visit. The loads and
@@ -2821,39 +2849,52 @@ def render_expert_analysis_control_bar(market, results):
     from stock_data import load_settings, save_settings
     settings_now = load_settings()
 
-    with st.expander("🤖 AI Stock Expert Analysis Controls", expanded=False):
+    REASON_CHOICES = ["models/gemini-3.5-flash-lite", "models/gemma-4-31b-it", "models/gemma-4-26b-a4b-it"]
+    DEFAULT_REASON = "models/gemini-3.5-flash-lite"
+
+    def _normalize_reason(val):
+        """Legacy settings stored the bare id; every choice is 'models/'-prefixed now."""
+        return DEFAULT_REASON if val == "gemini-3.5-flash-lite" else val
+
+    def _render_ai_section(scope, heading, pending, model_key, budget_key,
+                           workflow_file, workflow_name):
+        """One column's controls: model + thinking budget, a ticker picker, and
+        the three run buttons. Both sections are built from this so Expert Take
+        and Sentiment can never drift apart in layout or behavior -- only in
+        which settings keys, pending list and workflow they drive.
+
+        Widget keys are namespaced by BOTH scope and market: two sections on
+        every one of several tabs, all live in the same session_state.
+        """
+        st.markdown(f"##### {heading}")
         col1, col2, col3 = st.columns([4, 3, 3])
         with col1:
             st.caption("Search is powered by gemma-4-26b-a4b-it")
         with col2:
-            reason_choices = ["models/gemini-3.5-flash-lite", "models/gemma-4-31b-it", "models/gemma-4-26b-a4b-it"]
-            current_reason = settings_now.get("expert_reasoning_model", "models/gemini-3.5-flash-lite")
-            if current_reason == "gemini-3.5-flash-lite":
-                current_reason = "models/gemini-3.5-flash-lite"
+            saved_reason = _normalize_reason(settings_now.get(model_key, DEFAULT_REASON))
             new_reason = st.selectbox(
-                "Reasoning Model", reason_choices,
-                index=reason_choices.index(current_reason) if current_reason in reason_choices else 0,
-                key=f"expert_reasoning_model_select_{market}"
+                "Reasoning Model", REASON_CHOICES,
+                index=REASON_CHOICES.index(saved_reason) if saved_reason in REASON_CHOICES else 0,
+                key=f"{scope}_reasoning_model_select_{market}",
             )
-            saved_reason = settings_now.get("expert_reasoning_model", "models/gemini-3.5-flash-lite")
-            if saved_reason == "gemini-3.5-flash-lite":
-                saved_reason = "models/gemini-3.5-flash-lite"
             if new_reason != saved_reason:
-                settings_now["expert_reasoning_model"] = new_reason
+                settings_now[model_key] = new_reason
                 save_settings(settings_now)
                 st.rerun()
-            
+
         with col3:
-            is_gemma = "gemma" in settings_now.get("expert_reasoning_model", "")
+            # Gemma exposes a named reasoning LEVEL; Gemini a numeric token
+            # budget. Swapping the model swaps the whole choice list.
+            is_gemma = "gemma" in settings_now.get(model_key, "")
             if is_gemma:
                 budget_choices = ["LOW", "MEDIUM", "HIGH"]
                 default_val = "HIGH"
             else:
                 budget_choices = [1024, 2048, 4096, 8192]
                 default_val = 8192
-            
-            current_val = settings_now.get("expert_thinking_budget", default_val)
-        
+
+            current_val = settings_now.get(budget_key, default_val)
+
             if is_gemma and current_val not in budget_choices:
                 current_val = default_val
             elif not is_gemma:
@@ -2863,14 +2904,14 @@ def render_expert_analysis_control_bar(market, results):
                     current_val = default_val
                 if current_val not in budget_choices:
                     current_val = default_val
-                
+
             new_budget = st.selectbox(
                 "Thinking Budget / Level", budget_choices,
                 index=budget_choices.index(current_val),
-                key=f"expert_reasoning_budget_select_{market}"
+                key=f"{scope}_reasoning_budget_select_{market}",
             )
             if new_budget != current_val:
-                settings_now["expert_thinking_budget"] = new_budget
+                settings_now[budget_key] = new_budget
                 save_settings(settings_now)
                 st.rerun()
 
@@ -2879,88 +2920,65 @@ def render_expert_analysis_control_bar(market, results):
         selected_to_reanalyze = c1.multiselect(
             "Select tickers to re-analyze",
             options=all_tickers,
-            key=f"ev_multisel_{market}",
-            placeholder="Choose tickers to re-analyze...",
+            key=f"ev_multisel_{scope}_{market}",
+            placeholder=f"Search tickers to re-analyze ({heading})...",
             label_visibility="collapsed",
         )
 
         if c2.button(
             f"⚡ Re-analyze ({len(selected_to_reanalyze)})",
-            key=f"btn_re_sel_{market}",
+            key=f"btn_re_sel_{scope}_{market}",
             disabled=not selected_to_reanalyze or not api_key,
             width="stretch",
         ):
             _reanalyze_tickers_in_dashboard(
                 selected_to_reanalyze, results, api_key, nvidia_api_key,
-                f"Re-analyze selected tickers ({len(selected_to_reanalyze)}) via UI",
+                f"Re-analyze selected {scope} ({len(selected_to_reanalyze)} tickers) via UI",
+                scope=scope,
             )
 
-        failed_count = len(failed_tickers)
+        pending_count = len(pending)
         if c3.button(
-            f"⚠️ Retry Failed / Pending ({failed_count})",
-            key=f"btn_re_failed_{market}",
-            disabled=failed_count == 0 or not api_key,
-            type="primary" if failed_count > 0 else "secondary",
+            f"⚠️ Retry Pending ({pending_count})",
+            key=f"btn_re_failed_{scope}_{market}",
+            disabled=pending_count == 0 or not api_key,
+            type="primary" if pending_count > 0 else "secondary",
             width="stretch",
         ):
             _reanalyze_tickers_in_dashboard(
-                failed_tickers, results, api_key, nvidia_api_key,
-                f"Retry failed/pending tickers ({failed_count}) via UI",
+                pending, results, api_key, nvidia_api_key,
+                f"Retry pending {scope} ({pending_count} tickers) via UI",
+                scope=scope,
             )
 
         if c4.button(
             f"🔄 Re-analyze All ({len(all_tickers)})",
-            key=f"btn_re_all_{market}",
-            disabled=not api_key,
+            key=f"btn_re_all_{scope}_{market}",
+            disabled=not scope_markets,
+            help=(
+                f"Runs {workflow_file} in the background for this view's watchlist(s) only: "
+                f"{', '.join(scope_markets)}." if scope_markets
+                else "No watchlists are configured for this view."
+            ),
             width="stretch",
         ):
-            trigger_ai_refresh_workflows(f"Re-analyze All ({len(all_tickers)})")
-
-    with st.expander("🧠 AI Sentiment Analysis Controls", expanded=False):
-        scol1, scol2 = st.columns([3, 3])
-        with scol1:
-            s_reason_choices = ["models/gemini-3.5-flash-lite", "models/gemma-4-31b-it", "models/gemma-4-26b-a4b-it"]
-            s_current_reason = settings_now.get("sentiment_reasoning_model", "models/gemini-3.5-flash-lite")
-            s_new_reason = st.selectbox(
-                "Reasoning Model", s_reason_choices,
-                index=s_reason_choices.index(s_current_reason) if s_current_reason in s_reason_choices else 0,
-                key=f"sentiment_reasoning_model_select_{market}"
+            trigger_ai_refresh_workflow(
+                workflow_file, workflow_name,
+                f"Re-analyze All ({len(all_tickers)})", scope_markets,
             )
-            if s_new_reason != settings_now.get("sentiment_reasoning_model", "models/gemini-3.5-flash-lite"):
-                settings_now["sentiment_reasoning_model"] = s_new_reason
-                save_settings(settings_now)
-                st.rerun()
 
-        with scol2:
-            s_is_gemma = "gemma" in settings_now.get("sentiment_reasoning_model", "")
-            if s_is_gemma:
-                s_budget_choices = ["LOW", "MEDIUM", "HIGH"]
-                s_default_val = "HIGH"
-            else:
-                s_budget_choices = [1024, 2048, 4096, 8192]
-                s_default_val = 8192
-
-            s_current_val = settings_now.get("sentiment_thinking_budget", s_default_val)
-
-            if s_is_gemma and s_current_val not in s_budget_choices:
-                s_current_val = s_default_val
-            elif not s_is_gemma:
-                try:
-                    s_current_val = int(s_current_val)
-                except (ValueError, TypeError):
-                    s_current_val = s_default_val
-                if s_current_val not in s_budget_choices:
-                    s_current_val = s_default_val
-
-            s_new_budget = st.selectbox(
-                "Thinking Budget / Level", s_budget_choices,
-                index=s_budget_choices.index(s_current_val),
-                key=f"sentiment_reasoning_budget_select_{market}"
-            )
-            if s_new_budget != s_current_val:
-                settings_now["sentiment_thinking_budget"] = s_new_budget
-                save_settings(settings_now)
-                st.rerun()
+    with st.expander("🤖 AI Analysis Controls", expanded=False):
+        _render_ai_section(
+            "expert", "🤖 Expert Take", expert_pending,
+            "expert_reasoning_model", "expert_thinking_budget",
+            "expert-views.yml", "Expert Views",
+        )
+        st.markdown("---")
+        _render_ai_section(
+            "sentiment", "🧠 Sentiment", sentiment_pending,
+            "sentiment_reasoning_model", "sentiment_thinking_budget",
+            "fundamentals.yml", "Sentiment",
+        )
 
 
 def render_expert_view_expander(market, filtered_rows, settings):
@@ -3352,7 +3370,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         effective_sort_levels = [("index_name", True), ("pct_change_1d", False)]
     filtered = apply_sort_levels(filtered, effective_sort_levels)
 
-    render_expert_analysis_control_bar(market, results)
+    render_expert_analysis_control_bar(market, results, combined_markets=combined_markets)
     st.write(f"**Showing {len(filtered)} of {len(results)} tickers**")
 
     if filtered:
