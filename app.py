@@ -4062,7 +4062,24 @@ with dash2:
 for ck in combined_keys:
     with combined_tabs[ck]:
         combined_markets_here = combined_markets_by_key[ck]
-        combined_results = [r for m in combined_markets_here for r in per_market.get(m, [])]
+        # De-duplicated by ticker, first member wins. A ticker can sit in more
+        # than one member watchlist (AMKR is in both US Watchlist and
+        # Substack-OutperformingMarket), and a raw concatenation rendered it
+        # twice -- which crashed the tab outright, because the per-ticker
+        # widgets downstream are keyed on {market}_{ticker} and the second copy
+        # collided (StreamlitDuplicateElementKey on re_ev_all_watchlist_AMKR).
+        # Which copy survives doesn't change any displayed number: the rows are
+        # identical apart from their `market` tag, since every metric including
+        # Mansfield RS is computed against the ticker's own index (see
+        # ticker_index.json), not the member watchlist's benchmark.
+        seen_tickers = set()
+        combined_results = []
+        for m in combined_markets_here:
+            for r in per_market.get(m, []):
+                if r["ticker"] in seen_tickers:
+                    continue
+                seen_tickers.add(r["ticker"])
+                combined_results.append(r)
         render_market_tab(
             ck, combined_results, settings_now, shared_visible_keys, shared_label_by_key,
             shared_sort_levels, combined_markets=combined_markets_here,
