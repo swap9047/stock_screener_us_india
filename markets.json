@@ -14,5 +14,9 @@
   "us_watchlist": {
     "label": "US Watchlist",
     "benchmark": "SPY"
+  },
+  "substack_outperformingmarket": {
+    "label": "Substack-OutperformingMarket",
+    "benchmark": "^IXIC"
   }
 }
