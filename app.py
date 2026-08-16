@@ -3489,17 +3489,17 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         # Two markers ride on the ticker symbol itself, so both are readable
         # while scanning without their own columns being shown or scrolled
         # into view (each also has a plain column of its own):
-        #   - Flag color, PREPENDED, carrying a tooltip with its reason.
-        #   - Interested, a ★ APPENDED -- deliberately not a colored ⭐, since
-        #     the cell already spends color on the flag dot and a second
-        #     colored glyph would read as another status.
-        # The star is offset with position:relative, NOT vertical-align:sub:
-        # relative positioning is purely visual, so the span keeps its normal
-        # inline slot and the line box -- i.e. the row height -- can't grow.
-        # A taller line on only the starred rows would break row alignment
-        # down the table.
-        STAR_HTML = ('<span title="Interested" '
-                     'style="font-size:9px;position:relative;top:3px;opacity:0.75;">★</span>')
+        #   - Flag color, carrying a tooltip with its reason.
+        #   - Interested, a ★ -- deliberately not a colored ⭐, since the cell
+        #     already spends color on the flag dot and a second colored glyph
+        #     would read as another status.
+        # Both sit TOGETHER in a leading marker group, inside one nowrap span.
+        # The ticker column is narrow enough to wrap, and a star trailing the
+        # symbol got pushed onto a third line of the cell -- and only on some
+        # rows, depending on how long the symbol was, so the column looked
+        # ragged. Keeping the two markers glued to each other means the cell
+        # wraps at most once, in the same place, on every row.
+        STAR_HTML = '<span title="Interested" style="font-size:15px;">★</span>'
 
         def _ticker_cell(r):
             link = (f'<a href="{tradingview_url(r["ticker"])}" '
@@ -3507,13 +3507,16 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             flag = r.get("flag", "")
             reason = html.escape(r.get("flag_reason", ""))
             emoji = FLAG_EMOJI.get(flag)
+            markers = []
             if emoji and reason:
-                cell = f'<span title="{reason}">{emoji}</span> {link}'
+                markers.append(f'<span title="{reason}">{emoji}</span>')
             elif emoji:
-                cell = f'{emoji} {link}'
-            else:
-                cell = link
-            return f"{cell} {STAR_HTML}" if r.get("interested") else cell
+                markers.append(emoji)
+            if r.get("interested"):
+                markers.append(STAR_HTML)
+            if not markers:
+                return link
+            return f'<span style="white-space:nowrap;">{" ".join(markers)}</span> {link}'
         raw_df["ticker_link"] = [_ticker_cell(r) for r in filtered]
         raw_df["company_name"] = [r.get("company_name", "—") for r in filtered]
 
