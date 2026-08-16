@@ -1,6 +1,6 @@
 {
-  "as_of": "2026-08-16 00:05 ET",
-  "generated_at": "2026-08-16T04:05:42.625669+00:00",
+  "as_of": "2026-08-16 00:17 ET",
+  "generated_at": "2026-08-16T04:17:04.492211+00:00",
   "code_version": "18f051b196331008",
   "per_market": {
     "us_invested": [
@@ -5360,7 +5360,7 @@
         "net_volume_10d_ratio": 15.1,
         "week52_high": 1779.8,
         "week52_low": 981.1,
-        "week52_high_age": 244,
+        "week52_high_age": 245,
         "overhead_supply": 9.6,
         "week26_distance": 1.4,
         "week52_distance": 18.5,
@@ -8623,7 +8623,7 @@
           "direction": "Downtrend",
           "strong": false,
           "last_close": 142.3000030517578,
-          "last_ma": 126.87,
+          "last_ma": 126.88,
           "slope": 0.5695,
           "price_above_ma": true,
           "slope_rising": true,
