@@ -1105,6 +1105,7 @@ def column_definitions(settings, labels):
         ),
         "Notes": "Your free-text note for this ticker, set via the sidebar 'Ticker Notes' panel. Hover/tap a truncated note to see the full text.",
         "Interested": "Whether you ticked this ticker as Interested in the watchlist editor.",
+        "Sentiment": "AI fundamental sentiment (Positive / Neutral / Negative) from the most recent earnings, guidance and analyst coverage. 'Unknown' means the view is stale, predates a confirmed earnings report, or had no hard evidence to stand on -- not that sentiment is neutral.",
         "Qtr Profit Growth %": "Year-over-year net income growth for the most recent reported quarter, vs. the same quarter a year ago (Yahoo Finance). Ignores share count -- compare against Qtr EPS Growth % to spot dilution.",
         "Qtr EPS Growth %": "Year-over-year growth in DILUTED earnings per share for the most recent reported quarter, vs. the same quarter a year ago. Same profit figure as Qtr Profit Growth % but divided by share count, so growth funded by issuing equity (QIP, warrant conversion) shows up lower here -- a materially smaller number than Qtr Profit Growth % means shareholders were diluted. Blank when Yahoo has fewer than 5 quarters of statements or the year-ago quarter was loss-making (growth undefined), which is why it is sparser than Qtr Profit Growth %.",
         "Qtr Revenue Growth %": "Year-over-year revenue growth for the most recent reported quarter, vs. the same quarter a year ago (Yahoo Finance).",
@@ -2182,7 +2183,11 @@ def _sort_label_to_field(sort_label, key_by_label):
         "Company Name": "company_name",
         "Index": "index_name",
         "Last": "last_close",
-        "Interested": "interested"
+        "Interested": "interested",
+        # Sentiment's column key is "fundamentals", whose raw_df cell is a
+        # <details> HTML block, not a sortable value -- the sortable form is
+        # the plain verdict string attached to the row as "sentiment".
+        "Sentiment": "sentiment",
     }.get(sort_label) or key_by_label.get(sort_label)
 
 
@@ -2259,16 +2264,17 @@ def render_sort_control(market, market_label, label_by_key, key_by_label):
     the primary key and offers "(default order)"; levels 2-3 are optional
     tie-breakers and offer "(none)", each only shown once the level above
     it has a real column chosen."""
-    # matched_alerts (Alerts), vstop_change (VStop Weeks Ago), tech_uptrend_label
-    # (Tech Uptrend) and fundamentals (Sentiment) are all computed AFTER
-    # filtering, inside render_market_tab (tech_uptrend_label is a tooltip-
-    # wrapped display string built from raw_df; fundamentals is a separate
-    # per-ticker JSON lookup, never a field on the raw row dict at all) --
-    # none of them are present on the raw row dict at sort time -- excluded
-    # rather than silently sorting wrong (or crashing on a missing key).
+    # matched_alerts (Alerts), vstop_change (VStop Weeks Ago) and
+    # tech_uptrend_label (Tech Uptrend) are computed AFTER filtering, inside
+    # render_market_tab (tech_uptrend_label is a tooltip-wrapped display string
+    # built from raw_df), so they aren't on the raw row dict at sort time --
+    # excluded rather than silently sorting wrong (or crashing on a missing
+    # key). fundamentals (Sentiment) USED to belong here for the same reason;
+    # it's now resolved onto every row up front, so it sorts via the
+    # "Sentiment" -> "sentiment" case in _sort_label_to_field.
     sort_labels = ["Ticker", "Company Name", "Index", "Last"] + [
         lbl for key, lbl in label_by_key.items()
-        if key not in ("matched_alerts", "vstop_change", "tech_uptrend_label", "fundamentals", "company_name", "index_name")
+        if key not in ("matched_alerts", "vstop_change", "tech_uptrend_label", "company_name", "index_name")
     ]
 
     prefs = load_column_prefs_full()
@@ -4009,6 +4015,7 @@ custom_columns_now = load_custom_columns()
 ticker_notes_now = load_ticker_notes()
 from stock_data import load_interested as _load_interested_now
 interested_now = _load_interested_now()
+fundamentals_now_global = load_fundamentals()
 for _market_rows in per_market.values():
     apply_custom_columns_to_rows(_market_rows, custom_columns_now)
     # Notes/flags change far more often than custom columns (edited
@@ -4020,8 +4027,16 @@ for _market_rows in per_market.values():
     # Interested status lives in interested.json (ticked in the watchlist
     # editor), not the technical snapshot -- attach it here, same reasoning as
     # notes/flags above, so it's sortable and exportable like any other column.
+    #
+    # Sentiment likewise comes from fundamentals.json rather than the snapshot.
+    # It used to be resolved only at table-render time, i.e. AFTER filtering
+    # and sorting had already run, which is why it could be displayed but
+    # never filtered, alerted or sorted on. Resolving it here -- once per row,
+    # before any tab renders -- is what makes it a first-class metric, and it
+    # covers the combined tabs too since they reuse these same row dicts.
     for _row in _market_rows:
         _row["interested"] = _row["ticker"] in interested_now
+        _row["sentiment"] = _validate_sentiment(fundamentals_now_global.get(_row["ticker"], {}))[0]
 
 source_label = "daily snapshot" if using_snapshot else "live fetch"
 st.sidebar.caption(f"Data as of: {as_of} ({source_label})")

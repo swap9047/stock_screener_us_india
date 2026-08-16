@@ -454,6 +454,31 @@ def get_filterable_metrics(settings=None):
         "Flag": "flag",
         "Notes": "note",
         "Expert Take": "expert_take",
+        # Table columns that were never registered here, so they couldn't be
+        # used in a custom filter or an alert rule despite being visible and
+        # sitting on the row dict all along. Anything added to
+        # app.build_column_defs belongs here too unless it's genuinely
+        # underivable at filter time (see "Alerts" below) -- that omission is
+        # what this block is fixing, so don't let the next column repeat it.
+        # Labels MUST match build_column_defs character-for-character; the
+        # glossary and the condition-builder caption resolve through them.
+        "Interested": "interested",
+        "Sentiment": "sentiment",
+        "Index": "index_name",
+        "Company Name": "company_name",
+        "Data Thru": "data_end",
+        "Reported Qtr": "reported_qtr",
+        "P/E (TTM)": "trailing_pe",
+        "P/E (Fwd)": "forward_pe",
+        "P/B": "pb_ratio",
+        "EV/EBITDA": "ev_ebitda",
+        "P/Cashflow": "p_cashflow",
+        "ROE %": "roe",
+        "CFO/OP 5Y": "cfo_op_5yr",
+        "ROCE %": "roce",
+        # Deliberately NOT registered: "Alerts" (matched_alerts). It's produced
+        # by evaluating the alert rules against rows that filtering has already
+        # selected, so filtering on it would be circular.
     }
 
 

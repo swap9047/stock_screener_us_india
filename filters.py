@@ -73,6 +73,14 @@ CATEGORICAL_METRICS = {
     "tech_uptrend": ["Yes", "No"],
     "flag": FLAG_CHOICES,  # see ticker_notes.py -- Red/Yellow/Green/Blue
     "expert_take": ["Accumulate", "Hold", "Caution", "Pending"],
+    # Boolean, offered as Yes/No exactly like tech_uptrend above. No engine
+    # change needed: _coerce_fixed_value already maps yes/no words onto a
+    # bool `a`.
+    "interested": ["Yes", "No"],
+    # The full vocabulary fundamentals_eval._validate_sentiment can return --
+    # "Unknown" included, since that's what a stale//evidence-less view
+    # resolves to and you may well want to filter for exactly those.
+    "sentiment": ["Positive", "Neutral", "Negative", "Unknown"],
 }
 
 
