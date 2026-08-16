@@ -934,17 +934,6 @@
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
   },
-  "MANORAMA.NS": {
-    "verdict": "ACCUMULATE",
-    "headline": "Strong earnings growth backed by exploding volume and robust technical uptrend",
-    "technical_summary": "Manorama Industries exhibits a robust 'Strong Uptrend' supported by exploding 10-day volume and positive accumulation (88.6% ratio). Price is comfortably above all key moving averages, with healthy momentum (RSI in the mid-60s) and a well-established VStop uptrend held for 7 weeks.",
-    "catalyst_summary": "Q1 FY27 earnings reported stellar growth with revenue up 39.5% YoY to \u20b9404 cr and PAT surging 67.6% YoY to \u20b979 cr, providing strong fundamental tailwinds.",
-    "actionable_take": "Accumulate on minor pullbacks toward the 10 DEMA or 1600 zone, maintaining a strict trailing stop below the weekly VStop level of 1474.3.",
-    "as_of": "2026-08-15 04:33",
-    "news_used": "- **2026-08-14**: Reported Q1 FY27 earnings; Revenue \u20b9404 cr (+39.5% YoY), PAT \u20b979 cr (+67.6% YoY).\n- **2026-08-14**: Held Q1 FY27 earnings conference call.",
-    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
-    "model_used": "gemini-3.5-flash-lite"
-  },
   "NVDA": {
     "verdict": "HOLD",
     "headline": "NVDA displays a constructive uptrend, but a young volatility stop requires waiting for full accumulation criteria.",
