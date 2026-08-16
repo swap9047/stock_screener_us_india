@@ -48,5 +48,11 @@
   "sort_by_2": "Data Thru",
   "sort_dir_2": "\u2193",
   "sort_by_3": "% Chg",
-  "sort_dir_3": "\u2193"
+  "sort_dir_3": "\u2193",
+  "sort_by_substack_outperformingmarket_1": "Interested",
+  "sort_dir_substack_outperformingmarket_1": "\u2193",
+  "sort_by_substack_outperformingmarket_2": "Flag",
+  "sort_dir_substack_outperformingmarket_2": "\u2191",
+  "sort_by_substack_outperformingmarket_3": "(none)",
+  "sort_dir_substack_outperformingmarket_3": "\u2193"
 }
