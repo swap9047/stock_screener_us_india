@@ -3486,23 +3486,35 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
                     for r in filtered
                 ]
 
-        # Flag color is prepended to the ticker symbol itself (per request:
-        # "flag ticker symbol within the ticker column"), in addition to the
-        # separate Flag column above -- so it's visible at a glance without
-        # needing that column shown/scrolled into view.
-        # The flag emoji also carries a tooltip showing the reason.
-        def _ticker_with_flag(r):
+        # Two markers ride on the ticker symbol itself, so both are readable
+        # while scanning without their own columns being shown or scrolled
+        # into view (each also has a plain column of its own):
+        #   - Flag color, PREPENDED, carrying a tooltip with its reason.
+        #   - Interested, a ★ APPENDED -- deliberately not a colored ⭐, since
+        #     the cell already spends color on the flag dot and a second
+        #     colored glyph would read as another status.
+        # The star is offset with position:relative, NOT vertical-align:sub:
+        # relative positioning is purely visual, so the span keeps its normal
+        # inline slot and the line box -- i.e. the row height -- can't grow.
+        # A taller line on only the starred rows would break row alignment
+        # down the table.
+        STAR_HTML = ('<span title="Interested" '
+                     'style="font-size:9px;position:relative;top:3px;opacity:0.75;">★</span>')
+
+        def _ticker_cell(r):
             link = (f'<a href="{tradingview_url(r["ticker"])}" '
                     f'target="_blank" rel="noopener noreferrer">{r["ticker"]}</a>')
             flag = r.get("flag", "")
             reason = html.escape(r.get("flag_reason", ""))
             emoji = FLAG_EMOJI.get(flag)
             if emoji and reason:
-                return f'<span title="{reason}">{emoji}</span> {link}'
+                cell = f'<span title="{reason}">{emoji}</span> {link}'
             elif emoji:
-                return f'{emoji} {link}'
-            return link
-        raw_df["ticker_link"] = [_ticker_with_flag(r) for r in filtered]
+                cell = f'{emoji} {link}'
+            else:
+                cell = link
+            return f"{cell} {STAR_HTML}" if r.get("interested") else cell
+        raw_df["ticker_link"] = [_ticker_cell(r) for r in filtered]
         raw_df["company_name"] = [r.get("company_name", "—") for r in filtered]
 
         # Which enabled alert rules is each ticker currently matching?
