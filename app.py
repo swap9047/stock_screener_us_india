@@ -4271,7 +4271,8 @@ st.sidebar.caption(
 market_keys_now = list(markets_registry_now.keys())
 market_tab_labels = [markets_registry_now[mkt]["label"] for mkt in market_keys_now]
 
-# Two combined views, sequenced first: "All Invested" and "All Watchlist".
+# Two combined views, sequenced AFTER the real watchlists: "All Invested"
+# and "All Watchlist" -- roll-ups read as a summary of the tabs before them.
 # Synthetic keys ("all_invested"/"all_watchlist") namespace their own widget
 # state -- see render_market_tab's combined_markets docstring -- and are
 # reserved names (not real market keys), so they can never collide with a
@@ -4312,11 +4313,16 @@ combined_markets_by_key = {k: watchlist_groups_now.get(k, []) for k in combined_
 # individually guarded on `.open`, and skipping hidden tabs would change what
 # the visible one shows (the market tabs populate alert_matches). Persistence
 # only, deliberately -- laziness is a separate job.
-all_tabs = st.tabs(combined_tab_labels + market_tab_labels + ["News", "Alert Rules"],
+# Real watchlists first (in markets.json order -- the registry's insertion
+# order IS the display order), then the combined roll-ups, then the two fixed
+# tabs. Reorder watchlists by reordering markets.json, not by hardcoding a
+# list here: a watchlist added later appends to the registry and picks up its
+# tab automatically.
+all_tabs = st.tabs(market_tab_labels + combined_tab_labels + ["News", "Alert Rules"],
                    key="main_tabs", on_change="rerun")
-n_combined = len(combined_keys)
-combined_tabs = dict(zip(combined_keys, all_tabs[:n_combined]))
-market_tabs = dict(zip(market_keys_now, all_tabs[n_combined:-2]))
+n_markets = len(market_keys_now)
+market_tabs = dict(zip(market_keys_now, all_tabs[:n_markets]))
+combined_tabs = dict(zip(combined_keys, all_tabs[n_markets:-2]))
 tab_news, tab_alerts = all_tabs[-2], all_tabs[-1]
 
 # Which tab is on screen, so the sidebar sort control can edit THAT tab's
@@ -4327,7 +4333,7 @@ tab_news, tab_alerts = all_tabs[-2], all_tabs[-1]
 _tab_label_to_market = {"News": None, "Alert Rules": None}
 _tab_label_to_market.update(dict(zip(combined_tab_labels, combined_keys)))
 _tab_label_to_market.update(dict(zip(market_tab_labels, market_keys_now)))
-_active_label = st.session_state.get("main_tabs") or (combined_tab_labels + market_tab_labels)[0]
+_active_label = st.session_state.get("main_tabs") or (market_tab_labels + combined_tab_labels)[0]
 _active_market = _tab_label_to_market.get(_active_label)
 
 # Field types don't vary by market, so a slice of whatever rows exist is

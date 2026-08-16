@@ -12,3 +12,7 @@ streamlit.log
 .idea/
 .DS_Store
 .opencode/
+# Screenshots dropped in the repo root while reporting a UI issue. Note macOS
+# names these with a NARROW NO-BREAK SPACE (U+202F) before AM/PM, so a shell
+# glob typed with an ordinary space silently matches nothing.
+Screenshot*.png

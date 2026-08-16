@@ -1,11 +1,11 @@
 {
-  "us_invested": {
-    "label": "US Invested",
-    "benchmark": "SPY"
-  },
   "india_invested": {
     "label": "India Invested",
     "benchmark": "^CRSLDX"
+  },
+  "us_invested": {
+    "label": "US Invested",
+    "benchmark": "SPY"
   },
   "india_watchlist": {
     "label": "India Watchlist",
