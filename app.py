@@ -2133,14 +2133,63 @@ def build_column_defs(labels, custom_columns=None):
     return optional_defs, label_by_key, key_by_label, all_labels, default_visible
 
 
-def apply_sort(rows, sort_field, ascending):
+def load_category_order():
+    """{field: [values, best-first]} for every categorical metric.
+
+    CATEGORICAL_METRICS (filters.py) supplies the defaults -- it already
+    declares most of these in a meaningful order (trend runs Strong Uptrend
+    -> Strong Downtrend, sentiment Positive -> Unknown) -- and anything the
+    user has dragged in the sidebar panel overrides it. Merging rather than
+    replacing means a categorical metric added later gets a sensible ranking
+    with nobody having to touch saved prefs.
+
+    Only values still declared in CATEGORICAL_METRICS survive from the saved
+    order, with any newly-declared ones appended, so renaming a category can't
+    strand a dead entry at the top of the ranking.
+    """
+    saved = load_column_prefs_full().get("category_order") or {}
+    out = {}
+    for field, defaults in CATEGORICAL_METRICS.items():
+        chosen = [v for v in saved.get(field, []) if v in defaults]
+        out[field] = chosen + [v for v in defaults if v not in chosen]
+    return out
+
+
+def _rank_index(rank, value):
+    """Position of `value` within `rank`, case-insensitively.
+
+    Two behaviours worth stating:
+      - An unranked value returns len(rank), so it sorts AFTER everything
+        ranked but still ahead of rows where the field is missing entirely
+        (apply_sort pins those to the very end regardless of direction).
+      - Yes/No rankings accept the numeric and boolean forms the row actually
+        carries -- Tech Uptrend is stored 0/1 and Interested as a bool, so
+        neither would ever match a "Yes"/"No" string. Keyed off the rank
+        list's own contents rather than a hardcoded field list, so another
+        Yes/No metric works without being registered anywhere.
+    """
+    lowered = [str(v).strip().lower() for v in rank]
+    if isinstance(value, (bool, int, float)) and not isinstance(value, str) and set(lowered) == {"yes", "no"}:
+        value = "Yes" if value else "No"
+    try:
+        return lowered.index(str(value).strip().lower())
+    except ValueError:
+        return len(rank)
+
+
+def apply_sort(rows, sort_field, ascending, rank=None):
     """Sorts `rows` (list of raw row dicts, BEFORE they become a DataFrame)
     by `sort_field`. Missing values (None, "", or NaN) always sort to the
     end regardless of direction -- the usual spreadsheet convention --
     rather than clustering at the front on a descending sort. This is the
     practical stand-in for 'click a column header to sort' -- see
     render_sort_control's docstring for why a literal header-click
-    isn't feasible with this table."""
+    isn't feasible with this table.
+
+    `rank` is an ordered list of values for a categorical field, in which
+    case rows sort by position in that list instead of alphabetically --
+    alphabetical is actively wrong for these (Trend would run Downtrend,
+    Strong Downtrend, Strong Uptrend, Uptrend, which means nothing)."""
     if not sort_field:
         return rows
 
@@ -2152,21 +2201,27 @@ def apply_sort(rows, sort_field, ascending):
 
     def keyfn(r):
         v = r[sort_field]
+        if rank:
+            return _rank_index(rank, v)
         return v.lower() if isinstance(v, str) else v
 
     return sorted(present, key=keyfn, reverse=not ascending) + missing
 
 
-def apply_sort_levels(rows, levels):
+def apply_sort_levels(rows, levels, ranks=None):
     """Multi-key sort: apply_sort is already a stable sort, so chaining it
     once per level in REVERSE priority order (lowest-priority key first,
     highest-priority key last) produces correct multi-key ordering without
     any new sort logic -- each later pass only reorders rows that tied on
     every higher-priority key so far, exactly the semantics 'Sort by X,
     then by Y' implies. `levels` is a list of (sort_field, ascending)
-    tuples in priority order; an empty list is a no-op."""
+    tuples in priority order; an empty list is a no-op.
+
+    `ranks` is {field: ordered values} (see load_category_order); a field
+    without an entry sorts naturally."""
+    ranks = load_category_order() if ranks is None else ranks
     for sort_field, ascending in reversed(levels):
-        rows = apply_sort(rows, sort_field, ascending)
+        rows = apply_sort(rows, sort_field, ascending, rank=ranks.get(sort_field))
     return rows
 
 
@@ -2181,13 +2236,19 @@ DIR_LABELS = {
     "number": {"↑": "↑", "↓": "↓"},
     "text": {"↑": "A-Z", "↓": "Z-A"},
     "date": {"↑": "Old→New", "↓": "New→Old"},
+    # Categorical columns sort by your ranking (see load_category_order), so
+    # A-Z would be a lie -- "top" is whatever sits first in the drag list.
+    "rank": {"↑": "Top→Bottom", "↓": "Bottom→Top"},
 }
 _DATE_SHAPES = (re.compile(r"^\d{4}-\d{2}-\d{2}$"), re.compile(r"^Q[1-4] \d{4}$"))
 
 
 def _metric_kind(field, sample_rows):
-    """"number" | "text" | "date" for one sortable field, inferred from the
-    first non-empty value it actually holds.
+    """"rank" | "number" | "text" | "date" for one sortable field.
+
+    "rank" wins outright for any categorical metric -- its order is the one
+    you defined, not the one its values happen to spell. The rest is inferred
+    from the first non-empty value the field actually holds.
 
     Inferred rather than read off a hand-maintained list on purpose: such a
     list goes stale the moment a column is added (exactly how 14 columns ended
@@ -2199,6 +2260,8 @@ def _metric_kind(field, sample_rows):
     A field with no value anywhere in the sample falls back to "number", the
     same arrows the control has always shown.
     """
+    if field in CATEGORICAL_METRICS:
+        return "rank"
     for row in sample_rows:
         val = row.get(field)
         if val is None or val == "":
@@ -2220,6 +2283,10 @@ def _sort_label_to_field(sort_label, key_by_label):
         "Index": "index_name",
         "Last": "last_close",
         "Interested": "interested",
+        # Same key-differs-from-column case: the column is tech_uptrend_label
+        # (a tooltip-wrapped display string built after filtering), the
+        # sortable value is the raw 0/1 tech_uptrend on the row.
+        "Tech Uptrend": "tech_uptrend",
         # Sentiment's column key is "fundamentals", whose raw_df cell is a
         # <details> HTML block, not a sortable value -- the sortable form is
         # the plain verdict string attached to the row as "sentiment".
@@ -2269,7 +2336,7 @@ def saved_sort_levels(market, key_by_label):
     return levels
 
 
-def render_sort_control(market, market_label, label_by_key, key_by_label, sample_rows=()):
+def render_sort_control(market, market_label, label_by_key, key_by_label, sample_rows=(), other_tabs=()):
     """'Sort by' control for ONE watchlist, sidebar, always visible (not
     tucked into an expander -- used often enough to want one click, not two).
 
@@ -2300,17 +2367,19 @@ def render_sort_control(market, market_label, label_by_key, key_by_label, sample
     the primary key and offers "(default order)"; levels 2-3 are optional
     tie-breakers and offer "(none)", each only shown once the level above
     it has a real column chosen."""
-    # matched_alerts (Alerts), vstop_change (VStop Weeks Ago) and
-    # tech_uptrend_label (Tech Uptrend) are computed AFTER filtering, inside
-    # render_market_tab (tech_uptrend_label is a tooltip-wrapped display string
-    # built from raw_df), so they aren't on the raw row dict at sort time --
-    # excluded rather than silently sorting wrong (or crashing on a missing
-    # key). fundamentals (Sentiment) USED to belong here for the same reason;
-    # it's now resolved onto every row up front, so it sorts via the
-    # "Sentiment" -> "sentiment" case in _sort_label_to_field.
+    # matched_alerts (Alerts) and vstop_change (VStop Weeks Ago) are computed
+    # AFTER filtering, inside render_market_tab, so they aren't on the raw row
+    # dict at sort time -- excluded rather than silently sorting wrong (or
+    # crashing on a missing key).
+    #
+    # fundamentals (Sentiment) and tech_uptrend_label (Tech Uptrend) USED to
+    # belong here for the same reason. Both now sort off a raw field that IS
+    # on the row -- "sentiment" and "tech_uptrend" respectively -- reached
+    # through _sort_label_to_field's key-differs-from-column cases, so only
+    # their display cells are built late, not their sortable values.
     sort_labels = ["Ticker", "Company Name", "Index", "Last"] + [
         lbl for key, lbl in label_by_key.items()
-        if key not in ("matched_alerts", "vstop_change", "tech_uptrend_label", "company_name", "index_name")
+        if key not in ("matched_alerts", "vstop_change", "company_name", "index_name")
     ]
 
     prefs = load_column_prefs_full()
@@ -2364,10 +2433,47 @@ def render_sort_control(market, market_label, label_by_key, key_by_label, sample
         if sort_field:
             levels.append((sort_field, ascending))
 
+    _render_copy_sort_from(market, other_tabs)
     return levels
 
 
-def render_shared_column_picker(labels, active_market=None, active_market_label=None, sample_rows=()):
+def _render_copy_sort_from(market, other_tabs):
+    """"Copy sort from <tab>" -- lifts another tab's whole sort setup into
+    this one, instead of re-picking six levels and six directions by hand.
+
+    Two-step (pick, then press Copy) on purpose: a one-click dropdown would
+    overwrite the sort you're looking at the moment you browsed the list.
+    """
+    if not other_tabs:
+        return
+    st.sidebar.markdown("---")
+    labels = [lbl for lbl, _ in other_tabs]
+    by_label = dict(other_tabs)
+    cc1, cc2 = st.sidebar.columns([3, 2])
+    source_label = cc1.selectbox("Copy sort from", labels, key=f"copy_sort_src_{market}")
+    if not cc2.button("Copy", key=f"copy_sort_btn_{market}", width="stretch"):
+        return
+
+    source = by_label[source_label]
+    prefs = load_column_prefs_full()
+    for i in range(1, _SORT_LEVELS + 1):
+        src_field, src_dir = _sort_pref_keys(source, i)
+        dst_field, dst_dir = _sort_pref_keys(market, i)
+        default_label, default_dir = (
+            DEFAULT_SORT[i - 1] if i <= len(DEFAULT_SORT) else ("(none)" if i > 1 else "(default order)", "↑")
+        )
+        update_column_prefs(dst_field, prefs.get(src_field, default_label))
+        update_column_prefs(dst_dir, prefs.get(src_dir, default_dir))
+        # The widgets only seed themselves from prefs when their session_state
+        # entry is ABSENT, so leaving these behind would re-render the old
+        # values and write them straight back over the copy.
+        st.session_state.pop(f"sort_field_{market}_{i}", None)
+        st.session_state.pop(f"sort_dir_{market}_{i}", None)
+    st.toast(f"Copied sort from {source_label}.")
+    st.rerun()
+
+
+def render_shared_column_picker(labels, active_market=None, active_market_label=None, sample_rows=(), other_tabs=()):
     """Single 'Columns to show / reorder' control, rendered ONCE (in the
     sidebar) and shared by both the US and India watchlist tables, so
     picking/reordering columns always applies to both.
@@ -2390,7 +2496,7 @@ def render_shared_column_picker(labels, active_market=None, active_market_label=
 
     if active_market:
         render_sort_control(active_market, active_market_label or active_market,
-                            label_by_key, key_by_label, sample_rows)
+                            label_by_key, key_by_label, sample_rows, other_tabs)
 
     SHARED_ORDER_KEY = "shared_col_order"
     if SHARED_ORDER_KEY not in st.session_state:
@@ -2521,11 +2627,53 @@ def render_shared_column_picker(labels, active_market=None, active_market_label=
                 save_column_prefs(new_order)
                 st.rerun()
 
+    render_category_order_manager(label_by_key)
     render_metric_glossary(labels, custom_columns, key_by_label)
     render_custom_columns_manager()
     render_ticker_notes_manager()
 
     return st.session_state[SHARED_ORDER_KEY], label_by_key, key_by_label
+
+
+def render_category_order_manager(label_by_key):
+    """Sidebar panel for ranking each categorical column's values.
+
+    These columns can't sort alphabetically in any useful way -- Trend would
+    run Downtrend, Strong Downtrend, Strong Uptrend, Uptrend -- so the order
+    is yours to set, and it drives apply_sort via load_category_order().
+
+    Deliberately GLOBAL rather than per-tab: "Strong Uptrend outranks
+    Uptrend" is a fact about the metric, not about a watchlist. Each tab's
+    own direction control still flips the ranking independently.
+    """
+    saved = load_column_prefs_full().get("category_order") or {}
+    current = load_category_order()
+
+    # Metric field -> the label its column is shown under, so the panel reads
+    # in the same words as the sort dropdown. Falls back to the field name for
+    # a metric with no column of its own.
+    label_for = {
+        "trend": "Trend", "volume_trend": "Vol Trend", "sentiment": "Sentiment",
+        "expert_take": "Expert Take", "flag": "Flag", "tech_uptrend": "Tech Uptrend",
+        "vstop_weekly_direction": "VStop Dir", "interested": "Interested",
+    }
+
+    with st.sidebar.expander("Category sort order", expanded=False):
+        st.caption(
+            "Drag to rank each column's values (top = sorted first). Applies to "
+            "every tab; a tab's own ↑/↓ still reverses it."
+        )
+        for field, values in current.items():
+            st.markdown(f"**{label_for.get(field, field)}**")
+            # Same keying rule as the column reorder above: stable across pure
+            # reordering (streamlit_sortables pins its internal drag state to
+            # the key), but remounted if the SET of values ever changes.
+            sortable_key = f"cat_order_{field}_" + "|".join(sorted(values))
+            new_values = sort_items(values, direction="vertical", key=sortable_key)
+            if new_values and new_values != values:
+                saved[field] = new_values
+                update_column_prefs("category_order", saved)
+                st.rerun()
 
 
 def render_metric_glossary(labels, custom_columns, column_key_by_label):
@@ -4172,11 +4320,16 @@ _active_market = _tab_label_to_market.get(_active_label)
 # Field types don't vary by market, so a slice of whatever rows exist is
 # enough to tell the sort control whether a column is numeric, text or a date.
 _sample_rows = [r for rows in per_market.values() for r in rows[:5]]
+# Every OTHER sortable tab, as (label, market_key) -- the source list for
+# "Copy sort from". News/Alert Rules map to None and are excluded.
+_other_tabs = [(lbl, mkt) for lbl, mkt in _tab_label_to_market.items()
+               if mkt and mkt != _active_market]
 shared_visible_keys, shared_label_by_key, shared_key_by_label = render_shared_column_picker(
     ema_col_labels(settings_now),
     active_market=_active_market,
     active_market_label=_active_label if _active_market else None,
     sample_rows=_sample_rows,
+    other_tabs=_other_tabs,
 )
 
 # Prominent, upfront dashboard controls -- shortcuts to settings that
