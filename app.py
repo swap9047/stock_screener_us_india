@@ -2133,15 +2133,27 @@ def build_column_defs(labels, custom_columns=None):
     return optional_defs, label_by_key, key_by_label, all_labels, default_visible
 
 
+# CATEGORICAL_METRICS declares every categorical best-first EXCEPT flag, whose
+# list is FLAG_CHOICES -- the order the flag PICKER offers colors in, not a
+# ranking. Taken literally it made Flag the one column where "Top→Bottom" put
+# the worst value first, so you had to invert Flag alone to line it up with
+# every other column. Ranked here instead: good, watch, bad, then Blue, which
+# carries no good/bad meaning at all.
+CATEGORY_ORDER_DEFAULTS = {
+    "flag": ["Green", "Yellow", "Red", "Blue"],
+}
+
+
 def load_category_order():
     """{field: [values, best-first]} for every categorical metric.
 
     CATEGORICAL_METRICS (filters.py) supplies the defaults -- it already
     declares most of these in a meaningful order (trend runs Strong Uptrend
-    -> Strong Downtrend, sentiment Positive -> Unknown) -- and anything the
-    user has dragged in the sidebar panel overrides it. Merging rather than
-    replacing means a categorical metric added later gets a sensible ranking
-    with nobody having to touch saved prefs.
+    -> Strong Downtrend, sentiment Positive -> Unknown), with
+    CATEGORY_ORDER_DEFAULTS overriding the ones it doesn't -- and anything
+    the user has dragged in the sidebar panel wins over both. Merging rather
+    than replacing means a categorical metric added later gets a sensible
+    ranking with nobody having to touch saved prefs.
 
     Only values still declared in CATEGORICAL_METRICS survive from the saved
     order, with any newly-declared ones appended, so renaming a category can't
@@ -2149,7 +2161,8 @@ def load_category_order():
     """
     saved = load_column_prefs_full().get("category_order") or {}
     out = {}
-    for field, defaults in CATEGORICAL_METRICS.items():
+    for field, values in CATEGORICAL_METRICS.items():
+        defaults = CATEGORY_ORDER_DEFAULTS.get(field, values)
         chosen = [v for v in saved.get(field, []) if v in defaults]
         out[field] = chosen + [v for v in defaults if v not in chosen]
     return out
