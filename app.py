@@ -2170,7 +2170,43 @@ def apply_sort_levels(rows, levels):
     return rows
 
 
-_SORT_LEVELS = 3
+_SORT_LEVELS = 6
+
+# Direction labels per field kind. The stored/canonical value is ALWAYS the
+# arrow -- these are display-only, applied through the selectbox's format_func.
+# That's deliberate: saved prefs, DEFAULT_SORT and the `dir == "↑"` ascending
+# test all keep working untouched, with no migration and no chance of a saved
+# "↑" failing to match a relabelled option.
+DIR_LABELS = {
+    "number": {"↑": "↑", "↓": "↓"},
+    "text": {"↑": "A-Z", "↓": "Z-A"},
+    "date": {"↑": "Old→New", "↓": "New→Old"},
+}
+_DATE_SHAPES = (re.compile(r"^\d{4}-\d{2}-\d{2}$"), re.compile(r"^Q[1-4] \d{4}$"))
+
+
+def _metric_kind(field, sample_rows):
+    """"number" | "text" | "date" for one sortable field, inferred from the
+    first non-empty value it actually holds.
+
+    Inferred rather than read off a hand-maintained list on purpose: such a
+    list goes stale the moment a column is added (exactly how 14 columns ended
+    up unfilterable), and inference covers user-defined custom columns for
+    free. Dates are recognised by SHAPE -- they're stored as strings and sort
+    lexicographically, which for ISO dates and "Qn YYYY" is precisely
+    chronological, so they deserve chronological wording rather than A-Z.
+
+    A field with no value anywhere in the sample falls back to "number", the
+    same arrows the control has always shown.
+    """
+    for row in sample_rows:
+        val = row.get(field)
+        if val is None or val == "":
+            continue
+        if not isinstance(val, str):
+            return "number"
+        return "date" if any(p.match(val) for p in _DATE_SHAPES) else "text"
+    return "number"
 
 
 def _sort_label_to_field(sort_label, key_by_label):
@@ -2233,7 +2269,7 @@ def saved_sort_levels(market, key_by_label):
     return levels
 
 
-def render_sort_control(market, market_label, label_by_key, key_by_label):
+def render_sort_control(market, market_label, label_by_key, key_by_label, sample_rows=()):
     """'Sort by' control for ONE watchlist, sidebar, always visible (not
     tucked into an expander -- used often enough to want one click, not two).
 
@@ -2302,10 +2338,20 @@ def render_sort_control(market, market_label, label_by_key, key_by_label):
         if i > 1 and not levels:
             break
 
-        sc1, sc2 = st.sidebar.columns([3, 1])
+        # [3, 2] rather than [3, 1]: the direction box now has to fit
+        # "Old→New", not just a single arrow.
+        sc1, sc2 = st.sidebar.columns([3, 2])
         label = "Sort by" if i == 1 else "Then by"
         sort_label = sc1.selectbox(label, options, key=field_key)
-        sort_dir = sc2.selectbox("Dir", ["↑", "↓"], key=dir_key, label_visibility="collapsed" if i > 1 else "visible")
+        # Labels follow the chosen column's type -- ↑/↓ reads fine for % Chg
+        # but says nothing about Company Name. Options stay the canonical
+        # arrows; only the rendering changes (see DIR_LABELS).
+        kind = _metric_kind(_sort_label_to_field(sort_label, key_by_label), sample_rows)
+        sort_dir = sc2.selectbox(
+            "Dir", ["↑", "↓"], key=dir_key,
+            format_func=lambda d, _k=kind: DIR_LABELS[_k][d],
+            label_visibility="collapsed" if i > 1 else "visible",
+        )
         ascending = sort_dir == "↑"
 
         if sort_label != prefs.get(field_pref) or sort_dir != prefs.get(dir_pref):
@@ -2321,7 +2367,7 @@ def render_sort_control(market, market_label, label_by_key, key_by_label):
     return levels
 
 
-def render_shared_column_picker(labels, active_market=None, active_market_label=None):
+def render_shared_column_picker(labels, active_market=None, active_market_label=None, sample_rows=()):
     """Single 'Columns to show / reorder' control, rendered ONCE (in the
     sidebar) and shared by both the US and India watchlist tables, so
     picking/reordering columns always applies to both.
@@ -2344,7 +2390,7 @@ def render_shared_column_picker(labels, active_market=None, active_market_label=
 
     if active_market:
         render_sort_control(active_market, active_market_label or active_market,
-                            label_by_key, key_by_label)
+                            label_by_key, key_by_label, sample_rows)
 
     SHARED_ORDER_KEY = "shared_col_order"
     if SHARED_ORDER_KEY not in st.session_state:
@@ -3359,6 +3405,10 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             return True
         return lo <= val <= hi
 
+    # Read ONCE per tab, not once per row inside the loop below --
+    # load_expert_views() is uncached and re-parses the whole file on every
+    # call, so the old per-row lookup cost ~one full parse per ticker per tab.
+    expert_views_now = load_expert_views()
     filtered = []
     for row in results:
         if not passes_ema(row, "ema10", f_ema10):
@@ -3402,10 +3452,11 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             else:
                 if not all(rule_passes):
                     continue
-        # Attach expert_take string to row dict so custom filters can access it directly
-        ev = load_expert_views().get(row["ticker"], {})
+        # row["expert_take"] is already attached (module-level, before any tab
+        # renders); ev is still needed here for the headline/pending nuance the
+        # dropdown filter below applies.
+        ev = expert_views_now.get(row["ticker"], {})
         verdict = ev.get("verdict", "")
-        row["expert_take"] = verdict.title() if verdict in ("ACCUMULATE", "HOLD", "CAUTION") else "Pending"
 
         # Expert Take filter — resolved against live expert_views
         if f_expert_take != "Any":
@@ -4016,6 +4067,7 @@ ticker_notes_now = load_ticker_notes()
 from stock_data import load_interested as _load_interested_now
 interested_now = _load_interested_now()
 fundamentals_now_global = load_fundamentals()
+expert_views_now_global = load_expert_views()
 for _market_rows in per_market.values():
     apply_custom_columns_to_rows(_market_rows, custom_columns_now)
     # Notes/flags change far more often than custom columns (edited
@@ -4034,9 +4086,16 @@ for _market_rows in per_market.values():
     # never filtered, alerted or sorted on. Resolving it here -- once per row,
     # before any tab renders -- is what makes it a first-class metric, and it
     # covers the combined tabs too since they reuse these same row dicts.
+    # expert_take moved up here from render_market_tab's filter loop for two
+    # reasons: it has to exist BEFORE the sidebar renders for the sort control
+    # to type it as text rather than numeric, and the old site called the
+    # uncached load_expert_views() once PER ROW -- re-reading and re-parsing
+    # the whole file ~760 times a render across every row of every tab.
     for _row in _market_rows:
         _row["interested"] = _row["ticker"] in interested_now
         _row["sentiment"] = _validate_sentiment(fundamentals_now_global.get(_row["ticker"], {}))[0]
+        _verdict = expert_views_now_global.get(_row["ticker"], {}).get("verdict", "")
+        _row["expert_take"] = _verdict.title() if _verdict in ("ACCUMULATE", "HOLD", "CAUTION") else "Pending"
 
 source_label = "daily snapshot" if using_snapshot else "live fetch"
 st.sidebar.caption(f"Data as of: {as_of} ({source_label})")
@@ -4110,10 +4169,14 @@ _tab_label_to_market.update(dict(zip(market_tab_labels, market_keys_now)))
 _active_label = st.session_state.get("main_tabs") or (combined_tab_labels + market_tab_labels)[0]
 _active_market = _tab_label_to_market.get(_active_label)
 
+# Field types don't vary by market, so a slice of whatever rows exist is
+# enough to tell the sort control whether a column is numeric, text or a date.
+_sample_rows = [r for rows in per_market.values() for r in rows[:5]]
 shared_visible_keys, shared_label_by_key, shared_key_by_label = render_shared_column_picker(
     ema_col_labels(settings_now),
     active_market=_active_market,
     active_market_label=_active_label if _active_market else None,
+    sample_rows=_sample_rows,
 )
 
 # Prominent, upfront dashboard controls -- shortcuts to settings that
