@@ -47,7 +47,7 @@ GITHUB_API = "https://api.github.com"
 SYNCABLE_FILES = [
     ("watchlist.json", "Watchlist (tickers per market)"),
     ("markets.json", "Markets registry (labels, benchmarks per watchlist)"),
-    ("invested.json", "Invested positions and weights"),
+    ("interested.json", "Tickers marked Interested"),
     ("custom_filters.json", "Custom filters (per market)"),
     ("settings.json", "Calculation settings"),
     ("alerts_config.json", "Alert / scan rules"),
