@@ -72,7 +72,7 @@ to just the tab you clicked from.
 *   `refresh_*.py` — background entry points run by GitHub Actions.
 
 There is no database: all state is JSON in the repo root. See
-[CLAUDE.md](CLAUDE.md) for the full architecture, the row-dict contract, the
+[AGENTS.md](AGENTS.md) for the full architecture, the row-dict contract, the
 registration checklist for adding a column, and the known traps — read it before
 contributing (or before pointing an AI agent at this codebase).
 
