@@ -53,6 +53,18 @@
   "sort_dir_substack_outperformingmarket_1": "\u2193",
   "sort_by_substack_outperformingmarket_2": "Flag",
   "sort_dir_substack_outperformingmarket_2": "\u2191",
-  "sort_by_substack_outperformingmarket_3": "(none)",
-  "sort_dir_substack_outperformingmarket_3": "\u2193"
+  "sort_by_substack_outperformingmarket_3": "% Chg",
+  "sort_dir_substack_outperformingmarket_3": "\u2193",
+  "sort_by_us_watchlist_1": "Interested",
+  "sort_dir_us_watchlist_1": "\u2193",
+  "sort_by_us_watchlist_2": "% Chg",
+  "sort_dir_us_watchlist_2": "\u2193",
+  "sort_by_us_watchlist_3": "(none)",
+  "sort_dir_us_watchlist_3": "\u2193",
+  "sort_by_all_invested_1": "Index",
+  "sort_dir_all_invested_1": "\u2191",
+  "sort_by_all_invested_2": "Data Thru",
+  "sort_dir_all_invested_2": "\u2193",
+  "sort_by_all_invested_3": "% Chg",
+  "sort_dir_all_invested_3": "\u2193"
 }
