@@ -1104,7 +1104,7 @@ def column_definitions(settings, labels):
             "flagged cell for the exact vote/veto breakdown."
         ),
         "Notes": "Your free-text note for this ticker, set via the sidebar 'Ticker Notes' panel. Hover/tap a truncated note to see the full text.",
-        "Invested": "Whether this ticker is marked Invested in the watchlist editor's Invested/Weight table.",
+        "Interested": "Whether you ticked this ticker as Interested in the watchlist editor.",
         "Qtr Profit Growth %": "Year-over-year net income growth for the most recent reported quarter, vs. the same quarter a year ago (Yahoo Finance). Ignores share count -- compare against Qtr EPS Growth % to spot dilution.",
         "Qtr EPS Growth %": "Year-over-year growth in DILUTED earnings per share for the most recent reported quarter, vs. the same quarter a year ago. Same profit figure as Qtr Profit Growth % but divided by share count, so growth funded by issuing equity (QIP, warrant conversion) shows up lower here -- a materially smaller number than Qtr Profit Growth % means shareholders were diluted. Blank when Yahoo has fewer than 5 quarters of statements or the year-ago quarter was loss-making (growth undefined), which is why it is sparser than Qtr Profit Growth %.",
         "Qtr Revenue Growth %": "Year-over-year revenue growth for the most recent reported quarter, vs. the same quarter a year ago (Yahoo Finance).",
@@ -1495,11 +1495,11 @@ def settings_dialog():
         )
 
 
-def _apply_watchlist_tickers(market, market_label, existing_tickers, candidate_tickers, invested_weights):
-    from stock_data import save_invested_weights
+def _apply_watchlist_tickers(market, market_label, existing_tickers, candidate_tickers, interested):
+    from stock_data import save_interested
     """Validates `candidate_tickers` against Yahoo Finance (skipping
     tickers already known-valid in `existing_tickers`), saves the
-    watchlist + invested weights, pushes to GitHub if configured, and
+    watchlist + Interested flags, pushes to GitHub if configured, and
     reruns. Shared by the manual per-row editor's Save button and the
     bulk-upload handler so both go through the exact same validate/save/
     push sequence instead of duplicating it."""
@@ -1512,10 +1512,10 @@ def _apply_watchlist_tickers(market, market_label, existing_tickers, candidate_t
                 valid_tickers.append(t)
             else:
                 st.error(f"'{t}' doesn't return any price data from Yahoo Finance — dropping it.")
-                invested_weights.pop(t, None)
+                interested.discard(t)
 
     save_watchlist(market, valid_tickers)
-    save_invested_weights(invested_weights)
+    save_interested(interested)
 
     # Saving a watchlist is an allowed refresh trigger: recompute + persist the
     # snapshot so the post-save rerun (and later reloads) serve current data.
@@ -1529,7 +1529,7 @@ def _apply_watchlist_tickers(market, market_label, existing_tickers, candidate_t
     gh_token, gh_repo, gh_branch = get_github_config(st.secrets)
     if gh_token and gh_repo:
         with st.spinner("Pushing watchlist to GitHub..."):
-            ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=["watchlist.json", "invested.json", "data_snapshot.json", "ticker_index.json"], message=f"Update {market_label}")
+            ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=["watchlist.json", "interested.json", "data_snapshot.json", "ticker_index.json"], message=f"Update {market_label}")
             if ok:
                 st.success("Successfully pushed to GitHub!")
             else:
@@ -1540,14 +1540,14 @@ def _apply_watchlist_tickers(market, market_label, existing_tickers, candidate_t
 
 
 def render_watchlist_editor(market, watchlists):
-    from stock_data import load_invested_weights, save_invested_weights, load_markets_registry
+    from stock_data import load_interested, load_markets_registry
     import pandas as pd
 
     market_label = load_markets_registry().get(market, {}).get("label", market)
     tickers = watchlists.get(market, [])
     st.caption(f"{len(tickers)} tickers")
 
-    invested_weights = load_invested_weights()
+    interested = load_interested()
 
     with st.expander("⬆️ Bulk add tickers (.csv or .txt)", expanded=False):
         st.caption(
@@ -1609,21 +1609,20 @@ def render_watchlist_editor(market, watchlists):
                     type="primary",
                 ):
                     merged = tickers + new_from_upload
-                    _apply_watchlist_tickers(market, market_label, tickers, merged, invested_weights)
+                    _apply_watchlist_tickers(market, market_label, tickers, merged, interested)
 
     data = []
     for t in tickers:
         data.append({
             "Ticker": t,
-            "Invested": t in invested_weights,
-            "Weight": invested_weights.get(t, 1.0)
+            "Interested": t in interested,
         })
-        
-    df = pd.DataFrame(data, columns=["Ticker", "Invested", "Weight"])
+
+    df = pd.DataFrame(data, columns=["Ticker", "Interested"])
     if df.empty:
-        df = pd.DataFrame(columns=["Ticker", "Invested", "Weight"])
-        
-    df = df.astype({"Ticker": "string", "Invested": "boolean", "Weight": "Float64"})
+        df = pd.DataFrame(columns=["Ticker", "Interested"])
+
+    df = df.astype({"Ticker": "string", "Interested": "boolean"})
     
     st.caption("💡 **Tip:** To remove a ticker, click the row's leftmost edge to select the entire row, then press Delete or click the trash icon.")
         
@@ -1638,8 +1637,9 @@ def render_watchlist_editor(market, watchlists):
                 "Ticker" if market == "us_invested" else ("Ticker (needs .NS/.BO)" if market == "india_invested" else "Ticker (as recognized by Yahoo Finance)"),
                 required=True
             ),
-            "Invested": st.column_config.CheckboxColumn("Invested"),
-            "Weight": st.column_config.NumberColumn("Weight", min_value=0.0, step=0.1, format="%.2f")
+            "Interested": st.column_config.CheckboxColumn(
+                "Interested", help="Tick the tickers you're interested in. Shows as the Interested column in the table."
+            ),
         }
     )
     
@@ -1650,20 +1650,18 @@ def render_watchlist_editor(market, watchlists):
             if not t or t == "NAN": continue
             if t not in new_tickers:
                 new_tickers.append(t)
-                
-            is_invested = row["Invested"]
-            if is_invested:
-                w = 1.0
-                try:
-                    w = float(row["Weight"])
-                except Exception:
-                    pass
-                if pd.isna(w): w = 1.0
-                invested_weights[t] = w
-            else:
-                invested_weights.pop(t, None)
 
-        _apply_watchlist_tickers(market, market_label, tickers, new_tickers, invested_weights)
+            # A never-touched checkbox in a newly added row comes back as pd.NA,
+            # and bool(pd.NA) RAISES rather than returning False -- so guard on
+            # pd.notna first. Can't use `is True` either: iterrows() hands back
+            # numpy bools, which fail an identity test against the builtin.
+            flag = row["Interested"]
+            if pd.notna(flag) and bool(flag):
+                interested.add(t)
+            else:
+                interested.discard(t)
+
+        _apply_watchlist_tickers(market, market_label, tickers, new_tickers, interested)
 
 
 OPERATOR_CHOICES = [">", "<", ">=", "<=", "=="]
@@ -2041,7 +2039,7 @@ def build_column_defs(labels, custom_columns=None):
         ("trend", "Trend"),
         ("flag", "Flag"),
         ("note", "Notes"),
-        ("invested_label", "Invested"),
+        ("interested_label", "Interested"),
         ("matched_alerts", "Alerts"),
         ("pct_change_1d", "% Chg"),
         ("week52_high", "52W High"),
@@ -2124,7 +2122,7 @@ def build_column_defs(labels, custom_columns=None):
     # each exists to back a specific stockscans rule, and defaulting nine
     # more columns on would push the table sideways for everyone who never
     # runs those scans.
-    default_hidden = {"Vol 10D", "Vol 20D", "Vol 100D", "Flag", "Invested",
+    default_hidden = {"Vol 10D", "Vol 20D", "Vol 100D", "Flag", "Interested",
                       "Breakout Window", "26WH Distance", "52WH Distance", "52W High Age",
                       "Overhead Supply",
                       "5Y High", "5Y High Distance", "ADX-W", "ADX-M", "RSI-M (12)",
@@ -2140,7 +2138,7 @@ def apply_sort(rows, sort_field, ascending):
     end regardless of direction -- the usual spreadsheet convention --
     rather than clustering at the front on a descending sort. This is the
     practical stand-in for 'click a column header to sort' -- see
-    render_shared_sort_control's docstring for why a literal header-click
+    render_sort_control's docstring for why a literal header-click
     isn't feasible with this table."""
     if not sort_field:
         return rows
@@ -2175,8 +2173,8 @@ _SORT_LEVELS = 3
 
 
 def _sort_label_to_field(sort_label, key_by_label):
-    # "Invested" resolves to the raw boolean field ("invested"), not the
-    # display key ("invested_label") key_by_label would otherwise give --
+    # "Interested" resolves to the raw boolean field ("interested"), not the
+    # display key ("interested_label") key_by_label would otherwise give --
     # apply_sort operates on the row dict, which only ever carries the raw
     # field, same reasoning as Ticker/Company Name/Index/Last below.
     return {
@@ -2184,15 +2182,64 @@ def _sort_label_to_field(sort_label, key_by_label):
         "Company Name": "company_name",
         "Index": "index_name",
         "Last": "last_close",
-        "Invested": "invested"
+        "Interested": "interested"
     }.get(sort_label) or key_by_label.get(sort_label)
 
 
-def render_shared_sort_control(label_by_key, key_by_label):
-    """Shared 'Sort by' control, sidebar, always visible (not tucked into
-    an expander -- used often enough to want one click, not two). Applied
-    identically to every market tab, same reasoning as the shared column
-    picker above.
+# Where every watchlist starts before you touch its sort control, as display
+# labels (resolved through _sort_label_to_field, so they survive a column being
+# renamed). Was a single global setting shared by all tabs; each tab now keeps
+# its own, and this is what an untouched one falls back to.
+DEFAULT_SORT = [("Index", "↑"), ("Data Thru", "↓"), ("% Chg", "↓")]
+
+
+def _sort_pref_keys(market, i):
+    """(field_pref_key, dir_pref_key) in column_prefs.json for one market's
+    level `i`. Namespaced by market -- the un-namespaced sort_by_{i} /
+    sort_dir_{i} keys are the retired global setting, left on disk but no
+    longer read, since their values are exactly what DEFAULT_SORT reproduces."""
+    return f"sort_by_{market}_{i}", f"sort_dir_{market}_{i}"
+
+
+def saved_sort_levels(market, key_by_label):
+    """This market's sort as [(row_field, ascending)], read straight from
+    column_prefs.json -- no widgets, so EVERY tab can call it on every run,
+    not just whichever one is on screen. The sidebar control below renders
+    only for the active tab, but all seven tabs still have to sort their own
+    table on the same pass.
+
+    Levels stop at the first "(default order)"/"(none)", matching the control's
+    own gating: a tie-breaker under an unset level would just be a confusingly
+    labelled primary key."""
+    prefs = load_column_prefs_full()
+    levels = []
+    for i in range(1, _SORT_LEVELS + 1):
+        field_pref, dir_pref = _sort_pref_keys(market, i)
+        default_label, default_dir = (
+            DEFAULT_SORT[i - 1] if i <= len(DEFAULT_SORT) else ("(none)", "↑")
+        )
+        sort_label = prefs.get(field_pref, default_label)
+        sort_dir = prefs.get(dir_pref, default_dir)
+        if sort_label in ("(default order)", "(none)", None):
+            break
+        sort_field = _sort_label_to_field(sort_label, key_by_label)
+        if sort_field:
+            levels.append((sort_field, sort_dir == "↑"))
+    return levels
+
+
+def render_sort_control(market, market_label, label_by_key, key_by_label):
+    """'Sort by' control for ONE watchlist, sidebar, always visible (not
+    tucked into an expander -- used often enough to want one click, not two).
+
+    Rendered only for the tab you're looking at, and it edits only that tab's
+    saved sort. It used to be one global setting applied identically to every
+    tab, which meant an ordering that suited the India watchlist was forced on
+    the US one too. Widget keys carry the market, so switching tabs
+    instantiates a different widget set rather than re-pointing one -- which
+    also sidesteps the force-write-into-session_state hazard described in
+    render_shared_column_picker's docstring, since only one market's widgets
+    ever exist on a given run.
 
     True click-on-column-header sorting isn't feasible with the current
     table: it's rendered as a static HTML block (via st.markdown, needed
@@ -2225,19 +2272,22 @@ def render_shared_sort_control(label_by_key, key_by_label):
     ]
 
     prefs = load_column_prefs_full()
+    st.sidebar.caption(f"Sort — {market_label}")
     levels = []
     for i in range(1, _SORT_LEVELS + 1):
-        field_key = f"shared_sort_field_{i}"
-        dir_key = f"shared_sort_dir_{i}"
+        field_key = f"sort_field_{market}_{i}"
+        dir_key = f"sort_dir_{market}_{i}"
+        field_pref, dir_pref = _sort_pref_keys(market, i)
         empty_option = "(default order)" if i == 1 else "(none)"
         options = [empty_option] + sort_labels
+        default_label, default_dir = (
+            DEFAULT_SORT[i - 1] if i <= len(DEFAULT_SORT) else (empty_option, "↑")
+        )
         if field_key not in st.session_state:
-            # Seamless upgrade from the old single sort_by/sort_dir prefs --
-            # only level 1 ever reads them; levels 2-3 start empty.
-            default_val = prefs.get(f"sort_by_{i}", prefs.get("sort_by") if i == 1 else None) or empty_option
-            st.session_state[field_key] = default_val if default_val in options else empty_option
+            saved = prefs.get(field_pref, default_label) or empty_option
+            st.session_state[field_key] = saved if saved in options else empty_option
         if dir_key not in st.session_state:
-            st.session_state[dir_key] = prefs.get(f"sort_dir_{i}", prefs.get("sort_dir") if i == 1 else "↑") or "↑"
+            st.session_state[dir_key] = prefs.get(dir_pref, default_dir) or "↑"
 
         # A tie-breaker level only makes sense once the level above it is
         # actually sorting on something -- otherwise it's a lower-priority
@@ -2252,9 +2302,9 @@ def render_shared_sort_control(label_by_key, key_by_label):
         sort_dir = sc2.selectbox("Dir", ["↑", "↓"], key=dir_key, label_visibility="collapsed" if i > 1 else "visible")
         ascending = sort_dir == "↑"
 
-        if sort_label != prefs.get(f"sort_by_{i}") or sort_dir != prefs.get(f"sort_dir_{i}"):
-            update_column_prefs(f"sort_by_{i}", sort_label)
-            update_column_prefs(f"sort_dir_{i}", sort_dir)
+        if sort_label != prefs.get(field_pref) or sort_dir != prefs.get(dir_pref):
+            update_column_prefs(field_pref, sort_label)
+            update_column_prefs(dir_pref, sort_dir)
 
         if sort_label == empty_option:
             break
@@ -2265,10 +2315,15 @@ def render_shared_sort_control(label_by_key, key_by_label):
     return levels
 
 
-def render_shared_column_picker(labels):
+def render_shared_column_picker(labels, active_market=None, active_market_label=None):
     """Single 'Columns to show / reorder' control, rendered ONCE (in the
     sidebar) and shared by both the US and India watchlist tables, so
     picking/reordering columns always applies to both.
+
+    Columns stay shared; SORT does not. `active_market` is the tab currently on
+    screen -- its sort control is rendered here, above the column picker, and
+    edits only that tab's saved order. Pass None for a tab with no table (News,
+    Alert Rules) and no sort control is drawn at all.
 
     This used to be two separate widgets (one per tab) kept in sync by
     force-writing the shared value into each widget's session_state before
@@ -2277,11 +2332,13 @@ def render_shared_column_picker(labels):
     THAT widget silently clobbers their pending change before the widget
     ever sees it (confirmed empirically, not just suspected). A single
     shared widget sidesteps the problem entirely rather than working around
-    it. Returns (visible_keys, label_by_key, sort_levels)."""
+    it. Returns (visible_keys, label_by_key, key_by_label)."""
     custom_columns = load_custom_columns()
     optional_defs, label_by_key, key_by_label, all_labels, default_visible = build_column_defs(labels, custom_columns)
 
-    sort_levels = render_shared_sort_control(label_by_key, key_by_label)
+    if active_market:
+        render_sort_control(active_market, active_market_label or active_market,
+                            label_by_key, key_by_label)
 
     SHARED_ORDER_KEY = "shared_col_order"
     if SHARED_ORDER_KEY not in st.session_state:
@@ -2416,7 +2473,7 @@ def render_shared_column_picker(labels):
     render_custom_columns_manager()
     render_ticker_notes_manager()
 
-    return st.session_state[SHARED_ORDER_KEY], label_by_key, sort_levels
+    return st.session_state[SHARED_ORDER_KEY], label_by_key, key_by_label
 
 
 def render_metric_glossary(labels, custom_columns, column_key_by_label):
@@ -3359,16 +3416,10 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         filtered.append(row)
 
     filtered = apply_filters(filtered, active_custom_filters, market_rule_truth)
-    effective_sort_levels = sort_levels or []
-    # All Watchlist's own fixed default -- Index ascending, then day's Change%
-    # descending -- applies ONLY when the shared sort control is untouched
-    # (its own "(default order)" state, i.e. sort_levels is empty) and ONLY
-    # for this specific combined tab. Every other tab's "(default order)"
-    # behavior (raw watchlist.json order) is unchanged; this doesn't alter
-    # the shared control's own default, which stays global.
-    if not effective_sort_levels and market == "all_watchlist":
-        effective_sort_levels = [("index_name", True), ("pct_change_1d", False)]
-    filtered = apply_sort_levels(filtered, effective_sort_levels)
+    # Each tab carries its own sort now (see saved_sort_levels), so the
+    # All Watchlist-only Index-then-%Chg default that used to be hardcoded
+    # here is gone -- DEFAULT_SORT covers every tab, this one included.
+    filtered = apply_sort_levels(filtered, sort_levels or [])
 
     render_expert_analysis_control_bar(market, results, combined_markets=combined_markets)
     st.write(f"**Showing {len(filtered)} of {len(results)} tickers**")
@@ -3398,7 +3449,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             with_tooltip("Yes" if r["tech_uptrend"] else "No", tech_uptrend_tooltip(r, settings, labels))
             for r in filtered
         ]
-        raw_df["invested_label"] = ["Yes" if r.get("invested") else "No" for r in filtered]
+        raw_df["interested_label"] = ["Yes" if r.get("interested") else "No" for r in filtered]
         # Note text: short preview in the cell, full text on hover/tap (same
         # with_tooltip pattern as Trend/Vol Trend above) so a long note
         # doesn't blow out the column width.
@@ -3629,8 +3680,8 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
                 return r.get("index_name", "")
             if key == "tech_uptrend_label":
                 return "Yes" if r.get("tech_uptrend") else "No"
-            if key == "invested_label":
-                return "Yes" if r.get("invested") else "No"
+            if key == "interested_label":
+                return "Yes" if r.get("interested") else "No"
             if key == "vstop_change":
                 return vstop_change_str(r)
             if key == "fundamentals":
@@ -3941,8 +3992,8 @@ if snapshot_warning:
 # snapshot was built or whether this run used it at all.
 custom_columns_now = load_custom_columns()
 ticker_notes_now = load_ticker_notes()
-from stock_data import load_invested_weights as _load_invested_weights_now
-invested_weights_now = _load_invested_weights_now()
+from stock_data import load_interested as _load_interested_now
+interested_now = _load_interested_now()
 for _market_rows in per_market.values():
     apply_custom_columns_to_rows(_market_rows, custom_columns_now)
     # Notes/flags change far more often than custom columns (edited
@@ -3951,12 +4002,11 @@ for _market_rows in per_market.values():
     # just saved shows up immediately even when serving from this morning's
     # snapshot instead of waiting for the next refresh.
     apply_notes_to_rows(_market_rows, ticker_notes_now, min_vstop_weeks=settings_now.get("tech_uptrend_min_vstop_weeks", 3))
-    # Invested status lives in invested.json (edited via the watchlist
-    # editor's Invested/Weight table), not the technical snapshot -- attach
-    # it here, same reasoning as notes/flags above, so it's sortable and
-    # exportable like any other column.
+    # Interested status lives in interested.json (ticked in the watchlist
+    # editor), not the technical snapshot -- attach it here, same reasoning as
+    # notes/flags above, so it's sortable and exportable like any other column.
     for _row in _market_rows:
-        _row["invested"] = _row["ticker"] in invested_weights_now
+        _row["interested"] = _row["ticker"] in interested_now
 
 source_label = "daily snapshot" if using_snapshot else "live fetch"
 st.sidebar.caption(f"Data as of: {as_of} ({source_label})")
@@ -4019,8 +4069,21 @@ combined_tabs = dict(zip(combined_keys, all_tabs[:n_combined]))
 market_tabs = dict(zip(market_keys_now, all_tabs[n_combined:-2]))
 tab_news, tab_alerts = all_tabs[-2], all_tabs[-1]
 
-shared_visible_keys, shared_label_by_key, shared_sort_levels = render_shared_column_picker(
-    ema_col_labels(settings_now)
+# Which tab is on screen, so the sidebar sort control can edit THAT tab's
+# order. st.tabs(key=...) stores the selected tab's LABEL, defaulting to the
+# first tab's label on the very first render. Market tabs are inserted before
+# the two fixed tabs, so a watchlist labelled "News" or "Alert Rules" wins the
+# name and keeps its sort control (those two have no table to sort anyway).
+_tab_label_to_market = {"News": None, "Alert Rules": None}
+_tab_label_to_market.update(dict(zip(combined_tab_labels, combined_keys)))
+_tab_label_to_market.update(dict(zip(market_tab_labels, market_keys_now)))
+_active_label = st.session_state.get("main_tabs") or (combined_tab_labels + market_tab_labels)[0]
+_active_market = _tab_label_to_market.get(_active_label)
+
+shared_visible_keys, shared_label_by_key, shared_key_by_label = render_shared_column_picker(
+    ema_col_labels(settings_now),
+    active_market=_active_market,
+    active_market_label=_active_label if _active_market else None,
 )
 
 # Prominent, upfront dashboard controls -- shortcuts to settings that
@@ -4082,7 +4145,7 @@ for ck in combined_keys:
                 combined_results.append(r)
         render_market_tab(
             ck, combined_results, settings_now, shared_visible_keys, shared_label_by_key,
-            shared_sort_levels, combined_markets=combined_markets_here,
+            saved_sort_levels(ck, shared_key_by_label), combined_markets=combined_markets_here,
             combined_label=combined_display_label_by_key[ck],
         )
 
@@ -4090,7 +4153,7 @@ for mkt in market_keys_now:
     with market_tabs[mkt]:
         render_market_tab(
             mkt, per_market.get(mkt, []), settings_now, shared_visible_keys, shared_label_by_key,
-            shared_sort_levels,
+            saved_sort_levels(mkt, shared_key_by_label),
         )
 
 with tab_news:
@@ -4236,36 +4299,34 @@ with tab_news:
         df.index = pd.to_datetime(df.index)
         return df.sort_index()
             
-    from stock_data import load_invested_weights
-    invested_weights = load_invested_weights()
-    # This panel specifically pairs the "US Invested"/"India Invested" watchlists
-    # (dashboard_perf.json's portfolio-vs-benchmark curves), keyed by their
+    # Each curve is the whole watchlist, equal-weighted, against its own
+    # benchmark: India Invested vs Nifty 500 (^CRSLDX), US Invested vs SPY.
+    # The India side used to be filtered down to whichever of its tickers were
+    # flagged in invested.json and weighted by that file; both are gone with
+    # the flag (every stored weight was 1.0, i.e. equal-weight already, and the
+    # filter matched all 29 tickers -- so the curves are unchanged).
+    #
+    # These are the "US Invested"/"India Invested" WATCHLISTS keyed by their
     # markets.json registry keys -- not to be confused with market_breadth.json's
     # "US"/"INDIA" keys below, which represent national S&P 500/Nifty 500
     # breadth and are unrelated to the watchlist registry (see that lookup's
     # own comment).
     us_tickers = watchlists_now.get("us_invested", [])
     ind_tickers = watchlists_now.get("india_invested", [])
-    ind_invested = [t for t in ind_tickers if t in invested_weights]
-    
+
     st.divider()
-    
+
     from plotly.subplots import make_subplots
     import plotly.graph_objects as go
-    
+
     # We will build a single 3x2 subplot figure so hover spikes sync perfectly across all rows.
-    # We check ind_invested first, but if it's empty, fallback to ind_tickers
-    india_portfolio_tickers = ind_invested if ind_invested else ind_tickers
-    
     with st.spinner("Loading Dashboards..."):
         closes_ind = None
         df_perf_ind = None
-        if india_portfolio_tickers:
+        if ind_tickers:
             closes_ind = _closes_from_perf("india_invested")
-            # If we fall back to ind_tickers, we don't have invested_weights for them, so we pass None
-            w = invested_weights if ind_invested else None
             if closes_ind is not None and "^CRSLDX" in closes_ind.columns:
-                df_perf_ind = calculate_portfolio_returns(closes_ind, india_portfolio_tickers, "^CRSLDX", weights=w, filter_years=years)
+                df_perf_ind = calculate_portfolio_returns(closes_ind, ind_tickers, "^CRSLDX", weights=None, filter_years=years)
             
         closes_us = None
         df_perf_us = None

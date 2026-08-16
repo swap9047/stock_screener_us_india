@@ -55,7 +55,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 WATCHLIST_FILE = os.path.join(SCRIPT_DIR, "watchlist.json")
 SETTINGS_FILE = os.path.join(SCRIPT_DIR, "settings.json")
 DATA_SNAPSHOT_FILE = os.path.join(SCRIPT_DIR, "data_snapshot.json")
-INVESTED_FILE = os.path.join(SCRIPT_DIR, "invested.json")
+INTERESTED_FILE = os.path.join(SCRIPT_DIR, "interested.json")
 MARKETS_FILE = os.path.join(SCRIPT_DIR, "markets.json")
 TICKER_INDEX_FILE = os.path.join(SCRIPT_DIR, "ticker_index.json")
 WATCHLIST_GROUPS_FILE = os.path.join(SCRIPT_DIR, "watchlist_groups.json")
@@ -492,17 +492,25 @@ def save_watchlist(market, tickers):
     save_watchlists(all_lists)
 
 
-def load_invested_weights():
-    """Returns {"TICKER": 1.0, ...} mapping of invested tickers to their portfolio weight."""
-    if not os.path.exists(INVESTED_FILE):
-        return {}
-    with open(INVESTED_FILE) as f:
-        return json.load(f)
+def load_interested():
+    """Returns the set of tickers flagged "Interested" in the watchlist editor.
+
+    A plain list on disk, not the {ticker: weight} dict this replaced -- the
+    flag is boolean, and the old dict existed only to carry a portfolio weight
+    that every entry set to 1.0 (i.e. equal-weight, the same as no weights at
+    all). Missing file means nothing is flagged yet.
+    """
+    if not os.path.exists(INTERESTED_FILE):
+        return set()
+    with open(INTERESTED_FILE) as f:
+        return set(json.load(f))
 
 
-def save_invested_weights(weights):
-    with open(INVESTED_FILE, "w") as f:
-        json.dump(weights, f, indent=2)
+def save_interested(tickers):
+    """Writes the flagged tickers as a sorted list, so the file diffs cleanly
+    when it's pushed to GitHub rather than reshuffling on every save."""
+    with open(INTERESTED_FILE, "w") as f:
+        json.dump(sorted(tickers), f, indent=2)
 
 
 def load_ticker_index():
