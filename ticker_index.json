@@ -422,5 +422,9 @@
   "ACMR": {
     "index": "S&P 500",
     "benchmark": "SPY"
+  },
+  "SBUX": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
   }
 }
