@@ -426,5 +426,9 @@
   "SBUX": {
     "index": "S&P 500",
     "benchmark": "SPY"
+  },
+  "ILF": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
   }
 }
