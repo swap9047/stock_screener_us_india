@@ -1919,5 +1919,22 @@
     "model_used": "gemini-3.5-flash-lite",
     "quarter_verified": true,
     "real_earnings_date": "2026-07-24"
+  },
+  "BLISSGVS.NS": {
+    "earnings_summary": "Q1 FY27 Revenue: \u20b9285.58 Cr, Net Profit: \u20b950.1 Cr, EPS: \u20b94.73",
+    "future_guidance": "Focused on sustaining expanded EBITDA margins (~26.78%) and improving FY27 earnings through eased input cost pressures and revenue mix upgrades.",
+    "analyst_coverage": "Bullish market bias; Univest price target: \u20b9510.",
+    "earnings_report_date": "2026-08-12",
+    "eps_value": "\u20b94.73",
+    "guidance_change": null,
+    "analyst_action": null,
+    "sentiment": "Positive",
+    "reasoning": "The company reported robust Q1 FY27 earnings with a net profit of \u20b950.1 Cr and an EPS of \u20b94.73 on revenues of \u20b9285.58 Cr. Guidance indicates a strong focus on sustaining expanded EBITDA margins (~26.78%), and analyst coverage remains bullish with a price target of \u20b9510.",
+    "as_of": "2026-08-18 02:17",
+    "news_used": "**Bliss GVS Pharma (BLISSGVS) - Q1 FY27 (Ended June 30, 2026)**\n\n*   **Earnings (Released Aug 12, 2026):**\n    *   **Revenue:** \u20b9285.58 Cr\n    *   **EPS:** \u20b94.73\n    *   **Net Profit:** \u20b950.1 Cr\n*   **Guidance:** Focused on sustaining expanded EBITDA margins (~26.78%) and improving FY27 earnings through eased input cost pressures and revenue mix upgrades.\n*   **Analyst Coverage:** Bullish market bias; Univest price target: \u20b9510.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite",
+    "quarter_verified": true,
+    "real_earnings_date": "2019-11-11"
   }
 }
