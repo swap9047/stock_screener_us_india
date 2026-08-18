@@ -1164,5 +1164,49 @@
     "news_used": "No recent news found.",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
+  },
+  "MENONBE.NS": {
+    "verdict": "ACCUMULATE",
+    "headline": "Menon Bearings maintains a robust uptrend supported by strong momentum and positive accumulation.",
+    "technical_summary": "The stock is in a confirmed Stage 2 uptrend with price comfortably above rising daily and weekly EMAs. VStop has been tracking upward for 14 weeks, accompanied by positive net volume accumulation and strong relative strength against the broader market.",
+    "catalyst_summary": "No material news found; verdict based on technicals only.",
+    "actionable_take": "Accumulate gradually on minor pullbacks toward the 10 WEMA or 10 DEMA zones. Maintain a disciplined trailing stop just below the VStop level at 196.4 to protect against sudden trend shifts.",
+    "as_of": "2026-08-18 01:51",
+    "news_used": "No recent news found.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "FREDUN.BO": {
+    "verdict": "ACCUMULATE",
+    "headline": "Fredun Pharma surges on stellar Q1 FY27 earnings, NSE trading debut, and powerful uptrend momentum.",
+    "technical_summary": "The stock remains in a robust Strong Uptrend with a 26-week VStop holding at 1231.7 and exploding volume accumulation. Weekly and monthly RSIs are severely overbought, signaling strong momentum accompanied by high short-term extension risk.",
+    "catalyst_summary": "Fredun reported explosive Q1 FY27 standalone revenue surging 90.44% YoY and net profit jumping 94.63% YoY, backed by its recent commencement of trading on the National Stock Exchange (NSE).",
+    "actionable_take": "Accumulate progressively on measured pullbacks or consolidation phases, keeping the weekly VStop level of 1231.7 as a strict trailing stop-loss. Refrain from chasing parabolic gaps given extreme RSI levels.",
+    "as_of": "2026-08-18 01:52",
+    "news_used": "- August 17, 2026: Shares permitted to commence trading on the National Stock Exchange (NSE) under symbol FREDUN.\n- August 17, 2026: Reported Q1 FY27 standalone revenue of \u20b9228.25 crore (+90.44% YoY) and net profit of \u20b913.17 crore (+94.63% YoY).",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "MACPOWER.NS": {
+    "verdict": "ACCUMULATE",
+    "headline": "Strong technical momentum and positive volume accumulation support continued upside.",
+    "technical_summary": "Macpower CNC exhibits a robust Strong Uptrend with fully aligned bullish EMAs, positive net volume accumulation, and a high Mansfield Relative Strength. Weekly RSI at 75.3 reflects strong momentum while remaining below the extreme overbought threshold of 80.",
+    "catalyst_summary": "No material news found; verdict based on technicals only.",
+    "actionable_take": "Consider accumulating on minor pullbacks toward the 10 DEMA around 1658, utilizing the weekly VStop level of 1393.7 as a disciplined trailing stop-loss.",
+    "as_of": "2026-08-18 01:52",
+    "news_used": "No recent news found.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "SAPPHIRE.NS": {
+    "verdict": "HOLD",
+    "headline": "Mixed trend indicators and surging volume warrant a cautious HOLD stance.",
+    "technical_summary": "Despite exploding volume and a positive VStop at 194.5, the broader trend status is classified as a downtrend with mixed moving average alignment. Daily RSI at 73.5 indicates near-term momentum is stretched, preventing a clean accumulation setup.",
+    "catalyst_summary": "No material news found; verdict based on technicals only.",
+    "actionable_take": "Hold current positions using the VStop level of 194.5 as a trailing stop reference. Refrain from adding fresh capital until the official trend status transitions to a confirmed uptrend.",
+    "as_of": "2026-08-18 01:53",
+    "news_used": "No recent news found.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
   }
 }
