@@ -1208,5 +1208,16 @@
     "news_used": "No recent news found.",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
+  },
+  "BLISSGVS.NS": {
+    "verdict": "ACCUMULATE",
+    "headline": "Strong multi-timeframe uptrend backed by positive relative strength and sustained VStop support.",
+    "technical_summary": "Bliss GVS Pharma demonstrates a robust Stage 2 uptrend with price comfortably above rising weekly and daily EMAs. Mansfield Relative Strength is strongly positive across all timeframes, and the VStop-W has remained upward for 40 weeks at 433.4, despite a recent moderation in volume.",
+    "catalyst_summary": "No material news found; verdict based on technicals only.",
+    "actionable_take": "Consider accumulating on minor pullbacks toward the 10 DEMA (497.5) or 10 WEMA (474.5). Maintain a trailing stop discipline aligned with the VStop level at 433.4 to protect gains.",
+    "as_of": "2026-08-18 02:15",
+    "news_used": "No recent news found.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
   }
 }
