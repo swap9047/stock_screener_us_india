@@ -53,18 +53,26 @@ jobs:
           rule_hour = 23
           cron = os.environ.get("CRON_SCHEDULE")
           
-          is_valid_cron = True
+          # Which of the two crons matches the current DST season is the ONLY
+          # question here. There used to be a second condition,
+          #     hour_diff = min((h - R) % 24, (R - h) % 24)
+          #     due = is_valid_cron and (hour_diff <= 22)
+          # billed as a tolerance for scheduler delays -- but that expression is
+          # a distance on a 24h circle, so it maxes out at 12 and `<= 22` was
+          # unconditionally true. It gated nothing. Deliberately not replaced
+          # with a working hour window: GitHub can delay a scheduled run, and
+          # skipping the refresh entirely is worse than running it late.
+          due = True
           if cron:
               try:
                   cron_utc_hour = int(cron.split()[1])
                   expected_utc_hour = int((rule_hour - (now_et.utcoffset().total_seconds() / 3600)) % 24)
-                  if cron_utc_hour != expected_utc_hour:
-                      is_valid_cron = False
-              except Exception:
-                  pass
-                  
-          hour_diff = min((now_et.hour - rule_hour) % 24, (rule_hour - now_et.hour) % 24)
-          due = is_valid_cron and (hour_diff <= 22)
+                  due = cron_utc_hour == expected_utc_hour
+              except Exception as e:
+                  # Was `pass`, which left due=True -- so an unparseable cron
+                  # fired BOTH scheduled lines and double-ran ~110 tickers.
+                  print(f"# could not parse CRON_SCHEDULE {cron!r}: {e}")
+                  due = False
           
           print(f"due={'true' if due else 'false'}")
           EOF
@@ -73,6 +81,10 @@ jobs:
     needs: gate
     if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.due == 'true'
     runs-on: ubuntu-latest
+    # ~110 tickers x up to 5 LLM calls at a 120s timeout, plus retry
+    # pacing. Unbounded, the worst case creeps toward GitHub's 6h cap and
+    # is killed AFTER the API spend but BEFORE the commit step.
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
 
@@ -90,12 +102,14 @@ jobs:
         run: python -u refresh_expert_views.py
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           # github.event.inputs (not `inputs`) so scheduled runs, which carry
           # no inputs at all, resolve to an empty string = every watchlist.
           REFRESH_MARKETS: ${{ github.event.inputs.markets }}
 
       - name: Commit updated data_snapshot.json and expert_views.json
+        # always(): commit whatever the run produced even when it failed, so
+        # the partial results and any pruning survive for diagnosis.
+        if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
