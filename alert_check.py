@@ -20,7 +20,7 @@ Run: python3 alert_check.py
 import sys
 
 from stock_data import fetch_all_markets, load_settings, get_filterable_metrics
-from alerts import load_rules, load_state, save_state, load_discord_webhook, evaluate_and_fire, send_discord, is_rule_due
+from alerts import load_rules, load_state, save_state, load_discord_webhook, evaluate_and_fire, send_discord_batch, is_rule_due
 
 
 def main():
@@ -95,13 +95,19 @@ def main():
     # alerts.build_discord_messages_for_rule) -- send the header, then each
     # table, as SEPARATE messages rather than joining them into one, since a
     # joined blob could exceed the limit when several rules fire the same day.
-    ok = send_discord(webhook, f"**Stock Alert Check — {as_of}**")
-    for m in messages:
-        ok = send_discord(webhook, m) and ok
-
+    # Paced, and every message attempted: a cold-start run is ~17 messages
+    # back-to-back against a webhook that throttles at roughly 5 per 2s, and
+    # the bare unpaced loop this replaces relied entirely on _post_discord's 3
+    # rate-limit retries -- exhausting them dropped a message mid-digest.
+    ok, detail = send_discord_batch(
+        webhook,
+        [f"**Stock Alert Check — {as_of}**"] + list(messages),
+        stop_on_failure=False,
+    )
     if not ok:
+        print(f"Discord send failed: {detail}")
         # At least one message failed to reach Discord. We can't tell from
-        # send_discord's aggregate bool which specific rule's message failed,
+        # the batch's aggregate bool which specific rule's message failed,
         # so conservatively roll back ALL newly-triggered keys -- worst case
         # a ticker that DID send successfully gets re-notified next run,
         # which is a minor duplicate rather than a silently dropped alert.

@@ -45,7 +45,7 @@ def fetch_fundamental_news(client, ticker, market, company_name, is_retry=False)
     as_of_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     window = SEARCH_WINDOW_DAYS.get(market, SEARCH_WINDOW_DAYS["us_invested"])
     cutoff_date = (datetime.now(timezone.utc) - timedelta(days=window)).strftime("%Y-%m-%d")
-    exchange = get_exchange_label(market)
+    exchange = get_exchange_label(market, ticker)
     
     bare = ticker.rsplit(".", 1)[0] if ticker.endswith(".NS") or ticker.endswith(".BO") else ticker
     name = f"{company_name} ({bare})" if company_name and company_name != ticker else bare
