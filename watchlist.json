@@ -58,7 +58,6 @@
     "SHILPAMED.NS",
     "SBCL.NS",
     "SHREEREF.BO",
-    "SOLARA.NS",
     "STEELCAS.NS",
     "TANFACIND.BO",
     "TDPOWERSYS.NS",
@@ -66,7 +65,10 @@
     "WINDLAS.NS",
     "LUMAXIND.NS",
     "STLTECH.NS",
-    "JMFINANCIL.NS"
+    "JMFINANCIL.NS",
+    "RKFORGE.NS",
+    "UFBL.NS",
+    "MACPOWER.NS"
   ],
   "us_invested": [
     "GRID",
@@ -121,7 +123,8 @@
     "RKFORGE.NS",
     "VIYASH.NS",
     "CARBORUNIV.NS",
-    "MANORAMA.NS"
+    "MANORAMA.NS",
+    "SOLARA.NS"
   ],
   "wrap_earnings_watchlist": [
     "RKFORGE.NS",
