@@ -21,7 +21,7 @@
         "logic": "OR"
       }
     ],
-    "enabled": true,
+    "enabled": false,
     "schedule": {
       "type": "scheduled",
       "days": [

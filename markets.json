@@ -18,5 +18,9 @@
   "substack_outperformingmarket": {
     "label": "Substack-OutperformingMarket",
     "benchmark": "^IXIC"
+  },
+  "wrap_earnings_watchlist": {
+    "label": "wrap earnings watchlist",
+    "benchmark": "^CRSLDX"
   }
 }

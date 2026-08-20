@@ -422,5 +422,37 @@
   "ACMR": {
     "index": "S&P 500",
     "benchmark": "SPY"
+  },
+  "SBUX": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "ILF": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "MENONBE.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "FREDUN.BO": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "MACPOWER.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "OBSCP-SM.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "SAPPHIRE.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
+  },
+  "BLISSGVS.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
   }
 }
