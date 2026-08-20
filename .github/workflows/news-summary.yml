@@ -29,6 +29,7 @@ permissions:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       due: ${{ steps.check.outputs.due }}
     steps:
@@ -38,28 +39,39 @@ jobs:
           CRON_SCHEDULE: ${{ github.event.schedule }}
         run: |
           python3 - <<'EOF' >> "$GITHUB_OUTPUT"
-          # 22 hour tolerance for GitHub's scheduler delays.
+          # Which of the two crons is the right one for the current DST season
+          # is the ONLY question here. There used to be a second condition,
+          #     hour_diff = min((h - 20) % 24, (20 - h) % 24)
+          #     due = is_valid_cron and (hour_diff <= 22)
+          # described as a "22 hour tolerance for scheduler delays" -- but that
+          # expression is a distance on a 24h circle and so maxes out at 12,
+          # making `<= 22` unconditionally true. It gated nothing and only
+          # obscured the cron match, which does the real work. Deliberately not
+          # replaced with a working hour window: GitHub can delay a scheduled
+          # run substantially, and skipping the digest entirely is worse than
+          # running it late.
           import os
           from zoneinfo import ZoneInfo
           from datetime import datetime
           now_et = datetime.now(ZoneInfo("America/New_York"))
-          
+
           rule_hour = 20
           cron = os.environ.get("CRON_SCHEDULE")
-          
-          is_valid_cron = True
+
+          # No cron in the env means this wasn't a scheduled run (the build job
+          # lets workflow_dispatch through regardless), so default to due.
+          due = True
           if cron:
               try:
                   cron_utc_hour = int(cron.split()[1])
                   expected_utc_hour = int((rule_hour - (now_et.utcoffset().total_seconds() / 3600)) % 24)
-                  if cron_utc_hour != expected_utc_hour:
-                      is_valid_cron = False
-              except Exception:
-                  pass
-                  
-          hour_diff = min((now_et.hour - rule_hour) % 24, (rule_hour - now_et.hour) % 24)
-          due = is_valid_cron and (hour_diff <= 22)
-          
+                  due = cron_utc_hour == expected_utc_hour
+              except Exception as e:
+                  # Was `pass`, which left due=True -- so an unparseable cron
+                  # made BOTH scheduled lines fire and double-ran the digest.
+                  print(f"# could not parse CRON_SCHEDULE {cron!r}: {e}")
+                  due = False
+
           print(f"due={'true' if due else 'false'}")
           EOF
 
@@ -67,6 +79,11 @@ jobs:
     needs: gate
     if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.due == 'true'
     runs-on: ubuntu-latest
+    # ~105 tickers x up to 5 LLM calls at a 120s timeout, plus the retry
+    # queue's 30s-per-ticker pacing. Without a bound the worst case creeps
+    # toward the 6-hour hard cap and gets killed AFTER the API spend but
+    # BEFORE the commit step, losing the whole run's work.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
 
@@ -83,7 +100,12 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
 
+      # always(): news_check.py now exits non-zero when most tickers failed
+      # their search, and the counters recording exactly that live in the JSON
+      # it already wrote. Commit it either way so the failure is diagnosable;
+      # the job still reports red.
       - name: Commit updated news_summary.json
+        if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"

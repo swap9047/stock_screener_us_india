@@ -529,6 +529,64 @@ def _format_cell(metric_key, value):
     return str(value)
 
 
+# Discord counts a message's length in UTF-16 code units, not Python code
+# points, so every astral-plane character (emoji -- and the digests are full of
+# them: the news header's 📰, the wrap-up's 📅/🔥, plus whatever the LLM emits)
+# costs 2 on their side and 1 to len(). The 1900 limit against a 2000 cap
+# absorbed that by luck; LLM-generated text is exactly where the luck would run
+# out. Measure the way the receiver does instead.
+def _discord_len(text):
+    return len(text.encode("utf-16-le")) // 2
+
+
+def hard_split_text(text, limit):
+    """Splits `text` into pieces that each fit `limit` UTF-16 units, preferring
+    whitespace boundaries and falling back to a mid-word cut.
+
+    Exists because every chunker here guards with `... > limit and current`,
+    which silently lets a FIRST item that alone exceeds the limit fall through
+    and get POSTed -- earning a 400 from Discord and a dropped message that
+    reads exactly like truncation. Nothing may be emitted without passing
+    through this."""
+    if _discord_len(text) <= limit:
+        return [text]
+    pieces, current = [], ""
+    for word in text.split(" "):
+        candidate = f"{current} {word}" if current else word
+        if _discord_len(candidate) <= limit:
+            current = candidate
+            continue
+        if current:
+            pieces.append(current)
+            current = ""
+        # A single word longer than the limit (a URL, a base64 blob) still has
+        # to go somewhere -- cut it mid-word rather than emit it oversized.
+        while _discord_len(word) > limit:
+            cut = limit
+            while cut > 0 and _discord_len(word[:cut]) > limit:
+                cut -= 1
+            pieces.append(word[:cut])
+            word = word[cut:]
+        current = word
+    if current:
+        pieces.append(current)
+    return pieces
+
+
+# Discord renders *, _, ~, ` and | as formatting. Rule names are user-typed and
+# get interpolated straight into **bold** (and sit immediately above a ``` code
+# fence), so an unbalanced * italicises the rest of the message and a backtick
+# run can break out of the fence entirely.
+_MARKDOWN_SPECIALS = ("\\", "*", "_", "~", "`", "|", ">")
+
+
+def escape_markdown(text):
+    out = str(text)
+    for ch in _MARKDOWN_SPECIALS:
+        out = out.replace(ch, "\\" + ch)
+    return out
+
+
 def _ascii_table(headers, rows):
     widths = [len(str(h)) for h in headers]
     for r in rows:
@@ -556,7 +614,7 @@ def chunked_table_messages(title, headers, all_rows, limit=1900):
         return f"{head}\n```\n{table}\n```"
 
     whole = build_chunk(all_rows)
-    if len(whole) <= limit:
+    if _discord_len(whole) <= limit:
         return [whole]
 
     # Doesn't fit in one message -- split rows across multiple, each with
@@ -564,14 +622,66 @@ def chunked_table_messages(title, headers, all_rows, limit=1900):
     messages, current, part = [], [], 1
     for r in all_rows:
         trial = current + [r]
-        if len(build_chunk(trial, part)) > limit and current:
+        if _discord_len(build_chunk(trial, part)) > limit and current:
             messages.append(build_chunk(current, part))
             part += 1
             current = [r]
         else:
             current = trial
+        # A single row that doesn't fit even on its own used to ride the
+        # `and current` guard above straight out to Discord and 400. Cut it
+        # up instead. Reachable via a very wide rule (many metric columns) or
+        # a long user-typed rule name in the title.
+        if len(current) == 1 and _discord_len(build_chunk(current, part)) > limit:
+            head = title + f" (part {part})"
+            overhead = _discord_len(f"{head}\n```\n\n```")
+            for piece in hard_split_text(_ascii_table(headers, current), max(limit - overhead, 1)):
+                messages.append(f"{head}\n```\n{piece}\n```")
+                part += 1
+                head = title + f" (part {part})"
+            current = []
     if current:
         messages.append(build_chunk(current, part))
+    return messages
+
+
+def chunked_line_messages(text, limit=1900, head_for_part=None):
+    """Splits a newline-separated blob across Discord messages on line
+    boundaries, hard-splitting any single line that doesn't fit on its own.
+
+    `head_for_part(part_index)` optionally supplies a prefix line per message
+    (part_index is 0-based), so a multi-part digest can repeat its title. The
+    prefix counts toward `limit`.
+
+    Shared by the weekly wrap-up header and the news digest, both of which
+    previously either had no length check at all or let an oversized single
+    line through."""
+    def head(part):
+        return head_for_part(part) if head_for_part else None
+
+    def wrap(body, part):
+        h = head(part)
+        return f"{h}\n{body}" if h else body
+
+    lines = [ln for ln in text.split("\n") if ln.strip() or text.strip() == ""]
+    if not lines:
+        return []
+
+    messages, current, part = [], "", 0
+    for ln in lines:
+        # A line that can't fit even alone gets cut up rather than emitted
+        # oversized (the `and current` bug this replaces).
+        room = limit - _discord_len(wrap("", part))
+        for piece in hard_split_text(ln, max(room, 1)):
+            candidate = f"{current}\n{piece}" if current else piece
+            if _discord_len(wrap(candidate, part)) > limit and current:
+                messages.append(wrap(current, part))
+                part += 1
+                current = piece
+            else:
+                current = candidate
+    if current:
+        messages.append(wrap(current, part))
     return messages
 
 
@@ -608,7 +718,7 @@ def build_discord_messages_for_rule(rule, tickers, snapshot_by_ticker, metric_la
 
     name = rule.get("name") or "(unnamed)"
     scope_label = _scope_label(rule.get("scope"))
-    title = f"**{name}** — {scope_label}"
+    title = f"**{escape_markdown(name)}** — {scope_label}"
     return chunked_table_messages(title, headers, all_rows, limit=limit)
 
 
@@ -649,22 +759,18 @@ def _post_discord(webhook_url, content):
         return False, f"{resp.status_code}: {resp.text[:200]}"
 
 
-def send_discord(webhook_url, content):
-    """Bool-only convenience wrapper over _post_discord, used by every
-    automated/headless caller (alert_check.py, news_check.py,
-    weekly_wrapup_check.py) -- they only ever check success and already log
-    failures to the console, so the failure detail goes there, same as
-    before this function was split out."""
-    ok, detail = _post_discord(webhook_url, content)
-    if not ok:
-        print(f"Discord send failed: {detail}")
-    return ok
-
+# There used to be a send_discord(webhook, content) -> bool wrapper here for
+# the headless callers. It was removed once alert_check.py and news_check.py
+# moved to send_discord_batch: both were looping it with no delay at all, which
+# meant a burst (a cold-start alert run is ~17 messages) leaned entirely on
+# _post_discord's 3 rate-limit retries, and exhausting them dropped a message
+# in the middle of a digest. The batch below paces its posts instead. Use it
+# for a single message too -- send_discord_batch(url, [msg]).
 
 DISCORD_BATCH_PACING_SECONDS = 0.3
 
 
-def send_discord_batch(webhook_url, messages):
+def send_discord_batch(webhook_url, messages, stop_on_failure=True):
     """Posts each of `messages` in order via _post_discord, pacing them
     slightly (see DISCORD_BATCH_PACING_SECONDS) so a multi-message batch
     -- the weekly wrap-up especially -- mostly avoids Discord's rate limit
@@ -676,11 +782,20 @@ def send_discord_batch(webhook_url, messages):
     send_discord, which only returns a bool) so the caller can show/log the
     real cause instead of a generic 'check the webhook URL' message that's
     equally true whether the webhook is dead or a specific message got
-    rejected."""
+    rejected.
+
+    `stop_on_failure=False` posts the remaining messages anyway and reports the
+    first failure at the end -- what a multi-part digest wants, since one
+    rejected part shouldn't swallow the other four. The default stays True so
+    the wrap-up and the interactive buttons keep their existing fail-fast
+    behavior."""
+    first_detail = ""
     for idx, content in enumerate(messages):
         if idx > 0:
             time.sleep(DISCORD_BATCH_PACING_SECONDS)
         ok, detail = _post_discord(webhook_url, content)
         if not ok:
-            return False, detail
-    return True, ""
+            if stop_on_failure:
+                return False, detail
+            first_detail = first_detail or detail
+    return (not first_detail), first_detail

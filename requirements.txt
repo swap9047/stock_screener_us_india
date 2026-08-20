@@ -1,12 +1,17 @@
 streamlit
-yfinance
+# Pinned to the minor series: yfinance moved its .news schema under
+# item["content"] in the 0.2.4x -> 1.x line, and because nothing was pinned the
+# change landed in production silently -- the old title/providerPublishTime
+# reads returned None for every item and the guard skipped them, so the news
+# fallback returned nothing at all with no exception and no warning. That code
+# is gone now, but yfinance is still the price/indicator source, so bound it.
+yfinance~=1.5.0
 pandas
 numpy
 requests
 jinja2
 streamlit-sortables
-google-genai
-duckduckgo_search
+google-genai~=2.14.0
 python-dotenv
 openai
 plotly

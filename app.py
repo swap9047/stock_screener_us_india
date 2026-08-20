@@ -60,7 +60,7 @@ from stock_data import (
     load_markets_registry, load_data_snapshot, snapshot_is_usable, save_data_snapshot,
     load_watchlist_groups, save_watchlist_groups,
 )
-from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE, send_discord,
+from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE,
                      send_discord_batch, build_discord_messages_for_rule, describe_schedule,
                      DAY_CODES, DAY_LABELS, DEFAULT_DAYS, ALLOWED_HOURS, HOUR_LABELS,
                      compute_rule_truth, RULE_COLOR_HEX, _metrics_used_in_conditions)
@@ -4824,6 +4824,21 @@ with tab_news:
                 continue
             st.markdown(f"### {markets_registry_now.get(market, {}).get('label', MARKET_LABELS.get(market, market))}")
             st.markdown(entry.get("summary", "_No summary available._"))
+
+            # Per-ticker run health. Without this a quiet news day and a run
+            # where every search errored look identical -- both render as one
+            # short "no major news" line. Absent on digests generated before
+            # the counters existed, hence the `if counts`.
+            counts = entry.get("counts") or {}
+            if counts:
+                bits = [f"{counts.get('material', 0)} with news",
+                        f"{counts.get('quiet', 0)} quiet"]
+                if counts.get("degraded"):
+                    bits.append(f"⚠️ {counts['degraded']} unfiltered (AI filter failed)")
+                if counts.get("failed"):
+                    bits.append(f"⚠️ {counts['failed']} search failed")
+                st.caption(" · ".join(bits))
+
             sources = entry.get("sources") or []
             if sources:
                 with st.expander(f"Sources ({len(sources)})"):
