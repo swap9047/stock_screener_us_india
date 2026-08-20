@@ -35,7 +35,6 @@ whose search ladder is exhausted is now recorded as `failed` instead, which the
 output schema actually reports.
 """
 
-import concurrent.futures
 import json
 import os
 import time
@@ -43,6 +42,8 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from google.genai import types
+
+import llm_util
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 NEWS_SUMMARY_FILE = os.path.join(SCRIPT_DIR, "news_summary.json")
@@ -105,17 +106,6 @@ def get_gemini_api_key(st_secrets=None):
     return os.environ.get("GEMINI_API_KEY")
 
 
-def get_nvidia_api_key(st_secrets=None):
-    """Returns the NVIDIA API key for DeepSeek/Llama NIM endpoints."""
-    if st_secrets is not None:
-        try:
-            if "NVIDIA_API_KEY" in st_secrets:
-                return st_secrets["NVIDIA_API_KEY"]
-        except Exception:
-            pass
-    return os.environ.get("NVIDIA_API_KEY")
-
-
 def _bare_ticker(ticker):
     """Strips the .NS/.BO exchange suffix so the search prompt reads
     naturally (e.g. "RELIANCE" instead of "RELIANCE.NS")."""
@@ -153,32 +143,12 @@ def _cutoff_date(as_of_date):
     return (datetime.strptime(as_of_date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
 
 
-def _generate_with_timeout(client, model, contents, config, timeout=CALL_TIMEOUT_SECONDS):
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    future = executor.submit(client.models.generate_content, model=model, contents=contents, config=config)
-    try:
-        return future.result(timeout=timeout)
-    except concurrent.futures.TimeoutError:
-        raise TimeoutError(f"API call to {model} timed out after {timeout}s")
-    finally:
-        # Abandon rather than join -- see commit 33cac85. Waiting here is what
-        # used to hang the whole GitHub Actions job.
-        executor.shutdown(wait=False)
-
-
-def _is_retryable(exc):
-    """Whether re-running the same call could plausibly succeed.
-
-    Stage 1 used to raise TimeoutError for ANY first-pass failure, so a 401 or
-    an exhausted daily quota was reported to the operator as "TIMEOUT" and then
-    re-attempted ~70 more times with a 30s sleep between each. Auth and
-    bad-request failures are terminal; rate limits, timeouts and 5xx are not."""
-    if isinstance(exc, TimeoutError):
-        return True
-    text = f"{type(exc).__name__}: {exc}".lower()
-    terminal = ("401", "403", "400", "unauthorized", "permission",
-                "api key", "invalid argument")
-    return not any(s in text for s in terminal)
+# Both of these now live in llm_util so expert_views and fundamentals_eval get
+# the same behavior -- they had their own drifted copies with no retry tier and
+# no terminal-error gate. Kept as module-level aliases so this file's existing
+# call sites and tests are untouched.
+_generate_with_timeout = llm_util.generate_with_timeout
+_is_retryable = llm_util.is_retryable
 
 
 def _extract_sources(resp):

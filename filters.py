@@ -73,6 +73,9 @@ CATEGORICAL_METRICS = {
     "tech_uptrend": ["Yes", "No"],
     "flag": FLAG_CHOICES,  # see ticker_notes.py -- Red/Yellow/Green/Blue
     "expert_take": ["Accumulate", "Hold", "Caution", "Pending"],
+    # Did the Expert Take verdict have any news behind it, or is it a
+    # technicals-only read? Best-first like every categorical here.
+    "expert_news_backed": ["Yes", "No"],
     # Boolean, offered as Yes/No exactly like tech_uptrend above. No engine
     # change needed: _coerce_fixed_value already maps yes/no words onto a
     # bool `a`.

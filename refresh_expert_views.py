@@ -13,7 +13,7 @@ from expert_views import (
     load_expert_views, save_expert_views, generate_expert_view, _is_valid_view,
     EXPERT_STALE_DAYS, _view_age_days, stale_view_fallback,
 )
-from news_summary import get_gemini_api_key, get_nvidia_api_key
+from news_summary import get_gemini_api_key
 
 
 def _ts():
@@ -42,9 +42,25 @@ def _apply_result(expert_views, tk, view, old_view, elapsed):
     expert_views[tk] = view
     return 1, 0, f"FAILED ({elapsed:.1f}s): {view.get('headline')}"
 
+def _prune_orphans(store, watchlists, label):
+    """Drop entries for tickers that are no longer in any watchlist.
+
+    Nothing ever removed these, so they sat in the file forever, never
+    refreshed, ageing past the staleness threshold -- fundamentals.json carried
+    four (ADVENZYMES.NS, BNTX, SYNGENE.NS, and INTELLECT.BO, a ghost of the
+    current INTELLECT.NS) and they were precisely the entries exceeding it.
+    """
+    live = {t for tks in watchlists.values() for t in tks}
+    orphans = [t for t in store if t not in live]
+    for t in orphans:
+        del store[t]
+    if orphans:
+        print(f"[{_ts()}] Pruned {len(orphans)} {label} orphan(s) no longer in any watchlist: {', '.join(sorted(orphans))}")
+    return len(orphans)
+
+
 def main():
     api_key = get_gemini_api_key()
-    nvidia_api_key = get_nvidia_api_key()
 
     if not api_key:
         print("Error: GEMINI_API_KEY not found. Skipping expert views refresh.")
@@ -61,6 +77,7 @@ def main():
     # Load global watchlist to know exactly what to process
     watchlists = load_watchlists()
     expert_views = load_expert_views()
+    _prune_orphans(expert_views, watchlists, "expert_views")
 
     # REFRESH_MARKETS scopes the run to specific watchlists -- set by the
     # dashboard's per-tab "Re-analyze All" button (see the workflow's
@@ -73,6 +90,11 @@ def main():
     total_failed = 0
     total_fallback_used = 0
     retry_queue = []
+    # One analysis per ticker, not one per watchlist membership. The store is
+    # keyed by bare ticker so duplicates overwrote each other -- and not even
+    # equivalently, since the prompt embeds {market} and its benchmark, so the
+    # surviving analysis depended on dict iteration order.
+    seen = set()
 
     # Process each market
     for market, mkt_tickers in watchlists.items():
@@ -85,13 +107,23 @@ def main():
         results = snapshot["per_market"][market]
 
         for idx, tk in enumerate(mkt_tickers):
-            try:
-                row = next((r for r in results if r["ticker"] == tk), None)
-            except Exception:
-                row = None
+            if tk in seen:
+                print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - SKIP (already analyzed this run)")
+                continue
+            seen.add(tk)
+            row = next((r for r in results if r["ticker"] == tk), None)
 
             if not row:
+                # Age out a ticker that has fallen out of the snapshot. This
+                # used to be a bare `continue`, bypassing _apply_result
+                # entirely -- so a ticker that dropped out kept displaying an
+                # arbitrarily old ACCUMULATE forever, with nothing in the JSON
+                # or the exit code saying so.
                 print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - SKIP (no data in snapshot)")
+                age = _view_age_days(old_view := expert_views.get(tk))
+                if _is_valid_view(old_view) and age is not None and age > EXPERT_STALE_DAYS:
+                    expert_views[tk] = stale_view_fallback(f"no snapshot row; previous view is {age:.1f} days old")
+                    total_failed += 1
                 continue
 
             company_name = row.get("company_name", tk)
@@ -104,7 +136,6 @@ def main():
                 view = generate_expert_view(
                     client,
                     row,
-                    nvidia_api_key=nvidia_api_key,
                     is_retry=False
                 )
                 elapsed = time.time() - t0
@@ -119,6 +150,13 @@ def main():
             except Exception as e:
                 print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - EXCEPTION: {e}")
                 total_failed += 1
+                # Apply the staleness circuit breaker here too. Keeping the
+                # prior view unconditionally is what let a permanently-failing
+                # ticker display a confident verdict indefinitely; the
+                # fundamentals refresh already does this in its own handler.
+                age = _view_age_days(old_view)
+                if _is_valid_view(old_view) and age is not None and age > EXPERT_STALE_DAYS:
+                    expert_views[tk] = stale_view_fallback(f"{age:.1f} days old; last error: {e}")
 
             # Save incrementally in case the script times out or crashes
             save_expert_views(expert_views)
@@ -139,7 +177,6 @@ def main():
                 view = generate_expert_view(
                     client,
                     row,
-                    nvidia_api_key=nvidia_api_key,
                     is_retry=True
                 )
                 elapsed = time.time() - t0

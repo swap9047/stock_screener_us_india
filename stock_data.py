@@ -468,6 +468,7 @@ def get_filterable_metrics(settings=None):
         "Flag": "flag",
         "Notes": "note",
         "Expert Take": "expert_take",
+        "Expert News?": "expert_news_backed",
         # Table columns that were never registered here, so they couldn't be
         # used in a custom filter or an alert rule despite being visible and
         # sitting on the row dict all along. Anything added to
@@ -512,8 +513,20 @@ def load_watchlists():
         return {k: [] for k in registry_keys}
     with open(WATCHLIST_FILE) as f:
         data = json.load(f)
-    all_keys = registry_keys | set(data.keys())
-    return {k: data.get(k, []) for k in all_keys}
+    # Registry order first (that's the order markets.json declares and the
+    # tabs render in), then any extra keys the raw file carries, sorted.
+    #
+    # This used to be `for k in (registry_keys | set(data.keys()))` -- iterating
+    # a SET, so the order came from string hash randomization and changed every
+    # process. That mattered well beyond cosmetics: the AI refresh scripts key
+    # their stores by bare ticker, so for a ticker in more than one watchlist
+    # (AMKR is in three) it was last-write-wins with a nondeterministic winner,
+    # and the Expert Take prompt embeds the market name and benchmark -- so
+    # which analysis survived, and which benchmark the model was shown, varied
+    # run to run.
+    extra = sorted(set(data.keys()) - registry_keys)
+    ordered = [k for k in load_markets_registry().keys()] + extra
+    return {k: data.get(k, []) for k in ordered}
 
 
 def save_watchlists(watchlists):
