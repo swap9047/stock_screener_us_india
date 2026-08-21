@@ -4886,6 +4886,13 @@ with tab_news:
                     bits.append(f"⚠️ {counts['degraded']} unfiltered (AI filter failed)")
                 if counts.get("failed"):
                     bits.append(f"⚠️ {counts['failed']} search failed")
+                # Tickers Stage 2 judged material but Stage 3 left out of the
+                # digest. Surfaced because "8 with news" over a one-bullet
+                # summary is exactly the discrepancy that hid this bug.
+                _dropped = entry.get("collation_dropped") or []
+                if _dropped:
+                    bits.append(f"⚠️ {len(_dropped)} dropped in collation ({', '.join(_dropped[:4])}"
+                                + ("…" if len(_dropped) > 4 else "") + ")")
                 st.caption(" · ".join(bits))
 
             sources = entry.get("sources") or []

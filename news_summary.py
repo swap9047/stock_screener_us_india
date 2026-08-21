@@ -303,16 +303,36 @@ def collate_market_summary(client, market, batch_texts, as_of_date=None,
     as_of_date = as_of_date or datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
     cutoff_date = _cutoff_date(as_of_date)
 
+    # Stage 3 EDITS, it does not re-filter.
+    #
+    # Every note reaching here has already passed Stage 2's recency and
+    # materiality rules, against raw text that still carried its dates. Asking
+    # this stage to judge those bars a second time made it lossy and
+    # inconsistent: on 2026-08-20 Stage 2 marked 60 tickers material and Stage 3
+    # emitted only 34 bullets -- india_invested went from 8 down to 1. The
+    # giveaway was EBGNG.NS and UFBL.NS, which are in two watchlists and so
+    # share one cached Stage 2 result: identical input text, kept in the wrap
+    # earnings digest, dropped from india_invested.
+    #
+    # Two instructions caused it, both of which I added and neither of which the
+    # original had. "drop any undated note" is fatal because Stage 2 rewrites
+    # items into prose bullets and does not have to repeat the date, so a
+    # perfectly recent item arrives here looking undated. And the hard
+    # "ONLY items dated X or Y" equality is brittle across the ET/IST window
+    # split. Recency is Stage 2's job, done once, where the dates actually live.
     prompt = (
-        f"Below are filtered news notes gathered for the {_market_label(market)}.\n\n"
-        "Act as an editor for a daily investor briefing (like Perplexity Finance's watchlist digest). "
-        "Produce an EXTREMELY CRISP summary (under 500 words, max 1 pager) containing ONLY material, recent items.\n\n"
-        f"Today is {as_of_date}. ONLY items dated {cutoff_date} or {as_of_date} qualify -- "
-        "drop any note older than that, and drop any undated note.\n\n"
-        "Format as a flat list of short bullet points (one line each: **Company Name (Ticker)** - takeaway). "
-        "Use the EXACT company name and ticker provided in the notes. Do not hallucinate names. "
-        "CRITICAL: If a ticker does not have significant news, SKIP IT ENTIRELY. Do NOT write 'no significant news' or mention it. "
-        f"If NOTHING in the whole watchlist clears this bar, output EXACTLY ONE SENTENCE: '{NO_NEWS_SENTENCE}'\n\n"
+        f"Below are news notes for the {_market_label(market)}. They have ALREADY been "
+        "filtered for recency and materiality by an earlier stage. Your job is to EDIT and "
+        "FORMAT them -- do NOT re-judge whether an item qualifies, and do NOT drop a ticker "
+        "because its note does not restate a date.\n\n"
+        f"(For context only, today is {as_of_date}.)\n\n"
+        "Write ONE bullet per ticker that has a note, formatted exactly: "
+        "**Company Name (Ticker)** - takeaway. Keep each bullet to a single line, and keep it "
+        "tight -- a reader should be able to scan the whole list. "
+        "Use the EXACT company name and ticker given in the notes; never invent names, figures "
+        "or dates. If one ticker has several notes, merge them into that single bullet.\n\n"
+        "EVERY ticker present in the notes below must appear exactly once in your output. "
+        f"If the notes are empty, output EXACTLY ONE SENTENCE: '{NO_NEWS_SENTENCE}'\n\n"
         f"NOTES:\n{combined}"
     )
 
@@ -322,6 +342,18 @@ def collate_market_summary(client, market, batch_texts, as_of_date=None,
         # quiet day, and let the caller mark the market degraded.
         return combined, STATUS_DEGRADED
     return (text or NO_NEWS_SENTENCE), "ok"
+
+
+def collation_dropped_tickers(summary, material_tickers):
+    """Material tickers that Stage 3 failed to carry into the final summary.
+
+    A prompt cannot be trusted to be lossless, so the loss is measured rather
+    than assumed -- this is what turns "the digest looks thin" into a number in
+    the output. Matches on the bare ticker, case-insensitively, since Stage 3
+    renders "RELIANCE" rather than "RELIANCE.NS".
+    """
+    haystack = (summary or "").upper()
+    return [t for t in material_tickers if _bare_ticker(t).upper() not in haystack]
 
 
 def build_news_summary(watchlists, api_key):
@@ -542,6 +574,15 @@ def build_news_summary(watchlists, api_key):
         print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] [{market}] Stage3 done "
               f"({time.time()-t0:.1f}s, {collate_status})")
 
+        # Measure what collation lost. Stage 3 is the one stage whose output
+        # can't be checked against a schema, so a silent drop here is exactly
+        # how "8 with news" ended up rendering a single bullet.
+        material_tickers = [t for t, r in ticker_records.items() if r["status"] == STATUS_MATERIAL]
+        dropped = collation_dropped_tickers(collated, material_tickers)
+        if dropped:
+            print(f"WARNING: [{market}] Stage3 dropped {len(dropped)}/{len(material_tickers)} "
+                  f"material ticker(s) from the digest: {', '.join(sorted(dropped))}")
+
         # Dedup the flat source list the app renders -- Stage 1 results are
         # pooled per market and repeated URLs were common (46 entries for 36
         # unique URLs in the substack watchlist). Per-ticker attribution lives
@@ -558,6 +599,7 @@ def build_news_summary(watchlists, api_key):
             "ticker_count": len(tickers),
             "counts": counts,
             "collate_status": collate_status,
+            "collation_dropped": sorted(dropped),
             "tickers": ticker_records,
         }
 
