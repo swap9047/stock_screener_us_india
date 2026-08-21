@@ -1,8 +1,9 @@
 import json
 import os
-import concurrent.futures
 from datetime import datetime, timedelta, timezone
 from google.genai import types
+
+import llm_util
 import yfinance as yf
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -10,23 +11,39 @@ FUNDAMENTALS_FILE = os.path.join(SCRIPT_DIR, "fundamentals.json")
 
 # India reports quarterly results with a longer lag than the US (~30-45 days
 # post quarter-end vs ~2-3 weeks), so a US-calibrated window makes recent
-# Indian earnings look "not found" and pushes the guard toward Unknown less
-# often than it should for stale India cases. Widen the window per market.
-# Keyed by markets.json's registry keys (india_invested/india_watchlist vs
-# us_invested/us_watchlist) -- an unrecognized/custom watchlist key falls
-# back to the US-calibrated default below, same as before this dict's keys
-# were renamed to match the current registry.
-SEARCH_WINDOW_DAYS = {"india_invested": 45, "india_watchlist": 45, "us_invested": 25, "us_watchlist": 25}
+# Indian earnings look "not found".
+#
+# Resolve this off the TICKER SUFFIX, not the market key. It used to be a dict
+# keyed by markets.json keys with an unrecognized key falling back to the US
+# window -- the same shape as the old get_exchange_label bug (see
+# stock_data.py), and it failed the same way: watchlists are user-creatable
+# from the dashboard, so every new one silently got a US window. That is not
+# hypothetical -- "wrap_earnings_watchlist" was added with 11 .NS/.BO tickers
+# and a ^CRSLDX benchmark, and every one of them was being searched with a
+# 25-day window instead of 45.
+INDIA_SEARCH_WINDOW_DAYS = 45
+US_SEARCH_WINDOW_DAYS = 25
 
-def _generate_with_timeout(client, model, contents, config, timeout=120):
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    future = executor.submit(client.models.generate_content, model=model, contents=contents, config=config)
-    try:
-        return future.result(timeout=timeout)
-    except concurrent.futures.TimeoutError:
-        raise TimeoutError(f"API call to {model} timed out after {timeout}s")
-    finally:
-        executor.shutdown(wait=False)
+
+def search_window_days(market=None, ticker=None):
+    """News-search lookback for a ticker, in days. `market` is accepted only
+    so old single-argument call sites keep working; the suffix wins."""
+    if ticker and (ticker.endswith(".NS") or ticker.endswith(".BO")):
+        return INDIA_SEARCH_WINDOW_DAYS
+    if ticker:
+        return US_SEARCH_WINDOW_DAYS
+    return INDIA_SEARCH_WINDOW_DAYS if market == "india_invested" else US_SEARCH_WINDOW_DAYS
+
+
+# How far back a cited earnings date may sit and still belong to the SAME
+# reporting period. Deliberately separate from the search window above: one is
+# "how far back do we look for news", the other is "is this the current
+# quarter". _check_quarter_freshness used to reuse the search window for both.
+QUARTER_SPAN_DAYS = 92
+
+# Shared with news_summary and expert_views -- see llm_util.
+_generate_with_timeout = llm_util.generate_with_timeout
+
 
 def _clean_json_text(text):
     """Strip markdown code blocks from model JSON output."""
@@ -43,7 +60,7 @@ def fetch_fundamental_news(client, ticker, market, company_name, is_retry=False)
     from stock_data import get_exchange_label
 
     as_of_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    window = SEARCH_WINDOW_DAYS.get(market, SEARCH_WINDOW_DAYS["us_invested"])
+    window = search_window_days(market, ticker)
     cutoff_date = (datetime.now(timezone.utc) - timedelta(days=window)).strftime("%Y-%m-%d")
     exchange = get_exchange_label(market, ticker)
     
@@ -81,18 +98,35 @@ def fetch_fundamental_news(client, ticker, market, company_name, is_retry=False)
                 raise TimeoutError("Search timed out. Add to retry queue.")
             return "No recent fundamental news found.", "⚪ No Source"
 
+def _atomic_write_json(path, data):
+    """Write JSON via temp file + os.replace.
+
+    The plain truncate-and-write this replaces was called once PER TICKER by
+    the refresh loops -- ~110 rewrites of a 150 KB file per run. A crash or a
+    job timeout landing mid-dump left truncated JSON, and the loader's bare
+    except then returned {} on the next run, so the whole store was silently
+    rebuilt from empty with every prior view lost.
+    """
+    tmp = f"{path}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, path)
+
+
 def load_fundamentals():
     if not os.path.exists(FUNDAMENTALS_FILE):
         return {}
     try:
         with open(FUNDAMENTALS_FILE) as f:
             return json.load(f)
-    except Exception:
+    except Exception as e:
+        # Loud: returning {} silently means the next save rebuilds the store
+        # from empty and every prior view is gone.
+        print(f"ERROR: could not read {FUNDAMENTALS_FILE}: {e} -- treating as empty!")
         return {}
 
 def save_fundamentals(data):
-    with open(FUNDAMENTALS_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+    _atomic_write_json(FUNDAMENTALS_FILE, data)
 
 SENTIMENT_STALE_DAYS = 4
 
@@ -105,7 +139,16 @@ def _is_valid_view(view):
     # the previous (possibly hallucinated) verdict forever.
     if sentiment not in ("Positive", "Neutral", "Negative", "Unknown"):
         return False
-    if "error" in str(view).lower() or "pending" in str(view).lower():
+    # Test the sentinel this module actually writes, not free text. This used
+    # to be `"error" in str(view).lower() or "pending" in str(view).lower()` --
+    # str(view) includes news_used, i.e. up to a kilobyte of raw search output,
+    # so a legitimate view whose news mentioned "FDA approval pending" or
+    # "margin of error" was classified as a failed generation and discarded.
+    # Nothing tripped it in the current data, but the blast radius grew with
+    # every headline the search stage returned.
+    if view.get("model_used") == "Error":
+        return False
+    if str(view.get("reasoning", "")).startswith("Analysis pending -- "):
         return False
     return True
 
@@ -215,7 +258,7 @@ def _fetch_last_reported_earnings_date(ticker):
     except Exception:
         return None
 
-def _check_quarter_freshness(model_earnings_date, real_last_earnings_date, market):
+def _check_quarter_freshness(model_earnings_date, real_last_earnings_date, market, ticker=None):
     """Pure comparison (no I/O) — True if the model's claimed earnings date is
     consistent with the actual last-reported date, or if there isn't enough
     signal to contradict the model (fail open).
@@ -226,17 +269,34 @@ def _check_quarter_freshness(model_earnings_date, real_last_earnings_date, marke
     """
     if real_last_earnings_date is None:
         return True
-    window = SEARCH_WINDOW_DAYS.get(market, SEARCH_WINDOW_DAYS["us_invested"])
+    window = search_window_days(market, ticker)
     today = datetime.now(timezone.utc).date()
     if (today - real_last_earnings_date).days > window:
         return True  # nothing new expected within the search window either way
+
+    # A missing or unparseable date is NOT evidence that the model analysed the
+    # wrong quarter -- it only means it didn't cite a release date, which
+    # Indian coverage frequently doesn't state. This used to `return False`,
+    # and it was the single largest source of destroyed verdicts: of the 31
+    # Indian tickers inside the window, 14 gave no date, and every one was
+    # forced to Unknown despite carrying EPS/guidance/analyst evidence.
+    # Thin evidence is NO_DATA's and PARTIAL's job to judge, below -- not this
+    # function's.
     if not model_earnings_date:
-        return False
+        return True
     try:
         model_date = datetime.strptime(model_earnings_date, "%Y-%m-%d").date()
     except Exception:
-        return False
-    return abs((model_date - real_last_earnings_date).days) <= 10
+        return True
+
+    # Only flag when we can POSITIVELY show an older quarter was used. The old
+    # test was abs(delta) <= 10, which encodes the US convention of announcing
+    # within ~2 weeks of quarter-end. Indian companies report Q1 FY27 (ending
+    # Jun 30) between late July and mid-August, so a model citing the quarter
+    # END -- 2026-06-30 against a 2026-07-24 release -- could never pass, and
+    # 5 more tickers died that way. Anything inside one reporting period of the
+    # real release belongs to that release.
+    return model_date >= real_last_earnings_date - timedelta(days=QUARTER_SPAN_DAYS)
 
 def _validate_sentiment(view):
     """Deterministic post-hoc guard (independent of prompt compliance).
@@ -274,11 +334,20 @@ def generate_fundamental_view(client, row_data, news_text=None, news_source=None
     if news_text is None:
         try:
             news_text, news_source = fetch_fundamental_news(client, ticker, market, company_name, is_retry=is_retry)
+        except TimeoutError:
+            # Let the requeue signal through. fetch_fundamental_news raises this
+            # on a first-pass ladder exhaustion specifically so the caller can
+            # retry it later -- but TimeoutError subclasses OSError subclasses
+            # Exception, so the blanket handler below used to swallow it. The
+            # result: refresh_fundamentals' retry_queue was always empty and its
+            # entire retry phase (~50 lines, including a 30s backoff) had never
+            # once executed.
+            raise
         except Exception as e:
             print(f"  [fundamental news fetch failed/timeout] {ticker}: {e} -> Proceeding with fallback")
             news_text, news_source = "No recent fundamental news found.", "⚪ No Source"
 
-    window = SEARCH_WINDOW_DAYS.get(market, SEARCH_WINDOW_DAYS["us_invested"])
+    window = search_window_days(market, ticker)
     prompt = f"""You are a fundamental equities analyst. Review the provided news facts for {company_name} (Ticker: {ticker}) and extract the current quarter's Earnings, Guidance, and Analyst Coverage. Evaluate the overall fundamental sentiment and provide your reasoning.
 
 ======================================================================
@@ -291,8 +360,8 @@ CRITICAL RULES (these override everything else):
 1. If the news text says "No recent fundamental news found" or is empty, set "sentiment" to "Unknown" and all other fields (including the structured ones below) to "N/A"/null. Never guess or hallucinate a sentiment based on the company's past history, sector trends, or general knowledge.
 2. If the current quarter's EPS AND explicit forward guidance AND analyst upgrade/downgrade are ALL missing from the news facts, the strongest allowed "sentiment" is "Neutral" — revenue/revenue-growth figures alone cannot support "Positive" or "Negative".
 3. A directional verdict ("Positive"/"Negative") REQUIRES at least one of the structured fields below (eps_value, guidance_change, analyst_action) to be a real, specific value — not a vague or partial mention. Do not infer sentiment from company reputation, sector trends, or past performance — only from the specific structured facts found in the news above for the current quarter.
-4. "earnings_report_date" must be the exact date (YYYY-MM-DD) of the earnings release found in the news, or null if none was found. If the most recent quarter's earnings fall outside the {window}-day search window, set "earnings_report_date" to null and "sentiment" to "Unknown".
-5. MANDATORY: whenever "earnings_summary", "eps_value", or "analyst_coverage" contains real (non-N/A) data drawn from an actual earnings release, "earnings_report_date" MUST be filled in with that release's exact date — never leave it null while citing real earnings/EPS/analyst-coverage figures. This field is validated independently of the others; leaving it null when real data exists will cause the whole result to be discarded even if everything else is correct.
+4. "earnings_report_date" is the date the results were ANNOUNCED (YYYY-MM-DD), not the date the quarter ended. For example, an Indian company reporting Q1 FY27 (quarter ending 2026-06-30) in late July announces on roughly 2026-07-24 — use the announcement date. If the news does not state one, set it to null; do NOT guess, and do NOT substitute the quarter-end date.
+5. Setting "earnings_report_date" to null does not invalidate the rest of your answer. Judge "sentiment" from the facts you actually found, using rules 1-3 above. Report only what the news supports.
 
 Return ONLY a valid JSON object matching this schema:
 {{
@@ -329,7 +398,7 @@ Return ONLY a valid JSON object matching this schema:
         data["news_source"] = news_source or "⚪ Unknown"
         data["model_used"] = model_used
         real_date = _fetch_last_reported_earnings_date(ticker)
-        data["quarter_verified"] = _check_quarter_freshness(data.get("earnings_report_date"), real_date, market)
+        data["quarter_verified"] = _check_quarter_freshness(data.get("earnings_report_date"), real_date, market, ticker)
         data["real_earnings_date"] = real_date.isoformat() if real_date else None
         return data
 
@@ -338,31 +407,35 @@ Return ONLY a valid JSON object matching this schema:
     model = settings.get("sentiment_reasoning_model", "models/gemini-3.5-flash-lite")
     budget = settings.get("sentiment_thinking_budget", 8192)
 
-    # 1. Primary Reasoning Model (configurable, defaults to Gemini 3.5 Flash Lite with thinking)
-    try:
-        config_kwargs = {"response_mime_type": "application/json"}
-        if "gemma" not in model:
+    if not model.startswith("models/"):
+        model = f"models/{model}"
+
+    def _config_for(m):
+        kwargs = {"response_mime_type": "application/json"}
+        # Gemma models reject a thinking config.
+        if "gemma" not in m:
             if isinstance(budget, str):
-                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=budget)
+                kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=budget)
             else:
-                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
+                kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
+        return types.GenerateContentConfig(**kwargs)
 
-        config = types.GenerateContentConfig(**config_kwargs)
-        resp = _generate_with_timeout(client, model, prompt, config, timeout=120)
-        data = json.loads(_clean_json_text(resp.text))
-        return _finalize(data, model.split("/")[-1])
-    except Exception as e:
-        print(f"  [{model} reasoning failed] {ticker}: {e} -> Falling back to 31b")
-
-    # 2. Final Fallback (Gemma 4 31B)
-    try:
-        config = types.GenerateContentConfig(response_mime_type="application/json")
-        resp = _generate_with_timeout(client, "models/gemma-4-31b-it", prompt, config, timeout=120)
-        data = json.loads(_clean_json_text(resp.text))
-        return _finalize(data, "gemma-4-31b-it (Fallback)")
-    except Exception as e2:
-        print(f"  [31b reasoning failed] {ticker}: {e2} -> Giving up")
-        return _pending_fallback(str(e2))
+    # The good model, the good model again after a short backoff, then Gemma.
+    # The middle tier is new: this used to drop to the fallback on the FIRST
+    # exception, so one transient 429 -- the most common failure on a serial
+    # ~110-ticker run -- permanently demoted that ticker for the night. The
+    # ladder also now stops early on a terminal error (bad key, exhausted
+    # quota) instead of burning every tier on something a retry cannot fix.
+    data, used = llm_util.run_model_ladder(
+        client, prompt,
+        llm_util.standard_tiers(model, "models/gemma-4-31b-it"),
+        _config_for, label="sentiment", subject=ticker,
+        on_success=lambda resp: json.loads(_clean_json_text(resp.text)),
+    )
+    if used is None:
+        return _pending_fallback("reasoning ladder exhausted")
+    label = model.split("/")[-1] if used == model else f"{used.split('/')[-1]} (Fallback)"
+    return _finalize(data, label)
 
 
 def analyze_single_ticker_sentiment(ticker, row_data, api_key, is_retry=True):

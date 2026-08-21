@@ -12,7 +12,7 @@ from fundamentals_eval import (
     load_fundamentals, save_fundamentals, generate_fundamental_view,
     _is_valid_view, _validate_sentiment, _view_age_days, SENTIMENT_STALE_DAYS,
 )
-from news_summary import get_gemini_api_key, get_nvidia_api_key
+from news_summary import get_gemini_api_key
 
 def _ts():
     return datetime.now(timezone.utc).strftime("%H:%M:%S")
@@ -23,15 +23,29 @@ def _unknown_fallback(reason):
     Always writes every schema key so the UI never renders a tooltip of
     missing/N/A fields for a bare {sentiment, reasoning} dict.
     """
+    # Every schema key, genuinely. This used to omit seven of them
+    # (earnings_report_date, eps_value, guidance_change, analyst_action,
+    # news_used, quarter_verified, real_earnings_date) despite the docstring
+    # above -- which silently dropped _has_hard_evidence onto its legacy
+    # free-text branch, since that branch is selected by testing whether the
+    # structured keys are PRESENT.
     return {
         "earnings_summary": "N/A",
         "future_guidance": "N/A",
         "analyst_coverage": "N/A",
+        "earnings_report_date": None,
+        "eps_value": None,
+        "guidance_change": None,
+        "analyst_action": None,
         "sentiment": "Unknown",
         "reasoning": f"Analysis unavailable -- {reason}",
         "as_of": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+        "news_used": "",
         "news_source": "⚪ No Source",
         "model_used": "Error",
+        "quarter_verified": True,
+        "real_earnings_date": None,
+        "guard_flag": "NO_DATA",
     }
 
 def _apply_result(fundamentals, tk, view, old_view, elapsed):
@@ -43,12 +57,24 @@ def _apply_result(fundamentals, tk, view, old_view, elapsed):
     - Failed generation with no usable prior: write full-schema Unknown.
     """
     if _is_valid_view(view):
-        sentiment, flag = _validate_sentiment(view)
-        if flag:
-            view["sentiment"] = "Neutral" if flag == "PARTIAL" else "Unknown"
-            view["reasoning"] = f"{view.get('reasoning', '')}\n[auto-downgraded: {flag}]"
+        # Record what the guard thinks, but do NOT overwrite the model's own
+        # verdict on disk. This used to do
+        #     view["sentiment"] = "Neutral" if flag == "PARTIAL" else "Unknown"
+        # which was both redundant and lossy: app.py re-runs _validate_sentiment
+        # at every render site, so the display was already guarded, while the
+        # raw Positive/Negative was destroyed in the file. That is why fixing
+        # _check_quarter_freshness alone repaired nothing already written --
+        # there was no verdict left to recover.
+        #
+        # It also broke PARTIAL specifically: once "Neutral" was persisted, the
+        # next _validate_sentiment saw Neutral, skipped the hard-evidence check
+        # and returned no flag, so sentiment_flag_note rendered nothing and the
+        # user saw a bare Neutral with no explanation of the downgrade.
+        guarded, flag = _validate_sentiment(view)
+        view["guard_flag"] = flag or None
         fundamentals[tk] = view
-        return 0, f"OK ({elapsed:.1f}s) sentiment={view.get('sentiment')}"
+        shown = f"{view.get('sentiment')} -> {guarded} ({flag})" if flag else view.get("sentiment")
+        return 0, f"OK ({elapsed:.1f}s) sentiment={shown}"
     if _is_valid_view(old_view):
         age = _view_age_days(old_view)
         if age is not None and age > SENTIMENT_STALE_DAYS:
@@ -58,6 +84,23 @@ def _apply_result(fundamentals, tk, view, old_view, elapsed):
     reason = str(view.get("reasoning", view.get("sentiment", "no valid result")))[:160]
     fundamentals[tk] = _unknown_fallback(reason)
     return 1, f"FAILED ({elapsed:.1f}s): {view.get('sentiment')} -> wrote Unknown"
+
+def _prune_orphans(store, watchlists, label):
+    """Drop entries for tickers that are no longer in any watchlist.
+
+    Nothing ever removed these, so they sat in the file forever, never
+    refreshed, ageing past the staleness threshold -- fundamentals.json carried
+    four (ADVENZYMES.NS, BNTX, SYNGENE.NS, and INTELLECT.BO, a ghost of the
+    current INTELLECT.NS) and they were precisely the entries exceeding it.
+    """
+    live = {t for tks in watchlists.values() for t in tks}
+    orphans = [t for t in store if t not in live]
+    for t in orphans:
+        del store[t]
+    if orphans:
+        print(f"[{_ts()}] Pruned {len(orphans)} {label} orphan(s) no longer in any watchlist: {', '.join(sorted(orphans))}")
+    return len(orphans)
+
 
 def main():
     api_key = get_gemini_api_key()
@@ -74,6 +117,7 @@ def main():
 
     watchlists = load_watchlists()
     fundamentals = load_fundamentals()
+    _prune_orphans(fundamentals, watchlists, "fundamentals")
 
     # REFRESH_MARKETS scopes the run to specific watchlists -- set by the
     # dashboard's per-tab "Re-analyze All" button (see the workflow's
@@ -85,6 +129,11 @@ def main():
     total_processed = 0
     total_failed = 0
     retry_queue = []
+    # A ticker in several watchlists is one analysis, not several. The store is
+    # keyed by bare ticker, so the extra runs were pure waste that overwrote
+    # each other -- 110 slots for 105 unique tickers today (AMKR x3,
+    # META/ZS/JMFINANCIL.NS x2), i.e. 5 redundant search+reasoning pairs a night.
+    seen = set()
 
     for market, mkt_tickers in watchlists.items():
         if only_markets and market not in only_markets:
@@ -96,10 +145,11 @@ def main():
         results = snapshot["per_market"][market]
 
         for idx, tk in enumerate(mkt_tickers):
-            try:
-                row = next((r for r in results if r["ticker"] == tk), None)
-            except Exception:
-                row = None
+            if tk in seen:
+                print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - SKIP (already analyzed this run)")
+                continue
+            seen.add(tk)
+            row = next((r for r in results if r["ticker"] == tk), None)
 
             if not row:
                 print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - SKIP (no data in snapshot)")

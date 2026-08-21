@@ -78,8 +78,10 @@ from weekly_wrapup import (
 from filters import (get_market_filters, save_market_filters, apply_filters, describe_filter,
                      describe_chain, describe_chain_with_values, passes_filter_chain, CATEGORICAL_METRICS)
 from github_sync import get_github_config, push_all_config, trigger_github_workflow, SYNCABLE_FILES
-from news_summary import load_news_summary, MARKET_LABELS, get_gemini_api_key, get_nvidia_api_key
-from expert_views import load_expert_views, save_expert_views, analyze_single_ticker, generate_expert_view, _is_valid_view, VERDICT_RULES
+from news_summary import load_news_summary, MARKET_LABELS, get_gemini_api_key
+from expert_views import (load_expert_views, save_expert_views, analyze_single_ticker,
+                          generate_expert_view, _is_valid_view, VERDICT_RULES,
+                          validate_verdict, verdict_flag_note)
 from fundamentals_eval import (
     load_fundamentals, _validate_sentiment, SENTIMENT_STALE_DAYS,
     analyze_single_ticker_sentiment, _is_valid_view as _is_valid_sentiment_view,
@@ -688,6 +690,19 @@ def tech_uptrend_tooltip(row, settings, labels):
     return "\n".join(lines)
 
 
+# Sentinels the Expert Take search stage writes when it found nothing. An empty
+# news_used means the same thing. Kept as a helper so the enrichment loop and
+# the cell tooltip agree on what "no news behind this verdict" means.
+_EXPERT_NO_NEWS = ("no recent news found", "no news found", "no material news found", "nothing")
+
+
+def _expert_view_has_news(view):
+    text = str((view or {}).get("news_used") or "").strip().lower().rstrip(".")
+    if not text:
+        return False
+    return not any(text.startswith(m) for m in _EXPERT_NO_NEWS)
+
+
 def sentiment_flag_note(flag, as_of):
     """Plain-English note for a _validate_sentiment guard flag, or "" when the
     view passed clean. Shared by the Sentiment cell tooltip and the AI-review
@@ -1102,6 +1117,12 @@ def column_definitions(settings, labels):
             "Trend, Tech Uptrend, and Sentiment -- Green needs 3+ of 4 bullish, Red needs 3+ of 4 bearish, "
             "and a strong contradicting signal downgrades either to Yellow ('further study'). Hover a "
             "flagged cell for the exact vote/veto breakdown."
+        ),
+        "Expert News?": (
+            "Whether the Expert Take verdict had any news behind it. \"No\" means the grounded search "
+            "returned nothing for this ticker, so the verdict is a technicals-only read -- still valid "
+            "(the rules say absent news leans Hold), but not news-informed. Roughly 30% of verdicts are "
+            "technicals-only on a typical day."
         ),
         "Notes": "Your free-text note for this ticker, set via the sidebar 'Ticker Notes' panel. Hover/tap a truncated note to see the full text.",
         "Interested": "Whether you ticked this ticker as Interested in the watchlist editor.",
@@ -2037,6 +2058,7 @@ def build_column_defs(labels, custom_columns=None):
         ("company_name", "Company Name"),
         ("index_name", "Index"),
         ("expert_take", "Expert Take"),
+        ("expert_news_backed", "Expert News?"),
         ("trend", "Trend"),
         ("flag", "Flag"),
         ("note", "Notes"),
@@ -2667,7 +2689,8 @@ def render_category_order_manager(label_by_key):
     # a metric with no column of its own.
     label_for = {
         "trend": "Trend", "volume_trend": "Vol Trend", "sentiment": "Sentiment",
-        "expert_take": "Expert Take", "flag": "Flag", "tech_uptrend": "Tech Uptrend",
+        "expert_take": "Expert Take", "expert_news_backed": "Expert News?",
+        "flag": "Flag", "tech_uptrend": "Tech Uptrend",
         "vstop_weekly_direction": "VStop Dir", "interested": "Interested",
     }
 
@@ -3001,7 +3024,7 @@ def trigger_ai_refresh_workflow(workflow_file, name, label, markets):
         st.error(f"Failed to start refresh: {e}")
 
 
-def _reanalyze_tickers_in_dashboard(tickers, results, api_key, nvidia_api_key, sync_message,
+def _reanalyze_tickers_in_dashboard(tickers, results, api_key, sync_message,
                                     scope):
     """Refreshes ONE AI column for `tickers` synchronously, right here in the
     dashboard -- no GitHub Actions workflow involved.
@@ -3034,7 +3057,7 @@ def _reanalyze_tickers_in_dashboard(tickers, results, api_key, nvidia_api_key, s
         )
         if scope == "expert":
             try:
-                view = generate_expert_view(client, row, nvidia_api_key=nvidia_api_key, is_retry=True)
+                view = generate_expert_view(client, row, is_retry=True)
                 if _is_valid_view(view):
                     updated_views[tk] = view
                     save_expert_views(updated_views)
@@ -3072,7 +3095,6 @@ def _reanalyze_tickers_in_dashboard(tickers, results, api_key, nvidia_api_key, s
 def render_expert_analysis_control_bar(market, results, combined_markets=None):
     expert_views = load_expert_views()
     api_key = get_gemini_api_key(st.secrets)
-    nvidia_api_key = get_nvidia_api_key(st.secrets)
 
     all_tickers = [r["ticker"] for r in results]
 
@@ -3202,7 +3224,7 @@ def render_expert_analysis_control_bar(market, results, combined_markets=None):
             width="stretch",
         ):
             _reanalyze_tickers_in_dashboard(
-                selected_to_reanalyze, results, api_key, nvidia_api_key,
+                selected_to_reanalyze, results, api_key,
                 f"Re-analyze selected {scope} ({len(selected_to_reanalyze)} tickers) via UI",
                 scope=scope,
             )
@@ -3216,7 +3238,7 @@ def render_expert_analysis_control_bar(market, results, combined_markets=None):
             width="stretch",
         ):
             _reanalyze_tickers_in_dashboard(
-                pending, results, api_key, nvidia_api_key,
+                pending, results, api_key,
                 f"Retry pending {scope} ({pending_count} tickers) via UI",
                 scope=scope,
             )
@@ -3262,7 +3284,6 @@ def render_expert_view_expander(market, filtered_rows, settings):
     api_key = get_gemini_api_key(st.secrets)
     # Was missing entirely, so the per-ticker re-analyze button below raised
     # NameError the moment it was clicked.
-    nvidia_api_key = get_nvidia_api_key(st.secrets)
 
     with st.expander(f"🤖 AI Stock Expert Views ({market} — {len(tickers)} tickers)", expanded=False):
         # Scrollable container for all ticker cards
@@ -3283,7 +3304,7 @@ def render_expert_view_expander(market, filtered_rows, settings):
             with st.spinner(f"Re-analyzing {ticker} (Expert Take + Sentiment)..."):
                 ev_ok = True
                 try:
-                    analyze_single_ticker(ticker, row, api_key, nvidia_api_key=nvidia_api_key, is_retry=True)
+                    analyze_single_ticker(ticker, row, api_key, is_retry=True)
                 except Exception as e:
                     ev_ok = False
                     st.error(f"Expert Take refresh failed: {e}")
@@ -3786,9 +3807,14 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         raw_df["matched_alerts"] = [_colored_alert_cell(r["ticker"]) for r in filtered]
 
         expert_views = load_expert_views()
+        _row_by_ticker = {r["ticker"]: r for r in filtered}
+
         def _expert_take_cell(ticker):
             v = expert_views.get(ticker, {})
-            verdict = v.get("verdict")
+            # Guarded verdict, matching the filterable/sortable expert_take
+            # field attached in the enrichment loop -- the badge must not
+            # disagree with what you can filter on.
+            verdict, vflag = validate_verdict(v, _row_by_ticker.get(ticker))
             headline = v.get("headline", "")
             actionable = v.get("actionable_take", "")
             as_of = v.get("as_of", "unknown")
@@ -3805,7 +3831,19 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             else:
                 badge = "⚪ Pending"
             if headline:
-                tooltip = f"{headline}\n\n{actionable}\n\nAs of: {as_of}  |  Source: {news_source}  |  Model: {model_used}"
+                parts = [headline, actionable]
+                note = verdict_flag_note(vflag)
+                if note:
+                    parts.append(note)
+                # The news the verdict actually rests on. This was never shown,
+                # so a technicals-only verdict looked identical to a
+                # news-informed one -- about 30% of them are the former.
+                if _expert_view_has_news(v):
+                    parts.append(f"News used:\n{str(v.get('news_used') or '').strip()}")
+                else:
+                    parts.append("News used: none found -- this verdict is a technicals-only read.")
+                parts.append(f"As of: {as_of}  |  Source: {news_source}  |  Model: {model_used}")
+                tooltip = "\n\n".join(p for p in parts if p)
             else:
                 tooltip = "Click 'Retry Failed' in controls above to analyze."
             return with_tooltip(badge, tooltip)
@@ -4255,8 +4293,19 @@ for _market_rows in per_market.values():
     for _row in _market_rows:
         _row["interested"] = _row["ticker"] in interested_now
         _row["sentiment"] = _validate_sentiment(fundamentals_now_global.get(_row["ticker"], {}))[0]
-        _verdict = expert_views_now_global.get(_row["ticker"], {}).get("verdict", "")
+        _view = expert_views_now_global.get(_row["ticker"], {})
+        # Guarded verdict, not the raw model one -- validate_verdict demotes an
+        # ACCUMULATE whose trend/VStop preconditions aren't actually met, the
+        # same way _validate_sentiment guards the Sentiment column.
+        _verdict, _vflag = validate_verdict(_view, _row)
         _row["expert_take"] = _verdict.title() if _verdict in ("ACCUMULATE", "HOLD", "CAUTION") else "Pending"
+        # Whether the verdict had any news behind it. 30% of stored verdicts
+        # rest on "No recent news found." -- which is a legitimate
+        # technicals-only read (VERDICT_RULES says absent news leans HOLD, and
+        # the data bears that out), but nothing in the UI distinguished the two.
+        # Attached HERE, in the enrichment loop, rather than in the render path,
+        # so it is filterable and sortable -- see AGENTS.md's row-dict contract.
+        _row["expert_news_backed"] = "Yes" if _expert_view_has_news(_view) else "No"
 
 source_label = "daily snapshot" if using_snapshot else "live fetch"
 st.sidebar.caption(f"Data as of: {as_of} ({source_label})")
