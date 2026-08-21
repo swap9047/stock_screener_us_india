@@ -43,10 +43,28 @@ def generate_with_timeout(client, model, contents, config, timeout=CALL_TIMEOUT_
         executor.shutdown(wait=False)
 
 
+# Errors that are about THIS MODEL rather than the account: a wrong or retired
+# model id, or one the key has no access to. They say nothing about the next
+# tier, so the ladder should step past them rather than give up -- otherwise a
+# single typo'd model id silently degrades the whole stage, including a
+# fallback that would have worked perfectly.
+MODEL_UNAVAILABLE_MARKERS = (
+    "not found", "does not exist", "is not supported", "unsupported model",
+    "no such model", "404",
+)
+
+
+def is_model_unavailable(exc):
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(marker in text for marker in MODEL_UNAVAILABLE_MARKERS)
+
+
 def is_retryable(exc):
-    """Whether re-running the same call could plausibly succeed."""
+    """Whether re-running the SAME call could plausibly succeed."""
     if isinstance(exc, TimeoutError):
         return True
+    if is_model_unavailable(exc):
+        return False          # retrying a missing model just burns time
     text = f"{type(exc).__name__}: {exc}".lower()
     return not any(marker in text for marker in TERMINAL_ERROR_MARKERS)
 
@@ -72,7 +90,12 @@ def run_model_ladder(client, prompt, tiers, config_for, label="llm", subject="",
             return (on_success(resp) if on_success else resp), model
         except Exception as e:
             print(f"  [{label} {model} failed] {subject}: {e}")
+            if is_model_unavailable(e):
+                # This model is wrong/retired/not enabled -- the next tier may
+                # still be fine, so step past instead of abandoning the ladder.
+                continue
             if not is_retryable(e):
+                # Bad key, exhausted quota: no model will work. Stop.
                 break
     return None, None
 
@@ -81,6 +104,22 @@ def standard_tiers(primary, fallback):
     """The ladder every pipeline should use: the good model, the good model
     again after a backoff, then the fallback."""
     tiers = [(primary, 0), (primary, RETRY_BACKOFF_SECONDS)]
+    if fallback and fallback != primary:
+        tiers.append((fallback, 0))
+    return tiers
+
+
+def retry_pair_tiers(primary, fallback, backoff=RETRY_BACKOFF_SECONDS):
+    """Try primary, then fallback, then BOTH again after a backoff.
+
+    For a stage where both models are strong enough to trust, so the second
+    pass is about riding out a transient 429/503 rather than degrading -- as
+    opposed to standard_tiers, which retries the good model before conceding to
+    a weaker one."""
+    tiers = [(primary, 0)]
+    if fallback and fallback != primary:
+        tiers.append((fallback, 0))
+    tiers.append((primary, backoff))
     if fallback and fallback != primary:
         tiers.append((fallback, 0))
     return tiers

@@ -11,8 +11,12 @@ Perplexity-Finance-style digest built with a 3-stage per-ticker architecture:
      events 3-4 days out) and material-catalyst rules. Ladder:
      gemini-3.5-flash-lite -> retry it once -> gemma-4-26b-a4b-it -> degraded.
 
-  Stage 3 (Collation): same ladder as Stage 2, once per market.
-     Combines that market's surviving notes into a crisp, scannable brief.
+  Stage 3 (Collation): gemini-3.7-flash, falling back to gemini-3.6-flash,
+     both with a 4k-8k thinking budget; if both fail the pair is retried once
+     after a backoff. Once per market. EDITS and formats that market's notes
+     into a scannable brief -- it deliberately does NOT re-filter them, since
+     recency and materiality were already decided in Stage 2 where the raw
+     dates still exist.
 
 Roughly 105 search + 105 reasoning + 5 collation calls per run at today's
 watchlist sizes. Stages 1 and 2 are memoised per (ticker, window date), so a
@@ -53,9 +57,27 @@ NEWS_SUMMARY_FILE = os.path.join(SCRIPT_DIR, "news_summary.json")
 SEARCH_MODEL = "models/gemma-4-26b-a4b-it"
 SEARCH_FALLBACK_MODEL = "models/gemma-4-31b-it"
 
-# Stage 2/3 ladder.
+# Stage 2 ladder.
 REASONING_MODEL = "models/gemini-3.5-flash-lite"
 REASONING_FALLBACK_MODEL = "models/gemma-4-26b-a4b-it"
+
+# Stage 3 gets its own, stronger ladder. Collation is the one stage that reads
+# every surviving note for a watchlist at once and has to keep all of them, so
+# it is worth more capable models and a real thinking budget -- and unlike
+# Stage 2 there is no weak tier to concede to: both are trusted, so the ladder
+# tries each, then tries BOTH again after a backoff rather than degrading.
+# Overridable from settings.json via news_collation_model /
+# news_collation_fallback_model, so a model id can be corrected without a code
+# change; an unavailable id makes the ladder step to the next tier (see
+# llm_util.is_model_unavailable) instead of failing the stage.
+COLLATION_MODEL = "models/gemini-3.7-flash"
+COLLATION_FALLBACK_MODEL = "models/gemini-3.6-flash"
+
+# Thinking budget for Stage 3, clamped to the 4k-8k band. Below 4k the model
+# starts dropping items from a long note list, which is the failure this stage
+# was just fixed for; above 8k buys nothing for what is an editing task.
+COLLATION_MIN_THINKING = 4096
+COLLATION_MAX_THINKING = 8192
 
 SECONDS_BETWEEN_CALLS = 2
 # Longer backoff between retry-queue attempts, to give a transient
@@ -288,8 +310,17 @@ def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date,
     return text, "ok"
 
 
+def _collation_thinking_budget(budget):
+    """Stage 3's thinking budget, clamped into the 4k-8k band."""
+    try:
+        value = int(budget)
+    except (TypeError, ValueError):
+        return COLLATION_MAX_THINKING
+    return max(COLLATION_MIN_THINKING, min(COLLATION_MAX_THINKING, value))
+
+
 def collate_market_summary(client, market, batch_texts, as_of_date=None,
-                           model=REASONING_MODEL, budget=4096):
+                           model=None, budget=None, fallback_model=None):
     """Stage 3: collate one market's surviving notes into the daily brief.
 
     Returns (summary, status), same contract as Stage 2. A legitimate empty
@@ -336,7 +367,29 @@ def collate_market_summary(client, market, batch_texts, as_of_date=None,
         f"NOTES:\n{combined}"
     )
 
-    text, ok = _run_reasoning(client, prompt, model, budget, "stage3", market)
+    # Stage 3's own ladder: 3.7 -> 3.6 -> 3.7 -> 3.6, both with thinking.
+    # _run_reasoning is Stage 2's shape (good model twice, then a weak
+    # fallback), which is the wrong ladder here -- there is no weak tier to
+    # concede to.
+    model = model or COLLATION_MODEL
+    fallback_model = fallback_model or COLLATION_FALLBACK_MODEL
+    thinking = _collation_thinking_budget(budget if budget is not None else COLLATION_MAX_THINKING)
+
+    def _config_for(m):
+        kwargs = {}
+        if "gemma" not in m:            # Gemma rejects a thinking config
+            kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking)
+        return types.GenerateContentConfig(**kwargs)
+
+    text, used = llm_util.run_model_ladder(
+        client, prompt,
+        llm_util.retry_pair_tiers(model, fallback_model),
+        _config_for, label="stage3", subject=market,
+        on_success=lambda resp: (resp.text or "").strip(),
+    )
+    ok = used is not None
+    if ok:
+        print(f"  [stage3 {market}] collated by {used} (thinking={thinking})")
     if not ok:
         # Honest degradation: forward what we have rather than silently claim a
         # quiet day, and let the caller mark the market degraded.
@@ -389,6 +442,10 @@ def build_news_summary(watchlists, api_key):
     reasoning_model = settings.get("news_reasoning_model", REASONING_MODEL)
     if not reasoning_model.startswith("models/"):
         reasoning_model = f"models/{reasoning_model}"
+
+    collation_model = settings.get("news_collation_model", COLLATION_MODEL)
+    collation_fallback = settings.get("news_collation_fallback_model", COLLATION_FALLBACK_MODEL)
+    collation_budget = settings.get("news_collation_thinking_budget", COLLATION_MAX_THINKING)
 
     raw_budget = settings.get("news_reasoning_budget", 4096)
     thinking_budget = int(raw_budget) if isinstance(raw_budget, str) and raw_budget.isdigit() else raw_budget
@@ -569,7 +626,8 @@ def build_news_summary(watchlists, api_key):
         t0 = time.time()
         collated, collate_status = collate_market_summary(
             client, market, filtered_texts, as_of_date=window_date,
-            model=reasoning_model, budget=thinking_budget,
+            model=collation_model, fallback_model=collation_fallback,
+            budget=collation_budget,
         )
         print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] [{market}] Stage3 done "
               f"({time.time()-t0:.1f}s, {collate_status})")
