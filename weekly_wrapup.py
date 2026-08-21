@@ -38,8 +38,10 @@ from alerts import (
     _format_cell,
     _metrics_used_in_conditions,
     _scope_label,
+    chunked_line_messages,
     chunked_table_messages,
     compute_rule_truth,
+    escape_markdown,
 )
 from filters import describe_chain
 
@@ -316,16 +318,26 @@ def build_discord_messages(wrapup, limit=1900):
     header.append("")
     for a in wrapup["alerts"]:
         suffix = "" if a["rows"] else " — no matches"
-        header.append(f"**{a['num']}.** {a['name']} — {a['scope_label']} ({len(a['rows'])}){suffix}")
+        header.append(
+            f"**{a['num']}.** {escape_markdown(a['name'])} — {a['scope_label']} "
+            f"({len(a['rows'])}){suffix}"
+        )
     if wrapup["rollup"]:
         header.append("")
         header.append(f"🔥 Most active stocks summary follows at the end ↓")
 
-    messages = ["\n".join(header)]
+    # The header grows by one line per eligible rule and used to be emitted with
+    # no length check at all -- ~59 chars per rule, so it crosses Discord's 2000
+    # cap somewhere around 34 rules (sooner with long names). That mattered more
+    # than it looks: this is messages[0] of a send_discord_batch, which stops at
+    # the first failure, so an oversized header dropped the ENTIRE wrap-up and
+    # weekly_wrapup_check.py then skipped advance_state -- freezing the Wk
+    # counters silently, week after week.
+    messages = chunked_line_messages("\n".join(header), limit=limit)
 
     for a in matched:
         # Title line: alert name + scope
-        title = f"**{a['num']}. {a['name']}** — {a['scope_label']}"
+        title = f"**{a['num']}. {escape_markdown(a['name'])}** — {a['scope_label']}"
         # Append the human-readable condition description so Discord readers
         # know what each alert is actually checking for (e.g. "10 WEMA > 40 WEMA").
         desc = a.get("description", "").strip()

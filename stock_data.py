@@ -354,19 +354,33 @@ def get_benchmarks(settings=None):
     return {key: info["benchmark"] for key, info in registry.items()}
 
 
-def get_exchange_label(market):
+def get_exchange_label(market, ticker=None):
     """Human-readable 'X-listed' phrase for LLM search/reasoning prompts.
-    Preserves the exact existing wording for the two originally-pre-registered
-    markets (now keyed "us_invested"/"india_invested" after the markets.json
-    key rename) so their prompts don't change at all; any other market gets a
-    generic fallback built from its registry label, since the minimal
-    add-watchlist form doesn't collect a dedicated exchange phrase."""
+
+    Resolve off the TICKER SUFFIX first, not the market key. This used to key
+    off the market key alone with only "us_invested"/"india_invested"
+    hardcoded, so every other watchlist fell through to a generic
+    f"{registry label}-listed" -- which fed the search model literal nonsense:
+    india_watchlist's 32 .NS tickers were described as "India Watchlist-listed"
+    and substack_outperformingmarket's 22 as
+    "Substack-OutperformingMarket-listed". That was 65 of 110 tickers getting a
+    meaningless exchange phrase, and it silently got worse every time a
+    watchlist was added, since the registry label is whatever the user typed in
+    the add-watchlist form.
+
+    The suffix is the reliable signal: .NS/.BO are Indian listings regardless of
+    which watchlist the ticker happens to sit in, and everything else in this
+    app is US-listed. `ticker` is optional only so the old single-argument call
+    shape keeps working; pass it whenever you have it."""
+    if ticker:
+        if ticker.endswith(".NS") or ticker.endswith(".BO"):
+            return "NSE/BSE-listed"
+        return "US-listed"
+    # No ticker available -- fall back to the original market-key wording so
+    # the two pre-registered markets' prompts stay byte-identical.
     if market == "india_invested":
         return "NSE/BSE-listed"
-    if market == "us_invested":
-        return "US-listed"
-    label = load_markets_registry().get(market, {}).get("label", market)
-    return f"{label}-listed"
+    return "US-listed"
 
 
 def get_benchmark_display(market):
