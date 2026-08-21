@@ -11,6 +11,7 @@ from google import genai
 from stock_data import load_data_snapshot, load_watchlists
 from expert_views import (
     load_expert_views, save_expert_views, generate_expert_view, _is_valid_view,
+    resolve_persisted_view,
     EXPERT_STALE_DAYS, _view_age_days, stale_view_fallback,
 )
 from news_summary import get_gemini_api_key
@@ -29,17 +30,22 @@ def _apply_result(expert_views, tk, view, old_view, elapsed):
       rather than silently keep showing an unverified old verdict.
     - Failed generation with no usable prior: write the failed view as-is.
     """
+    # The four-case decision lives in expert_views.resolve_persisted_view so the
+    # dashboard's re-analyze button applies exactly the same rules -- it used to
+    # write unconditionally and could overwrite a good verdict with a failure
+    # stub. This function keeps ownership of the counters and log text.
     if _is_valid_view(view):
         expert_views[tk] = view
         fallback_inc = 1 if "⚪" in view.get("news_source", "") else 0
         return 0, fallback_inc, f"OK ({elapsed:.1f}s) verdict={view.get('verdict')}"
+
+    to_store = resolve_persisted_view(view, old_view)
+    if to_store is None:
+        return 0, 0, f"FAILED ({elapsed:.1f}s), keeping prior result"
+    expert_views[tk] = to_store
     if _is_valid_view(old_view):
         age = _view_age_days(old_view)
-        if age is not None and age > EXPERT_STALE_DAYS:
-            expert_views[tk] = stale_view_fallback(f"previous view is {age:.1f} days old")
-            return 1, 0, f"FAILED ({elapsed:.1f}s); prior stale ({age:.1f}d) -> wrote pending"
-        return 0, 0, f"FAILED ({elapsed:.1f}s), keeping prior result"
-    expert_views[tk] = view
+        return 1, 0, f"FAILED ({elapsed:.1f}s); prior stale ({age:.1f}d) -> wrote pending"
     return 1, 0, f"FAILED ({elapsed:.1f}s): {view.get('headline')}"
 
 def _prune_orphans(store, watchlists, label):
