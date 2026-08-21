@@ -440,14 +440,57 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
     return _pending_fallback("reasoning ladder exhausted")
 
 
+def resolve_persisted_view(view, old_view):
+    """Which view should actually be stored, given a freshly generated `view`
+    and whatever is already on disk. Returns the view to write, or None meaning
+    "keep what's there".
+
+    Four cases, in order:
+      - fresh view is valid                  -> write it
+      - invalid, prior is valid and fresh    -> keep the prior (return None)
+      - invalid, prior is valid but stale    -> write an honest pending
+                                                placeholder, so a pipeline that
+                                                has been failing for days stops
+                                                showing an unverified old
+                                                verdict as current
+      - invalid, no usable prior             -> write the failure, so the UI can
+                                                render "Failed (Retry)" instead
+                                                of nothing at all
+
+    Extracted so the nightly batch and the dashboard's per-ticker re-analyze
+    button cannot disagree. They did: the batch applied all four rules, while
+    analyze_single_ticker wrote whatever it got. A transient API failure behind
+    that button therefore replaced a good ACCUMULATE with a
+    HOLD/"Analysis pending"/model_used="Error" stub -- destroying the verdict
+    rather than keeping it. The Sentiment counterpart already guarded against
+    this, so the two features behaved differently on the same click.
+    """
+    if _is_valid_view(view):
+        return view
+    if _is_valid_view(old_view):
+        age = _view_age_days(old_view)
+        if age is not None and age > EXPERT_STALE_DAYS:
+            return stale_view_fallback(f"previous view is {age:.1f} days old")
+        return None
+    return view
+
+
 def analyze_single_ticker(ticker, row_data, api_key, active_alerts_text=None, is_retry=True):
+    """Regenerate one ticker's Expert Take and persist it.
+
+    Returns the stored view, or None when generation failed and the existing
+    view was kept (same contract as
+    fundamentals_eval.analyze_single_ticker_sentiment)."""
     from google import genai
 
     client = genai.Client(api_key=api_key)
     view = generate_expert_view(client, row_data, active_alerts_text=active_alerts_text, is_retry=is_retry)
     all_views = load_expert_views()
-    all_views[ticker] = view
+    to_store = resolve_persisted_view(view, all_views.get(ticker))
+    if to_store is None:
+        return None
+    all_views[ticker] = to_store
     save_expert_views(all_views)
-    return view
+    return to_store
 
 # Trigger Streamlit Cloud hot-reload
