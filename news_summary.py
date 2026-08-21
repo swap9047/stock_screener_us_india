@@ -11,8 +11,12 @@ Perplexity-Finance-style digest built with a 3-stage per-ticker architecture:
      events 3-4 days out) and material-catalyst rules. Ladder:
      gemini-3.5-flash-lite -> retry it once -> gemma-4-26b-a4b-it -> degraded.
 
-  Stage 3 (Collation): same ladder as Stage 2, once per market.
-     Combines that market's surviving notes into a crisp, scannable brief.
+  Stage 3 (Collation): gemini-3.7-flash, falling back to gemini-3.6-flash,
+     both with a 4k-8k thinking budget; if both fail the pair is retried once
+     after a backoff. Once per market. EDITS and formats that market's notes
+     into a scannable brief -- it deliberately does NOT re-filter them, since
+     recency and materiality were already decided in Stage 2 where the raw
+     dates still exist.
 
 Roughly 105 search + 105 reasoning + 5 collation calls per run at today's
 watchlist sizes. Stages 1 and 2 are memoised per (ticker, window date), so a
@@ -53,9 +57,27 @@ NEWS_SUMMARY_FILE = os.path.join(SCRIPT_DIR, "news_summary.json")
 SEARCH_MODEL = "models/gemma-4-26b-a4b-it"
 SEARCH_FALLBACK_MODEL = "models/gemma-4-31b-it"
 
-# Stage 2/3 ladder.
+# Stage 2 ladder.
 REASONING_MODEL = "models/gemini-3.5-flash-lite"
 REASONING_FALLBACK_MODEL = "models/gemma-4-26b-a4b-it"
+
+# Stage 3 gets its own, stronger ladder. Collation is the one stage that reads
+# every surviving note for a watchlist at once and has to keep all of them, so
+# it is worth more capable models and a real thinking budget -- and unlike
+# Stage 2 there is no weak tier to concede to: both are trusted, so the ladder
+# tries each, then tries BOTH again after a backoff rather than degrading.
+# Overridable from settings.json via news_collation_model /
+# news_collation_fallback_model, so a model id can be corrected without a code
+# change; an unavailable id makes the ladder step to the next tier (see
+# llm_util.is_model_unavailable) instead of failing the stage.
+COLLATION_MODEL = "models/gemini-3.7-flash"
+COLLATION_FALLBACK_MODEL = "models/gemini-3.6-flash"
+
+# Thinking budget for Stage 3, clamped to the 4k-8k band. Below 4k the model
+# starts dropping items from a long note list, which is the failure this stage
+# was just fixed for; above 8k buys nothing for what is an editing task.
+COLLATION_MIN_THINKING = 4096
+COLLATION_MAX_THINKING = 8192
 
 SECONDS_BETWEEN_CALLS = 2
 # Longer backoff between retry-queue attempts, to give a transient
@@ -288,8 +310,17 @@ def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date,
     return text, "ok"
 
 
+def _collation_thinking_budget(budget):
+    """Stage 3's thinking budget, clamped into the 4k-8k band."""
+    try:
+        value = int(budget)
+    except (TypeError, ValueError):
+        return COLLATION_MAX_THINKING
+    return max(COLLATION_MIN_THINKING, min(COLLATION_MAX_THINKING, value))
+
+
 def collate_market_summary(client, market, batch_texts, as_of_date=None,
-                           model=REASONING_MODEL, budget=4096):
+                           model=None, budget=None, fallback_model=None):
     """Stage 3: collate one market's surviving notes into the daily brief.
 
     Returns (summary, status), same contract as Stage 2. A legitimate empty
@@ -303,25 +334,79 @@ def collate_market_summary(client, market, batch_texts, as_of_date=None,
     as_of_date = as_of_date or datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
     cutoff_date = _cutoff_date(as_of_date)
 
+    # Stage 3 EDITS, it does not re-filter.
+    #
+    # Every note reaching here has already passed Stage 2's recency and
+    # materiality rules, against raw text that still carried its dates. Asking
+    # this stage to judge those bars a second time made it lossy and
+    # inconsistent: on 2026-08-20 Stage 2 marked 60 tickers material and Stage 3
+    # emitted only 34 bullets -- india_invested went from 8 down to 1. The
+    # giveaway was EBGNG.NS and UFBL.NS, which are in two watchlists and so
+    # share one cached Stage 2 result: identical input text, kept in the wrap
+    # earnings digest, dropped from india_invested.
+    #
+    # Two instructions caused it, both of which I added and neither of which the
+    # original had. "drop any undated note" is fatal because Stage 2 rewrites
+    # items into prose bullets and does not have to repeat the date, so a
+    # perfectly recent item arrives here looking undated. And the hard
+    # "ONLY items dated X or Y" equality is brittle across the ET/IST window
+    # split. Recency is Stage 2's job, done once, where the dates actually live.
     prompt = (
-        f"Below are filtered news notes gathered for the {_market_label(market)}.\n\n"
-        "Act as an editor for a daily investor briefing (like Perplexity Finance's watchlist digest). "
-        "Produce an EXTREMELY CRISP summary (under 500 words, max 1 pager) containing ONLY material, recent items.\n\n"
-        f"Today is {as_of_date}. ONLY items dated {cutoff_date} or {as_of_date} qualify -- "
-        "drop any note older than that, and drop any undated note.\n\n"
-        "Format as a flat list of short bullet points (one line each: **Company Name (Ticker)** - takeaway). "
-        "Use the EXACT company name and ticker provided in the notes. Do not hallucinate names. "
-        "CRITICAL: If a ticker does not have significant news, SKIP IT ENTIRELY. Do NOT write 'no significant news' or mention it. "
-        f"If NOTHING in the whole watchlist clears this bar, output EXACTLY ONE SENTENCE: '{NO_NEWS_SENTENCE}'\n\n"
+        f"Below are news notes for the {_market_label(market)}. They have ALREADY been "
+        "filtered for recency and materiality by an earlier stage. Your job is to EDIT and "
+        "FORMAT them -- do NOT re-judge whether an item qualifies, and do NOT drop a ticker "
+        "because its note does not restate a date.\n\n"
+        f"(For context only, today is {as_of_date}.)\n\n"
+        "Write ONE bullet per ticker that has a note, formatted exactly: "
+        "**Company Name (Ticker)** - takeaway. Keep each bullet to a single line, and keep it "
+        "tight -- a reader should be able to scan the whole list. "
+        "Use the EXACT company name and ticker given in the notes; never invent names, figures "
+        "or dates. If one ticker has several notes, merge them into that single bullet.\n\n"
+        "EVERY ticker present in the notes below must appear exactly once in your output. "
+        f"If the notes are empty, output EXACTLY ONE SENTENCE: '{NO_NEWS_SENTENCE}'\n\n"
         f"NOTES:\n{combined}"
     )
 
-    text, ok = _run_reasoning(client, prompt, model, budget, "stage3", market)
+    # Stage 3's own ladder: 3.7 -> 3.6 -> 3.7 -> 3.6, both with thinking.
+    # _run_reasoning is Stage 2's shape (good model twice, then a weak
+    # fallback), which is the wrong ladder here -- there is no weak tier to
+    # concede to.
+    model = model or COLLATION_MODEL
+    fallback_model = fallback_model or COLLATION_FALLBACK_MODEL
+    thinking = _collation_thinking_budget(budget if budget is not None else COLLATION_MAX_THINKING)
+
+    def _config_for(m):
+        kwargs = {}
+        if "gemma" not in m:            # Gemma rejects a thinking config
+            kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking)
+        return types.GenerateContentConfig(**kwargs)
+
+    text, used = llm_util.run_model_ladder(
+        client, prompt,
+        llm_util.retry_pair_tiers(model, fallback_model),
+        _config_for, label="stage3", subject=market,
+        on_success=lambda resp: (resp.text or "").strip(),
+    )
+    ok = used is not None
+    if ok:
+        print(f"  [stage3 {market}] collated by {used} (thinking={thinking})")
     if not ok:
         # Honest degradation: forward what we have rather than silently claim a
         # quiet day, and let the caller mark the market degraded.
         return combined, STATUS_DEGRADED
     return (text or NO_NEWS_SENTENCE), "ok"
+
+
+def collation_dropped_tickers(summary, material_tickers):
+    """Material tickers that Stage 3 failed to carry into the final summary.
+
+    A prompt cannot be trusted to be lossless, so the loss is measured rather
+    than assumed -- this is what turns "the digest looks thin" into a number in
+    the output. Matches on the bare ticker, case-insensitively, since Stage 3
+    renders "RELIANCE" rather than "RELIANCE.NS".
+    """
+    haystack = (summary or "").upper()
+    return [t for t in material_tickers if _bare_ticker(t).upper() not in haystack]
 
 
 def build_news_summary(watchlists, api_key):
@@ -357,6 +442,10 @@ def build_news_summary(watchlists, api_key):
     reasoning_model = settings.get("news_reasoning_model", REASONING_MODEL)
     if not reasoning_model.startswith("models/"):
         reasoning_model = f"models/{reasoning_model}"
+
+    collation_model = settings.get("news_collation_model", COLLATION_MODEL)
+    collation_fallback = settings.get("news_collation_fallback_model", COLLATION_FALLBACK_MODEL)
+    collation_budget = settings.get("news_collation_thinking_budget", COLLATION_MAX_THINKING)
 
     raw_budget = settings.get("news_reasoning_budget", 4096)
     thinking_budget = int(raw_budget) if isinstance(raw_budget, str) and raw_budget.isdigit() else raw_budget
@@ -537,10 +626,20 @@ def build_news_summary(watchlists, api_key):
         t0 = time.time()
         collated, collate_status = collate_market_summary(
             client, market, filtered_texts, as_of_date=window_date,
-            model=reasoning_model, budget=thinking_budget,
+            model=collation_model, fallback_model=collation_fallback,
+            budget=collation_budget,
         )
         print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] [{market}] Stage3 done "
               f"({time.time()-t0:.1f}s, {collate_status})")
+
+        # Measure what collation lost. Stage 3 is the one stage whose output
+        # can't be checked against a schema, so a silent drop here is exactly
+        # how "8 with news" ended up rendering a single bullet.
+        material_tickers = [t for t, r in ticker_records.items() if r["status"] == STATUS_MATERIAL]
+        dropped = collation_dropped_tickers(collated, material_tickers)
+        if dropped:
+            print(f"WARNING: [{market}] Stage3 dropped {len(dropped)}/{len(material_tickers)} "
+                  f"material ticker(s) from the digest: {', '.join(sorted(dropped))}")
 
         # Dedup the flat source list the app renders -- Stage 1 results are
         # pooled per market and repeated URLs were common (46 entries for 36
@@ -558,6 +657,7 @@ def build_news_summary(watchlists, api_key):
             "ticker_count": len(tickers),
             "counts": counts,
             "collate_status": collate_status,
+            "collation_dropped": sorted(dropped),
             "tickers": ticker_records,
         }
 
