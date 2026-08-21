@@ -174,6 +174,12 @@ DEFAULT_SETTINGS = {
     "news_search_model": "models/gemma-4-26b-a4b-it",
     "news_reasoning_model": "models/gemini-3.5-flash-lite",
     "news_reasoning_budget": 8192,
+    # Stage 3 (collation) runs its own, stronger ladder -- see news_summary.
+    # These MUST be listed here: load_settings drops any saved key absent from
+    # DEFAULT_SETTINGS, so an override that isn't declared is silently ignored.
+    "news_collation_model": "models/gemini-3.7-flash",
+    "news_collation_fallback_model": "models/gemini-3.6-flash",
+    "news_collation_thinking_budget": 8192,
     
     # -- Expert Pipeline Defaults --
     "expert_reasoning_model": "models/gemini-3.5-flash-lite",
