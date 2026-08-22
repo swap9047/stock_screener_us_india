@@ -1,6 +1,6 @@
 {
-  "as_of": "2026-08-22 16:34 ET",
-  "generated_at": "2026-08-22T20:34:12.619939+00:00",
+  "as_of": "2026-08-22 17:31 ET",
+  "generated_at": "2026-08-22T21:31:27.598968+00:00",
   "code_version": "028d3d3a7cd195dc",
   "per_market": {
     "india_invested": [
@@ -3952,7 +3952,7 @@
       },
       {
         "ticker": "KRYS",
-        "company_name": "Krystal Biotech, Inc. Common Stock",
+        "company_name": "Krystal Biotech, Inc.",
         "last_close": 346.6,
         "pct_change_1d": 2.84,
         "perf_1m": 2.9,
@@ -12058,7 +12058,7 @@
       },
       {
         "ticker": "MDB",
-        "company_name": "MongoDB, Inc. Class A Common Stock",
+        "company_name": "MongoDB, Inc.",
         "last_close": 430.8,
         "pct_change_1d": 2.49,
         "perf_1m": 41.3,
@@ -12986,7 +12986,7 @@
       },
       {
         "ticker": "ACMR",
-        "company_name": "ACM Research, Inc. Class A Common Stock",
+        "company_name": "ACM Research, Inc.",
         "last_close": 79.4,
         "pct_change_1d": 1.13,
         "perf_1m": -11.3,
