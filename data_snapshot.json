@@ -1,6 +1,6 @@
 {
-  "as_of": "2026-08-22 23:12 ET",
-  "generated_at": "2026-08-23T03:12:55.832422+00:00",
+  "as_of": "2026-08-22 23:45 ET",
+  "generated_at": "2026-08-23T03:45:20.220143+00:00",
   "code_version": "028d3d3a7cd195dc",
   "per_market": {
     "india_invested": [
@@ -2455,7 +2455,7 @@
         "qtr_revenue_growth": 6.3,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 98.991646,
+        "trailing_pe": 98.02659,
         "forward_pe": 31.27427,
         "pb_ratio": 17.741919,
         "ev_ebitda": 59.315,
@@ -8819,7 +8819,7 @@
         "qtr_revenue_growth": 114.4,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 60.38293,
+        "trailing_pe": 58.094738,
         "forward_pe": 23.686697,
         "pb_ratio": 4.1371818,
         "ev_ebitda": 18.29,
@@ -12802,7 +12802,7 @@
           "strong": false,
           "last_close": 1763.760009765625,
           "last_ma": 1486.39,
-          "slope": 16.3257,
+          "slope": 16.3256,
           "price_above_ma": true,
           "slope_rising": true,
           "ema_fast": 1741.5,
