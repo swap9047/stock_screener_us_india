@@ -1,19 +1,25 @@
 {
   "entries": {
-    "09aea890:ACMR": {
-      "entered": "2026-08-17"
+    "09aea890:AARTIPHARM.NS": {
+      "entered": "2026-08-24"
     },
-    "09aea890:AMZN": {
-      "entered": "2026-08-17"
-    },
-    "09aea890:ASML": {
-      "entered": "2026-08-17"
+    "09aea890:ANLON.NS": {
+      "entered": "2026-08-24"
     },
     "09aea890:ASX": {
       "entered": "2026-08-10"
     },
+    "09aea890:BECTORFOOD.NS": {
+      "entered": "2026-08-24"
+    },
     "09aea890:BETA.NS": {
       "entered": "2026-08-10"
+    },
+    "09aea890:BHAGYANGR.NS": {
+      "entered": "2026-08-24"
+    },
+    "09aea890:BLISSGVS.NS": {
+      "entered": "2026-08-24"
     },
     "09aea890:BLUEJET.NS": {
       "entered": "2026-08-10"
@@ -36,8 +42,17 @@
     "09aea890:CYRX": {
       "entered": "2026-08-10"
     },
+    "09aea890:EBGNG.NS": {
+      "entered": "2026-08-24"
+    },
+    "09aea890:ENTERO.NS": {
+      "entered": "2026-08-24"
+    },
     "09aea890:EPACKPEB.NS": {
       "entered": "2026-08-10"
+    },
+    "09aea890:FREDUN.BO": {
+      "entered": "2026-08-24"
     },
     "09aea890:GRAVITA.NS": {
       "entered": "2026-08-17"
@@ -54,9 +69,6 @@
     "09aea890:KMEW.BO": {
       "entered": "2026-08-17"
     },
-    "09aea890:KRYS": {
-      "entered": "2026-08-10"
-    },
     "09aea890:KXIAY": {
       "entered": "2026-08-17"
     },
@@ -69,11 +81,20 @@
     "09aea890:LITE": {
       "entered": "2026-08-17"
     },
+    "09aea890:LUMAXIND.NS": {
+      "entered": "2026-08-24"
+    },
+    "09aea890:MACPOWER.NS": {
+      "entered": "2026-08-24"
+    },
     "09aea890:MANORAMA.NS": {
       "entered": "2026-08-17"
     },
     "09aea890:MDB": {
       "entered": "2026-08-17"
+    },
+    "09aea890:MENONBE.NS": {
+      "entered": "2026-08-24"
     },
     "09aea890:MSFT": {
       "entered": "2026-08-17"
@@ -105,14 +126,14 @@
     "09aea890:RGEN": {
       "entered": "2026-08-10"
     },
-    "09aea890:RKFORGE.NS": {
-      "entered": "2026-08-17"
-    },
     "09aea890:ROSSTECH.NS": {
       "entered": "2026-08-10"
     },
     "09aea890:SAILIFE.NS": {
       "entered": "2026-08-17"
+    },
+    "09aea890:SAKAR.NS": {
+      "entered": "2026-08-24"
     },
     "09aea890:SANSERA.NS": {
       "entered": "2026-08-17"
@@ -122,6 +143,9 @@
     },
     "09aea890:SBCL.NS": {
       "entered": "2026-08-10"
+    },
+    "09aea890:SBUX": {
+      "entered": "2026-08-24"
     },
     "09aea890:SFL.NS": {
       "entered": "2026-08-10"
@@ -135,8 +159,14 @@
     "09aea890:SJS.NS": {
       "entered": "2026-08-10"
     },
+    "09aea890:SNDK": {
+      "entered": "2026-08-24"
+    },
     "09aea890:SNOW": {
       "entered": "2026-08-17"
+    },
+    "09aea890:SOLARA.NS": {
+      "entered": "2026-08-24"
     },
     "09aea890:STEELCAS.NS": {
       "entered": "2026-08-17"
@@ -149,9 +179,6 @@
     },
     "09aea890:TDPOWERSYS.NS": {
       "entered": "2026-08-10"
-    },
-    "09aea890:TSM": {
-      "entered": "2026-08-17"
     },
     "09aea890:TWST": {
       "entered": "2026-08-10"
@@ -174,20 +201,29 @@
     "09aea890:WINDLAS.NS": {
       "entered": "2026-08-17"
     },
-    "1b91dbc4:CRWD": {
-      "entered": "2026-08-17"
+    "1b91dbc4:BLISSGVS.NS": {
+      "entered": "2026-08-24"
+    },
+    "1b91dbc4:CYRX": {
+      "entered": "2026-08-24"
     },
     "1b91dbc4:ENTERO.NS": {
       "entered": "2026-08-17"
     },
-    "1b91dbc4:KMEW.BO": {
-      "entered": "2026-08-17"
+    "1b91dbc4:GRAVITA.NS": {
+      "entered": "2026-08-24"
+    },
+    "1b91dbc4:INDGN.NS": {
+      "entered": "2026-08-24"
+    },
+    "1b91dbc4:INNOVACAP.NS": {
+      "entered": "2026-08-24"
+    },
+    "1b91dbc4:JNJ": {
+      "entered": "2026-08-24"
     },
     "1b91dbc4:LAURUSLABS.NS": {
       "entered": "2026-08-10"
-    },
-    "1b91dbc4:MDB": {
-      "entered": "2026-08-17"
     },
     "1b91dbc4:NRBBEARING.NS": {
       "entered": "2026-08-10"
@@ -195,11 +231,8 @@
     "1b91dbc4:NTRA": {
       "entered": "2026-08-10"
     },
-    "1b91dbc4:NVDA": {
-      "entered": "2026-08-17"
-    },
-    "1b91dbc4:RBRK": {
-      "entered": "2026-08-17"
+    "1b91dbc4:RGEN": {
+      "entered": "2026-08-24"
     },
     "1b91dbc4:RKFORGE.NS": {
       "entered": "2026-08-17"
@@ -210,8 +243,14 @@
     "1b91dbc4:SANSERA.NS": {
       "entered": "2026-08-10"
     },
+    "1b91dbc4:SBUX": {
+      "entered": "2026-08-24"
+    },
     "1b91dbc4:SHILPAMED.NS": {
       "entered": "2026-08-10"
+    },
+    "1b91dbc4:SHREEREF.BO": {
+      "entered": "2026-08-24"
     },
     "1b91dbc4:SJS.NS": {
       "entered": "2026-08-17"
@@ -222,191 +261,26 @@
     "1b91dbc4:STEELCAS.NS": {
       "entered": "2026-08-10"
     },
-    "1b91dbc4:TANFACIND.BO": {
-      "entered": "2026-08-17"
-    },
     "1b91dbc4:TDPOWERSYS.NS": {
       "entered": "2026-08-17"
+    },
+    "1b91dbc4:TWST": {
+      "entered": "2026-08-24"
+    },
+    "1b91dbc4:UFBL.NS": {
+      "entered": "2026-08-24"
     },
     "1b91dbc4:UNIMECH.NS": {
       "entered": "2026-08-10"
     },
-    "591b1f1f:ASX": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:BETA.NS": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:BHAGYANGR.NS": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:BLUEJET.NS": {
-      "entered": "2026-08-10"
-    },
-    "591b1f1f:CARBORUNIV.NS": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:CARYSIL.NS": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:CONCORDBIO.NS": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:CRWD": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:CYIENTDLM.NS": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:CYRX": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:EBGNG.NS": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:ENTERO.NS": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:GRAVITA.NS": {
-      "entered": "2026-08-10"
-    },
-    "591b1f1f:INDGN.NS": {
-      "entered": "2026-08-10"
-    },
-    "591b1f1f:INNOVACAP.NS": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:JNJ": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:KMEW.BO": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:KRISHNADEF.NS": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:KRYS": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:LANDMARK.NS": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:LAURUSLABS.NS": {
-      "entered": "2026-08-10"
-    },
-    "591b1f1f:LITE": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:MAMATA.NS": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:MANORAMA.NS": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:MDB": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:NEOGEN.NS": {
-      "entered": "2026-08-10"
-    },
-    "591b1f1f:NRBBEARING.NS": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:NTRA": {
-      "entered": "2026-08-10"
-    },
-    "591b1f1f:PRIVISCL.NS": {
-      "entered": "2026-08-10"
-    },
-    "591b1f1f:QURE": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:RATEGAIN.NS": {
-      "entered": "2026-08-10"
-    },
-    "591b1f1f:RBRK": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:RGEN": {
-      "entered": "2026-08-10"
-    },
-    "591b1f1f:RKFORGE.NS": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:ROSSTECH.NS": {
-      "entered": "2026-08-10"
-    },
-    "591b1f1f:SAILIFE.NS": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:SAKAR.NS": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:SANSERA.NS": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:SAREGAMA.NS": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:SBCL.NS": {
-      "entered": "2026-08-10"
-    },
-    "591b1f1f:SE": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:SFL.NS": {
-      "entered": "2026-08-10"
-    },
-    "591b1f1f:SHILPAMED.NS": {
-      "entered": "2026-08-10"
-    },
-    "591b1f1f:SHREEREF.BO": {
-      "entered": "2026-08-10"
-    },
-    "591b1f1f:SJS.NS": {
-      "entered": "2026-08-10"
-    },
-    "591b1f1f:SNOW": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:STEELCAS.NS": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:TANFACIND.BO": {
-      "entered": "2026-08-10"
-    },
-    "591b1f1f:TATVA.NS": {
-      "entered": "2026-08-10"
-    },
-    "591b1f1f:TDPOWERSYS.NS": {
-      "entered": "2026-08-10"
-    },
-    "591b1f1f:TWST": {
-      "entered": "2026-08-10"
-    },
-    "591b1f1f:UFBL.NS": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:UNIMECH.NS": {
-      "entered": "2026-08-10"
-    },
-    "591b1f1f:VENUSPIPES.NS": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:VISHNU.NS": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:VIYASH.NS": {
-      "entered": "2026-08-17"
-    },
-    "591b1f1f:WINDLAS.NS": {
-      "entered": "2026-08-17"
-    },
     "77f7a948:AKAM": {
       "entered": "2026-08-10"
     },
-    "77f7a948:BABA": {
-      "entered": "2026-08-17"
+    "77f7a948:ARM": {
+      "entered": "2026-08-24"
+    },
+    "77f7a948:COHANCE.NS": {
+      "entered": "2026-08-24"
     },
     "77f7a948:DSSL.NS": {
       "entered": "2026-08-17"
@@ -414,65 +288,59 @@
     "77f7a948:GRID": {
       "entered": "2026-08-10"
     },
-    "77f7a948:HIMS": {
-      "entered": "2026-08-10"
+    "77f7a948:ILF": {
+      "entered": "2026-08-24"
     },
-    "77f7a948:IAU": {
-      "entered": "2026-08-17"
-    },
-    "77f7a948:INTERARCH.NS": {
-      "entered": "2026-08-10"
-    },
-    "77f7a948:META": {
-      "entered": "2026-08-17"
+    "77f7a948:INTELLECT.NS": {
+      "entered": "2026-08-24"
     },
     "77f7a948:NKE": {
       "entered": "2026-08-10"
     },
-    "77f7a948:PWR": {
-      "entered": "2026-08-17"
+    "77f7a948:ORCL": {
+      "entered": "2026-08-24"
+    },
+    "77f7a948:RKLB": {
+      "entered": "2026-08-24"
     },
     "77f7a948:ROBO": {
       "entered": "2026-08-17"
     },
-    "77f7a948:VSH": {
-      "entered": "2026-08-17"
+    "77f7a948:TCEHY": {
+      "entered": "2026-08-24"
     },
-    "77f7a948:ZS": {
-      "entered": "2026-08-17"
+    "77f7a948:WOLF": {
+      "entered": "2026-08-24"
     },
-    "ae60c0b9:BHAGYANGR.NS": {
-      "entered": "2026-08-17"
-    },
-    "ae60c0b9:BLUEJET.NS": {
-      "entered": "2026-08-17"
+    "ae60c0b9:ASX": {
+      "entered": "2026-08-24"
     },
     "ae60c0b9:CARYSIL.NS": {
       "entered": "2026-08-17"
     },
-    "ae60c0b9:CYRX": {
-      "entered": "2026-08-10"
-    },
-    "ae60c0b9:GRAVITA.NS": {
-      "entered": "2026-08-10"
-    },
-    "ae60c0b9:JNJ": {
-      "entered": "2026-08-10"
-    },
-    "ae60c0b9:KRISHNADEF.NS": {
-      "entered": "2026-08-10"
+    "ae60c0b9:CRWD": {
+      "entered": "2026-08-24"
     },
     "ae60c0b9:KRYS": {
       "entered": "2026-08-10"
     },
+    "ae60c0b9:LANDMARK.NS": {
+      "entered": "2026-08-24"
+    },
+    "ae60c0b9:LITE": {
+      "entered": "2026-08-24"
+    },
+    "ae60c0b9:MAMATA.NS": {
+      "entered": "2026-08-24"
+    },
     "ae60c0b9:PRIVISCL.NS": {
       "entered": "2026-08-10"
     },
-    "ae60c0b9:SFL.NS": {
-      "entered": "2026-08-10"
+    "ae60c0b9:SAREGAMA.NS": {
+      "entered": "2026-08-24"
     },
-    "ae60c0b9:SHREEREF.BO": {
-      "entered": "2026-08-10"
+    "ae60c0b9:SBUX": {
+      "entered": "2026-08-24"
     },
     "ae60c0b9:VENUSPIPES.NS": {
       "entered": "2026-08-10"
@@ -480,14 +348,17 @@
     "ae60c0b9:VISHNU.NS": {
       "entered": "2026-08-10"
     },
-    "ae60c0b9:VIYASH.NS": {
-      "entered": "2026-08-17"
-    },
     "b2b65277:CYIENTDLM.NS": {
       "entered": "2026-08-10"
     },
+    "b2b65277:CYRX": {
+      "entered": "2026-08-24"
+    },
     "b2b65277:ENTERO.NS": {
       "entered": "2026-08-17"
+    },
+    "b2b65277:GRAVITA.NS": {
+      "entered": "2026-08-24"
     },
     "b2b65277:INDGN.NS": {
       "entered": "2026-08-10"
@@ -504,44 +375,38 @@
     "b2b65277:RKFORGE.NS": {
       "entered": "2026-08-17"
     },
-    "b2b65277:SAREGAMA.NS": {
-      "entered": "2026-08-10"
-    },
     "b2b65277:SNOW": {
       "entered": "2026-08-17"
     },
-    "b2b65277:TATVA.NS": {
-      "entered": "2026-08-10"
+    "b2b65277:UFBL.NS": {
+      "entered": "2026-08-24"
     },
-    "b2b65277:TWST": {
-      "entered": "2026-08-10"
+    "b2b65277:WINDLAS.NS": {
+      "entered": "2026-08-24"
     },
     "dccb5c72:CONCORDBIO.NS": {
       "entered": "2026-08-17"
     },
-    "dccb5c72:RGEN": {
-      "entered": "2026-08-10"
-    },
     "ed319eac:AARTIPHARM.NS": {
       "entered": "2026-08-17"
     },
-    "ed319eac:ACMR": {
-      "entered": "2026-08-17"
-    },
-    "ed319eac:AMZN": {
-      "entered": "2026-08-17"
-    },
-    "ed319eac:ASML": {
-      "entered": "2026-08-17"
+    "ed319eac:ANLON.NS": {
+      "entered": "2026-08-24"
     },
     "ed319eac:ASX": {
       "entered": "2026-08-17"
+    },
+    "ed319eac:BECTORFOOD.NS": {
+      "entered": "2026-08-24"
     },
     "ed319eac:BETA.NS": {
       "entered": "2026-08-17"
     },
     "ed319eac:BHAGYANGR.NS": {
       "entered": "2026-08-17"
+    },
+    "ed319eac:BLISSGVS.NS": {
+      "entered": "2026-08-24"
     },
     "ed319eac:BLUEJET.NS": {
       "entered": "2026-08-17"
@@ -573,6 +438,9 @@
     "ed319eac:EPACKPEB.NS": {
       "entered": "2026-08-17"
     },
+    "ed319eac:FREDUN.BO": {
+      "entered": "2026-08-24"
+    },
     "ed319eac:GRAVITA.NS": {
       "entered": "2026-08-17"
     },
@@ -586,9 +454,6 @@
       "entered": "2026-08-17"
     },
     "ed319eac:KMEW.BO": {
-      "entered": "2026-08-17"
-    },
-    "ed319eac:KRISHNADEF.NS": {
       "entered": "2026-08-17"
     },
     "ed319eac:KRYS": {
@@ -609,6 +474,9 @@
     "ed319eac:LUMAXIND.NS": {
       "entered": "2026-08-17"
     },
+    "ed319eac:MACPOWER.NS": {
+      "entered": "2026-08-24"
+    },
     "ed319eac:MAMATA.NS": {
       "entered": "2026-08-17"
     },
@@ -617,6 +485,9 @@
     },
     "ed319eac:MDB": {
       "entered": "2026-08-17"
+    },
+    "ed319eac:MENONBE.NS": {
+      "entered": "2026-08-24"
     },
     "ed319eac:MSFT": {
       "entered": "2026-08-17"
@@ -648,9 +519,6 @@
     "ed319eac:RGEN": {
       "entered": "2026-08-17"
     },
-    "ed319eac:RKFORGE.NS": {
-      "entered": "2026-08-17"
-    },
     "ed319eac:ROSSTECH.NS": {
       "entered": "2026-08-17"
     },
@@ -669,8 +537,8 @@
     "ed319eac:SBCL.NS": {
       "entered": "2026-08-17"
     },
-    "ed319eac:SE": {
-      "entered": "2026-08-17"
+    "ed319eac:SBUX": {
+      "entered": "2026-08-24"
     },
     "ed319eac:SFL.NS": {
       "entered": "2026-08-17"
@@ -684,8 +552,14 @@
     "ed319eac:SJS.NS": {
       "entered": "2026-08-17"
     },
+    "ed319eac:SNDK": {
+      "entered": "2026-08-24"
+    },
     "ed319eac:SNOW": {
       "entered": "2026-08-17"
+    },
+    "ed319eac:SOLARA.NS": {
+      "entered": "2026-08-24"
     },
     "ed319eac:STEELCAS.NS": {
       "entered": "2026-08-17"
@@ -697,9 +571,6 @@
       "entered": "2026-08-17"
     },
     "ed319eac:TDPOWERSYS.NS": {
-      "entered": "2026-08-17"
-    },
-    "ed319eac:TSM": {
       "entered": "2026-08-17"
     },
     "ed319eac:TWST": {
@@ -723,6 +594,12 @@
     "ed319eac:WINDLAS.NS": {
       "entered": "2026-08-17"
     },
+    "fb030685:AKAM": {
+      "entered": "2026-08-24"
+    },
+    "fb030685:AMKR": {
+      "entered": "2026-08-24"
+    },
     "fb030685:BABA": {
       "entered": "2026-08-17"
     },
@@ -732,8 +609,8 @@
     "fb030685:COHANCE.NS": {
       "entered": "2026-08-10"
     },
-    "fb030685:HIMS": {
-      "entered": "2026-08-17"
+    "fb030685:DSSL.NS": {
+      "entered": "2026-08-24"
     },
     "fb030685:INTELLECT.NS": {
       "entered": "2026-08-10"
@@ -743,6 +620,9 @@
     },
     "fb030685:JMFINANCIL.NS": {
       "entered": "2026-08-10"
+    },
+    "fb030685:KRISHNADEF.NS": {
+      "entered": "2026-08-24"
     },
     "fb030685:META": {
       "entered": "2026-08-10"
@@ -756,11 +636,14 @@
     "fb030685:ORCL": {
       "entered": "2026-08-10"
     },
-    "fb030685:SOLARA.NS": {
-      "entered": "2026-08-10"
+    "fb030685:RKLB": {
+      "entered": "2026-08-24"
     },
     "fb030685:TCEHY": {
       "entered": "2026-08-17"
+    },
+    "fb030685:VSH": {
+      "entered": "2026-08-24"
     },
     "fb030685:WOLF": {
       "entered": "2026-08-17"
@@ -768,19 +651,16 @@
     "sc-bohorizon:AARTIPHARM.NS": {
       "entered": "2026-08-17"
     },
+    "sc-bohorizon:CYIENTDLM.NS": {
+      "entered": "2026-08-24"
+    },
     "sc-bohorizon:ENTERO.NS": {
       "entered": "2026-08-17"
     },
     "sc-bohorizon:INNOVACAP.NS": {
       "entered": "2026-08-17"
     },
-    "sc-bohorizon:NEOGEN.NS": {
-      "entered": "2026-08-17"
-    },
     "sc-bohorizon:SNOW": {
-      "entered": "2026-08-17"
-    },
-    "sc-bohorizon:TWST": {
       "entered": "2026-08-17"
     },
     "sc-bohorizon:WINDLAS.NS": {
@@ -789,14 +669,26 @@
     "sc-consolid:AARTIPHARM.NS": {
       "entered": "2026-08-10"
     },
+    "sc-consolid:ACMR": {
+      "entered": "2026-08-24"
+    },
     "sc-consolid:AMKR": {
       "entered": "2026-08-17"
+    },
+    "sc-consolid:AMZN": {
+      "entered": "2026-08-24"
+    },
+    "sc-consolid:ASML": {
+      "entered": "2026-08-24"
     },
     "sc-consolid:AVGO": {
       "entered": "2026-08-17"
     },
     "sc-consolid:CARYSIL.NS": {
       "entered": "2026-08-17"
+    },
+    "sc-consolid:DSSL.NS": {
+      "entered": "2026-08-24"
     },
     "sc-consolid:GRAVITA.NS": {
       "entered": "2026-08-10"
@@ -807,6 +699,9 @@
     "sc-consolid:IAU": {
       "entered": "2026-08-10"
     },
+    "sc-consolid:ILF": {
+      "entered": "2026-08-24"
+    },
     "sc-consolid:JMFINANCIL.NS": {
       "entered": "2026-08-10"
     },
@@ -816,14 +711,8 @@
     "sc-consolid:KRISHNADEF.NS": {
       "entered": "2026-08-10"
     },
-    "sc-consolid:KRYS": {
-      "entered": "2026-08-10"
-    },
     "sc-consolid:LUMAXIND.NS": {
       "entered": "2026-08-10"
-    },
-    "sc-consolid:MANORAMA.NS": {
-      "entered": "2026-08-17"
     },
     "sc-consolid:META": {
       "entered": "2026-08-10"
@@ -836,6 +725,12 @@
     },
     "sc-consolid:NVDA": {
       "entered": "2026-08-17"
+    },
+    "sc-consolid:PRIVISCL.NS": {
+      "entered": "2026-08-24"
+    },
+    "sc-consolid:PWR": {
+      "entered": "2026-08-24"
     },
     "sc-consolid:RKLB": {
       "entered": "2026-08-10"
@@ -852,39 +747,27 @@
     "sc-consolid:VISHNU.NS": {
       "entered": "2026-08-10"
     },
-    "sc-consolid:VIYASH.NS": {
-      "entered": "2026-08-17"
-    },
-    "sc-consolid:WINDLAS.NS": {
-      "entered": "2026-08-10"
-    },
     "sc-volrocket:AARTIPHARM.NS": {
       "entered": "2026-08-17"
     },
     "sc-volrocket:ENTERO.NS": {
       "entered": "2026-08-17"
     },
-    "sc-volrocket:INDGN.NS": {
-      "entered": "2026-08-17"
-    },
-    "sc-volrocket:LUMAXIND.NS": {
-      "entered": "2026-08-17"
-    },
     "sc-volrocket:MANORAMA.NS": {
       "entered": "2026-08-17"
+    },
+    "sc-volrocket:NEOGEN.NS": {
+      "entered": "2026-08-24"
     },
     "sc-volrocket:SBCL.NS": {
       "entered": "2026-08-17"
     },
-    "sc-volrocket:SHILPAMED.NS": {
-      "entered": "2026-08-17"
-    },
-    "sc-volrocket:UNIMECH.NS": {
-      "entered": "2026-08-17"
+    "sc-volrocket:SOLARA.NS": {
+      "entered": "2026-08-24"
     },
     "sc-volrocket:WINDLAS.NS": {
       "entered": "2026-08-17"
     }
   },
-  "last_run": "2026-08-17"
+  "last_run": "2026-08-24"
 }
