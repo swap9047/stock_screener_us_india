@@ -2014,5 +2014,22 @@
     "quarter_verified": true,
     "real_earnings_date": null,
     "guard_flag": "NO_DATA"
+  },
+  "GEV": {
+    "earnings_summary": "Q2 2026 Revenue: $11.1B, EPS: $2.47",
+    "future_guidance": "2026 Guidance: Revenue $45.5B\u2013$46.5B, Free Cash Flow $11.5B\u2013$12.5B",
+    "analyst_coverage": "Fitch upgraded Long-Term Issuer Default Rating and senior unsecured debt to 'A-' from 'BBB+' on August 12, 2026.",
+    "earnings_report_date": null,
+    "eps_value": "$2.47",
+    "guidance_change": null,
+    "analyst_action": "upgrade",
+    "sentiment": "Positive",
+    "reasoning": "GE Vernova reported solid Q2 2026 earnings with an EPS of $2.47 and revenue of $11.1B, alongside robust 2026 guidance for revenue and free cash flow. Furthermore, Fitch upgraded the company's credit rating, supporting an overall positive fundamental sentiment.",
+    "as_of": "2026-08-25 18:55",
+    "news_used": "**Q2 2026 Earnings (Most Recent)**\n* **Revenue:** $11.1B\n* **EPS:** $2.47\n\n**2026 Guidance**\n* **Revenue:** $45.5B\u2013$46.5B\n* **Free Cash Flow:** $11.5B\u2013$12.5B\n\n**Analyst Actions (July 31 \u2013 Aug 25, 2026)**\n* **Fitch:** Upgraded Long-Term Issuer Default Rating and senior unsecured debt to 'A-' from 'BBB+' (Aug 12).",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite",
+    "quarter_verified": true,
+    "real_earnings_date": null
   }
 }
