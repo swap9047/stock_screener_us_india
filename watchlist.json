@@ -32,7 +32,6 @@
     "LUMAXIND.NS"
   ],
   "us_invested": [
-    "GRID",
     "HIMS",
     "IAU",
     "JNJ",
@@ -49,8 +48,8 @@
     "RGEN",
     "AMKR",
     "AVGO",
-    "PWR",
-    "RBRK"
+    "GEV",
+    "ARM"
   ],
   "india_watchlist": [
     "VISHNU.NS",
