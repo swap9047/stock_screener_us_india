@@ -454,5 +454,9 @@
   "BLISSGVS.NS": {
     "index": "Nifty 500",
     "benchmark": "^CRSLDX"
+  },
+  "GEV": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
   }
 }
