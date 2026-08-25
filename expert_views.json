@@ -32,17 +32,6 @@
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
   },
-  "GRID": {
-    "verdict": "CAUTION",
-    "headline": "GRID triggers caution due to active downtrend, negative volume distribution, and downward VStop.",
-    "technical_summary": "The fund remains in a downtrend with a negative Mansfield Relative Strength and a downward VStop held for 6 weeks. Additionally, 10-day net volume reflects a negative distribution ratio of -15.8%, signalling ongoing institutional supply.",
-    "catalyst_summary": "No material news found; verdict based on technicals only.",
-    "actionable_take": "Avoid new long entries until the trend structure improves and VStop turns upward. Consider setting tight trailing stops or scaling back exposure to protect capital against relative underperformance.",
-    "as_of": "2026-08-25 04:28",
-    "news_used": "No material news or scheduled events were found for First Trust NASDAQ Clean Edge Smart Grid Infrastructure Index Fund (GRID) for the requested periods.",
-    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
-    "model_used": "gemini-3.5-flash-lite"
-  },
   "HIMS": {
     "verdict": "CAUTION",
     "headline": "HIMS triggers caution due to a downtrend, heavy net distribution, and mounting regulatory and legal headwinds.",
