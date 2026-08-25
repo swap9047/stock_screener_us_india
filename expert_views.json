@@ -1230,5 +1230,16 @@
     "news_used": "No recent news found.",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
+  },
+  "GEV": {
+    "verdict": "CAUTION",
+    "headline": "GEV trades under a technical downtrend and distribution pressure despite positive product catalysts.",
+    "technical_summary": "GEV is in a defined downtrend with a downward-pointing weekly volatility stop and negative 10-day net volume (-29.5%), signaling ongoing institutional distribution. Weak relative strength and a daily RSI of 37.5 highlight persistent near-term selling pressure.",
+    "catalyst_summary": "Recent news features a new medium-voltage UPS launch for AI factories and strong sector growth positioning, balanced by mixed institutional activity and no direct negative earnings catalysts.",
+    "actionable_take": "Exercise caution and avoid fresh accumulation until the trend status improves and VStop flips back to an uptrend. Monitor the 40 WEMA around 896.5 closely as a key structural support level for any stabilization.",
+    "as_of": "2026-08-25 18:52",
+    "news_used": "**NEWS (2026-08-24 to 2026-08-25)**\n* **2026-08-24:** GE Vernova introduced a new medium-voltage Uninterruptible Power Supply (UPS) designed to support AI factories and energy-intensive industries (Product Launch).\n* **2026-08-24:** Tribune Investment Group LP lowered its position in GEV (Institutional Activity).\n* **2026-08-24:** Mar Vista Investment Partners LLC purchased GEV shares (Institutional Activity).\n* **2026-08-24:** GEV identified as a top growth stock within the S&P Industrials sector (XLI) (Market Analysis).\n\n**EVENTS (Next 3-4 days)**\n* **2026-08-28:** CIGRE Paris 2026 (Electricity transmission and power-system expert gathering) concludes.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
   }
 }
