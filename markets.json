@@ -22,5 +22,9 @@
   "wrap_earnings_watchlist": {
     "label": "wrap earnings watchlist",
     "benchmark": "^CRSLDX"
+  },
+  "tracking": {
+    "label": "Tracking",
+    "benchmark": "^SPX"
   }
 }
