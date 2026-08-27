@@ -1230,5 +1230,27 @@
     "news_used": "**NEWS**\n- 2026-08-25: Wellington Shields Capital Management LLC increased GEV holdings by 35%.\n- 2026-08-25: E Fund Management Co. Ltd. purchased GEV shares.\n- 2026-08-25: Geneva Partners LLC increased GEV stake by 13.9%.\n- 2026-08-26: Announced launch of new 170 kV SF\u2086-free gas-insulated switchgear (GIS).\n\n**EVENTS**\n- None.",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
+  },
+  "CLPT": {
+    "verdict": "ACCUMULATE",
+    "headline": "CLPT maintains a solid Stage 2 uptrend backed by positive volume accumulation and rising moving averages.",
+    "technical_summary": "CLPT is in a confirmed uptrend with price comfortably above the rising 40-week and 200-day EMAs. The weekly volatility stop has trended upward for 12 weeks, and the 10-day net volume shows positive accumulation with a 21.2% ratio while RSI remains in a healthy bullish zone near 57.",
+    "catalyst_summary": "Recent minor price fluctuations reflect normal market volatility following an 8.3% gain, with no material negative news catalysts reported.",
+    "actionable_take": "Accumulate on pullbacks toward the 10 WEMA (~15.30) or daily 50 DEMA (~15.90). Set a strict trailing stop below the VStop-W level at $14.40 to manage downside risk effectively.",
+    "as_of": "2026-08-27 02:41",
+    "news_used": "**NEWS (2026-08-25 to 2026-08-26)**\n* 2026-08-25: MarketBeat published an article regarding CLPT trading up 8.3%.\n* 2026-08-26: Shares declined 3.7% to $16.37 (reported by GuruFocus).\n\n**SCHEDULED EVENTS**\n* None.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "ACOG": {
+    "verdict": "ACCUMULATE",
+    "headline": "ACOG exhibits robust technical momentum and strong volume accumulation supporting further upside.",
+    "technical_summary": "ACOG is in a confirmed Strong Uptrend with price well above rising EMAs and a 19-week VStop uptrend. Mansfield Relative Strength is strongly positive across all timeframes, backed by exploding 10-day volume and positive net accumulation.",
+    "catalyst_summary": "No material news found; verdict based on technicals only.",
+    "actionable_take": "Consider accumulating on minor pullbacks toward the 10 DEMA or short-term moving averages, while utilizing the VStop level near 7.3 as a disciplined trailing stop. Maintain strict risk management given the lack of fundamental news catalysts.",
+    "as_of": "2026-08-27 02:42",
+    "news_used": "No recent news found.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
   }
 }
