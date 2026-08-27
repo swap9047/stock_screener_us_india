@@ -798,5 +798,41 @@
     },
     "weekly_wrapup": false,
     "color": "green"
+  },
+  {
+    "id": "88c98447",
+    "name": "stocks below or greater than 5%",
+    "scope": "ALL",
+    "conditions": [
+      {
+        "metric_a": "pct_change_1d",
+        "operator": ">",
+        "compare_type": "value",
+        "value": 5.0,
+        "logic": "AND"
+      },
+      {
+        "metric_a": "pct_change_1d",
+        "operator": "<",
+        "compare_type": "value",
+        "value": -5.0,
+        "logic": "OR"
+      }
+    ],
+    "enabled": true,
+    "schedule": {
+      "type": "scheduled",
+      "days": [
+        "MON",
+        "TUE",
+        "WED",
+        "THU",
+        "FRI",
+        "SAT"
+      ],
+      "time_et": "21:00"
+    },
+    "color": null,
+    "weekly_wrapup": false
   }
 ]
