@@ -2014,5 +2014,39 @@
     "quarter_verified": true,
     "real_earnings_date": null,
     "guard_flag": null
+  },
+  "CLPT": {
+    "earnings_summary": "Q2 2026 Revenue: $10.9 million, EPS: -$0.38",
+    "future_guidance": "FY 2026 Revenue: $48 million \u2013 $52 million (revised downward)",
+    "analyst_coverage": "Wall Street Zen downgraded from 'Sell' to 'Strong Sell'; Lake Street Capital set a $25.00 price target; Stifel Nicolaus set a $22.00 price objective",
+    "earnings_report_date": "2026-08-03",
+    "eps_value": "-$0.38",
+    "guidance_change": "lowered",
+    "analyst_action": "downgrade",
+    "sentiment": "Negative",
+    "reasoning": "The fundamental sentiment is Negative because the company reported a net loss per share (-$0.38), revised its full-year 2026 revenue guidance downward, and received a ratings downgrade from Wall Street Zen.",
+    "as_of": "2026-08-27 02:43",
+    "news_used": "**Q2 2026 Earnings (Reported Aug 3, 2026):**\n* **Revenue:** $10.9 million\n* **EPS:** -$0.38\n\n**Forward Guidance:**\n* **FY 2026 Revenue:** $48 million \u2013 $52 million (revised downward)\n\n**Recent Analyst Coverage (Aug 2 \u2013 Aug 27, 2026):**\n* **Wall Street Zen:** Downgraded from \"Sell\" to \"Strong Sell\" (Aug 8)\n* **Lake Street Capital:** $25.00 price target (Aug 4)\n* **Stifel Nicolaus:** $22.00 price objective (Aug 4)",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite",
+    "quarter_verified": true,
+    "real_earnings_date": null
+  },
+  "ACOG": {
+    "earnings_summary": "Q2 2026 EPS: -$0.40, Revenue: $6.1 million",
+    "future_guidance": "FY2026 Operating Expenses lowered to $50M\u2013$54M from $54M\u2013$58M",
+    "analyst_coverage": "B. Riley initiated coverage with a Buy rating and $21.00 PT; H.C. Wainwright maintained Buy and raised PT to $20.00",
+    "earnings_report_date": "2026-08-13",
+    "eps_value": "-$0.40",
+    "guidance_change": "lowered",
+    "analyst_action": null,
+    "sentiment": "Positive",
+    "reasoning": "The sentiment is Positive driven by strong analyst backing, including a new Buy rating with a $21.00 price target from B. Riley and a price target hike to $20.00 by H.C. Wainwright, coupled with a reduction in projected operating expenses which is favorable for cash burn management.",
+    "as_of": "2026-08-27 02:44",
+    "news_used": "**Q2 2026 Earnings (Aug 13, 2026):**\n*   **EPS:** -$0.40\n*   **Revenue:** $6.1 million\n*   **Guidance:** FY2026 Operating Expenses $50M\u2013$54M (lowered from $54M\u2013$58M)\n\n**Analyst Coverage:**\n*   **B. Riley Securities:** New coverage, Buy rating, $21.00 PT (Aug 19)\n*   **H.C. Wainwright:** Maintain Buy, PT raised to $20.00 (Aug 17)",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite",
+    "quarter_verified": true,
+    "real_earnings_date": null
   }
 }
