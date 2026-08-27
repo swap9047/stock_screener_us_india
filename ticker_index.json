@@ -458,5 +458,13 @@
   "GEV": {
     "index": "S&P 500",
     "benchmark": "SPY"
+  },
+  "CLPT": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "ACOG": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
   }
 }
