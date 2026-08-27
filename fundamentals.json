@@ -1278,22 +1278,21 @@
     "guard_flag": null
   },
   "STLTECH.NS": {
-    "earnings_summary": "Q1 FY27 Revenue \u20b91,910 Cr (up 87% YoY), EBITDA \u20b9397 Cr (up 184% YoY), PAT \u20b9197 Cr, EBITDA Margin 20.8%",
-    "future_guidance": "FY27 EBITDA Margin raised to 23% (from 20%); Data Center/Enterprise Revenue expected to reach 50% of total revenue",
-    "analyst_coverage": "CLSA upgraded to Outperform with PT \u20b9950; StockInvest.us downgraded to Hold/Accumulate",
+    "earnings_summary": "Q1 FY27 Revenue: \u20b91,910 Cr, EPS: \u20b94.03",
+    "future_guidance": "FY27 EBITDA margin guidance raised to 23% from 20%; Data center/enterprise revenue target set to ~50% of FY27 total revenue.",
+    "analyst_coverage": "Significantly increased 2027 forecasts; Revenue target \u20b981b, EPS target \u20b916.50, Price target raised 57% to \u20b9860; Consensus 'BUY'.",
     "earnings_report_date": "2026-07-24",
-    "eps_value": null,
+    "eps_value": "\u20b94.03 actual",
     "guidance_change": "raised",
     "analyst_action": "upgrade",
     "sentiment": "Positive",
-    "reasoning": "The company delivered robust Q1 FY27 financial performance with massive YoY growth in revenue (up 87%) and EBITDA (up 184%). Furthermore, management raised its forward EBITDA margin guidance for FY27, and CLSA issued an upgrade to Outperform, strongly supporting a positive fundamental sentiment.",
-    "as_of": "2026-08-26 08:23",
-    "news_used": "**Q1 FY27 Earnings (Released July 24, 2026)**\n* **Revenue:** \u20b91,910 Cr (up 87% YoY)\n* **EBITDA:** \u20b9397 Cr (up 184% YoY)\n* **PAT:** \u20b9197 Cr \n* **EBITDA Margin:** 20.8%\n\n**Forward Guidance**\n* **FY27 EBITDA Margin:** Raised to 23% (from 20%)\n* **Data Center/Enterprise Revenue:** Expected to reach 50% of total revenue (up from 30% guidance)\n* **Attach Rate:** Targeting >20% next quarter and 25% by year-end\n\n**Analyst Coverage/Ratings**\n* **CLSA:** Upgraded to **Outperform**; Price Target \u20b9950 (July 27, 2026)\n* **StockInvest.us:** Downgraded to **Hold/Accumulate** (Aug 21, 2026)",
+    "reasoning": "The sentiment is Positive due to strong Q1 FY27 financial performance (EPS \u20b94.03), an upward revision in FY27 EBITDA margin guidance to 23%, and major target upgrades from analysts (including a 57% price target increase to \u20b9860 and a consensus 'BUY' rating).",
+    "as_of": "2026-08-27 02:48",
+    "news_used": "**Earnings (Q1 FY27, reported July 24, 2026):**\n* **Revenue:** \u20b91,910 Cr\n* **EPS:** \u20b94.03\n* **Guidance:** \n    * FY27 EBITDA margin guidance raised to 23% (from 20%).\n    * Data center/enterprise revenue target: ~50% of FY27 total revenue (up from 30%).\n    * Optical connectivity attach rate target: >20% for Q2 and 25% by year-end.\n\n**Analyst Coverage/Ratings:**\n* **Upgrades (July 30, 2026):** Analysts significantly increased 2027 statutory forecasts; 2027 Revenue target: \u20b981b; 2027 EPS target: \u20b916.50; Price target raised 57% to \u20b9860.\n* **Ratings:** MarketsMojo 'Hold' (July 22, 2026); Consensus 'BUY' (average price target \u20b9877.20).",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite",
     "quarter_verified": true,
-    "real_earnings_date": null,
-    "guard_flag": null
+    "real_earnings_date": null
   },
   "INDGN.NS": {
     "earnings_summary": "Revenue: \u20b91,063.10 crore (+39.7% YoY), EBITDA: \u20b9179.5 crore (16.9% margin), Net Profit (PAT): \u20b9116.20 crore (+45.8% QoQ)",
