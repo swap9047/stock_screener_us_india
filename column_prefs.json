@@ -144,5 +144,17 @@
   "sort_by_wrap_earnings_watchlist_5": "Sentiment",
   "sort_dir_wrap_earnings_watchlist_5": "\u2191",
   "sort_by_wrap_earnings_watchlist_6": "% Chg",
-  "sort_dir_wrap_earnings_watchlist_6": "\u2193"
+  "sort_dir_wrap_earnings_watchlist_6": "\u2193",
+  "sort_by_tracking_1": "Interested",
+  "sort_dir_tracking_1": "\u2191",
+  "sort_by_tracking_2": "Flag",
+  "sort_dir_tracking_2": "\u2191",
+  "sort_by_tracking_3": "Expert Take",
+  "sort_dir_tracking_3": "\u2191",
+  "sort_by_tracking_4": "Trend",
+  "sort_dir_tracking_4": "\u2191",
+  "sort_by_tracking_5": "Sentiment",
+  "sort_dir_tracking_5": "\u2191",
+  "sort_by_tracking_6": "% Chg",
+  "sort_dir_tracking_6": "\u2193"
 }
