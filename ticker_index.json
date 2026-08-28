@@ -466,5 +466,13 @@
   "ACOG": {
     "index": "S&P 500",
     "benchmark": "SPY"
+  },
+  "CLS": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
+  },
+  "TDG": {
+    "index": "S&P 500",
+    "benchmark": "SPY"
   }
 }
