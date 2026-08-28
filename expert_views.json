@@ -1252,5 +1252,27 @@
     "news_used": "No recent news found.",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
+  },
+  "CLS": {
+    "verdict": "CAUTION",
+    "headline": "CLS remains in a technical downtrend with negative volume distribution despite recent positive earnings reports.",
+    "technical_summary": "Celestica trades in a defined downtrend, remaining below its 40-week EMA with a downward-sloping VStop at 405.9. Furthermore, 10-day net volume reflects negative distribution (-8.0%) and Mansfield Relative Strength is deeply negative.",
+    "catalyst_summary": "Recent reports highlight strong Q2 2026 results, a raised annual outlook, and an upgrade from 'Sell' to 'Hold', though fundamental improvements have yet to trigger a technical trend reversal.",
+    "actionable_take": "Avoid new long positions while the stock is under key moving averages and distribution persists. Wait for a confirmed trend reversal, a bullish VStop flip, and sustained volume accumulation before engaging.",
+    "as_of": "2026-08-28 19:51",
+    "news_used": "**NEWS (2026-08-27 to 2026-08-28)**\n* **2026-08-27:** MarketBeat reports CLS shares trading up 3.3%.\n* **2026-08-27:** Barchart reports on strong Q2 2026 results and the company's raised 2026 outlook.\n* **2026-08-28:** Seeking Alpha analyst Louis Gerard upgrades CLS from \"Sell\" to \"Hold\".\n\n**SCHEDULED EVENTS (Next 3-4 days)**\n* None.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "TDG": {
+    "verdict": "CAUTION",
+    "headline": "TDG exhibits structural weakness with a downtrend, negative volume distribution, and a downward VStop.",
+    "technical_summary": "TDG is currently in a confirmed downtrend, trading below all key moving averages with a negative VStop and persistently weak relative strength. Additionally, 10-day net volume shows heavy distribution (-42.3% ratio), indicating ongoing institutional selling pressure.",
+    "catalyst_summary": "No material news found; verdict based on technicals only.",
+    "actionable_take": "Avoid new long entries while the stock remains below its declining moving averages and VStop resistance near 1,338.8. Existing holders should enforce tight risk management, as continued distribution points to potential further downside toward the 52-week low.",
+    "as_of": "2026-08-28 19:52",
+    "news_used": "no news found",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
   }
 }
