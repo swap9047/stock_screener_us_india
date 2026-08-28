@@ -474,5 +474,9 @@
   "TDG": {
     "index": "S&P 500",
     "benchmark": "SPY"
+  },
+  "ANTHEM.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
   }
 }
