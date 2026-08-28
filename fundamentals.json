@@ -2050,5 +2050,39 @@
     "quarter_verified": true,
     "real_earnings_date": null,
     "guard_flag": null
+  },
+  "CLS": {
+    "earnings_summary": "Q2 2026 Revenue: $4.70 billion, Adjusted EPS: $2.54",
+    "future_guidance": "FY 2026 Guidance: Revenue: $20.5 billion, Adjusted EPS: $11.30",
+    "analyst_coverage": "UBS upgraded to Buy (PT $430), RBC rated Outperform (PT $450), and Weiss Ratings downgraded slightly from Buy (b) to Buy (b-)",
+    "earnings_report_date": null,
+    "eps_value": "$2.54",
+    "guidance_change": null,
+    "analyst_action": "upgrade",
+    "sentiment": "Positive",
+    "reasoning": "Celestica delivered solid Q2 2026 financial results with $4.70 billion in revenue and an adjusted EPS of $2.54. Furthermore, the company received favorable analyst actions, including an upgrade from UBS to Buy and an Outperform rating from RBC, indicating a strong fundamental outlook.",
+    "as_of": "2026-08-28 19:23",
+    "news_used": "**Q2 2026 Results**\n* **Revenue:** $4.70 billion\n* **Adjusted EPS:** $2.54\n\n**FY 2026 Guidance**\n* **Revenue:** $20.5 billion\n* **Adjusted EPS:** $11.30\n\n**Recent Analyst Ratings (Aug 3\u201328, 2026)**\n* **UBS:** Upgrade (Neutral $\\rightarrow$ Buy); Price Target: $430\n* **Royal Bank of Canada (RBC):** Outperform; Price Target: $450\n* **Weiss Ratings:** Downgrade (Buy (b) $\\rightarrow$ Buy (b-))",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite",
+    "quarter_verified": true,
+    "real_earnings_date": null
+  },
+  "TDG": {
+    "earnings_summary": "Q3 FY2026 Revenue of $2,741 million, Adjusted EPS of $10.87, and Reported EPS of $9.39.",
+    "future_guidance": "FY2026 Guidance: Revenue of $10,470M \u2013 $10,550M, Adjusted EPS of $40.62 \u2013 $41.46, and EBITDA of $5,490M \u2013 $5,550M.",
+    "analyst_coverage": "UBS increased price target to $1,695 with a Buy rating; Morgan Stanley downgraded to Hold with a $1,525 target; Zacks upgraded to Rank #2 (Buy).",
+    "earnings_report_date": "2026-08-04",
+    "eps_value": "Adjusted EPS: $10.87, Reported EPS: $9.39",
+    "guidance_change": null,
+    "analyst_action": "downgrade",
+    "sentiment": "Positive",
+    "reasoning": "TransDigm reported strong Q3 FY2026 financial results with solid adjusted EPS and healthy full-year guidance ranges. Despite a downgrade to Hold by Morgan Stanley, the overall fundamental sentiment remains positive supported by an earnings beat/solid report, a price target increase and Buy rating from UBS, and an upgrade to Rank #2 by Zacks.",
+    "as_of": "2026-08-28 19:24",
+    "news_used": "**Earnings (Q3 FY2026, reported Aug 4, 2026)**\n* **Revenue:** $2,741 million\n* **Adjusted EPS:** $10.87\n* **Reported EPS:** $9.39\n\n**FY2026 Guidance**\n* **Revenue:** $10,470M \u2013 $10,550M\n* **Adjusted EPS:** $40.62 \u2013 $41.46\n* **EBITDA (As Defined):** $5,490M \u2013 $5,550M\n\n**Analyst Actions**\n* **UBS:** Price target increase to $1,695; Buy rating (Aug 5)\n* **Morgan Stanley:** Downgrade to Hold; $1,525 target (Aug 4)\n* **Zacks:** Upgrade to Rank #2 (Buy) (Aug 28)",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite",
+    "quarter_verified": true,
+    "real_earnings_date": null
   }
 }
