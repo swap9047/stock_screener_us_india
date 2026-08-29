@@ -58,6 +58,7 @@ from stock_data import (
     load_watchlists, save_watchlist, fetch_all_markets, validate_ticker, tradingview_url,
     load_settings, save_settings, DEFAULT_SETTINGS, get_benchmarks, get_filterable_metrics,
     load_markets_registry, load_data_snapshot, snapshot_is_usable, save_data_snapshot,
+    rebuild_snapshot_for_market,
     load_watchlist_groups, save_watchlist_groups,
 )
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE,
@@ -1539,14 +1540,52 @@ def _apply_watchlist_tickers(market, market_label, existing_tickers, candidate_t
     save_watchlist(market, valid_tickers)
     save_interested(interested)
 
-    # Saving a watchlist is an allowed refresh trigger: recompute + persist the
-    # snapshot so the post-save rerun (and later reloads) serve current data.
+    # Saving a watchlist is an allowed refresh trigger, but only the tickers
+    # that have no snapshot row actually need one. This used to call
+    # fetch_all_markets(None) -- the None loads EVERY watchlist, so editing one
+    # market refetched all ~118 tickers, and since it ran unconditionally, even
+    # deleting a ticker or saving an unchanged list paid the full price. At
+    # roughly 5 Yahoo requests per ticker plus a deliberate 0.5s pause between
+    # them (see fetch_snapshot), that is minutes of blocked UI for a one-ticker
+    # edit.
+    #
+    # Reusing a row fetched under a DIFFERENT watchlist is safe: rows are
+    # per-ticker, not per-market. fetch_all_markets groups by each ticker's
+    # permanent ticker_index.json assignment "independent of which watchlist(s)
+    # it's filed under" (see its docstring), so the same ticker yields the same
+    # row whichever list it sits in.
     from stock_data import load_settings as _load_settings_now
     _curr_settings = _load_settings_now()
-    _combined, _as_of, _per_market = fetch_all_markets(None, settings=_curr_settings)
-    _persist_and_serve(_per_market, _as_of, _curr_settings)
+
+    _snapshot = load_data_snapshot() or {}
+    _as_of_box = [_snapshot.get("as_of")]
+
+    def _fetch_new(tickers_needed):
+        with st.spinner(f"Fetching {len(tickers_needed)} new ticker(s) from Yahoo Finance..."):
+            # Pass the real market key so the benchmark fallback is right for any
+            # ticker backfill_ticker_indices could not classify.
+            _c, _fetched_as_of, _fetched = fetch_all_markets({market: tickers_needed}, settings=_curr_settings)
+        _as_of_box[0] = _fetched_as_of
+        return _fetched.get(market, [])
+
+    _merged, _to_fetch = rebuild_snapshot_for_market(
+        _snapshot.get("per_market") or {}, market, valid_tickers, _fetch_new
+    )
+    _as_of = _as_of_box[0] or datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    _persist_and_serve(_merged, _as_of, _curr_settings)
     _bump_refresh()
-    st.success(f"Saved {market_label} with {len(valid_tickers)} tickers and refreshed data.")
+    _reused = len(valid_tickers) - len(_to_fetch)
+    if _to_fetch:
+        st.success(
+            f"Saved {market_label} with {len(valid_tickers)} tickers — "
+            f"fetched {len(_to_fetch)} new, reused {_reused} from the last snapshot."
+        )
+    else:
+        st.success(
+            f"Saved {market_label} with {len(valid_tickers)} tickers — "
+            "no Yahoo fetch needed, every ticker was already in the snapshot."
+        )
 
     gh_token, gh_repo, gh_branch = get_github_config(st.secrets)
     if gh_token and gh_repo:
@@ -4188,8 +4227,13 @@ render_logout_button()
 
 # Resolve this run's per-market data WITHOUT ever hitting yfinance on a plain
 # login/reload. A live fetch is allowed ONLY after an explicit trigger
-# (Refresh Data button, saving a watchlist, saving calc Settings) -- all of
-# which set refresh_token > 0. At refresh_token == 0 we always serve the
+# (the Refresh Data button, or saving a watchlist) -- both of
+# which set refresh_token > 0. Saving calc Settings is NOT one of them despite
+# what this comment used to claim: the Settings dialog only calls save_settings,
+# which leaves refresh_token alone. What a settings change actually does is fail
+# snapshot_is_usable's settings comparison, so the app serves the last-known rows
+# with the "out of date" warning until you click Refresh Data yourself.
+# At refresh_token == 0 we always serve the
 # on-disk snapshot (data_snapshot.json, built by the GitHub Actions data
 # refresh); if it's missing or stale we still serve its rows and ask the user
 # to click Refresh Data instead of silently re-fetching on every page load.
