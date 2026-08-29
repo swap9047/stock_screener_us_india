@@ -16,3 +16,9 @@ python-dotenv
 openai
 plotly
 tzdata
+# Required by pandas.read_html in refresh_market_breadth.py (the S&P 500
+# constituent scrape) -- nothing imports lxml directly, so it reads as
+# removable. It used to arrive transitively via duckduckgo_search; deleting
+# that in the news-pipeline cleanup took lxml with it and silently killed US
+# market breadth for 8 days while every workflow run still reported success.
+lxml

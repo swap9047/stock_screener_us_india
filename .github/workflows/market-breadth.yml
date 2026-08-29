@@ -103,3 +103,25 @@ jobs:
           else
             echo "No changes to commit"
           fi
+
+      # Runs AFTER the commit on purpose. A leg that fails still leaves the
+      # other market refreshed and worth committing, and refresh_market_breadth.py
+      # exits 0 so those steps run -- so this is the only place a failure becomes
+      # visible. Without it, 8 consecutive runs reported "success" while the S&P
+      # 500 breadth charts were blank.
+      - name: Verify every market refreshed
+        if: steps.time_check.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          python3 - <<'EOF'
+          import json, sys
+          with open("market_breadth.json") as f:
+              data = json.load(f)
+          status = data.get("status") or {}
+          failed = sorted(k for k, v in status.items() if v != "ok")
+          missing = sorted({"US", "INDIA"} - set(status))
+          if failed or missing:
+              print(f"::error::Market breadth incomplete -- failed: {failed or 'none'}, "
+                    f"missing from status: {missing or 'none'}")
+              sys.exit(1)
+          print(f"All markets refreshed: {sorted(status)}")
+          EOF

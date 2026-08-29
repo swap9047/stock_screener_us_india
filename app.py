@@ -4664,14 +4664,35 @@ with tab_news:
                 return f"{df[col].iloc[-1]:.1f}"
             return "--"
             
-        total_ind = breadth_data.get("markets", {}).get("INDIA", {}).get("total", "--")
-        total_us = breadth_data.get("markets", {}).get("US", {}).get("total", "--")
+        # `or {}` is load-bearing: refresh_market_breadth.py's calculate_breadth
+        # returns None when every download batch fails, and a stored None made
+        # .get("US", {}) return None -- .get("total") on it raised AttributeError
+        # and took down this whole tab, not just one chart. The refresh script no
+        # longer writes None, but an older snapshot may still carry one.
+        def _breadth_block(market_key):
+            return (breadth_data.get("markets") or {}).get(market_key) or {}
+
+        # A market whose own as_of differs from the file's is preserved data from
+        # an earlier run -- its leg failed and main() kept the previous block
+        # rather than wiping it. Label it instead of passing it off as current.
+        _breadth_as_of = breadth_data.get("as_of")
+
+        def _stale_suffix(market_key):
+            block_as_of = _breadth_block(market_key).get("as_of")
+            if block_as_of and _breadth_as_of and block_as_of != _breadth_as_of:
+                return f" [stale: {block_as_of}]"
+            return ""
+
+        total_ind = _breadth_block("INDIA").get("total", "--")
+        total_us = _breadth_block("US").get("total", "--")
+        stale_ind = _stale_suffix("INDIA")
+        stale_us = _stale_suffix("US")
             
-        title_ema_ind = f"Nifty 500: % Above 200-Day SMA (Current: {get_val(df_ema_ind, '% Above 200d SMA')}%, Captured: {total_ind})"
-        title_ema_us = f"S&P 500: % Above 200-Day SMA (Current: {get_val(df_ema_us, '% Above 200d SMA')}%, Captured: {total_us})"
+        title_ema_ind = f"Nifty 500: % Above 200-Day SMA (Current: {get_val(df_ema_ind, '% Above 200d SMA')}%, Captured: {total_ind}){stale_ind}"
+        title_ema_us = f"S&P 500: % Above 200-Day SMA (Current: {get_val(df_ema_us, '% Above 200d SMA')}%, Captured: {total_us}){stale_us}"
         
-        title_hl_ind = f"Nifty 500: 52-Week Highs vs Lows (Highs: {get_val(df_hl_ind, '% New Highs')}%, Lows: {get_val(df_hl_ind, '% New Lows')}%)"
-        title_hl_us = f"S&P 500: 52-Week Highs vs Lows (Highs: {get_val(df_hl_us, '% New Highs')}%, Lows: {get_val(df_hl_us, '% New Lows')}%)"
+        title_hl_ind = f"Nifty 500: 52-Week Highs vs Lows (Highs: {get_val(df_hl_ind, '% New Highs')}%, Lows: {get_val(df_hl_ind, '% New Lows')}%){stale_ind}"
+        title_hl_us = f"S&P 500: 52-Week Highs vs Lows (Highs: {get_val(df_hl_us, '% New Highs')}%, Lows: {get_val(df_hl_us, '% New Lows')}%){stale_us}"
         
         def get_perf(df):
             if df is not None and not df.empty and 'Portfolio' in df.columns and 'Benchmark' in df.columns:
@@ -4701,49 +4722,85 @@ with tab_news:
         )
         
         colors = ['#2ecc71', '#e74c3c', '#f39c12']
-        
+
+        # An empty panel is indistinguishable from a panel whose data is all
+        # zero. Say why it is blank -- the S&P breadth charts sat empty for 8
+        # days because a refresh leg was failing silently, and nothing on screen
+        # pointed at the refresh job.
+        def _no_data(row, col):
+            fig.add_annotation(
+                text="No data - last refresh failed",
+                showarrow=False,
+                xref="x domain", yref="y domain", x=0.5, y=0.5,
+                row=row, col=col,
+                font=dict(color="#95a5a6", size=13),
+            )
+
         # Row 1: SMA Breadth
         if df_ema_ind is not None and not df_ema_ind.empty:
             for i, col in enumerate([c for c in df_ema_ind.columns if c != 'Date']):
                 fig.add_trace(go.Scatter(x=df_ema_ind['Date'], y=df_ema_ind[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5), showlegend=False), row=1, col=1)
             fig.add_hline(y=50, line_dash="dash", line_color="rgba(0,0,0,0.3)", row=1, col=1)
-            
+        else:
+            _no_data(1, 1)
+
         if df_ema_us is not None and not df_ema_us.empty:
             for i, col in enumerate([c for c in df_ema_us.columns if c != 'Date']):
                 fig.add_trace(go.Scatter(x=df_ema_us['Date'], y=df_ema_us[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5), showlegend=False), row=1, col=2)
             fig.add_hline(y=50, line_dash="dash", line_color="rgba(0,0,0,0.3)", row=1, col=2)
-            
+        else:
+            _no_data(1, 2)
+
         # Row 2: High/Low Extremes
         if df_hl_ind is not None and not df_hl_ind.empty:
             for i, col in enumerate([c for c in df_hl_ind.columns if c != 'Date']):
                 fig.add_trace(go.Scatter(x=df_hl_ind['Date'], y=df_hl_ind[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5), showlegend=False), row=2, col=1)
-                
+        else:
+            _no_data(2, 1)
+
         if df_hl_us is not None and not df_hl_us.empty:
             for i, col in enumerate([c for c in df_hl_us.columns if c != 'Date']):
                 fig.add_trace(go.Scatter(x=df_hl_us['Date'], y=df_hl_us[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5), showlegend=False), row=2, col=2)
-                
+        else:
+            _no_data(2, 2)
+
         # Row 3: Portfolio Performance
         _ind_label = markets_registry_now.get("india_invested", {}).get("label", "India Invested")
         _us_label = markets_registry_now.get("us_invested", {}).get("label", "US Invested")
         if df_perf_ind is not None and not df_perf_ind.empty:
             fig.add_trace(go.Scatter(x=df_perf_ind.index, y=df_perf_ind['Portfolio'], name=_ind_label, line=dict(color='#3498db', width=2), showlegend=False), row=3, col=1)
             fig.add_trace(go.Scatter(x=df_perf_ind.index, y=df_perf_ind['Benchmark'], name="Nifty 500", line=dict(color='#95a5a6', width=1.5, dash='dot'), showlegend=False), row=3, col=1)
-            
+        else:
+            _no_data(3, 1)
+
         if df_perf_us is not None and not df_perf_us.empty:
             fig.add_trace(go.Scatter(x=df_perf_us.index, y=df_perf_us['Portfolio'], name=_us_label, line=dict(color='#3498db', width=2), showlegend=False), row=3, col=2)
             fig.add_trace(go.Scatter(x=df_perf_us.index, y=df_perf_us['Benchmark'], name="S&P 500", line=dict(color='#95a5a6', width=1.5, dash='dot'), showlegend=False), row=3, col=2)
-            
+        else:
+            _no_data(3, 2)
+
         fig.update_layout(
             height=900,
             hovermode="x unified",
-            margin=dict(l=0, r=0, t=30, b=0),
+            # t=30 left the modebar sitting directly on the right column's
+            # subplot title. A vertical modebar parks it against the right edge
+            # and the extra headroom keeps it clear of the titles entirely.
+            margin=dict(l=0, r=0, t=55, b=0),
+            modebar=dict(orientation="v", bgcolor="rgba(0,0,0,0)"),
             showlegend=False
         )
         fig.update_xaxes(showspikes=True, spikemode="across", spikesnap="cursor", showline=True, showgrid=False)
         fig.update_yaxes(showgrid=True)
         
-        st.plotly_chart(fig, width="stretch")
-        
+        st.plotly_chart(
+            fig,
+            width="stretch",
+            config={
+                "displaylogo": False,
+                "modeBarButtonsToRemove": ["lasso2d", "select2d", "autoScale2d"],
+            },
+        )
+
     st.divider()
     st.subheader("Watchlist news digest")
     st.caption(

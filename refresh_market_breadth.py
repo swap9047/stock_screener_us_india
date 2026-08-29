@@ -209,27 +209,74 @@ def calculate_breadth(tickers, label, tz, close_hhmm):
 
 def main():
     print("=== Refreshing Market Breadth ===")
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+
+    # Start from what is already on disk rather than an empty dict. This used to
+    # build "markets" from scratch and dump it unconditionally, so ONE failed leg
+    # did not merely skip an update -- it deleted that market's stored history.
+    # When lxml dropped out of the dependency tree the S&P scrape began raising,
+    # and the very next run replaced 1055 days of US breadth with nothing; the
+    # app then rendered an empty chart titled "Current: --%, Captured: --" for 8
+    # days. Degrade to stale data, never to no data.
+    previous = {}
+    if os.path.exists(BREADTH_FILE):
+        try:
+            with open(BREADTH_FILE) as f:
+                previous = json.load(f)
+        except Exception as e:
+            # A corrupt file must not stop the refresh -- we simply have no
+            # earlier blocks to fall back on for a leg that fails.
+            print(f"Warning: could not read existing {BREADTH_FILE}: {e}")
+
+    # Falsy blocks are filtered out on the way in: an older snapshot can hold an
+    # explicit null under a market key, and carrying that forward would keep
+    # re-writing the value that used to crash the News tab.
     results = {
-        "as_of": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
-        "markets": {}
+        "as_of": now,
+        "markets": {k: v for k, v in (previous.get("markets") or {}).items() if v},
+        "status": {},
     }
-    
-    try:
-        sp500 = get_sp500_tickers()
-        results["markets"]["US"] = calculate_breadth(sp500, "S&P 500", "America/New_York", (16, 0))
-    except Exception as e:
-        print(f"Error processing US breadth: {e}")
-        
-    try:
-        nifty = get_nifty500_tickers()
-        results["markets"]["INDIA"] = calculate_breadth(nifty, "Nifty 500", "Asia/Kolkata", (15, 30))
-    except Exception as e:
-        print(f"Error processing India breadth: {e}")
-        
+
+    legs = [
+        ("US", get_sp500_tickers, "S&P 500", "America/New_York", (16, 0)),
+        ("INDIA", get_nifty500_tickers, "Nifty 500", "Asia/Kolkata", (15, 30)),
+    ]
+
+    for key, get_tickers, label, tz, close_hhmm in legs:
+        try:
+            tickers = get_tickers()
+            block = calculate_breadth(tickers, label, tz, close_hhmm)
+            # calculate_breadth returns None when every download batch failed.
+            # Storing that None used to be worse than storing nothing: the app
+            # does markets.get("US", {}).get("total"), which raises AttributeError
+            # on None and takes down the whole News tab rather than one chart.
+            if not block:
+                raise ValueError("no usable price data returned")
+        except Exception as e:
+            print(f"Error processing {key} breadth: {e}")
+            results["status"][key] = "failed"
+            kept = results["markets"].get(key)
+            if kept:
+                print(f"  -> keeping previous {key} block from {kept.get('as_of', 'an unknown date')}")
+            else:
+                print(f"  -> no previous {key} block to fall back on; it stays absent")
+            continue
+
+        # Per-market as_of, because a preserved block is stale and the top-level
+        # as_of no longer describes it. The UI reads this to label the chart.
+        block["as_of"] = now
+        results["markets"][key] = block
+        results["status"][key] = "ok"
+
     with open(BREADTH_FILE, "w") as f:
         json.dump(results, f, indent=2)
-        
+
     print(f"Saved to {BREADTH_FILE}")
+    print(f"Status: {results['status']}")
+
+    # Deliberately exits 0 even on a failed leg. The workflow still has to run
+    # refresh_dashboard_perf.py and commit, and bailing here would throw away the
+    # market that DID refresh. The loud signal is a verify step after the commit.
 
 if __name__ == "__main__":
     main()
