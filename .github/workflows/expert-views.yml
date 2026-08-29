@@ -97,6 +97,13 @@ jobs:
 
       - name: Refresh data snapshot
         run: python -u refresh_data.py
+        env:
+          # Same scoping as the AI step below. Without this the snapshot leg
+          # ignored `markets` entirely, so "Re-analyze All" clicked on a
+          # 10-ticker tab still refetched all ~118 tickers from Yahoo -- the
+          # button's own help text ("this view's watchlist(s) only") was only
+          # true of the half of the job that ran after it.
+          REFRESH_MARKETS: ${{ github.event.inputs.markets }}
 
       - name: Generate AI Expert Views
         run: python -u refresh_expert_views.py
