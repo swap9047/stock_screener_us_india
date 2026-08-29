@@ -2037,15 +2037,27 @@ def _code_fingerprint():
         return "unknown"
 
 
-def save_data_snapshot(as_of, per_market, settings=None):
+def save_data_snapshot(as_of, per_market, settings=None, merge=False):
     """Persists a fetch_all_markets() result to disk so the Streamlit app
     can load it directly instead of hitting yfinance live on every session
     -- meant to be called once/day by the scheduled data-refresh workflow
     (see refresh_data.py), not by the app itself. Stores the settings used
     to compute it too, so the app can detect a settings change (SMA
     lengths, thresholds, etc.) since the snapshot ran and fall back to a
-    live fetch instead of showing data computed with stale parameters."""
+    live fetch instead of showing data computed with stale parameters.
+
+    `merge=True` overlays only the markets in `per_market` onto whatever is
+    already on disk, leaving the rest untouched. A SCOPED refresh must use
+    it: this file holds every market in one blob, so writing just the
+    markets you fetched would delete the others. That is not hypothetical
+    -- refresh_market_breadth.py wrote its file the same unconditional way
+    and one failing leg silently destroyed 1055 days of US breadth."""
     from datetime import timezone
+    if merge:
+        existing = load_data_snapshot() or {}
+        base = dict(existing.get("per_market") or {})
+        base.update(per_market)
+        per_market = base
     with open(DATA_SNAPSHOT_FILE, "w") as f:
         json.dump({
             "as_of": as_of,
@@ -2064,6 +2076,55 @@ def load_data_snapshot():
             return json.load(f)
     except Exception:
         return None
+
+
+def rebuild_snapshot_for_market(snap_per_market, market, tickers, fetch_new):
+    """Rebuilds ONE market's rows inside a snapshot, fetching only what is
+    genuinely missing, and returns (merged_per_market, fetched_tickers).
+
+    `fetch_new(tickers)` is called at most once, with only the tickers that
+    have no row anywhere in the snapshot, and must return a list of row dicts.
+    It is not called at all when nothing is missing -- which is the point:
+    saving a watchlist after deleting a ticker, or with no change, should cost
+    no Yahoo traffic whatsoever.
+
+    Reusing a row that was fetched under a DIFFERENT watchlist is deliberate
+    and safe. Rows are per-ticker, not per-market: fetch_all_markets groups by
+    each ticker's permanent ticker_index.json assignment, "independent of which
+    watchlist(s) it's filed under" (see its docstring), so one ticker yields
+    the same row whichever list it is filed under -- with exactly one
+    exception, the "market" tag stamped on at fetch time. That one IS
+    per-market and load-bearing (alerts.py scopes a rule's tickers by it), so
+    a reused row is copied and re-tagged rather than filed under the wrong
+    watchlist. The copy matters too: mutating the row in place would retag the
+    source market's own row as a side effect.
+
+    Markets other than `market` are passed through untouched -- this file holds
+    every market in one blob, so rebuilding it from only the market in hand
+    would silently delete the others."""
+    rows_by_ticker = {}
+    for rows in (snap_per_market or {}).values():
+        for r in rows:
+            rows_by_ticker.setdefault(r.get("ticker"), r)
+
+    to_fetch = [t for t in tickers if t not in rows_by_ticker]
+    if to_fetch:
+        for r in fetch_new(to_fetch) or []:
+            rows_by_ticker[r.get("ticker")] = r
+
+    merged = {m: list(rows) for m, rows in (snap_per_market or {}).items()}
+    # Built from the saved ticker order, so removed tickers simply fall out.
+    rebuilt = []
+    for t in tickers:
+        row = rows_by_ticker.get(t)
+        if row is None:
+            continue
+        if row.get("market") != market:
+            row = dict(row)
+            row["market"] = market
+        rebuilt.append(row)
+    merged[market] = rebuilt
+    return merged, to_fetch
 
 
 def snapshot_is_usable(snapshot, watchlists, settings):
