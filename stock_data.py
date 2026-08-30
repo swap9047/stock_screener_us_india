@@ -1049,10 +1049,19 @@ def _fetch_info_with_retry(yf_t, ticker, attempts=3, base_delay=3):
     (429 Too Many Requests / 401 Invalid Crumb), especially from a shared/datacenter
     IP like Streamlit Cloud's. Retries with exponential backoff on those specific
     transient errors; gives up (returns {}) after exhausting attempts so callers
-    keep their existing None-safe behavior."""
+    keep their existing None-safe behavior.
+
+    ALWAYS returns a dict. Under rate limiting yfinance does not always raise --
+    it can hand back None instead, and that sailed straight through this
+    function's only-catches-exceptions guard. detect_ticker_index then did
+    info.get("currency") on None and took the whole Streamlit app down with
+    "AttributeError: 'NoneType' object has no attribute 'get'" the moment
+    someone added a ticker while Yahoo was throttling. The docstring already
+    promised callers a dict; now the code actually keeps that promise."""
     for attempt in range(1, attempts + 1):
         try:
-            return yf_t.info
+            info = yf_t.info
+            return info if isinstance(info, dict) else {}
         except Exception as e:
             msg = str(e)
             if attempt < attempts and any(s in msg for s in ("Too Many Requests", "Rate limited", "Invalid Crumb", "401", "429")):
