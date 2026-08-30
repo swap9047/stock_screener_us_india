@@ -1285,5 +1285,16 @@
     "news_used": "No recent news found.",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
+  },
+  "SGRL.BO": {
+    "verdict": "CAUTION",
+    "headline": "SGRL.BO exhibits a confirmed downtrend and heavy distribution, demanding strict risk management.",
+    "technical_summary": "The stock is in a defined downtrend trading below its declining 40 WEMA, with the weekly VStop pointing down at 651.6. Volume trends show severe institutional distribution with a -54.4% net volume ratio over the last 10 days alongside deeply negative relative strength.",
+    "catalyst_summary": "No material news found; verdict based on technicals only.",
+    "actionable_take": "Avoid initiating new long positions given the prevailing downtrend and distribution pressure. Existing holders should tighten risk controls or exit, waiting for a definitive reversal above the 40 WEMA and a positive shift in volume accumulation before considering re-entry.",
+    "as_of": "2026-08-30 03:13",
+    "news_used": "No recent news found.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
   }
 }
