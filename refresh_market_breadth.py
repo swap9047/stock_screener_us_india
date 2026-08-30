@@ -10,6 +10,10 @@ import yfinance as yf
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BREADTH_FILE = os.path.join(SCRIPT_DIR, "market_breadth.json")
 
+# Minimum share of an index's constituents a run must actually capture before
+# its numbers are believed. See the check in main() for why this exists.
+MIN_COVERAGE_FRACTION = 0.5
+
 def get_sp500_tickers():
     url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -252,6 +256,21 @@ def main():
             # on None and takes down the whole News tab rather than one chart.
             if not block:
                 raise ValueError("no usable price data returned")
+            # A run can "succeed" having captured almost nothing. On 2026-08-29
+            # Yahoo throttled the runner and the US leg came back with 1 of 503
+            # constituents -- a perfectly well-formed block reporting 0.0% above
+            # the 200d SMA, which passed the falsy check above, overwrote 501
+            # good tickers and wrote a 0.0 point into the history. Coverage is
+            # the only thing separating that from a real reading, so require a
+            # majority of the requested universe. The floor is deliberately
+            # loose: the India leg legitimately lands near 310/501 on the early
+            # run and ~490 on the later one, and both are real data.
+            captured = block.get("total") or 0
+            if captured < MIN_COVERAGE_FRACTION * len(tickers):
+                raise ValueError(
+                    f"only {captured} of {len(tickers)} tickers captured "
+                    f"(< {MIN_COVERAGE_FRACTION:.0%}) -- treating as a failed fetch, not a reading"
+                )
         except Exception as e:
             print(f"Error processing {key} breadth: {e}")
             results["status"][key] = "failed"
