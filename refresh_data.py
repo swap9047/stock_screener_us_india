@@ -20,7 +20,10 @@ Run: python3 refresh_data.py
 
 import os
 
-from stock_data import load_watchlists, load_settings, fetch_all_markets, save_data_snapshot
+from stock_data import (
+    load_watchlists, load_settings, fetch_all_markets, save_data_snapshot,
+    load_data_snapshot, fill_snapshot_gaps,
+)
 
 
 def main():
@@ -49,6 +52,20 @@ def main():
     breakdown = " + ".join(f"{len(tks)} {mkt}" for mkt, tks in watchlists.items())
     print(f"Fetching {total} tickers ({breakdown})...")
     combined, as_of, per_market = fetch_all_markets(watchlists, settings=settings)
+
+    # Anything Yahoo would not return keeps its last-known row instead of
+    # vanishing. fetch_all_markets drops a whole benchmark group whose fetch
+    # raised, so a throttled run otherwise writes a watchlist that looks
+    # emptied rather than unrefreshed.
+    previous = (load_data_snapshot() or {}).get("per_market") or {}
+    per_market, recovered = fill_snapshot_gaps(per_market, previous, watchlists)
+    combined = [r for rows in per_market.values() for r in rows]
+    if recovered:
+        n = sum(len(v) for v in recovered.values())
+        print(f"WARNING: {n} ticker(s) returned no data; kept last-known rows:")
+        for mkt, tks in sorted(recovered.items()):
+            print(f"  {mkt}: {', '.join(tks)}")
+
     # A scoped run only holds rows for the markets it fetched, so it must merge
     # rather than replace -- otherwise scoping the run would delete every other
     # market from the snapshot.
