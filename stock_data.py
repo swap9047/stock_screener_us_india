@@ -2087,6 +2087,53 @@ def load_data_snapshot():
         return None
 
 
+def fill_snapshot_gaps(fresh_per_market, previous_per_market, watchlists):
+    """Backfills tickers a fetch failed to return from the previous snapshot,
+    returning (filled_per_market, {market: [recovered tickers]}).
+
+    fetch_all_markets drops whatever Yahoo would not hand over: a benchmark
+    group whose fetch_snapshot raised is skipped wholesale, and inside a group
+    a ticker that came back empty simply produces no row. Persisting that
+    result verbatim does not record "we could not reach Yahoo", it records
+    "this watchlist has four stocks in it" -- which is what happened on
+    2026-08-29, when a Refresh Data click during a throttling episode replaced
+    30 India rows with 4 and pushed that to GitHub. Every US market was
+    untouched, because only the ^CRSLDX group collapsed.
+
+    A missing row means the fetch failed, never that the ticker is gone -- a
+    ticker actually removed from a watchlist is absent from `watchlists` and
+    is dropped here as usual. So the honest degradation is last-known data for
+    the tickers we could not refresh, which the UI already surfaces per row via
+    the "Data Thru" column and its stale-ticker warning.
+
+    Callers should tell the user what was recovered; silently serving stale
+    rows would trade one invisible failure for another."""
+    prev_by_market = {
+        m: {r.get("ticker"): r for r in rows}
+        for m, rows in (previous_per_market or {}).items()
+    }
+
+    filled, recovered = {}, {}
+    for market, rows in (fresh_per_market or {}).items():
+        fresh_by_ticker = {r.get("ticker"): r for r in rows}
+        # Watchlist order is authoritative; fall back to whatever the fetch
+        # returned for a market with no watchlist entry.
+        wanted = list((watchlists or {}).get(market) or fresh_by_ticker.keys())
+        out, from_previous = [], []
+        for t in wanted:
+            if t in fresh_by_ticker:
+                out.append(fresh_by_ticker[t])
+                continue
+            old = prev_by_market.get(market, {}).get(t)
+            if old is not None:
+                out.append(old)
+                from_previous.append(t)
+        filled[market] = out
+        if from_previous:
+            recovered[market] = from_previous
+    return filled, recovered
+
+
 def rebuild_snapshot_for_market(snap_per_market, market, tickers, fetch_new):
     """Rebuilds ONE market's rows inside a snapshot, fetching only what is
     genuinely missing, and returns (merged_per_market, fetched_tickers).
