@@ -2104,5 +2104,22 @@
     "quarter_verified": true,
     "real_earnings_date": null,
     "guard_flag": null
+  },
+  "SGRL.BO": {
+    "earnings_summary": "Q1 FY27 Revenue \u20b914.36 crore, EPS 0.87, Net Profit \u20b91.12 crore",
+    "future_guidance": "Volume recovery expected within two quarters, CRAMS revenues anticipated in H2FY27, non-linear growth guidance moderated, Block 7 commissioning scheduled for H1FY27",
+    "analyst_coverage": "StockInvest.us (Aug 28, 2026): Sell Candidate",
+    "earnings_report_date": null,
+    "eps_value": "0.87",
+    "guidance_change": "lowered",
+    "analyst_action": null,
+    "sentiment": "Negative",
+    "reasoning": "The company reported Q1 FY27 EPS of 0.87 and revenue of \u20b914.36 crore. Forward guidance noted that non-linear growth expectations were moderated, and external analyst coverage from StockInvest.us designated the stock as a Sell Candidate, justifying an overall negative sentiment.",
+    "as_of": "2026-08-30 03:11",
+    "news_used": "**Quarterly Earnings (Q1 FY27, ended June 30, 2026)**\n*   **Revenue:** \u20b914.36 crore\n*   **EPS:** 0.87\n*   **Net Profit:** \u20b91.12 crore\n\n**Forward Guidance**\n*   Volume recovery expected within two quarters.\n*   CRAMS revenues anticipated in H2FY27.\n*   Non-linear growth guidance moderated.\n*   Block 7 commissioning scheduled for H1FY27.\n\n**Analyst Ratings**\n*   **StockInvest.us (Aug 28, 2026):** Sell Candidate.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite",
+    "quarter_verified": true,
+    "real_earnings_date": null
   }
 }
