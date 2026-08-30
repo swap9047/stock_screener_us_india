@@ -58,7 +58,7 @@ from stock_data import (
     load_watchlists, save_watchlist, fetch_all_markets, validate_ticker, tradingview_url,
     load_settings, save_settings, DEFAULT_SETTINGS, get_benchmarks, get_filterable_metrics,
     load_markets_registry, load_data_snapshot, snapshot_is_usable, save_data_snapshot,
-    rebuild_snapshot_for_market,
+    rebuild_snapshot_for_market, fill_snapshot_gaps,
     load_watchlist_groups, save_watchlist_groups,
 )
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE,
@@ -4200,6 +4200,19 @@ sb1, sb2 = st.sidebar.columns(2)
 if sb1.button("Refresh Data", type="primary", width="stretch"):
     with st.spinner("Fetching latest prices & updating snapshot..."):
         combined, as_of, per_market = fetch_all_markets(watchlists_now, settings=settings_now)
+        # Keep last-known rows for anything Yahoo would not return, rather than
+        # persisting the gap as though those tickers no longer exist. A single
+        # throttled click once cut India from 30 rows to 4 and pushed it.
+        _prev_rows = (load_data_snapshot() or {}).get("per_market") or {}
+        per_market, _recovered = fill_snapshot_gaps(per_market, _prev_rows, watchlists_now)
+        combined = [r for mkt_rows in per_market.values() for r in mkt_rows]
+        if _recovered:
+            _n = sum(len(v) for v in _recovered.values())
+            st.sidebar.warning(
+                f"Yahoo returned no data for {_n} ticker(s) this refresh — kept their "
+                "last-known values rather than dropping them. Check the 'Data Thru' "
+                "column, and refresh again later for current prices."
+            )
         _persist_and_serve(per_market, as_of, settings_now)
         token, repo, branch = get_github_config(st.secrets)
         if token and repo:
