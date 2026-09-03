@@ -277,6 +277,28 @@ def save_markets_registry(registry):
         json.dump(registry, f, indent=2)
 
 
+def atomic_write_json(path, data):
+    """Write JSON via temp file + os.replace.
+
+    The plain truncate-and-write this replaces was called once PER TICKER by
+    the refresh loops -- ~110 rewrites of a 150 KB file per run. A crash or a
+    job timeout landing mid-dump left truncated JSON, and the loader's bare
+    except then returned {} on the next run, so the whole store was silently
+    rebuilt from empty with every prior view lost.
+
+    Lives here because all three stores need it: it was copy-pasted privately
+    into fundamentals_eval and expert_views, and missing entirely from
+    news_summary, whose plain write could leave a torn file that
+    load_news_summary's bare except then reported to the UI as "no digest yet".
+    A crash or a cancelled workflow landing mid-dump is not hypothetical -- a
+    fundamentals run was cancelled on 2026-09-03.
+    """
+    tmp = f"{path}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, path)
+
+
 def load_watchlist_groups():
     """Returns {group_key: [member market keys]} for the fixed combined
     tabs (see DEFAULT_WATCHLIST_GROUPS). Bootstraps the file with today's
