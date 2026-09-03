@@ -11,6 +11,7 @@ search over the last 24 hours), not read from news_summary.json.
 import os
 import time
 from datetime import datetime, timezone
+import llm_util
 from google import genai
 from stock_data import load_data_snapshot, load_watchlists
 from expert_views import (
@@ -77,7 +78,7 @@ def main():
         print("Error: GEMINI_API_KEY not found. Skipping expert views refresh.")
         return
 
-    client = genai.Client(api_key=api_key)
+    client = llm_util.make_client(api_key)
     
     # Load the snapshot refreshed by this same workflow minutes earlier.
     snapshot = load_data_snapshot()

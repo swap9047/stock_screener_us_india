@@ -553,9 +553,7 @@ def analyze_single_ticker(ticker, row_data, api_key, active_alerts_text=None, is
     Returns the stored view, or None when generation failed and the existing
     view was kept (same contract as
     fundamentals_eval.analyze_single_ticker_sentiment)."""
-    from google import genai
-
-    client = genai.Client(api_key=api_key)
+    client = llm_util.make_client(api_key)
     view = generate_expert_view(client, row_data, active_alerts_text=active_alerts_text, is_retry=is_retry)
     all_views = load_expert_views()
     to_store = resolve_persisted_view(view, all_views.get(ticker))

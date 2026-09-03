@@ -6,6 +6,7 @@ watchlisted tickers. Intended to run via GitHub Actions.
 import os
 import time
 from datetime import datetime, timezone
+import llm_util
 from google import genai
 from stock_data import load_data_snapshot, load_watchlists
 from fundamentals_eval import (
@@ -39,6 +40,7 @@ def _unknown_fallback(reason):
         "analyst_action": None,
         "sentiment": "Unknown",
         "reasoning": f"Analysis unavailable -- {reason}",
+        "targeted_retry": None,
         "as_of": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
         "news_used": "",
         "news_source": "⚪ No Source",
@@ -108,7 +110,7 @@ def main():
         print("Error: GEMINI_API_KEY not found. Skipping fundamentals refresh.")
         return
 
-    client = genai.Client(api_key=api_key)
+    client = llm_util.make_client(api_key)
     
     snapshot = load_data_snapshot()
     if not snapshot or "per_market" not in snapshot:
