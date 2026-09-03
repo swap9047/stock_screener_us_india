@@ -64,7 +64,8 @@ from stock_data import (
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE,
                      send_discord_batch, build_discord_messages_for_rule, describe_schedule,
                      DAY_CODES, DAY_LABELS, DEFAULT_DAYS, ALLOWED_HOURS, HOUR_LABELS,
-                     compute_rule_truth, RULE_COLOR_HEX, _metrics_used_in_conditions)
+                     compute_rule_truth, RULE_COLOR_HEX, _metrics_used_in_conditions,
+                     active_alerts_for_prompt, alerts_text_for)
 
 # Alerts-column color picker, shared by the add-rule builder and the
 # existing-rule editor -- UI label <-> stored rule["color"] value ("green"/
@@ -81,7 +82,8 @@ from filters import (get_market_filters, save_market_filters, apply_filters, des
 from github_sync import get_github_config, push_all_config, trigger_github_workflow, SYNCABLE_FILES
 from news_summary import load_news_summary, MARKET_LABELS, get_gemini_api_key
 from expert_views import (load_expert_views, save_expert_views, analyze_single_ticker,
-                          generate_expert_view, _is_valid_view, VERDICT_RULES,
+                          generate_expert_view, _is_valid_view, is_pending_view,
+                          VERDICT_RULES, VERDICT_GUARD_RULES,
                           validate_verdict, verdict_flag_note)
 from fundamentals_eval import (
     load_fundamentals, _validate_sentiment, SENTIMENT_STALE_DAYS,
@@ -704,6 +706,19 @@ def _expert_view_has_news(view):
     return not any(text.startswith(m) for m in _EXPERT_NO_NEWS)
 
 
+# Expert Take dropdown label -> the value row["expert_take"] carries. "Any" maps
+# to None, which never equals a row value, and is short-circuited before the
+# lookup anyway. Kept as one mapping so the option list and the comparison
+# cannot drift apart.
+EXPERT_FILTER_VALUES = {
+    "Any": None,
+    "🟢 Accumulate": "Accumulate",
+    "🟡 Hold": "Hold",
+    "🔴 Caution": "Caution",
+    "⚪ Pending": "Pending",
+}
+
+
 def sentiment_flag_note(flag, as_of):
     """Plain-English note for a _validate_sentiment guard flag, or "" when the
     view passed clean. Shared by the Sentiment cell tooltip and the AI-review
@@ -843,8 +858,21 @@ def build_ai_review_payload(
         if show_expert:
             v = expert_views.get(t) or {}
             out.append("\n### Expert Take")
-            if v.get("verdict"):
-                out.append(f"Verdict: {v['verdict']} — {v.get('headline', '')}")
+            if is_pending_view(v):
+                # A placeholder record stores verdict "HOLD", so the old
+                # `if v.get("verdict")` branch reported a failed generation to
+                # the reader as a real Hold verdict.
+                out.append("No usable analysis stored -- the last generation failed "
+                           f"({v.get('headline', '')}).")
+            elif v.get("verdict"):
+                # Guarded verdict, not the raw stored one, so the payload agrees
+                # with the table -- same reasoning as the Sentiment block below.
+                verdict, vflag = validate_verdict(v, r)
+                out.append(f"Verdict: {verdict} — {v.get('headline', '')}"
+                           + (f" ({vflag})" if vflag else ""))
+                note = verdict_flag_note(vflag, v.get("as_of", "unknown"))
+                if note:
+                    out.append(note)
                 for fld in ("technical_summary", "catalyst_summary", "actionable_take"):
                     if v.get(fld):
                         out.append(f"- {fld.replace('_', ' ').title()}: {v[fld]}")
@@ -881,6 +909,8 @@ def build_ai_review_payload(
         out.append('\n## How "Expert Take" is decided')
         out.append("An LLM assigns the verdict under these rules:\n")
         out.append(VERDICT_RULES)
+        out.append("")
+        out.append(VERDICT_GUARD_RULES)
     if show_sentiment:
         out.append('\n## How "Sentiment" is decided')
         out.append("An LLM reads recent earnings/guidance/analyst news and returns "
@@ -3084,6 +3114,12 @@ def _reanalyze_tickers_in_dashboard(tickers, results, api_key, sync_message,
     from google import genai
     client = genai.Client(api_key=api_key) if scope == "expert" else None
     updated_views = load_expert_views() if scope == "expert" else None
+    # Section 2 of the Expert Take prompt. Evaluated once for the whole market,
+    # not per ticker -- see alerts.active_alerts_by_ticker. `results` is the
+    # full market row set, which is what rule scoping and rule-to-rule
+    # references need; passing only the selected tickers would change which
+    # rules resolve as true.
+    alerts_by_ticker = active_alerts_for_prompt(results) if scope == "expert" else None
 
     for idx, tk in enumerate(tickers):
         row = next((r for r in results if r["ticker"] == tk), None)
@@ -3096,7 +3132,11 @@ def _reanalyze_tickers_in_dashboard(tickers, results, api_key, sync_message,
         )
         if scope == "expert":
             try:
-                view = generate_expert_view(client, row, is_retry=True)
+                view = generate_expert_view(
+                    client, row,
+                    active_alerts_text=alerts_text_for(alerts_by_ticker, tk),
+                    is_retry=True,
+                )
                 if _is_valid_view(view):
                     updated_views[tk] = view
                     save_expert_views(updated_views)
@@ -3312,7 +3352,7 @@ def render_expert_analysis_control_bar(market, results, combined_markets=None):
         )
 
 
-def render_expert_view_expander(market, filtered_rows, settings):
+def render_expert_view_expander(market, filtered_rows, settings, results=None):
     expert_views = load_expert_views()
     tickers = [r["ticker"] for r in filtered_rows]
     if not tickers:
@@ -3343,7 +3383,12 @@ def render_expert_view_expander(market, filtered_rows, settings):
             with st.spinner(f"Re-analyzing {ticker} (Expert Take + Sentiment)..."):
                 ev_ok = True
                 try:
-                    analyze_single_ticker(ticker, row, api_key, is_retry=True)
+                    alerts_by_ticker = active_alerts_for_prompt(results or filtered_rows)
+                    analyze_single_ticker(
+                        ticker, row, api_key,
+                        active_alerts_text=alerts_text_for(alerts_by_ticker, ticker),
+                        is_retry=True,
+                    )
                 except Exception as e:
                     ev_ok = False
                     st.error(f"Expert Take refresh failed: {e}")
@@ -3567,7 +3612,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             "Vol Trend", ["Any", "Exploding", "In-line", "Declining"], key=f"f_voltrend_{market}",
         )
         f_expert_take = fc3.selectbox(
-            "Expert Take", ["Any", "🟢 Accumulate", "🟡 Hold", "🔴 Caution", "⚪ Pending"],
+            "Expert Take", list(EXPERT_FILTER_VALUES),
             key=f"f_expert_{market}",
         )
         f_tech_only = fc4.checkbox("Tech Uptrend only", key=f"f_tech_{market}")
@@ -3626,10 +3671,6 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             return True
         return lo <= val <= hi
 
-    # Read ONCE per tab, not once per row inside the loop below --
-    # load_expert_views() is uncached and re-parses the whole file on every
-    # call, so the old per-row lookup cost ~one full parse per ticker per tab.
-    expert_views_now = load_expert_views()
     filtered = []
     for row in results:
         if not passes_ema(row, "ema10", f_ema10):
@@ -3673,23 +3714,18 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             else:
                 if not all(rule_passes):
                     continue
-        # row["expert_take"] is already attached (module-level, before any tab
-        # renders); ev is still needed here for the headline/pending nuance the
-        # dropdown filter below applies.
-        ev = expert_views_now.get(row["ticker"], {})
-        verdict = ev.get("verdict", "")
-
-        # Expert Take filter — resolved against live expert_views
+        # Expert Take filter -- resolved against row["expert_take"], the
+        # guarded, pending-aware verdict attached in the enrichment loop
+        # (module level, before any tab renders), so the dropdown, the badge
+        # and the sortable column cannot disagree.
+        #
+        # This used to re-derive the answer here from the RAW stored verdict
+        # plus some headline sniffing ("429"/"analysis pending"), which was
+        # wrong in both directions: a failed-generation placeholder stores
+        # verdict "HOLD", so it matched BOTH "🟡 Hold" and "⚪ Pending", and it
+        # cost an uncached load_expert_views() per tab to do it.
         if f_expert_take != "Any":
-            headline = (ev.get("headline") or "").lower()
-            is_pending = not verdict or verdict in ("PENDING", "FAILED") or "429" in headline or "analysis pending" in headline
-            if f_expert_take == "🟢 Accumulate" and verdict != "ACCUMULATE":
-                continue
-            elif f_expert_take == "🟡 Hold" and verdict != "HOLD":
-                continue
-            elif f_expert_take == "🔴 Caution" and verdict != "CAUTION":
-                continue
-            elif f_expert_take == "⚪ Pending" and not is_pending:
+            if EXPERT_FILTER_VALUES.get(f_expert_take) != row.get("expert_take"):
                 continue
         filtered.append(row)
 
@@ -3859,19 +3895,26 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             as_of = v.get("as_of", "unknown")
             news_source = v.get("news_source", "⚪ Unknown")
             model_used = v.get("model_used", "⚪ Unknown")
-            if verdict == "ACCUMULATE":
+            # Pending FIRST. A failed/stale placeholder stores verdict "HOLD"
+            # with an "Analysis pending -- ..." headline, so the verdict ladder
+            # caught it in its HOLD branch and rendered a broken pipeline as a
+            # confident 🟡 Hold -- making this "Failed (Retry)" badge
+            # unreachable for exactly the records it was written for.
+            if is_pending_view(v):
+                badge = "⚠️ Failed (Retry)"
+            elif verdict == "ACCUMULATE":
                 badge = "🟢 Accumulate"
             elif verdict == "HOLD":
                 badge = "🟡 Hold"
             elif verdict == "CAUTION":
                 badge = "🔴 Caution"
-            elif verdict in ("FAILED", "PENDING") or "error" in headline.lower() or "pending" in headline.lower():
-                badge = "⚠️ Failed (Retry)"
             else:
+                # Never analysed, or aged past EXPERT_STALE_DAYS -- validate_verdict
+                # returns the non-verdict sentinel "PENDING" for the latter.
                 badge = "⚪ Pending"
             if headline:
                 parts = [headline, actionable]
-                note = verdict_flag_note(vflag)
+                note = verdict_flag_note(vflag, as_of)
                 if note:
                     parts.append(note)
                 # The news the verdict actually rests on. This was never shown,
@@ -4152,7 +4195,10 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
     else:
         st.info("No tickers match the current filters.")
 
-    render_expert_view_expander(market, filtered, settings)
+    # `results` (not just the filtered rows) so the alert rules behind the
+    # per-ticker re-analyze button resolve over the whole market, exactly as
+    # they do in the nightly job.
+    render_expert_view_expander(market, filtered, settings, results=results)
 
     st.caption(
         f"Mansfield RS = ((price/{bench} ratio today ÷ SMA of that ratio, n) − 1) × 100. "
@@ -4352,10 +4398,19 @@ for _market_rows in per_market.values():
         _row["sentiment"] = _validate_sentiment(fundamentals_now_global.get(_row["ticker"], {}))[0]
         _view = expert_views_now_global.get(_row["ticker"], {})
         # Guarded verdict, not the raw model one -- validate_verdict demotes an
-        # ACCUMULATE whose trend/VStop preconditions aren't actually met, the
-        # same way _validate_sentiment guards the Sentiment column.
-        _verdict, _vflag = validate_verdict(_view, _row)
-        _row["expert_take"] = _verdict.title() if _verdict in ("ACCUMULATE", "HOLD", "CAUTION") else "Pending"
+        # ACCUMULATE whose trend/VStop/RS preconditions aren't actually met and
+        # ages out a view the pipeline has stopped refreshing, the same way
+        # _validate_sentiment guards the Sentiment column.
+        #
+        # is_pending_view comes first for the same reason it does in the badge:
+        # a failed-generation placeholder stores verdict "HOLD", so keying off
+        # the verdict alone made a broken analysis filterable and sortable as a
+        # genuine Hold.
+        if is_pending_view(_view):
+            _row["expert_take"] = "Pending"
+        else:
+            _verdict, _vflag = validate_verdict(_view, _row)
+            _row["expert_take"] = _verdict.title() if _verdict in ("ACCUMULATE", "HOLD", "CAUTION") else "Pending"
         # Whether the verdict had any news behind it. 30% of stored verdicts
         # rest on "No recent news found." -- which is a legitimate
         # technicals-only read (VERDICT_RULES says absent news leans HOLD, and

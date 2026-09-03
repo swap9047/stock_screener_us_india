@@ -1,7 +1,11 @@
 """
 Background script to automatically generate AI Expert Takes for all
-watchlisted tickers. Intended to run via GitHub Actions at 1:00 PM ET daily.
-It uses data_snapshot.json and automatically pulls news from news_summary.json.
+watchlisted tickers. Run by expert-views.yml at 11:00 PM ET daily (03:00 UTC
+EDT / 04:00 UTC EST), as the step AFTER that workflow's own refresh_data.py --
+so data_snapshot.json is same-day by construction, not by timing luck.
+
+News is fetched per ticker by expert_views.fetch_gemma_expert_news (a grounded
+search over the last 24 hours), not read from news_summary.json.
 """
 
 import os
@@ -14,6 +18,7 @@ from expert_views import (
     resolve_persisted_view,
     EXPERT_STALE_DAYS, _view_age_days, stale_view_fallback,
 )
+from alerts import active_alerts_for_prompt, alerts_text_for
 from news_summary import get_gemini_api_key
 
 
@@ -74,7 +79,7 @@ def main():
 
     client = genai.Client(api_key=api_key)
     
-    # Load data snapshot (generated at 7 AM ET)
+    # Load the snapshot refreshed by this same workflow minutes earlier.
     snapshot = load_data_snapshot()
     if not snapshot or "per_market" not in snapshot:
         print("Error: Invalid or missing data_snapshot.json. Run refresh_data.py first.")
@@ -111,6 +116,14 @@ def main():
 
         print(f"\n[{_ts()}] === {market} Watchlist ({len(mkt_tickers)} tickers) ===")
         results = snapshot["per_market"][market]
+        # Section 2 of the Expert Take prompt ("ACTIVE ALERT RULES TRIGGERED").
+        # Evaluated ONCE per market over the whole market's rows -- not per
+        # ticker, and not over a subset, since a rule may reference another
+        # rule and scope resolution needs the full set. Until now nothing ever
+        # passed this, so every nightly analysis was told no rules had fired.
+        alerts_by_ticker = active_alerts_for_prompt(results)
+        if alerts_by_ticker is not None:
+            print(f"[{_ts()}] Alert rules currently true for {len(alerts_by_ticker)}/{len(results)} tickers in {market}")
 
         for idx, tk in enumerate(mkt_tickers):
             if tk in seen:
@@ -137,11 +150,14 @@ def main():
 
             old_view = expert_views.get(tk)
 
+            alerts_text = alerts_text_for(alerts_by_ticker, tk)
+
             try:
                 t0 = time.time()
                 view = generate_expert_view(
                     client,
                     row,
+                    active_alerts_text=alerts_text,
                     is_retry=False
                 )
                 elapsed = time.time() - t0
@@ -152,7 +168,7 @@ def main():
                 print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - {detail}")
             except TimeoutError as e:
                 print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - TIMEOUT: {e}. Added to retry queue.")
-                retry_queue.append((market, tk, row, old_view))
+                retry_queue.append((market, tk, row, old_view, alerts_text))
             except Exception as e:
                 print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - EXCEPTION: {e}")
                 total_failed += 1
@@ -175,7 +191,7 @@ def main():
     # Process retry queue
     if retry_queue:
         print(f"\n[{_ts()}] === Processing Retry Queue ({len(retry_queue)} tickers) ===")
-        for idx, (market, tk, row, old_view) in enumerate(retry_queue):
+        for idx, (market, tk, row, old_view, alerts_text) in enumerate(retry_queue):
             company_name = row.get("company_name", tk)
             print(f"[{_ts()}] [RETRY] [{market}] [{idx+1}/{len(retry_queue)}] {tk} ({company_name}) - starting...")
             try:
@@ -183,6 +199,7 @@ def main():
                 view = generate_expert_view(
                     client,
                     row,
+                    active_alerts_text=alerts_text,
                     is_retry=True
                 )
                 elapsed = time.time() - t0
