@@ -576,22 +576,21 @@
     "guard_flag": null
   },
   "GRAVITA.NS": {
-    "earnings_summary": "Revenue: \u20b91,475.06 Cr, Net Profit (PAT): \u20b9106.39 Cr, EPS: 14.6",
-    "future_guidance": "Management indicated the near-term environment remains difficult due to Middle East conflicts disrupting scrap supply chains.",
-    "analyst_coverage": "Consensus: Strong Buy (6 Strong Buy, 3 Buy ratings).",
+    "earnings_summary": "Revenue \u20b91,475.06 Cr (\u219141.8% YoY), Net Profit \u20b9106.39 Cr (\u219114.1% YoY), EPS \u20b914.60, Adjusted EBITDA \u20b9145 Cr (\u219129% YoY)",
+    "future_guidance": "CAPEX raised to \u20b91,700 Cr targeting 20%+ ROCE; Copper segment capacity to double to ~60,000 MTPA over 3 years; Long-term PAT CAGR target of 25%\u201330% over 4-5 years",
+    "analyst_coverage": "ICICI Securities: Buy, Target \u20b92,020 (Maintained); Axis Direct: Buy, Target \u20b92,200",
     "earnings_report_date": "2026-07-27",
-    "eps_value": "14.6",
-    "guidance_change": null,
+    "eps_value": "\u20b914.60",
+    "guidance_change": "raised",
     "analyst_action": null,
-    "sentiment": "Neutral",
-    "reasoning": "Gravita India reported solid Q1 FY27 earnings with revenue of \u20b91,475.06 Cr and EPS of 14.6, backed by a strong analyst consensus. However, management issued a cautious outlook stating that the near-term environment remains difficult due to Middle East supply chain disruptions. Balancing the strong current financial results against the challenging near-term headwinds results in a Neutral fundamental sentiment.",
-    "as_of": "2026-09-03 13:16",
-    "news_used": "**Earnings (Q1 FY27 - released July 27, 2026):**\n* **Revenue:** \u20b91,475.06 Cr\n* **Net Profit (PAT):** \u20b9106.39 Cr\n* **EPS:** 14.6\n\n**Forward Guidance:**\n* Management indicated the near-term environment remains difficult due to Middle East conflicts disrupting scrap supply chains.\n\n**Analyst Coverage (as of Sept 3, 2026):**\n* **Consensus:** Strong Buy (6 Strong Buy, 3 Buy ratings).",
+    "sentiment": "Positive",
+    "reasoning": "Gravita India reported strong Q1 FY27 revenue and profit growth, raised its CAPEX guidance along with a robust long-term PAT CAGR target of 25%-30%, and received positive Buy ratings and target prices from prominent analysts.",
+    "as_of": "2026-09-03 19:15",
+    "news_used": "**Q1 FY27 Earnings (Reported July 27, 2026):**\n* **Revenue:** \u20b91,475.06 Cr (\u219141.8% YoY)\n* **Net Profit (PAT):** \u20b9106.39 Cr (\u219114.1% YoY)\n* **EPS:** \u20b914.60\n* **Adjusted EBITDA:** \u20b9145 Cr (\u219129% YoY)\n\n**Forward Guidance:**\n* **CAPEX:** Guidance raised to \u20b91,700 Cr; targets 20%+ ROCE.\n* **Copper Segment:** Plans to double capacity to ~60,000 MTPA over the next three years.\n* **Long-term Target:** Aiming for 25%\u201330% PAT CAGR over the next 4\u20135 years.\n\n**Recent Analyst Ratings (July 20 \u2013 Sept 03, 2026):**\n* **ICICI Securities:** Buy | Target: \u20b92,020 (Maintained, July 28, 2026)\n* **Axis Direct:** Buy | Target: \u20b92,200 (July 29, 2026)",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite",
     "quarter_verified": true,
-    "real_earnings_date": "2026-07-27",
-    "guard_flag": null
+    "real_earnings_date": null
   },
   "SHILPAMED.NS": {
     "earnings_summary": "Q1 FY27 Revenue: \u20b9465.78 Cr, Net Profit: \u20b9100.88 Cr, Statutory EPS: \u20b912.44, Normalized EPS: \u20b95.16",
