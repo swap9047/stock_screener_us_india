@@ -1,5 +1,8 @@
 """
-AI Stock Expert View Engine powered by gemini-3.6-flash.
+AI Stock Expert View Engine. The reasoning model is settings-driven
+(`expert_reasoning_model`, default gemini-3.5-flash-lite) with a Gemma ladder
+behind it -- see generate_expert_view; this line used to name a hardcoded model
+the code has never called.
 Evaluates rich quantitative indicators, trend rules, active alert conditions,
 and free web news catalysts to produce actionable investor takes.
 """
@@ -153,6 +156,24 @@ def _is_valid_view(view):
     return True
 
 
+def is_pending_view(view):
+    """True if a record EXISTS but is a failure/pending placeholder rather than
+    a real analysis.
+
+    Both _pending_fallback and stale_view_fallback write verdict "HOLD" (there
+    is no "pending" member of the verdict vocabulary), so every consumer that
+    branched on the verdict string alone rendered those records as a confident
+    Hold -- the UI's own "Failed (Retry)" badge was unreachable for exactly the
+    records it was written for. One predicate, used by the badge, the row
+    field and the dropdown filter, is what keeps those three agreeing.
+
+    Distinct from `not _is_valid_view(view)`, which is also true for a ticker
+    that has never been analysed at all -- that one is "Pending", this one is
+    "Failed".
+    """
+    return bool(view) and not _is_valid_view(view)
+
+
 EXPERT_STALE_DAYS = 4
 
 # Minimum weeks the weekly VStop must have held UP for an ACCUMULATE, per
@@ -166,8 +187,11 @@ def validate_verdict(view, row):
 
     Returns (verdict, flag) -- flag is "" when the verdict stands, or
     "UNSUPPORTED_ACCUMULATE" when ACCUMULATE was returned without the
-    technical preconditions VERDICT_RULES makes mandatory, in which case the
-    verdict is demoted to the rules' own stated default, HOLD.
+    technical preconditions VERDICT_RULES makes mandatory -- clauses (a) trend,
+    (b) VStop up >= 3 weeks and (c) RS positive, i.e. every one of the four
+    that is reconstructible from the row; (d) "no negative news catalyst" is a
+    judgement about the news text and is not -- in which case the verdict is
+    demoted to the rules' own stated default, HOLD.
 
     VERDICT_RULES was enforced by prompt compliance alone, even though every
     input it names is already a structured field on the snapshot row. Replaying
@@ -176,12 +200,26 @@ def validate_verdict(view, row):
     rate, but it was unbounded and unmonitored, and it moves with any model
     swap in the ladder.
 
-    Only ACCUMULATE is checked. HOLD is the rules' default and needs no
-    evidence, and CAUTION's "at least two of five signals" includes news
-    judgement that isn't reconstructible from the row.
+    Only ACCUMULATE is checked for support. HOLD is the rules' default and
+    needs no evidence, and CAUTION's "at least two of five signals" includes
+    news judgement that isn't reconstructible from the row.
+
+    Staleness is checked first and applies to every verdict, returning the
+    non-verdict sentinel "PENDING" so consumers fall through to their existing
+    pending branch. resolve_persisted_view already ages out a view while the
+    nightly refresh is RUNNING and failing; this covers the case it cannot --
+    the workflow not running at all (disabled schedule, GitHub's 60-day
+    inactivity auto-disable, an expired key), where nothing writes and a
+    month-old ACCUMULATE would otherwise keep displaying as current. Sentiment
+    has had this at read time all along; Expert Take had it only at write time.
     """
-    if not view or not row:
-        return (view or {}).get("verdict"), ""
+    if not view:
+        return None, ""
+    age = _view_age_days(view)
+    if age is not None and age > EXPERT_STALE_DAYS:
+        return "PENDING", "STALE"
+    if not row:
+        return view.get("verdict"), ""
     if view.get("verdict") != "ACCUMULATE":
         return view.get("verdict"), ""
 
@@ -192,14 +230,25 @@ def validate_verdict(view, row):
     weeks = row.get("vstop_weekly_weeks_since_change")
     if isinstance(weeks, (int, float)) and weeks < ACCUMULATE_MIN_VSTOP_WEEKS:
         return "HOLD", "UNSUPPORTED_ACCUMULATE"
+    # Clause (c). Both this and the weeks test above fail OPEN on a missing or
+    # non-numeric value, which is the rule's own wording -- "RS is positive or
+    # N/A for very new data" -- not an oversight: a ticker with too little
+    # history to compute Mansfield RS must not be demoted for it.
+    rs = row.get("rs_weekly")
+    if isinstance(rs, (int, float)) and rs < 0:
+        return "HOLD", "UNSUPPORTED_ACCUMULATE"
     return "ACCUMULATE", ""
 
 
-def verdict_flag_note(flag):
+def verdict_flag_note(flag, as_of="unknown"):
     """Plain-English note for a validate_verdict flag, for the cell tooltip."""
     if flag == "UNSUPPORTED_ACCUMULATE":
         return ("[Downgraded to Hold: the model returned Accumulate, but the "
-                "trend/VStop preconditions in its own rules were not met]")
+                "trend/VStop/RS preconditions in its own rules were not met]")
+    if flag == "STALE":
+        return (f"[STALE: as_of {as_of} is older than {EXPERT_STALE_DAYS} days -- "
+                "the refresh pipeline has not updated this verdict, so it is no "
+                "longer shown as current]")
     return ""
 
 def _view_age_days(view):
@@ -237,7 +286,17 @@ VERDICT_RULES = """MANDATORY VERDICT RULES — apply these strictly before choos
 - NEVER give ACCUMULATE solely because news is absent or minimal — absent news → lean HOLD unless technicals fully satisfy the ACCUMULATE criteria above."""
 
 
-def build_expert_prompt(row_data, news_text, active_alerts_text="None"):
+# The deterministic guard validate_verdict applies on top of whatever the model
+# wrote. Spelled out for the copy-for-AI payload for the same reason
+# VERDICT_RULES is -- the reader is told these rules produced the verdict, so
+# they must also be told the verdict is not raw model output.
+VERDICT_GUARD_RULES = f"""A deterministic guard runs after the model answers and can override it:
+- View older than {EXPERT_STALE_DAYS} days -> shown as Pending (STALE): the refresh pipeline has stopped updating this verdict, so it is no longer presented as current.
+- ACCUMULATE without the mandatory technical preconditions -- trend not Uptrend/Strong Uptrend, VStop not UP, VStop held < {ACCUMULATE_MIN_VSTOP_WEEKS} weeks, or weekly RS negative -> demoted to HOLD (UNSUPPORTED_ACCUMULATE).
+- HOLD and CAUTION are not re-checked: HOLD is the rules' own default, and CAUTION's five-signal test includes news judgement that cannot be reconstructed from the metrics."""
+
+
+def build_expert_prompt(row_data, news_text, active_alerts_text=None):
     # These two used to be hardcoded as "> 3 wks" and ">= 1.4x" in the prompt
     # text below, but both are settings-driven -- and this repo runs
     # tech_uptrend_volume_ratio at 0.1, so the model was being told Tech Uptrend
@@ -293,6 +352,19 @@ def build_expert_prompt(row_data, news_text, active_alerts_text="None"):
         if news_absent else ""
     )
 
+    # "None" reads to the model as "every rule was checked and none fired" --
+    # a positive signal. For the life of this feature no caller passed anything
+    # here, so that claim was made on every single analysis without a single
+    # rule ever having been evaluated. These three cases are now distinct:
+    # text = rules fired, "" = evaluated and none fired, None = not evaluated.
+    if active_alerts_text is None:
+        alerts_section = ("Not evaluated for this run -- treat as NO INFORMATION about alert "
+                          "rules, not as evidence that nothing triggered.")
+    elif not str(active_alerts_text).strip():
+        alerts_section = "None -- every enabled rule was evaluated for this ticker and none is currently true."
+    else:
+        alerts_section = str(active_alerts_text)
+
     prompt = f"""You are an elite equity portfolio manager combining Stan Weinstein stage analysis, trend momentum,
 volume accumulation/distribution analysis, and fundamental catalyst evaluation.
 
@@ -318,7 +390,7 @@ recent web news findings provided below.
 ======================================================================
 2. ACTIVE ALERT RULES TRIGGERED
 ======================================================================
-{active_alerts_text or 'None'}
+{alerts_section}
 
 ======================================================================
 3. USER FLAGS & NOTES

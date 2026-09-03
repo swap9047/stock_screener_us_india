@@ -36,7 +36,7 @@ from datetime import date
 
 import requests
 
-from filters import passes_filter_chain, describe_chain
+from filters import passes_filter_chain, describe_chain, describe_chain_with_values
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 RULES_FILE = os.path.join(SCRIPT_DIR, "alerts_config.json")
@@ -443,6 +443,63 @@ def preview_rules(rules, snapshot_results):
                 "is_true_now": is_true,
             })
     return out, cycle_ids
+
+
+def active_alerts_by_ticker(rules, snapshot_results, metric_labels=None):
+    """{ticker: text} describing every enabled rule that is TRUE right now for
+    that ticker, rendered with the live values that make it true.
+
+    Feeds the Expert Take prompt's "ACTIVE ALERT RULES TRIGGERED" section,
+    which was a dead parameter for the life of that feature: no caller ever
+    passed one, so every analysis was told "None" whether or not rules had
+    fired -- a positive claim that nothing triggered, not a missing section.
+
+    Reuses preview_rules (the same evaluation behind the dashboard's Alerts
+    column) and filters.describe_chain_with_values (the same rendering the
+    AI-review payload uses), so the model is shown exactly what the user sees.
+
+    Indexed once per call rather than evaluated per ticker: preview_rules walks
+    every rule x ticker combination, so calling it inside a ~110-ticker refresh
+    loop would be quadratic for no gain.
+    """
+    metric_labels = metric_labels or {}
+    rule_by_id = {r["id"]: r for r in rules}
+    out = {}
+    for p in preview_rules(rules, snapshot_results)[0]:
+        if not p["is_true_now"]:
+            continue
+        name = p["rule_name"] or "(unnamed rule)"
+        detail = describe_chain_with_values(p["row"], p["conditions"], metric_labels, rule_by_id)
+        out.setdefault(p["ticker"], []).append(f"- {name}: {detail}")
+    return {t: "\n".join(lines) for t, lines in out.items()}
+
+
+def active_alerts_for_prompt(snapshot_results, metric_labels=None):
+    """active_alerts_by_ticker over the CONFIGURED rules, or None when no rule
+    is configured at all -- the distinction build_expert_prompt renders as
+    "not evaluated" rather than "evaluated, nothing fired".
+
+    metric_labels is resolved from settings when not supplied; the import is
+    local because stock_data is the heavier module and nothing else in this
+    file needs it.
+    """
+    rules = [r for r in load_rules() if r.get("enabled", True) and r.get("conditions")]
+    if not rules:
+        return None
+    if metric_labels is None:
+        from stock_data import get_filterable_metrics, load_settings
+        metric_labels = {v: k for k, v in get_filterable_metrics(load_settings()).items()}
+    return active_alerts_by_ticker(rules, snapshot_results, metric_labels)
+
+
+def alerts_text_for(alerts_by_ticker, ticker):
+    """The per-ticker value build_expert_prompt expects: None when alerts were
+    not evaluated at all (no rules configured, or the caller didn't ask), and
+    "" when they were evaluated and nothing is currently true for this ticker.
+    The two mean different things to the model, so don't collapse them."""
+    if alerts_by_ticker is None:
+        return None
+    return alerts_by_ticker.get(ticker, "")
 
 
 def evaluate_and_fire(all_rules, snapshot_results, state, metric_labels=None, due_rules=None):
