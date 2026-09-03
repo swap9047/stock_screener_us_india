@@ -96,6 +96,10 @@ jobs:
         run: python -u refresh_fundamentals.py
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # Second key so llm_util.make_client can spread the run's calls
+          # across both projects' quotas -- see llm_util's rotation section.
+          # Absent/blank is fine: rotation just falls back to one key.
+          GEMINI_API_KEY_BACKUP: ${{ secrets.GEMINI_API_KEY_BACKUP }}
           PYTHONUNBUFFERED: "1"
           # github.event.inputs (not `inputs`) so scheduled runs, which carry
           # no inputs at all, resolve to an empty string = every watchlist.

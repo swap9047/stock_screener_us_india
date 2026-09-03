@@ -114,18 +114,23 @@ def _market_label(market):
 
 
 def get_gemini_api_key(st_secrets=None):
-    """Returns the Gemini API key, checking (in order) a passed-in
-    Streamlit secrets-dict-like object, then the GEMINI_API_KEY env var
-    (how the GitHub Actions workflow supplies it). Mirrors
-    github_sync.get_github_config / alerts.load_discord_webhook's pattern.
-    Returns None if not configured anywhere."""
-    if st_secrets is not None:
-        try:
-            if "GEMINI_API_KEY" in st_secrets:
-                return st_secrets["GEMINI_API_KEY"]
-        except Exception:
-            pass
-    return os.environ.get("GEMINI_API_KEY")
+    """Returns ONE Gemini API key -- the primary if configured, else whichever
+    is. Kept because callers use it as an "is Gemini configured at all?" test
+    and to pass a key down into the analysis helpers.
+
+    Discovery itself lives in llm_util.gemini_api_keys now, because there are
+    two keys (GEMINI_API_KEY and GEMINI_API_KEY_BACKUP) and every actual CALL
+    should rotate between them -- see llm_util.make_client. Returning a single
+    key from here is only about configuration checks; it is not the thing that
+    picks which key a request uses."""
+    keys = llm_util.gemini_api_keys(st_secrets=st_secrets)
+    return keys[0][1] if keys else None
+
+
+def get_gemini_api_keys(st_secrets=None):
+    """Every configured key, for callers that pass keys down to a helper which
+    will build a rotating client (the dashboard does this)."""
+    return [k for _, k in llm_util.gemini_api_keys(st_secrets=st_secrets)]
 
 
 def _bare_ticker(ticker):
@@ -419,7 +424,6 @@ def build_news_summary(watchlists, api_key):
                            "collate_status",
                            "tickers": {TICKER: {"status", "sources"}}}}}
     """
-    from google import genai
     from stock_data import load_settings, load_data_snapshot
 
     settings = load_settings()
@@ -450,7 +454,7 @@ def build_news_summary(watchlists, api_key):
     raw_budget = settings.get("news_reasoning_budget", 4096)
     thinking_budget = int(raw_budget) if isinstance(raw_budget, str) and raw_budget.isdigit() else raw_budget
 
-    client = genai.Client(api_key=api_key)
+    client = llm_util.make_client(api_key)
     result = {
         # Top-level as_of is for display and is dated in ET, which is when the
         # scheduled run actually happens (8 PM ET).

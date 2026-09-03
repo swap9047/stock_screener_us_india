@@ -98,6 +98,10 @@ jobs:
         run: python -u news_check.py
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # Second key so llm_util.make_client can spread the run's calls
+          # across both projects' quotas -- see llm_util's rotation section.
+          # Absent/blank is fine: rotation just falls back to one key.
+          GEMINI_API_KEY_BACKUP: ${{ secrets.GEMINI_API_KEY_BACKUP }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
 
       # always(): news_check.py now exits non-zero when most tickers failed

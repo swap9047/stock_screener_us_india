@@ -61,6 +61,7 @@ from stock_data import (
     rebuild_snapshot_for_market, fill_snapshot_gaps,
     load_watchlist_groups, save_watchlist_groups,
 )
+import llm_util
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE,
                      send_discord_batch, build_discord_messages_for_rule, describe_schedule,
                      DAY_CODES, DAY_LABELS, DEFAULT_DAYS, ALLOWED_HOURS, HOUR_LABELS,
@@ -80,7 +81,7 @@ from weekly_wrapup import (
 from filters import (get_market_filters, save_market_filters, apply_filters, describe_filter,
                      describe_chain, describe_chain_with_values, passes_filter_chain, CATEGORICAL_METRICS)
 from github_sync import get_github_config, push_all_config, trigger_github_workflow, SYNCABLE_FILES
-from news_summary import load_news_summary, MARKET_LABELS, get_gemini_api_key
+from news_summary import load_news_summary, MARKET_LABELS, get_gemini_api_key, get_gemini_api_keys
 from expert_views import (load_expert_views, save_expert_views, analyze_single_ticker,
                           generate_expert_view, _is_valid_view, is_pending_view,
                           VERDICT_RULES, VERDICT_GUARD_RULES,
@@ -731,6 +732,11 @@ def sentiment_flag_note(flag, as_of):
         return "[NO_DATA: earnings, guidance and analyst coverage are all N/A]"
     if flag == "PARTIAL":
         return "[PARTIAL: only revenue/soft data — no EPS, guidance or analyst action; capped at Neutral]"
+    if flag == "NO_EVIDENCE":
+        return ("[NO HARD EVIDENCE: no current-quarter EPS, no guidance change and no analyst "
+                "upgrade/downgrade were found. This is \"nothing solid was found\", not \"the "
+                "picture is balanced\" — read the earnings/guidance/analyst lines above and judge "
+                "for yourself]")
     return ""
 
 
@@ -742,7 +748,9 @@ SENTIMENT_GUARD_RULES = f"""A deterministic guard runs after the model answers a
 - Earnings, guidance and analyst coverage all missing/N/A -> Unknown (NO_DATA)
 - A confirmed earnings report the news didn't account for -> Unknown (STALE_QUARTER)
 - Positive/Negative without hard evidence (no EPS figure, no guidance change, no
-  analyst action) -> capped at Neutral (PARTIAL)"""
+  analyst action) -> capped at Neutral (PARTIAL)
+- Neutral with no hard evidence -> still Neutral, but labelled NO_EVIDENCE: it means
+  nothing solid was found, NOT that the fundamental picture is balanced"""
 
 AI_REVIEW_INSTRUCTION = (
     "Do a thorough analysis from an investment perspective, considering valuation, "
@@ -3111,8 +3119,7 @@ def _reanalyze_tickers_in_dashboard(tickers, results, api_key, sync_message,
     """
     label = "Expert Take" if scope == "expert" else "Sentiment"
     progress_bar = st.progress(0, text=f"Starting selective {label} re-analysis...")
-    from google import genai
-    client = genai.Client(api_key=api_key) if scope == "expert" else None
+    client = llm_util.make_client(api_key) if scope == "expert" else None
     updated_views = load_expert_views() if scope == "expert" else None
     # Section 2 of the Expert Take prompt. Evaluated once for the whole market,
     # not per ticker -- see alerts.active_alerts_by_ticker. `results` is the
@@ -3173,7 +3180,10 @@ def _reanalyze_tickers_in_dashboard(tickers, results, api_key, sync_message,
 
 def render_expert_analysis_control_bar(market, results, combined_markets=None):
     expert_views = load_expert_views()
-    api_key = get_gemini_api_key(st.secrets)
+    # All configured keys, not just the primary: on Streamlit Cloud the backup
+    # lives in st.secrets, which llm_util cannot read on its own, so the UI has
+    # to pass them down or these paths would pin every call to one key.
+    api_key = get_gemini_api_keys(st.secrets)
 
     all_tickers = [r["ticker"] for r in results]
 
@@ -3360,7 +3370,10 @@ def render_expert_view_expander(market, filtered_rows, settings, results=None):
 
     v_colors = {"ACCUMULATE": "#1a7a3a", "HOLD": "#7a6a00", "CAUTION": "#7a1a1a"}
     v_badges = {"ACCUMULATE": "🟢 ACCUMULATE / ADD", "HOLD": "🟡 HOLD / WATCH", "CAUTION": "🔴 CAUTION / EXIT"}
-    api_key = get_gemini_api_key(st.secrets)
+    # All configured keys, not just the primary: on Streamlit Cloud the backup
+    # lives in st.secrets, which llm_util cannot read on its own, so the UI has
+    # to pass them down or these paths would pin every call to one key.
+    api_key = get_gemini_api_keys(st.secrets)
     # Was missing entirely, so the per-ticker re-analyze button below raised
     # NameError the moment it was clicked.
 
@@ -3959,7 +3972,10 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
                 label = "🐻 Bearish"
             elif sentiment == "Neutral":
                 color = None
-                label = "⚖️ Neutral"
+                # "Nothing solid found" and "genuinely balanced" are different
+                # claims and used to render identically -- see NO_EVIDENCE in
+                # _validate_sentiment.
+                label = "⚖️ Neutral (no hard evidence)" if flag == "NO_EVIDENCE" else "⚖️ Neutral"
             else:
                 color = None
                 label = "⚪ Unknown (STALE)" if flag == "STALE" else (

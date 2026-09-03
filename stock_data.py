@@ -188,6 +188,12 @@ DEFAULT_SETTINGS = {
     # -- Sentiment Pipeline Defaults --
     "sentiment_reasoning_model": "models/gemini-3.5-flash-lite",
     "sentiment_thinking_budget": 8192,
+    # One extra grounded search + one extra reasoning pass for a ticker whose
+    # broad search found a known earnings announcement but no figures for it
+    # (see fundamentals_eval.needs_targeted_retry). Set false to disable the
+    # extra calls entirely. Prefixed "sentiment_" so it counts as a UI/pipeline
+    # setting and does not invalidate the snapshot cache -- see _NON_CALC.
+    "sentiment_targeted_retry": True,
 
     "note_dropdown_options": "",
 

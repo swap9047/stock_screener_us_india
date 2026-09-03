@@ -9,6 +9,9 @@ other two. This module is the one implementation they now share.
 """
 
 import concurrent.futures
+import os
+import random
+import threading
 import time
 
 CALL_TIMEOUT_SECONDS = 120
@@ -123,3 +126,163 @@ def retry_pair_tiers(primary, fallback, backoff=RETRY_BACKOFF_SECONDS):
     if fallback and fallback != primary:
         tiers.append((fallback, 0))
     return tiers
+
+
+# ---------------------------------------------------------------------------
+# API key rotation
+#
+# Two Gemini keys are configured (GEMINI_API_KEY, GEMINI_API_KEY_BACKUP), both
+# as repo secrets and in .env. The point is to halve the per-key load: a
+# nightly run is ~250 calls against one project's quota, and the search stages
+# are the slow, rate-limit-prone ones.
+#
+# Rotation is PER CALL, not per run or per script. A run picks a client once
+# and then makes every call through it, so per-run rotation would still put a
+# whole 117-ticker job on one key -- exactly the load this is meant to split.
+# RotatingGeminiClient therefore stands in for the client object itself and
+# chooses a key on each generate_content, which needs no changes at any of the
+# call sites.
+# ---------------------------------------------------------------------------
+
+# In priority order. Anything matching GEMINI_API_KEY_<N> is picked up too, so
+# adding a third key is a config change rather than a code change.
+PRIMARY_KEY_NAME = "GEMINI_API_KEY"
+BACKUP_KEY_NAME = "GEMINI_API_KEY_BACKUP"
+
+# How long a key that returned a quota/rate-limit error is skipped for. Without
+# this, a key whose daily quota is exhausted keeps getting picked for half the
+# remaining calls and fails every one of them.
+KEY_COOLDOWN_SECONDS = 120
+
+QUOTA_ERROR_MARKERS = ("429", "resource_exhausted", "quota", "rate limit", "too many requests")
+
+
+def _is_quota_error(exc):
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(m in text for m in QUOTA_ERROR_MARKERS)
+
+
+def gemini_api_keys(st_secrets=None, extra=None):
+    """Every configured Gemini key as [(name, key), ...], primary first.
+
+    Looks in a Streamlit secrets-like object first, then the environment (how
+    GitHub Actions supplies them) -- the same order and shape as
+    news_summary.get_gemini_api_key, which this replaces the plural half of.
+    `extra` accepts a key or list of keys a caller already resolved (the
+    dashboard passes what it read from st.secrets down into the analysis
+    helpers). Duplicates are dropped, so passing the primary explicitly does
+    not weight it double in the rotation.
+    """
+    found = []
+
+    def add(name, value):
+        if value and isinstance(value, str) and value not in {k for _, k in found}:
+            found.append((name, value))
+
+    # Named discovery first, so a key the caller also passed keeps its real
+    # name in the rotation logs instead of showing up as "caller[0]".
+    names = [PRIMARY_KEY_NAME, BACKUP_KEY_NAME] + [f"{PRIMARY_KEY_NAME}_{n}" for n in range(2, 10)]
+    for name in names:
+        if st_secrets is not None:
+            try:
+                if name in st_secrets:
+                    add(name, st_secrets[name])
+                    continue
+            except Exception:
+                pass
+        add(name, os.environ.get(name))
+
+    if isinstance(extra, str):
+        add("caller", extra)
+    elif extra:
+        for i, k in enumerate(extra):
+            add(f"caller[{i}]", k)
+    return found
+
+
+class RotatingGeminiClient:
+    """Stands in for genai.Client, picking a key at random on every call.
+
+    Only `client.models.generate_content(...)` is proxied, because that is the
+    entire surface this codebase uses (see generate_with_timeout). Anything
+    else would raise AttributeError loudly rather than silently bypassing the
+    rotation.
+
+    Underlying clients are built once per key and reused -- construction is not
+    free, and this is called ~250 times a night.
+    """
+
+    def __init__(self, keys):
+        if not keys:
+            raise ValueError("RotatingGeminiClient needs at least one API key")
+        self._keys = list(keys)
+        self._clients = {}
+        self._cooldown_until = {}
+        self._lock = threading.Lock()
+        self.last_key_name = None
+        # Call counts per key name, so a run can report how the load actually
+        # split rather than assuming it was even.
+        self.call_counts = {name: 0 for name, _ in self._keys}
+
+    @property
+    def key_names(self):
+        return [name for name, _ in self._keys]
+
+    def _client_for(self, key):
+        client = self._clients.get(key)
+        if client is None:
+            from google import genai
+            client = genai.Client(api_key=key)
+            self._clients[key] = client
+        return client
+
+    def _pick(self):
+        now = time.time()
+        with self._lock:
+            live = [(n, k) for n, k in self._keys if self._cooldown_until.get(n, 0) <= now]
+            # Every key cooling down: use them all rather than hard-failing --
+            # a stale cooldown must never be the reason a run does nothing.
+            choices = live or self._keys
+            name, key = random.choice(choices)
+            self.call_counts[name] = self.call_counts.get(name, 0) + 1
+            self.last_key_name = name
+        return name, self._client_for(key)
+
+    def _mark_quota_error(self, name):
+        with self._lock:
+            self._cooldown_until[name] = time.time() + KEY_COOLDOWN_SECONDS
+        print(f"  [key rotation] {name} hit a quota/rate limit -- skipping it for {KEY_COOLDOWN_SECONDS}s")
+
+    @property
+    def models(self):
+        return _RotatingModels(self)
+
+
+class _RotatingModels:
+    """The `.models` namespace of the proxy above."""
+
+    def __init__(self, parent):
+        self._parent = parent
+
+    def generate_content(self, **kwargs):
+        name, client = self._parent._pick()
+        try:
+            return client.models.generate_content(**kwargs)
+        except Exception as e:
+            if _is_quota_error(e):
+                self._parent._mark_quota_error(name)
+            raise
+
+
+def make_client(api_key=None, st_secrets=None):
+    """The client every pipeline should use: rotates across all configured keys.
+
+    `api_key` accepts a single key or a list, for callers that already resolved
+    one (the dashboard reads st.secrets before calling into the analysis
+    helpers). Returns None when nothing is configured, matching what the
+    callers already check for.
+    """
+    keys = gemini_api_keys(st_secrets=st_secrets, extra=api_key)
+    if not keys:
+        return None
+    return RotatingGeminiClient(keys)

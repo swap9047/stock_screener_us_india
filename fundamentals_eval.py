@@ -318,6 +318,24 @@ def _validate_sentiment(view):
       "PARTIAL"      -> only revenue/soft data; no EPS/guidance/analyst
                         evidence, so a directional verdict is capped at
                         "Neutral"
+      "NO_EVIDENCE"  -> the model itself returned "Neutral" for want of hard
+                        evidence. Verdict unchanged; the flag exists because
+                        "we found nothing solid" and "the picture is genuinely
+                        balanced" are different claims that rendered
+                        identically. WINDLAS.NS is the worked example: bullish
+                        -sounding prose (expansion plans, a "Strong Buy" from
+                        an algorithmic site) whose only real number -- EPS
+                        Rs 7.59 -- belonged to the PREVIOUS quarter, correctly
+                        refused. 9 of 117 views are in this state (a further 2
+                        evidence-less Neutrals resolve to NO_DATA first, since
+                        all three of their text fields are placeholders too).
+
+    Note PARTIAL cannot fire on its own: the prompt's own rules 2-3 already
+    force an evidence-less directional call down to "Neutral" before the guard
+    sees it, so the case reaches here as Neutral, not as Positive/Negative.
+    PARTIAL is kept as the belt to the prompt's braces (it catches a model that
+    ignores the rules, and every cached pre-schema view), while NO_EVIDENCE is
+    what actually labels the live data.
     """
     if not view:
         return "Unknown", "NO_DATA"
@@ -332,31 +350,20 @@ def _validate_sentiment(view):
     sentiment = view.get("sentiment", "Unknown")
     if sentiment in ("Positive", "Negative") and not _has_hard_evidence(view):
         return "Neutral", "PARTIAL"
+    if sentiment == "Neutral" and not _has_hard_evidence(view):
+        # Verdict deliberately unchanged -- Neutral IS the right answer on no
+        # evidence. Only the label is added, so filters and sorting (which read
+        # the verdict, not the flag) are untouched.
+        return "Neutral", "NO_EVIDENCE"
     return sentiment, ""
 
-def generate_fundamental_view(client, row_data, news_text=None, news_source=None, is_retry=False):
-    ticker = row_data.get("ticker", "UNKNOWN")
-    market = row_data.get("market", "us_invested")
-    company_name = row_data.get("company_name", ticker)
-
-    if news_text is None:
-        try:
-            news_text, news_source = fetch_fundamental_news(client, ticker, market, company_name, is_retry=is_retry)
-        except TimeoutError:
-            # Let the requeue signal through. fetch_fundamental_news raises this
-            # on a first-pass ladder exhaustion specifically so the caller can
-            # retry it later -- but TimeoutError subclasses OSError subclasses
-            # Exception, so the blanket handler below used to swallow it. The
-            # result: refresh_fundamentals' retry_queue was always empty and its
-            # entire retry phase (~50 lines, including a 30s backoff) had never
-            # once executed.
-            raise
-        except Exception as e:
-            print(f"  [fundamental news fetch failed/timeout] {ticker}: {e} -> Proceeding with fallback")
-            news_text, news_source = "No recent fundamental news found.", "⚪ No Source"
-
-    window = search_window_days(market, ticker)
-    prompt = f"""You are a fundamental equities analyst. Review the provided news facts for {company_name} (Ticker: {ticker}) and extract the current quarter's Earnings, Guidance, and Analyst Coverage. Evaluate the overall fundamental sentiment and provide your reasoning.
+def build_sentiment_prompt(company_name, ticker, news_text):
+    """The reasoning-stage prompt. Extracted from generate_fundamental_view so
+    the targeted follow-up pass (see needs_targeted_retry) can rebuild it with
+    the extra search output appended, instead of keeping a second copy that
+    would drift the moment these rules are tuned -- the same reasoning behind
+    expert_views.build_expert_prompt."""
+    return f"""You are a fundamental equities analyst. Review the provided news facts for {company_name} (Ticker: {ticker}) and extract the current quarter's Earnings, Guidance, and Analyst Coverage. Evaluate the overall fundamental sentiment and provide your reasoning.
 
 ======================================================================
 RECENT FUNDAMENTAL NEWS & ANNOUNCEMENTS
@@ -384,6 +391,127 @@ Return ONLY a valid JSON object matching this schema:
   "reasoning": "Explain why you chose this sentiment based on the facts."
 }}"""
 
+
+def _anchor_earnings_date(view):
+    """The date a targeted re-query can aim at: the announcement date the model
+    cited, else the confirmed one from yfinance. "YYYY-MM-DD", or None."""
+    for key in ("earnings_report_date", "real_earnings_date"):
+        val = (view or {}).get(key)
+        if val:
+            return str(val)[:10]
+    return None
+
+
+def needs_targeted_retry(view, market=None, ticker=None):
+    """True if the broad search came back with no hard numbers even though we
+    KNOW the company reported, and when -- so a narrower query has something to
+    aim at.
+
+    This is the WINDLAS.NS case: the broad search found the Q1 FY27 results
+    were announced on 2026-08-10 but returned no revenue or EPS for that
+    quarter (the only figures it surfaced belonged to the previous one, which
+    it correctly refused to use), so the view landed on an unexplained Neutral
+    while the numbers were publicly available all along.
+
+    Deliberately narrow, because every True here costs one extra search plus
+    one extra reasoning call:
+      - no hard evidence yet, and the verdict is Neutral/Unknown (a directional
+        verdict already rests on something, so there is nothing to chase);
+      - an announcement date exists, so the query has an anchor;
+      - that date sits inside the window the first search already covered, so
+        we are not chasing an old quarter.
+    On 2026-09-03's store this fires for 3 of 117 tickers (WINDLAS.NS,
+    ANTHEM.NS, SHREEREF.BO) -- 6 more are evidence-less but have no report
+    inside the window to chase (JNJ last reported 50 days ago, TSM 49, ZS 100),
+    which is a genuine absence of recent news rather than a search miss. So the
+    cost is ~+2.6% of the run's calls, not one extra pass per Neutral.
+    """
+    if not view or _has_hard_evidence(view):
+        return False
+    if view.get("sentiment") not in ("Neutral", "Unknown"):
+        return False
+    anchor = _anchor_earnings_date(view)
+    if not anchor:
+        return False
+    try:
+        reported = datetime.strptime(anchor, "%Y-%m-%d").date()
+    except Exception:
+        return False
+    days_ago = (datetime.now(timezone.utc).date() - reported).days
+    return 0 <= days_ago <= search_window_days(market, ticker)
+
+
+def fetch_targeted_earnings_numbers(client, ticker, company_name, market, announced_on):
+    """One narrow grounded search for exactly the figures the broad search
+    missed, anchored to the announcement date.
+
+    Leads with gemma-4-31b-it rather than the 26b the broad pass leads with:
+    the point of a second attempt is a different reader of the same web, not a
+    re-roll of the one that already came back empty. It then falls back through
+    the standard ladder (31b again after a backoff, then 26b).
+
+    The ladder is not optional here. Measured live on WINDLAS.NS: a first 31b
+    call timed out at 120s, a second identical call answered in 85s with the
+    exact figures, and 26b timed out at 110s. These grounded searches are
+    simply slow, so a single-shot attempt -- which is what this function did
+    when first written -- loses the numbers roughly as often as it finds them.
+    Worst case is ~6 minutes per triggered ticker (3 tiers x 120s), which on a
+    3-4 hour nightly job across ~3 triggered tickers is noise.
+
+    Never raises -- this is an enhancement pass on a view that already exists,
+    so a failure must leave that view exactly as it was.
+    """
+    from stock_data import get_exchange_label
+
+    bare = ticker.rsplit(".", 1)[0] if ticker.endswith((".NS", ".BO")) else ticker
+    name = f"{company_name} ({bare})" if company_name and company_name != ticker else bare
+    exchange = get_exchange_label(market, ticker)
+
+    prompt = (
+        f"{exchange} stock {name} announced quarterly results on {announced_on}. "
+        f"Report ONLY the headline figures from THAT results announcement: revenue, "
+        f"net profit/PAT, and EPS, with the year-over-year change if stated, and name "
+        f"the quarter (e.g. Q1 FY27). Also report any analyst rating change or price "
+        f"target issued in response to it. "
+        f"Give exact numbers with their units. If you cannot find the figures for that "
+        f"specific announcement, output nothing at all -- do not substitute another "
+        f"quarter's numbers and do not estimate."
+    )
+    grounding_tool = types.Tool(google_search=types.GoogleSearch())
+    config = types.GenerateContentConfig(tools=[grounding_tool])
+    resp, used = llm_util.run_model_ladder(
+        client, prompt,
+        llm_util.standard_tiers("models/gemma-4-31b-it", "models/gemma-4-26b-a4b-it"),
+        lambda m: config, label="targeted-earnings", subject=ticker,
+    )
+    if used is None:
+        return ""
+    return (resp.text or "").strip()
+
+
+def generate_fundamental_view(client, row_data, news_text=None, news_source=None, is_retry=False):
+    ticker = row_data.get("ticker", "UNKNOWN")
+    market = row_data.get("market", "us_invested")
+    company_name = row_data.get("company_name", ticker)
+
+    if news_text is None:
+        try:
+            news_text, news_source = fetch_fundamental_news(client, ticker, market, company_name, is_retry=is_retry)
+        except TimeoutError:
+            # Let the requeue signal through. fetch_fundamental_news raises this
+            # on a first-pass ladder exhaustion specifically so the caller can
+            # retry it later -- but TimeoutError subclasses OSError subclasses
+            # Exception, so the blanket handler below used to swallow it. The
+            # result: refresh_fundamentals' retry_queue was always empty and its
+            # entire retry phase (~50 lines, including a 30s backoff) had never
+            # once executed.
+            raise
+        except Exception as e:
+            print(f"  [fundamental news fetch failed/timeout] {ticker}: {e} -> Proceeding with fallback")
+            news_text, news_source = "No recent fundamental news found.", "⚪ No Source"
+
+    prompt = build_sentiment_prompt(company_name, ticker, news_text)
+
     def _pending_fallback(reason, used_model="Error"):
         return {
             "earnings_summary": "N/A",
@@ -395,12 +523,25 @@ Return ONLY a valid JSON object matching this schema:
             "analyst_action": None,
             "sentiment": "Unknown",
             "reasoning": f"Analysis pending -- {reason}",
+            "targeted_retry": None,
             "as_of": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
             "news_source": news_source or "⚪ Unknown",
             "model_used": used_model,
         }
 
     def _finalize(data, model_used):
+        # Guarantee the structured evidence keys exist on every fresh response.
+        # _has_hard_evidence selects its branch by testing whether these keys
+        # are PRESENT, and JSON mode does not guarantee the model emits fields
+        # it considers null -- so an omitted key silently drops a brand-new
+        # view onto the LEGACY free-text branch, where soft prose counts as
+        # hard evidence and an unsupported Positive escapes both the PARTIAL
+        # and NO_EVIDENCE guards. Caught live on SHREEREF.BO, whose
+        # future_guidance ("Management targets 40-50% CAGR over the next 4-5
+        # years") is exactly the kind of aspiration that branch would accept.
+        # The legacy branch must only ever serve genuinely pre-schema records.
+        for key in ("earnings_report_date", "eps_value", "guidance_change", "analyst_action"):
+            data.setdefault(key, None)
         data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         data["news_used"] = news_text
         data["news_source"] = news_source or "⚪ Unknown"
@@ -443,7 +584,40 @@ Return ONLY a valid JSON object matching this schema:
     if used is None:
         return _pending_fallback("reasoning ladder exhausted")
     label = model.split("/")[-1] if used == model else f"{used.split('/')[-1]} (Fallback)"
-    return _finalize(data, label)
+    view = _finalize(data, label)
+
+    # Second, targeted pass for the numbers the broad search missed. Strictly
+    # bounded: it runs only when needs_targeted_retry says there is a known
+    # earnings announcement with no figures attached to it, costs one search
+    # plus (only if that search returns something) one reasoning call, and
+    # never recurses. The result is accepted ONLY if it actually produced hard
+    # evidence -- otherwise the original view stands, since a second opinion
+    # that found nothing new is not a reason to discard the first.
+    if settings.get("sentiment_targeted_retry", True) and needs_targeted_retry(view, market, ticker):
+        anchor = _anchor_earnings_date(view)
+        print(f"  [targeted retry] {ticker}: no hard numbers for the {anchor} report -- re-querying")
+        extra = fetch_targeted_earnings_numbers(client, ticker, company_name, market, anchor)
+        if extra:
+            combined = f"{news_text}\n\n--- TARGETED FOLLOW-UP SEARCH ({anchor} results) ---\n{extra}"
+            data2, used2 = llm_util.run_model_ladder(
+                client, build_sentiment_prompt(company_name, ticker, combined),
+                llm_util.standard_tiers(model, "models/gemma-4-31b-it"),
+                _config_for, label="sentiment-retry", subject=ticker,
+                on_success=lambda resp: json.loads(_clean_json_text(resp.text)),
+            )
+            if used2 is not None and _has_hard_evidence(data2):
+                news_text = combined
+                news_source = f"{news_source or '⚪ Unknown'} + 🎯 targeted"
+                label2 = model.split("/")[-1] if used2 == model else f"{used2.split('/')[-1]} (Fallback)"
+                view = _finalize(data2, label2)
+                view["targeted_retry"] = "found"
+                print(f"  [targeted retry] {ticker}: numbers found -> sentiment={view.get('sentiment')}")
+            else:
+                view["targeted_retry"] = "no numbers found"
+        else:
+            view["targeted_retry"] = "search returned nothing"
+
+    return view
 
 
 def _search_failed_unknown(view):
@@ -480,9 +654,7 @@ def analyze_single_ticker_sentiment(ticker, row_data, api_key, is_retry=True):
     a perfectly good existing view. Returns the stored view, or None if the call
     failed and the previous view was kept.
     """
-    from google import genai
-
-    client = genai.Client(api_key=api_key)
+    client = llm_util.make_client(api_key)
     old_view = load_fundamentals().get(ticker)
     view = generate_fundamental_view(client, row_data, is_retry=is_retry)
     if not _is_valid_view(view):
