@@ -1132,17 +1132,6 @@
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
   },
-  "SBUX": {
-    "verdict": "HOLD",
-    "headline": "SBUX shows a solid technical uptrend offset by heavy short-term distribution and mixed valuation views.",
-    "technical_summary": "Starbucks remains in a confirmed uptrend with price above rising moving averages and a long-held VStop at 97.0. However, the 10-day net volume exhibits heavy distribution with a -24.7% ratio, indicating underlying near-term selling pressure.",
-    "catalyst_summary": "Recent developments include mixed institutional buying and selling, an appointment for SVP of Supply Chain Operations, and a GuruFocus DCF analysis pointing to potential overvaluation.",
-    "actionable_take": "Hold existing positions and trail stops using the 97.0 VStop level. New capital should wait for net volume accumulation to turn positive before committing.",
-    "as_of": "2026-09-02 08:58",
-    "news_used": "**NEWS (2026-09-01 to 2026-09-02)**\n* **2026-09-01:** Susquehanna Fundamental Investments LLC made a new investment in SBUX.\n* **2026-09-01:** Moore Capital Management LP sold 11,081 shares of SBUX.\n* **2026-09-01:** Andrew Corner named SVP of Supply Chain Operations.\n* **2026-09-01:** GuruFocus published a DCF analysis indicating SBUX is significantly overvalued.\n\n**EVENTS (Next 3-4 days)**\n* None.",
-    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
-    "model_used": "gemini-3.5-flash-lite"
-  },
   "MANORAMA.NS": {
     "verdict": "ACCUMULATE",
     "headline": "Solid technical uptrend backed by positive relative strength and steady accumulation.",
