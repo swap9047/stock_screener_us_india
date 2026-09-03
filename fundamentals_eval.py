@@ -1,3 +1,4 @@
+import concurrent.futures
 import json
 import os
 from datetime import datetime, timedelta, timezone
@@ -231,6 +232,13 @@ def _fetch_last_reported_earnings_date(ticker):
     the sequential GitHub Actions refresh loop, and GitHub-hosted runners
     share IP ranges Yahoo Finance sometimes rate-limits/slows -- a hang here
     with no timeout would stall the whole batch job.
+
+    The `concurrent.futures` import this needs was missing from the module for
+    the life of the function, so every call raised NameError, the fail-open
+    `except Exception` below turned that into None, and _check_quarter_freshness
+    therefore never had a real date to compare against: quarter_verified was
+    True and real_earnings_date null for all 118 stored views, i.e. the
+    STALE_QUARTER guard had never once fired. Keep the import.
     """
     try:
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
@@ -438,6 +446,27 @@ Return ONLY a valid JSON object matching this schema:
     return _finalize(data, label)
 
 
+def _search_failed_unknown(view):
+    """True if this view is Unknown ONLY because the news search stage failed.
+
+    "No Source" is written exactly where fetch_fundamental_news exhausted both
+    of its search models -- distinct from a successful search that legitimately
+    found nothing, which still carries a Gemma source label.
+    """
+    return (
+        (view or {}).get("sentiment") == "Unknown"
+        and "No Source" in str((view or {}).get("news_source", ""))
+    )
+
+
+def _prior_worth_keeping(old_view):
+    """True if the previously stored view is valid and not yet stale."""
+    if not _is_valid_view(old_view):
+        return False
+    age = _view_age_days(old_view)
+    return age is None or age <= SENTIMENT_STALE_DAYS
+
+
 def analyze_single_ticker_sentiment(ticker, row_data, api_key, is_retry=True):
     """Regenerate one ticker's Sentiment view and persist it.
 
@@ -454,9 +483,25 @@ def analyze_single_ticker_sentiment(ticker, row_data, api_key, is_retry=True):
     from google import genai
 
     client = genai.Client(api_key=api_key)
+    old_view = load_fundamentals().get(ticker)
     view = generate_fundamental_view(client, row_data, is_retry=is_retry)
     if not _is_valid_view(view):
         return None
+    if _search_failed_unknown(view) and _prior_worth_keeping(old_view):
+        # The search stage came back empty because it FAILED, not because the
+        # company has no news -- this path passes is_retry=True, so
+        # fetch_fundamental_news swallows its own ladder exhaustion and returns
+        # "No recent fundamental news found." instead of raising the requeue
+        # signal the batch loop relies on. The model then answers "Unknown",
+        # which is a perfectly valid view by _is_valid_view, and writing it
+        # replaced a fresh Positive/Negative with Unknown for the rest of the
+        # day. The batch path is covered by refresh_fundamentals' retry queue;
+        # this one had nothing, so guard it here.
+        return None
+    # Re-read rather than reusing the copy loaded above: generate_fundamental_view
+    # can take minutes, and the nightly refresh writes this same file, so holding
+    # a pre-call snapshot across the LLM call and writing it back would silently
+    # revert every other ticker the batch job finished in the meantime.
     all_views = load_fundamentals()
     all_views[ticker] = view
     save_fundamentals(all_views)
