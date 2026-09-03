@@ -89,18 +89,10 @@ def fetch_gemma_expert_news(client, ticker, market, company_name, is_retry=False
 
 
 def _atomic_write_json(path, data):
-    """Write JSON via temp file + os.replace.
-
-    The plain truncate-and-write this replaces was called once PER TICKER by
-    the refresh loops -- ~110 rewrites of a 150 KB file per run. A crash or a
-    job timeout landing mid-dump left truncated JSON, and the loader's bare
-    except then returned {} on the next run, so the whole store was silently
-    rebuilt from empty with every prior view lost.
-    """
-    tmp = f"{path}.tmp"
-    with open(tmp, "w") as f:
-        json.dump(data, f, indent=2)
-    os.replace(tmp, path)
+    """Delegates to stock_data.atomic_write_json -- this used to be a private
+    copy in each of the three store modules."""
+    from stock_data import atomic_write_json
+    atomic_write_json(path, data)
 
 
 def load_expert_views():

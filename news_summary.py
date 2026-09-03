@@ -41,6 +41,7 @@ output schema actually reports.
 
 import json
 import os
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -83,10 +84,10 @@ SECONDS_BETWEEN_CALLS = 2
 # Longer backoff between retry-queue attempts, to give a transient
 # rate-limit/network issue more time to clear before hitting the same API again
 RETRY_SECONDS_BETWEEN_CALLS = 30
-# Short in-line pause before re-trying the GOOD reasoning model. Distinct from
-# the Stage 1 queue delay above: this one is buying a transient 429/503 a second
-# chance on gemini-3.5-flash-lite before quality degrades to the Gemma fallback.
-REASONING_RETRY_BACKOFF_SECONDS = 5
+# The pause before re-trying the GOOD model now comes from
+# llm_util.RETRY_BACKOFF_SECONDS, since both stages build their tiers with
+# llm_util.standard_tiers. A local REASONING_RETRY_BACKOFF_SECONDS lived here
+# and went dead in that change -- tune the shared one instead.
 
 CALL_TIMEOUT_SECONDS = 120
 
@@ -103,6 +104,55 @@ NO_NEWS_SENTENCE = "No major news for this watchlist's tickers in the last 24 ho
 MARKET_LABELS = {"US": "US Watchlist", "INDIA": "India Watchlist"}
 
 _INDIA_SUFFIXES = (".NS", ".BO")
+
+
+# Which watchlists a news run covers when settings.news_watchlist_scope is
+# empty. It used to mean "every watchlist" -- 142 slots a night across 7 lists,
+# most of them research/tracking lists whose news nobody reads daily. The
+# invested lists are the ones worth a digest by default; everything else is
+# opt-in.
+DEFAULT_NEWS_SCOPE_GROUP = "all_invested"
+
+
+def resolve_news_scope(scope, watchlists, groups=None):
+    """The market keys a news run should cover, given settings' scope list.
+
+    `scope` may hold market keys, combined GROUP keys ("all_invested",
+    "all_watchlist"), or a mix. Storing the group key rather than its members
+    is deliberate: editing a group's membership on its combined tab then
+    re-scopes the news digest automatically, instead of leaving a stale copy of
+    the old membership in settings.json.
+
+    An empty scope resolves to DEFAULT_NEWS_SCOPE_GROUP, not to everything.
+
+    Returns keys in `watchlists` order (registry order), de-duplicated -- a
+    ticker list can be reachable both directly and through a group, and the
+    caller uses this to filter a dict, so order and uniqueness both matter.
+
+    Falls back to every watchlist if resolution yields nothing, which can only
+    happen if the group is missing or its members were renamed. A digest that
+    silently covers nothing is worse than one that covers too much.
+    """
+    if groups is None:
+        from stock_data import load_watchlist_groups
+        groups = load_watchlist_groups()
+
+    keys = list(scope or [])
+    if not keys:
+        keys = [DEFAULT_NEWS_SCOPE_GROUP]
+
+    wanted = set()
+    for key in keys:
+        if key in groups:
+            wanted.update(groups.get(key) or [])
+        else:
+            wanted.add(key)
+
+    resolved = [m for m in watchlists if m in wanted]
+    if not resolved:
+        print(f"[news] scope {scope!r} resolved to no known watchlist -- falling back to all.")
+        return list(watchlists)
+    return resolved
 
 
 def _market_label(market):
@@ -147,6 +197,24 @@ def _display_name(ticker, ticker_names):
     bare = _bare_ticker(ticker)
     company = (ticker_names or {}).get(ticker)
     return f"{company} ({bare})" if company and company != ticker else bare
+
+
+def ticker_window_date(ticker):
+    """The exchange-local calendar date anchoring ONE ticker's search window.
+
+    market_window_date below resolves this per MARKET, from whether ANY ticker
+    in the list is Indian -- which is right for today's watchlists (each is
+    single-region) and wrong the moment one mixes them: at the 8 PM ET run,
+    Kolkata is already on the next calendar day, so every US ticker in a mixed
+    list would be asked for a New York date that has not happened yet. That is
+    the same bug the market_window_date docstring describes fixing for UTC.
+
+    Resolved off the TICKER SUFFIX, matching what fundamentals_eval's
+    search_window_days had to be changed to for exactly this reason: watchlists
+    are user-creatable from the dashboard, so nothing stops a mixed one.
+    """
+    tz = ZoneInfo("Asia/Kolkata") if ticker.endswith(_INDIA_SUFFIXES) else ZoneInfo("America/New_York")
+    return datetime.now(tz).strftime("%Y-%m-%d")
 
 
 def market_window_date(market, tickers):
@@ -219,18 +287,34 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None,
     grounding_tool = types.Tool(google_search=types.GoogleSearch())
     config = types.GenerateContentConfig(tools=[grounding_tool])
 
-    ladder = [model]
-    if SEARCH_FALLBACK_MODEL != model:
-        ladder.append(SEARCH_FALLBACK_MODEL)
-
+    # standard_tiers = the good model, the good model again after a short
+    # backoff, then the fallback. The hand-rolled [model, fallback] list this
+    # replaces had NO same-model retry, so a single transient 429 -- the
+    # likeliest failure on a ~115-call serial run -- permanently demoted that
+    # ticker to the weaker search model for the night.
+    #
+    # This stage keeps its own loop rather than calling run_model_ladder
+    # because the caller inspects the RAISED exception to choose between the
+    # retry queue and a terminal failure, and the ladder helper does not
+    # surface it.
     last_exc = None
-    for attempt_model in ladder:
+    for attempt_model, backoff in llm_util.standard_tiers(model, SEARCH_FALLBACK_MODEL):
+        if backoff:
+            time.sleep(backoff)
         try:
-            resp = _generate_with_timeout(client, attempt_model, prompt, config)
+            resp = _generate_with_timeout(client, attempt_model, prompt, config,
+                                          timeout=CALL_TIMEOUT_SECONDS)
             return (resp.text or "").strip(), _extract_sources(resp)
         except Exception as e:
             last_exc = e
             print(f"  [stage1 {attempt_model} failed] {ticker}: {e}")
+            if llm_util.is_model_unavailable(e):
+                # A wrong/retired/unavailable model id says nothing about the
+                # next tier. is_retryable() returns False for these, so the old
+                # `break` meant a typo'd news_search_model -- a settings value
+                # editable straight from the dashboard -- failed EVERY ticker
+                # without ever trying the fallback that would have worked.
+                continue
             if not _is_retryable(e):
                 break
     raise last_exc
@@ -253,21 +337,22 @@ def _run_reasoning(client, prompt, model, budget, label, subject=""):
                 kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
         return types.GenerateContentConfig(**kwargs)
 
-    attempts = [(model, 0), (model, REASONING_RETRY_BACKOFF_SECONDS)]
-    if REASONING_FALLBACK_MODEL != model:
-        attempts.append((REASONING_FALLBACK_MODEL, 0))
-
-    for attempt_model, backoff in attempts:
-        if backoff:
-            time.sleep(backoff)
-        try:
-            resp = _generate_with_timeout(client, attempt_model, prompt, _config_for(attempt_model))
-            return (resp.text or "").strip(), True
-        except Exception as e:
-            print(f"  [{label} {attempt_model} failed] {subject}: {e}")
-            if not _is_retryable(e):
-                break
-    return "", False
+    # run_model_ladder is the same shape this loop was hand-rolling (good model,
+    # good model after a backoff, fallback) plus the one behaviour it lacked:
+    # stepping PAST an unavailable model id instead of treating it as terminal.
+    # news_reasoning_model is settings-driven, so a bad value used to take out
+    # Stage 2 for every ticker and silently forward unfiltered search text.
+    text, used = llm_util.run_model_ladder(
+        client, prompt,
+        llm_util.standard_tiers(model, REASONING_FALLBACK_MODEL),
+        _config_for, label=label, subject=subject,
+        timeout=CALL_TIMEOUT_SECONDS,
+        on_success=lambda resp: (resp.text or "").strip(),
+    )
+    # `used`, not `text` -- an empty string is a legitimate answer here (both
+    # prompts say to output nothing when nothing qualifies), so success cannot
+    # be inferred from the text being non-empty.
+    return (text or ""), used is not None
 
 
 def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date,
@@ -411,7 +496,15 @@ def collation_dropped_tickers(summary, material_tickers):
     renders "RELIANCE" rather than "RELIANCE.NS".
     """
     haystack = (summary or "").upper()
-    return [t for t in material_tickers if _bare_ticker(t).upper() not in haystack]
+    # Word boundaries, not a bare substring test. "Q" (Qnity) matches inside
+    # "QURE" and "Q1", "SE" inside "RAISED", "ARM" inside "NON-FARM" -- so a
+    # short ticker that Stage 3 really did drop would be reported as present.
+    # Nothing was mis-reported in the 2026-09-02 digest (the colliding symbols
+    # were all quiet, and this function only looks at material ones), but the
+    # module docstring records this exact class of bug biting the removed
+    # DuckDuckGo tier, where ticker "Q" matched every line containing a q.
+    return [t for t in material_tickers
+            if not re.search(rf"\b{re.escape(_bare_ticker(t).upper())}\b", haystack)]
 
 
 def build_news_summary(watchlists, api_key):
@@ -428,19 +521,21 @@ def build_news_summary(watchlists, api_key):
 
     settings = load_settings()
 
-    # Scope filtering: if the user has selected specific watchlists for news,
-    # restrict processing to those keys only. Empty list = all markets.
+    # Scope filtering. The saved list may name watchlists, combined groups, or
+    # both, and an empty list means the default group rather than everything --
+    # see resolve_news_scope.
     scope = settings.get("news_watchlist_scope", [])
-    if scope:
-        watchlists = {k: v for k, v in watchlists.items() if k in scope}
-        if not watchlists:
-            print(f"[news] news_watchlist_scope={scope} but none of those keys exist in the watchlist. Nothing to process.")
-            return {
-                "as_of": datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d"),
-                "generated_at": datetime.now(timezone.utc).isoformat(),
-                "totals": {},
-                "markets": {},
-            }
+    selected = resolve_news_scope(scope, watchlists)
+    print(f"[news] scope {scope or '(default)'} -> {', '.join(selected)}")
+    watchlists = {k: v for k, v in watchlists.items() if k in selected}
+    if not watchlists:
+        print(f"[news] news_watchlist_scope={scope} matched no watchlist with tickers. Nothing to process.")
+        return {
+            "as_of": datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d"),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "totals": {},
+            "markets": {},
+        }
 
     search_model = settings.get("news_search_model", SEARCH_MODEL)
     reasoning_model = settings.get("news_reasoning_model", REASONING_MODEL)
@@ -500,6 +595,9 @@ def build_news_summary(watchlists, api_key):
               f"{len(tickers)} tickers, window ending {window_date} ===")
 
         filtered_texts = []
+        # Stage 2's note per ticker, so a ticker Stage 3 drops can be recovered
+        # verbatim below instead of merely counted.
+        note_by_ticker = {}
         all_sources = []
         ticker_records = {}
         retry_queue = []
@@ -507,10 +605,12 @@ def build_news_summary(watchlists, api_key):
         def record(ticker, status, sources=None):
             ticker_records[ticker] = {"status": status, "sources": sources or []}
 
-        def run_stage2(ticker, raw_text, sources):
+        def run_stage2(ticker, raw_text, sources, window):
             """Stage 2 for one ticker, memoised. Appends to filtered_texts and
-            writes the ticker's record."""
-            key = (ticker, window_date)
+            writes the ticker's record. `window` is the TICKER's window date,
+            which equals the market's for a single-region watchlist and differs
+            for a mixed one -- see ticker_window_date."""
+            key = (ticker, window)
             if key in filter_cache:
                 counters["cache_hits"] += 1
                 clean, status = filter_cache[key]
@@ -522,22 +622,25 @@ def build_news_summary(watchlists, api_key):
             else:
                 header = f"**{_display_name(ticker, ticker_names)}**:\n{raw_text}"
                 clean, status = filter_batch_with_reasoning(
-                    client, header, [ticker], market, window_date,
+                    client, header, [ticker], market, window,
                     ticker_names=ticker_names, model=reasoning_model, budget=thinking_budget,
                 )
                 filter_cache[key] = (clean, status)
 
             if status == STATUS_DEGRADED:
                 filtered_texts.append(clean)
+                note_by_ticker[ticker] = clean
                 record(ticker, STATUS_DEGRADED, sources)
             elif clean:
                 filtered_texts.append(clean)
+                note_by_ticker[ticker] = clean
                 record(ticker, STATUS_MATERIAL, sources)
             else:
                 record(ticker, STATUS_QUIET, sources)
 
         for i, ticker in enumerate(tickers):
-            key = (ticker, window_date)
+            tw = ticker_window_date(ticker)
+            key = (ticker, tw)
             ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
             progress = f"[{ts}] [{market}] [{i+1}/{len(tickers)}] {ticker}"
 
@@ -551,7 +654,7 @@ def build_news_summary(watchlists, api_key):
                 raw_text, sources = cached
                 print(f"{progress} - Stage1 cache hit")
                 all_sources.extend(sources)
-                run_stage2(ticker, raw_text, sources)
+                run_stage2(ticker, raw_text, sources, tw)
                 continue
 
             if not first_call[0]:
@@ -562,7 +665,7 @@ def build_news_summary(watchlists, api_key):
             t0 = time.time()
             try:
                 raw_text, sources = fetch_single_raw_news(
-                    client, ticker, market, window_date,
+                    client, ticker, market, tw,
                     ticker_names=ticker_names, model=search_model,
                 )
             except Exception as e:
@@ -585,11 +688,11 @@ def build_news_summary(watchlists, api_key):
             ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
             if not raw_text:
                 print(f"[{ts}] [{market}] {ticker} - Stage1 found nothing ({elapsed1:.1f}s)")
-                run_stage2(ticker, raw_text, sources)
+                run_stage2(ticker, raw_text, sources, tw)
                 continue
             print(f"[{ts}] [{market}] {ticker} - Stage1 done ({elapsed1:.1f}s), Stage2 starting...")
             t0_2 = time.time()
-            run_stage2(ticker, raw_text, sources)
+            run_stage2(ticker, raw_text, sources, tw)
             ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
             print(f"[{ts}] [{market}] {ticker} - {ticker_records[ticker]['status']} "
                   f"(search {elapsed1:.1f}s + filter {time.time()-t0_2:.1f}s)")
@@ -598,12 +701,13 @@ def build_news_summary(watchlists, api_key):
             print(f"\n[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] === Retry queue ({len(retry_queue)}) ===")
             for i, ticker in enumerate(retry_queue):
                 time.sleep(RETRY_SECONDS_BETWEEN_CALLS)
-                key = (ticker, window_date)
+                tw = ticker_window_date(ticker)
+                key = (ticker, tw)
                 ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
                 print(f"[{ts}] [RETRY] [{market}] [{i+1}/{len(retry_queue)}] {ticker} - Stage1 starting...")
                 try:
                     raw_text, sources = fetch_single_raw_news(
-                        client, ticker, market, window_date,
+                        client, ticker, market, tw,
                         ticker_names=ticker_names, model=search_model,
                     )
                 except Exception as e:
@@ -614,7 +718,7 @@ def build_news_summary(watchlists, api_key):
                     continue
                 search_cache[key] = (raw_text, sources)
                 all_sources.extend(sources)
-                run_stage2(ticker, raw_text, sources)
+                run_stage2(ticker, raw_text, sources, tw)
                 ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
                 print(f"[{ts}] [RETRY] [{market}] {ticker} - {ticker_records[ticker]['status']}")
 
@@ -644,6 +748,17 @@ def build_news_summary(watchlists, api_key):
         if dropped:
             print(f"WARNING: [{market}] Stage3 dropped {len(dropped)}/{len(material_tickers)} "
                   f"material ticker(s) from the digest: {', '.join(sorted(dropped))}")
+            # Append their Stage 2 notes verbatim rather than losing them. The
+            # notes are still in hand at this point, so a lossy editing pass
+            # costs formatting consistency, not content -- measuring the loss
+            # (above) without recovering it left the reader with a warning and
+            # no way to see what was missing.
+            recovered = "\n\n".join(
+                note_by_ticker[t].strip() for t in sorted(dropped) if note_by_ticker.get(t)
+            )
+            if recovered:
+                collated = (f"{collated}\n\n_Not folded in by the editor "
+                            f"({len(dropped)}) -- raw notes:_\n\n{recovered}")
 
         # Dedup the flat source list the app renders -- Stage 1 results are
         # pooled per market and repeated URLs were common (46 entries for 36
@@ -717,5 +832,8 @@ def load_news_summary():
 
 
 def save_news_summary(data):
-    with open(NEWS_SUMMARY_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+    # Atomic: a torn write here is invisible, because load_news_summary()
+    # swallows the parse error and the News tab just renders "nothing
+    # generated yet".
+    from stock_data import atomic_write_json
+    atomic_write_json(NEWS_SUMMARY_FILE, data)

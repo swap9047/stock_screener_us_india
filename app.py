@@ -81,7 +81,8 @@ from weekly_wrapup import (
 from filters import (get_market_filters, save_market_filters, apply_filters, describe_filter,
                      describe_chain, describe_chain_with_values, passes_filter_chain, CATEGORICAL_METRICS)
 from github_sync import get_github_config, push_all_config, trigger_github_workflow, SYNCABLE_FILES
-from news_summary import load_news_summary, MARKET_LABELS, get_gemini_api_key, get_gemini_api_keys
+from news_summary import (load_news_summary, MARKET_LABELS, get_gemini_api_key,
+                          get_gemini_api_keys, resolve_news_scope, DEFAULT_NEWS_SCOPE_GROUP)
 from expert_views import (load_expert_views, save_expert_views, analyze_single_ticker,
                           generate_expert_view, _is_valid_view, is_pending_view,
                           VERDICT_RULES, VERDICT_GUARD_RULES,
@@ -4943,23 +4944,38 @@ with tab_news:
     # Controls which watchlists are included when the news pipeline runs.
     # The selection is persisted in settings.json so GitHub Actions picks it
     # up on the next scheduled run (after pushing settings to GitHub).
-    _all_news_market_opts = {
-        markets_registry_now.get(mkt, {}).get("label", mkt): mkt
-        for mkt in market_keys_now
-    }
+    # The combined GROUPS come first, then the individual watchlists. Selecting
+    # a group stores the GROUP key ("all_invested"), not today's members, so
+    # editing that group's membership on its combined tab re-scopes news
+    # automatically -- see news_summary.resolve_news_scope, which expands it at
+    # run time.
+    _all_news_market_opts = {}
+    for _gkey, _glabel in COMBINED_TAB_DEFS:
+        _members = combined_markets_by_key.get(_gkey) or []
+        _all_news_market_opts[f"{_glabel} (group of {len(_members)})"] = _gkey
+    for mkt in market_keys_now:
+        _all_news_market_opts[markets_registry_now.get(mkt, {}).get("label", mkt)] = mkt
+    _label_by_scope_key = {v: k for k, v in _all_news_market_opts.items()}
+
     _saved_scope_keys = settings_now.get("news_watchlist_scope", [])
+    # An empty setting MEANS the default group, so show it selected rather than
+    # showing an empty box that silently behaves like something. The comparison
+    # below is against the raw saved value, so the first render after this
+    # change writes the default out explicitly and the two stop disagreeing.
+    _effective_scope_keys = _saved_scope_keys or [DEFAULT_NEWS_SCOPE_GROUP]
     _saved_scope_labels = [
-        lbl for lbl, key in _all_news_market_opts.items() if key in _saved_scope_keys
+        _label_by_scope_key[k] for k in _effective_scope_keys if k in _label_by_scope_key
     ]
     _selected_scope_labels = st.multiselect(
-        "📋 News scope — generate for watchlists (empty = all)",
+        "📋 News scope — watchlists included in the digest",
         options=list(_all_news_market_opts.keys()),
         default=_saved_scope_labels,
         key="news_scope_select",
         help=(
-            "Choose which watchlists to include in the news digest. "
-            "Leave empty to include all. Push settings to GitHub (Alert Rules tab) "
-            "so the scheduled GitHub Actions workflow respects this selection."
+            "Groups expand to their member watchlists when the digest runs, so changing a "
+            "group's membership re-scopes news automatically. Clearing the box falls back to "
+            "All Invested. Push settings to GitHub (Alert Rules tab) so the scheduled "
+            "GitHub Actions workflow respects this selection."
         ),
     )
     _new_scope_keys = [_all_news_market_opts[lbl] for lbl in _selected_scope_labels]
@@ -4967,6 +4983,19 @@ with tab_news:
         settings_now["news_watchlist_scope"] = _new_scope_keys
         save_settings(settings_now)
         st.rerun()
+
+    # What that selection actually resolves to, with ticker counts -- a group
+    # name alone doesn't tell you how much the next run will cover.
+    _resolved_markets = resolve_news_scope(_new_scope_keys, watchlists_now, combined_markets_by_key)
+    _resolved_bits = [
+        f"{markets_registry_now.get(m, {}).get('label', m)} ({len(watchlists_now.get(m, []))})"
+        for m in _resolved_markets
+    ]
+    st.caption(
+        f"Next run covers {len(_resolved_markets)} watchlist(s), "
+        f"{sum(len(watchlists_now.get(m, [])) for m in _resolved_markets)} ticker slots: "
+        + ", ".join(_resolved_bits)
+    )
 
     col1, col2, col3, col4 = st.columns([2, 3, 3, 3])
     with col1:
@@ -5074,9 +5103,13 @@ with tab_news:
                 # Tickers Stage 2 judged material but Stage 3 left out of the
                 # digest. Surfaced because "8 with news" over a one-bullet
                 # summary is exactly the discrepancy that hid this bug.
+                # These are no longer lost -- their Stage 2 notes are appended
+                # verbatim to the digest above under "Not folded in by the
+                # editor" -- so the caption says what happened rather than
+                # warning about a disappearance.
                 _dropped = entry.get("collation_dropped") or []
                 if _dropped:
-                    bits.append(f"⚠️ {len(_dropped)} dropped in collation ({', '.join(_dropped[:4])}"
+                    bits.append(f"{len(_dropped)} shown as raw notes ({', '.join(_dropped[:4])}"
                                 + ("…" if len(_dropped) > 4 else "") + ")")
                 st.caption(" · ".join(bits))
 
