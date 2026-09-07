@@ -486,5 +486,9 @@
   "SGRL.BO": {
     "index": "Nifty 500",
     "benchmark": "^CRSLDX"
+  },
+  "STAR.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
   }
 }
