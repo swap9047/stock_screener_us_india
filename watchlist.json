@@ -26,10 +26,10 @@
     "VENUSPIPES.NS",
     "WINDLAS.NS",
     "STLTECH.NS",
-    "RKFORGE.NS",
     "UFBL.NS",
     "MACPOWER.NS",
-    "LUMAXIND.NS"
+    "LUMAXIND.NS",
+    "SFL.NS"
   ],
   "us_invested": [
     "HIMS",
