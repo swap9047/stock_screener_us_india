@@ -490,5 +490,9 @@
   "STAR.NS": {
     "index": "Nifty 500",
     "benchmark": "^CRSLDX"
+  },
+  "GMMPFAUDLR.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
   }
 }
