@@ -22,7 +22,7 @@ import os
 
 from stock_data import (
     load_watchlists, load_settings, fetch_all_markets, save_data_snapshot,
-    load_data_snapshot, fill_snapshot_gaps,
+    load_data_snapshot, fill_snapshot_gaps, reject_stale_rows,
 )
 
 
@@ -58,6 +58,18 @@ def main():
     # raised, so a throttled run otherwise writes a watchlist that looks
     # emptied rather than unrefreshed.
     previous = (load_data_snapshot() or {}).get("per_market") or {}
+
+    # A row that came back OLDER than the one we already have is Yahoo serving
+    # a stale series, not new information -- see reject_stale_rows. Runs first
+    # so the log reads in the order the two failures actually happen: bad data
+    # rejected, then missing data backfilled.
+    per_market, stale = reject_stale_rows(per_market, previous)
+    if stale:
+        n = sum(len(v) for v in stale.values())
+        print(f"WARNING: {n} ticker(s) came back older than the stored row; kept the newer one:")
+        for mkt, tks in sorted(stale.items()):
+            print(f"  {mkt}: {', '.join(tks)}")
+
     per_market, recovered = fill_snapshot_gaps(per_market, previous, watchlists)
     combined = [r for rows in per_market.values() for r in rows]
     if recovered:

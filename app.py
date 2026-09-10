@@ -59,7 +59,7 @@ from stock_data import (
     load_watchlists, save_watchlist, fetch_all_markets, validate_ticker, tradingview_url,
     load_settings, save_settings, DEFAULT_SETTINGS, get_benchmarks, get_filterable_metrics,
     load_markets_registry, load_data_snapshot, snapshot_is_usable, save_data_snapshot,
-    rebuild_snapshot_for_market, fill_snapshot_gaps,
+    rebuild_snapshot_for_market, fill_snapshot_gaps, reject_stale_rows,
     load_watchlist_groups, save_watchlist_groups,
 )
 import llm_util
@@ -4292,6 +4292,10 @@ if sb1.button("Refresh Data", type="primary", width="stretch"):
         # persisting the gap as though those tickers no longer exist. A single
         # throttled click once cut India from 30 rows to 4 and pushed it.
         _prev_rows = (load_data_snapshot() or {}).get("per_market") or {}
+        # Same two guards the scheduled refresh applies, in the same order --
+        # the Refresh Data button hits the identical Yahoo behaviour, and the
+        # 2026-08-29 row-collapse this protects against was itself a UI click.
+        per_market, _stale_rows = reject_stale_rows(per_market, _prev_rows)
         per_market, _recovered = fill_snapshot_gaps(per_market, _prev_rows, watchlists_now)
         combined = [r for mkt_rows in per_market.values() for r in mkt_rows]
         if _recovered:
