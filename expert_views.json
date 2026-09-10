@@ -1285,5 +1285,27 @@
     "news_used": "No recent news found.",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
+  },
+  "GMMPFAUDLR.NS": {
+    "verdict": "ACCUMULATE",
+    "headline": "Strong Stage 2 breakout backed by exploding accumulation volume and positive relative strength.",
+    "technical_summary": "The stock exhibits a robust Strong Uptrend, trading well above rising moving averages and near its 52-week high with a 6-week VStop uptrend. Volume is exploding with a 94.6% positive 10D net volume ratio, highlighting aggressive institutional accumulation despite an overbought daily RSI.",
+    "catalyst_summary": "No material news found; verdict based on technicals only.",
+    "actionable_take": "Consider accumulating on minor intraday pullbacks or near the breakout zone. Maintain a trailing stop loss strictly aligned with the weekly VStop level at 1108.3 to lock in profits and manage downside risk.",
+    "as_of": "2026-09-10 02:58",
+    "news_used": "No recent news found.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
+  },
+  "SHIVALIK.NS": {
+    "verdict": "CAUTION",
+    "headline": "Downtrend status and heavy distribution warrant caution despite positive relative strength.",
+    "technical_summary": "Although the stock maintains positive Mansfield Relative Strength and a rising VStop, it remains in a structural downtrend with heavy 10-day net volume distribution (-37.3%) and mixed moving average configurations.",
+    "catalyst_summary": "No material news found; verdict based on technicals only.",
+    "actionable_take": "Avoid new long entries until distribution subsides and the trend status shifts to a confirmed uptrend. Protect existing positions using the weekly VStop trailing level at 265.7 as a strict exit trigger.",
+    "as_of": "2026-09-10 02:59",
+    "news_used": "No recent news found.",
+    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
+    "model_used": "gemini-3.5-flash-lite"
   }
 }
