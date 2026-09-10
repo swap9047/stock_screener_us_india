@@ -494,5 +494,9 @@
   "GMMPFAUDLR.NS": {
     "index": "Nifty 500",
     "benchmark": "^CRSLDX"
+  },
+  "SHIVALIK.NS": {
+    "index": "Nifty 500",
+    "benchmark": "^CRSLDX"
   }
 }
