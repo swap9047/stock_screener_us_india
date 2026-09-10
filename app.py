@@ -42,6 +42,7 @@ import re
 import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
@@ -80,7 +81,8 @@ from weekly_wrapup import (
 )
 from filters import (get_market_filters, save_market_filters, apply_filters, describe_filter,
                      describe_chain, describe_chain_with_values, passes_filter_chain, CATEGORICAL_METRICS)
-from github_sync import get_github_config, push_all_config, trigger_github_workflow, SYNCABLE_FILES
+from github_sync import (get_github_config, push_all_config, trigger_github_workflow,
+                         pull_generated_files, SYNCABLE_FILES)
 from news_summary import (load_news_summary, MARKET_LABELS, get_gemini_api_key,
                           get_gemini_api_keys, resolve_news_scope, DEFAULT_NEWS_SCOPE_GROUP)
 from expert_views import (load_expert_views, save_expert_views, analyze_single_ticker,
@@ -719,6 +721,29 @@ EXPERT_FILTER_VALUES = {
     "🔴 Caution": "Caution",
     "⚪ Pending": "Pending",
 }
+
+
+# How old a snapshot may be before the sidebar warns. The hourly refresh means
+# anything past a few hours is a broken pipeline or a stale checkout, not a
+# quiet market.
+SNAPSHOT_STALE_WARN_HOURS = 6
+
+
+def snapshot_age_hours(as_of):
+    """Hours since the snapshot's as_of, or None if it can't be parsed.
+
+    as_of is written as "YYYY-MM-DD HH:MM ET" (see save_data_snapshot), i.e.
+    exchange-local wall clock with a literal suffix rather than an offset, so
+    it needs localizing rather than fromisoformat."""
+    if not as_of:
+        return None
+    try:
+        text = str(as_of).replace(" ET", "").strip()
+        naive = datetime.strptime(text, "%Y-%m-%d %H:%M")
+        stamped = naive.replace(tzinfo=ZoneInfo("America/New_York"))
+        return (datetime.now(timezone.utc) - stamped).total_seconds() / 3600
+    except Exception:
+        return None
 
 
 def sentiment_flag_note(flag, as_of):
@@ -4317,6 +4342,24 @@ render_logout_button()
 # A freshly-persisted result (Refresh button / watchlist save) is stashed in
 # session state so the rerun that follows those actions serves that exact
 # result -- no duplicate fetch on top of the one the action already did.
+# Pull the newest generated files from GitHub before anything reads them.
+#
+# On Streamlit Community Cloud these files come from the container's checkout,
+# which only changes when the app REDEPLOYS -- so when redeploys stopped firing
+# (2026-09-06 to 2026-09-09) the dashboard silently served three-day-old AI
+# verdicts while every workflow kept running green. Nothing errored; the app
+# just had no way to know it was behind. This makes freshness the app's own
+# job. Rate-limited internally to one check per SYNC_MIN_INTERVAL_SECONDS, so
+# calling it on every rerun is cheap, and it never raises -- a failed sync
+# leaves the app running on whatever it already had.
+try:
+    _gh_token, _gh_repo, _gh_branch = get_github_config(st.secrets)
+    _pulled, _pull_note = pull_generated_files(_gh_token, _gh_repo, _gh_branch)
+    if _pulled:
+        print(f"[data sync] refreshed from GitHub: {', '.join(_pulled)}")
+except Exception as _e:                                  # never break the page
+    _pulled, _pull_note = [], f"sync failed: {_e}"
+
 using_snapshot = False
 snapshot_warning = None
 served = st.session_state.get("_served_snapshot")
@@ -4438,6 +4481,20 @@ for _market_rows in per_market.values():
 
 source_label = "daily snapshot" if using_snapshot else "live fetch"
 st.sidebar.caption(f"Data as of: {as_of} ({source_label})")
+# Age of the snapshot, spelled out. The caption above has always shown the
+# timestamp, but a date three days old reads much like a fresh one at a glance
+# -- which is how a frozen container went unnoticed for three days. An explicit
+# age, and a warning past SNAPSHOT_STALE_WARN_HOURS, does not.
+_snap_age_h = snapshot_age_hours(as_of)
+if _snap_age_h is not None:
+    if _snap_age_h >= SNAPSHOT_STALE_WARN_HOURS:
+        st.sidebar.warning(
+            f"⚠️ Snapshot is {_snap_age_h:.0f}h old. The hourly refresh may have stopped, "
+            "or this app may be serving a stale checkout -- try Refresh Data, "
+            "or reboot the app from Streamlit Cloud."
+        )
+    else:
+        st.sidebar.caption(f"↻ {_snap_age_h:.1f}h old · sync: {_pull_note}")
 markets_registry_now = load_markets_registry()
 st.sidebar.caption(
     " · ".join(
