@@ -1285,27 +1285,5 @@
     "news_used": "No recent news found.",
     "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
     "model_used": "gemini-3.5-flash-lite"
-  },
-  "STAR.NS": {
-    "verdict": "HOLD",
-    "headline": "Strong momentum and volume breakout tempered by fresh VStop status requiring confirmation.",
-    "technical_summary": "STAR.NS displays a strong uptrend near its 52-week highs with exploding volume and positive accumulation (92.4%). However, the weekly Volatility Stop was just triggered (0 weeks held), keeping technical uptrend confirmation on hold despite daily RSI reaching overbought levels (80.2).",
-    "catalyst_summary": "No material news found; verdict based on technicals only.",
-    "actionable_take": "Maintain existing positions while respecting the VStop level at 1018.1. Wait for the VStop uptrend duration to reach at least 3 weeks and digest the near-term overbought daily conditions before deploying new capital.",
-    "as_of": "2026-09-09 09:36",
-    "news_used": "No recent news found.",
-    "news_source": "\ud83d\udd0d Gemma-4-26B (Google Search)",
-    "model_used": "gemini-3.5-flash-lite"
-  },
-  "GMMPFAUDLR.NS": {
-    "verdict": "ACCUMULATE",
-    "headline": "GMM Pfaudler confirms a strong Stage 2 breakout with heavy volume accumulation and positive relative strength.",
-    "technical_summary": "The stock trades in a robust uptrend near its 52-week high, backed by an ascending VStop held for 6 weeks and exploding volume with a 91.7% net accumulation ratio. While daily RSI at 87.5 signals short-term overbought conditions, the overall technical structure remains strongly constructive.",
-    "catalyst_summary": "No material news found; verdict based on technicals only.",
-    "actionable_take": "Consider accumulating positions on shallow pullbacks toward the 10 DEMA or 10 WEMA zones. Keep a strict trailing stop-loss aligned with the VStop level at 1131.1 to manage downside risk.",
-    "as_of": "2026-09-09 10:01",
-    "news_used": "No recent news found.",
-    "news_source": "\u26aa No Source",
-    "model_used": "gemini-3.5-flash-lite"
   }
 }
