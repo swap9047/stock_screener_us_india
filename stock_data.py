@@ -2162,6 +2162,77 @@ def fill_snapshot_gaps(fresh_per_market, previous_per_market, watchlists):
     return filled, recovered
 
 
+def _parse_data_end(value):
+    """"YYYY-MM-DD" -> date, or None if absent/unparseable."""
+    try:
+        return datetime.strptime(str(value), "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+def reject_stale_rows(fresh_per_market, previous_per_market, max_hold_days=5, today=None):
+    """Keep the previous row when a freshly fetched one is OLDER than it.
+    Returns (per_market, {market: [tickers]}), the same shape as
+    fill_snapshot_gaps.
+
+    fill_snapshot_gaps covers a fetch that returned NOTHING. This covers the
+    other half: a fetch that returned a complete, internally consistent row of
+    YESTERDAY. Nothing about such a row looks wrong -- it has prices, EMAs,
+    RSI, VStop, volumes, a data_end -- so every guard we had waved it through,
+    and save_data_snapshot then stamped it with the current as_of and
+    overwrote good data with it.
+
+    That is not hypothetical. On 2026-09-08 and again on 2026-09-09, the
+    ~21:00 ET run came back with the previous session for most US tickers: in
+    the 09-09 21:00 snapshot, 46 of 50 US rows had last_close byte-identical
+    to that morning's PRE-MARKET snapshot and data_end had moved backwards
+    from 09-09 to 09-08, while the 18:28 run three hours earlier had the right
+    data. We pass no start/end to yfinance (period="5y"), so the series
+    boundary is entirely Yahoo's -- three tickers did get 09-09, which looks
+    like cache variance on their side rather than a clean cutoff. The file then
+    claimed a freshness it did not have, which is the actual harm: the
+    dashboard showed yesterday's Last and % Chg under tonight's timestamp, and
+    "Data Thru" only reddens at 3+ days so a one-session regression was
+    invisible.
+
+    max_hold_days is the safety valve, and it is the part that matters. A
+    ticker's history can legitimately shrink -- delisting, a symbol change,
+    Yahoo dropping coverage -- and a guard without a valve would then serve
+    that ticker's last good row forever, trading a visible bug for an
+    invisible one. So the previous row is only held while it is itself recent;
+    past that, the fresh row wins even though it is older, and the row's own
+    data_end/"Data Thru" column carries the staleness to the UI.
+    """
+    prev_by_market = {
+        m: {r.get("ticker"): r for r in rows}
+        for m, rows in (previous_per_market or {}).items()
+    }
+    today = today or datetime.now(ZoneInfo("America/New_York")).date()
+
+    out, rejected = {}, {}
+    for market, rows in (fresh_per_market or {}).items():
+        prev = prev_by_market.get(market, {})
+        kept, stale = [], []
+        for row in rows:
+            old = prev.get(row.get("ticker"))
+            new_end = _parse_data_end(row.get("data_end"))
+            old_end = _parse_data_end((old or {}).get("data_end"))
+            # Never block on a comparison we cannot make: an unknown date on
+            # either side, or a ticker with no history here, takes the fresh row.
+            if old is None or new_end is None or old_end is None or new_end >= old_end:
+                kept.append(row)
+                continue
+            if (today - old_end).days > max_hold_days:
+                kept.append(row)          # the valve -- see the docstring
+                continue
+            kept.append(old)
+            stale.append(row.get("ticker"))
+        out[market] = kept
+        if stale:
+            rejected[market] = stale
+    return out, rejected
+
+
 def rebuild_snapshot_for_market(snap_per_market, market, tickers, fetch_new):
     """Rebuilds ONE market's rows inside a snapshot, fetching only what is
     genuinely missing, and returns (merged_per_market, fetched_tickers).
