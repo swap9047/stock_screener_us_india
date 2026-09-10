@@ -9,18 +9,26 @@ env:
 # redundant identical fetches across visitors. The app's "Refresh Data"
 # button still fetches live data on demand regardless of this snapshot.
 #
-# Refreshes every 3 hours from 7:00 AM to 11:00 PM ET, Mon-Sat (7, 10, 13,
-# 16, 19, 22 ET). Because ET is UTC-4 (EDT) or UTC-5 (EST), the schedule
-# fires on a union of UTC hours covering both seasons and a gate keeps only
-# the runs whose current ET time lands within a slot. A 6-hour grace window
-# past each slot absorbs GitHub's schedule delays (runs can fire minutes to
-# hours after the cron time), so a late fire is still honored instead of
-# silently dropped. expert-views.yml still refreshes data_snapshot.json
-# nightly (~11:00 PM ET) so Expert Views always work from same-day data.
-# Workflow_dispatch always bypasses the gate.
+# Refreshes HOURLY, every hour of every day.
+#
+# This replaces six fixed ET slots (7, 10, 13, 16, 19, 22 ET) selected by a
+# gate job. The gate existed only to map those slots onto UTC crons across
+# DST -- an hourly cron needs none of that machinery, since every hour fires
+# correctly in both seasons and there is no cron pair that could double-fire.
+#
+# Running around the clock is deliberate, not laziness: India trades roughly
+# 23:45-06:00 ET, so the old 7 AM - 11 PM ET window sampled the entire Indian
+# session exactly never -- it only ever saw those prices after the close.
+#
+# Cost is zero (public repo = free Actions minutes), and an idle hour costs
+# nothing downstream either: the commit step below skips when the snapshot is
+# byte-identical, so hours with no market activity add no commits.
+#
+# expert-views.yml still refreshes data_snapshot.json before its nightly run,
+# so Expert Views always work from same-day data.
 on:
   schedule:
-    - cron: "0 0,2,3,11,12,14,15,17,18,20,21,23 * * *"
+    - cron: "0 * * * *"
   workflow_dispatch: {}    # run manually from the Actions tab anytime
 
 concurrency:
@@ -31,47 +39,7 @@ permissions:
   contents: write   # needed to commit data_snapshot.json back to the repo
 
 jobs:
-  gate:
-    runs-on: ubuntu-latest
-    outputs:
-      due: ${{ steps.check.outputs.due }}
-    steps:
-      - id: check
-        name: Is it an allowed refresh slot right now?
-        env:
-          CRON_SCHEDULE: ${{ github.event.schedule }}
-        run: |
-          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
-          import os
-          from zoneinfo import ZoneInfo
-          from datetime import datetime
-          now_et = datetime.now(ZoneInfo("America/New_York"))
-
-          slots = {7, 10, 13, 16, 19, 22}   # every 3h, 7 AM - 11 PM ET
-          grace_h = 6                       # tolerate GitHub schedule delays
-          cron = os.environ.get("CRON_SCHEDULE")
-
-          is_valid_cron = True
-          if cron:
-              try:
-                  cron_utc_hours = {int(h) for h in cron.split()[1].split(',')}
-                  expected_utc_hours = {int((slot - (now_et.utcoffset().total_seconds() / 3600)) % 24) for slot in slots}
-                  if not cron_utc_hours & expected_utc_hours:
-                      is_valid_cron = False
-              except Exception:
-                  pass
-
-          now_minutes = now_et.hour * 60 + now_et.minute
-          due = (is_valid_cron and now_et.isoweekday() <= 6 and
-                 any(s <= now_minutes < s + grace_h * 60
-                     for s in (slot * 60 for slot in slots)))
-
-          print(f"due={'true' if due else 'false'}")
-          EOF
-
   refresh:
-    needs: gate
-    if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.due == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

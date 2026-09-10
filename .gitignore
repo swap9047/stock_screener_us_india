@@ -16,3 +16,6 @@ streamlit.log
 # names these with a NARROW NO-BREAK SPACE (U+202F) before AM/PM, so a shell
 # glob typed with an ordinary space silently matches nothing.
 Screenshot*.png
+# Container-local marker for github_sync.pull_generated_files -- records which
+# blob SHAs this container last pulled. Per-container state, never shared.
+.data_sync_state.json

@@ -37,7 +37,9 @@ One-time setup:
 """
 
 import base64
+import json
 import os
+import time
 
 import requests
 
@@ -62,6 +64,156 @@ SYNCABLE_FILES = [
 ]
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+# Files the WORKFLOWS generate and the app only ever reads. These are the ones
+# safe to pull at runtime. User config (watchlist.json, settings.json, notes,
+# ...) is deliberately NOT here: it is edited in the UI and pushed from there,
+# so pulling it could overwrite an edit the user is in the middle of making.
+PULLABLE_FILES = [
+    "data_snapshot.json",
+    "expert_views.json",
+    "fundamentals.json",
+    "news_summary.json",
+    "market_breadth.json",
+    "dashboard_perf.json",
+]
+
+# Container-local, gitignored. Remembers the blob SHA of each file we last
+# pulled plus when we last checked, so a rerun costs one small API call at
+# most -- Streamlit re-executes the whole script on every interaction.
+SYNC_STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".data_sync_state.json")
+SYNC_MIN_INTERVAL_SECONDS = 300
+
+# Timestamp fields used to refuse a backwards pull, in preference order.
+_FRESHNESS_KEYS = ("generated_at", "as_of")
+
+
+def _read_sync_state():
+    try:
+        with open(SYNC_STATE_FILE) as f:
+            state = json.load(f)
+        return state if isinstance(state, dict) else {}
+    except Exception:
+        return {}
+
+
+def _write_sync_state(state):
+    try:
+        tmp = f"{SYNC_STATE_FILE}.tmp"
+        with open(tmp, "w") as f:
+            json.dump(state, f)
+        os.replace(tmp, SYNC_STATE_FILE)
+    except Exception:
+        pass  # a lost marker only costs one redundant check
+
+
+def _local_freshness(path):
+    """The file's own timestamp, for refusing an older remote copy."""
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    for key in _FRESHNESS_KEYS:
+        if data.get(key):
+            return str(data[key])
+    return None
+
+
+def pull_generated_files(token, repo, branch="main", files=None,
+                         min_interval=SYNC_MIN_INTERVAL_SECONDS, force=False):
+    """Refresh the generated JSON files from GitHub. Returns (updated, note).
+
+    WHY this exists: on Streamlit Community Cloud the app reads these files
+    from its container's checkout, which only changes when the app REDEPLOYS.
+    When redeploys stop firing -- which happened between 2026-09-06 and
+    2026-09-09 -- the dashboard silently freezes on whatever it last had,
+    while every workflow keeps running green and committing. There is no error
+    anywhere; the app simply shows three-day-old AI verdicts as current. This
+    makes freshness the app's own responsibility instead of the platform's.
+
+    Cheap by construction: one git-trees call returns every root file's blob
+    SHA, so a check with nothing new costs a single small request, and only
+    files whose SHA actually moved are downloaded. Content is fetched by BLOB
+    SHA rather than from raw.githubusercontent.com because the blob is
+    content-addressed -- the raw CDN caches for minutes and could hand back an
+    older body than the tree we just read.
+
+    Never raises: a failed sync must leave the app running on its local files.
+    """
+    files = list(files or PULLABLE_FILES)
+    state = _read_sync_state()
+    now = time.time()
+    if not force and now - float(state.get("checked_at") or 0) < min_interval:
+        return [], "skipped (checked recently)"
+    if not repo:
+        return [], "no GITHUB_REPO configured"
+
+    headers = _headers(token) if token else {"Accept": "application/vnd.github+json"}
+    root = os.path.dirname(os.path.abspath(__file__))
+    try:
+        tree_resp = requests.get(
+            f"{GITHUB_API}/repos/{repo}/git/trees/{branch}",
+            headers=headers, timeout=15,
+        )
+        if tree_resp.status_code != 200:
+            return [], f"tree lookup failed: {_short(tree_resp)}"
+        entries = {e.get("path"): e.get("sha") for e in (tree_resp.json().get("tree") or [])}
+    except requests.RequestException as e:
+        return [], f"tree lookup failed: {e}"
+
+    known = dict(state.get("blobs") or {})
+    updated, skipped = [], []
+    for name in files:
+        remote_sha = entries.get(name)
+        if not remote_sha:
+            continue
+        path = os.path.join(root, name)
+        if known.get(name) == remote_sha and os.path.exists(path):
+            continue
+        try:
+            blob = requests.get(
+                f"{GITHUB_API}/repos/{repo}/git/blobs/{remote_sha}",
+                headers={**headers, "Accept": "application/vnd.github.raw"}, timeout=30,
+            )
+            if blob.status_code != 200:
+                continue
+            body = blob.content
+            parsed = json.loads(body.decode("utf-8"))
+        except Exception:
+            # A truncated or non-JSON body must never land on disk -- the
+            # loaders treat a parse error as "no data at all".
+            continue
+
+        # Never go backwards. The app writes data_snapshot.json itself (the
+        # Refresh Data button) and pushes it; if that push failed, pulling
+        # would quietly revert the user's own fresher data.
+        local_stamp = _local_freshness(path)
+        remote_stamp = next((str(parsed[k]) for k in _FRESHNESS_KEYS
+                             if isinstance(parsed, dict) and parsed.get(k)), None)
+        if local_stamp and remote_stamp and remote_stamp < local_stamp:
+            skipped.append(name)
+            known[name] = remote_sha   # seen and judged; don't re-download it
+            continue
+
+        try:
+            tmp = f"{path}.tmp"
+            with open(tmp, "wb") as f:
+                f.write(body)
+            os.replace(tmp, path)
+        except Exception:
+            continue
+        known[name] = remote_sha
+        updated.append(name)
+
+    _write_sync_state({"checked_at": now, "blobs": known})
+    note = f"updated {len(updated)}" if updated else "up to date"
+    if skipped:
+        note += f"; kept newer local copy of {', '.join(skipped)}"
+    return updated, note
 
 
 def get_github_config(st_secrets=None):
