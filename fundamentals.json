@@ -2143,5 +2143,22 @@
     "quarter_verified": true,
     "real_earnings_date": "2026-08-05",
     "guard_flag": null
+  },
+  "SHIVALIK.NS": {
+    "earnings_summary": "N/A",
+    "future_guidance": "N/A",
+    "analyst_coverage": "N/A",
+    "earnings_report_date": null,
+    "eps_value": null,
+    "guidance_change": null,
+    "analyst_action": null,
+    "sentiment": "Unknown",
+    "reasoning": "No recent fundamental news was found for Shivalik Rasayan Limited. Per the critical rules, when no news is available, the sentiment must be set to Unknown and all structured fields to N/A or null.",
+    "as_of": "2026-09-10 02:57",
+    "news_used": "No recent fundamental news found.",
+    "news_source": "\u26aa No Source",
+    "model_used": "gemini-3.5-flash-lite",
+    "quarter_verified": true,
+    "real_earnings_date": null
   }
 }
