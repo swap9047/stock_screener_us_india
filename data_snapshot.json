@@ -1,6 +1,6 @@
 {
-  "as_of": "2026-09-12 15:01 ET",
-  "generated_at": "2026-09-12T19:01:46.461175+00:00",
+  "as_of": "2026-09-12 17:25 ET",
+  "generated_at": "2026-09-12T21:25:06.644391+00:00",
   "code_version": "0b2b27d01cce86e6",
   "per_market": {
     "india_invested": [
@@ -10677,7 +10677,7 @@
         "qtr_revenue_growth": 22.1,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 44.041813,
+        "trailing_pe": 45.30466,
         "forward_pe": 23.50255,
         "pb_ratio": 3.6451726,
         "ev_ebitda": 19.854,
@@ -12304,7 +12304,7 @@
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
         "trailing_pe": 24.672688,
-        "forward_pe": 11.769765,
+        "forward_pe": 11.763292,
         "pb_ratio": 1.6321005,
         "ev_ebitda": 2.018,
         "p_cashflow": 3.46,
