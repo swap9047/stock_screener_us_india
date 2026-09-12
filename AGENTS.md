@@ -23,8 +23,8 @@ credentials are configured, and in headless tests you bypass it by seeding
 `session_state["authenticated"] = True` (see **Verifying a change**).
 
 Secrets come from Streamlit secrets first, then env vars: `GEMINI_API_KEY`,
-`NVIDIA_API_KEY`, `GITHUB_TOKEN`, `GITHUB_REPO`, `GITHUB_BRANCH`, `DISCORD_WEBHOOK_URL`.
-See `DEPLOYMENT.md`.
+`GITHUB_TOKEN`, `GITHUB_REPO`, `GITHUB_BRANCH`, `DISCORD_WEBHOOK_URL`, `AUTH_USERNAME`,
+`AUTH_PASSWORD`. See `DEPLOYMENT.md`.
 
 **There is no test suite.** Changes are verified by rendering the app headlessly — recipe
 at the bottom.
@@ -33,27 +33,34 @@ at the bottom.
 
 ## Module map
 
-~12k lines total. The weighting matters: `app.py` is more than half of it.
+~12.6k lines total. The weighting matters: `app.py` is nearly half of it.
 
 | File | Lines | What it owns |
 |---|---:|---|
-| `app.py` | 5496 | The entire UI: tabs, tables, sidebar, filters, sort, editors, AI control bars, News + Alert Rules tabs |
-| `stock_data.py` | 2071 | yfinance fetching, all indicator maths, watchlist/markets registry IO, `get_filterable_metrics` |
-| `alerts.py` | 686 | Alert rule evaluation + Discord message building |
-| `news_summary.py` | 473 | News gathering + LLM summarisation |
-| `fundamentals_eval.py` | 390 | Sentiment ("fundamental view") generation + validation |
-| `expert_views.py` | 369 | Expert Take verdict generation |
-| `filters.py` | 350 | The boolean condition engine — shared by UI filters **and** background alerts |
-| `weekly_wrapup.py` | 349 | Weekly Discord digest |
+| `app.py` | 5846 | The entire UI: tabs, tables, sidebar, filters, sort, editors, AI control bars, News + Alert Rules tabs |
+| `stock_data.py` | 2320 | yfinance fetching, all indicator maths, watchlist/markets registry IO, `get_filterable_metrics` |
+| `alerts.py` | 858 | Alert rule evaluation + Discord message building |
+| `news_summary.py` | 839 | News gathering + LLM summarisation |
+| `fundamentals_eval.py` | 672 | Sentiment ("fundamental view") generation + validation |
+| `expert_views.py` | 558 | Expert Take verdict generation |
+| `github_sync.py` | 374 | Atomic config push + `workflow_dispatch` trigger |
+| `filters.py` | 353 | The boolean condition engine — shared by UI filters **and** background alerts |
+| `weekly_wrapup.py` | 361 | Weekly Discord digest |
+| `llm_util.py` | 288 | Shared Gemini-call plumbing (timeout wrapper, retry/model-ladder logic) for the three AI pipelines |
 | `ticker_notes.py` | 230 | Per-ticker notes/flags + auto-flag voting |
 | `custom_columns.py` | 229 | User-defined formula columns |
-| `github_sync.py` | 222 | Atomic config push + `workflow_dispatch` trigger |
 
 `refresh_*.py` and `*_check.py` are thin entry points that exist only to be run by GitHub
 Actions. They contain no logic worth duplicating — they call into the modules above.
 
 `filters.py` being shared is load-bearing: a rule must evaluate identically in the UI
 preview and in the nightly Discord job. Don't fork that logic.
+
+`llm_util.py` being shared is load-bearing too: `news_summary.py`, `expert_views.py` and
+`fundamentals_eval.py` each used to carry their own copy of the timeout wrapper and retry
+logic, and the copies drifted (only one pipeline ever gained a same-model retry before
+falling back). Add a new AI pipeline stage on top of `run_model_ladder`/`standard_tiers`,
+not a fourth copy.
 
 ---
 
@@ -105,13 +112,14 @@ spine, in order:
 Two things you cannot guess and will get wrong:
 
 - **Every tab body executes on every run**, not just the visible one. Anything expensive
-  in a tab body costs you 7×.
+  in a tab body costs you 11× (7 watchlists + 2 combined tabs + News + Alert Rules —
+  recount against `markets.json` and the `st.tabs(...)` call in `app.py` if that drifts).
 - **`st.tabs` is instantiated early on purpose.** A keyed widget's `session_state` only
   survives a rerun if the widget was re-instantiated on the run before it — so any widget
   that calls `st.rerun()` *before* `st.tabs` would orphan the tab selection and bounce you
   back to the first tab. Don't move it down.
 
-Tabs are registry-driven (`markets.json`), currently 5 watchlists shown in that file's key
+Tabs are registry-driven (`markets.json`), currently 7 watchlists shown in that file's key
 order — reorder the tabs by reordering the JSON, not by hardcoding a list — followed by two
 **combined tabs** (`all_invested`, `all_watchlist`) whose membership lives in
 `watchlist_groups.json`.
@@ -218,7 +226,7 @@ Each of these has actually bitten this codebase.
 
 | Workflow | Runs | Commits | Schedule (UTC) |
 |---|---|---|---|
-| `data-refresh.yml` | `refresh_data.py` | `data_snapshot.json` | every ~2h across the trading day |
+| `data-refresh.yml` | `refresh_data.py` | `data_snapshot.json` | hourly, every hour, around the clock |
 | `expert-views.yml` | `refresh_data.py`, `refresh_expert_views.py` | `data_snapshot.json`, `expert_views.json` | 03:00 / 04:00 (11 PM ET) |
 | `fundamentals.yml` | `refresh_fundamentals.py` | `fundamentals.json` | 07:00 / 08:00 (3 AM ET) |
 | `news-summary.yml` | `news_check.py` | `news_summary.json` | 00:00 / 01:00 (8 PM ET) |
@@ -226,8 +234,14 @@ Each of these has actually bitten this codebase.
 | `market-breadth.yml` | `refresh_market_breadth.py`, `refresh_dashboard_perf.py` | `market_breadth.json`, `dashboard_perf.json` | 02,03,14,15 |
 | `weekly-wrapup.yml` | `weekly_wrapup_check.py` | `weekly_wrapup_state.json` | Mon 01:00 / 02:00 |
 
-Two crons per workflow is the EDT/EST pair; a gate job checks the real ET hour and skips
-the wrong one, so a run isn't double-fired.
+`data-refresh.yml` is the exception to the pattern below: it's a single hourly cron with no
+gate job, deliberately running around the clock rather than only during US/India market
+hours, since a fixed daytime window sampled India's ~23:45-06:00 ET session never (only
+after the close). It's idempotent either way — the commit step no-ops when the snapshot is
+byte-identical, so quiet hours add no commits.
+
+Every other workflow's two crons are the EDT/EST pair; a gate job checks the real ET hour
+and skips the wrong one, so a run isn't double-fired.
 
 `expert-views.yml` and `fundamentals.yml` accept a **`markets`** input (comma-separated
 market keys) which the app's per-tab "Re-analyze All" button uses to scope a run to one

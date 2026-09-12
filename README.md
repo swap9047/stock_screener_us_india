@@ -9,8 +9,8 @@ automated alerts to Discord.
 
 *   **Registry-driven watchlists:** Watchlists are defined in `markets.json`, each with its
     own benchmark — add one from the dashboard without touching code.
-    Currently: US Invested, India Invested, US Watchlist, India Watchlist,
-    and Substack-OutperformingMarket.
+    Currently 7: US Invested, India Invested, US Watchlist, India Watchlist,
+    Substack-OutperformingMarket, Wrap Earnings Watchlist, and Tracking.
 *   **Combined views:** Two roll-up tabs, *All Invested* and *All Watchlist*, merge any
     watchlists you choose (membership is editable in the UI, stored in
     `watchlist_groups.json`) and de-duplicate tickers that appear in more than one.
@@ -43,7 +43,8 @@ evidence rather than model recall.
 ### Expert Views (`expert_views.py`)
 Actionable verdicts — `ACCUMULATE`, `HOLD`, `CAUTION` — combining pre-computed technical
 indicators with a targeted search for analyst ratings and upgrades/downgrades. Falls back
-down a 3-tier model chain on rate limits so an analysis is always produced.
+through a shared model ladder (`llm_util.py`) on rate limits — retrying the primary model
+before conceding to a weaker one — so an analysis is always produced.
 
 ### Fundamental Sentiment (`fundamentals_eval.py`)
 A `Positive` / `Neutral` / `Negative` read on the most recent earnings, guidance and
@@ -67,6 +68,8 @@ to just the tab you clicked from.
     mathematically grounded.
 *   `filters.py` — the shared boolean condition engine behind both UI filters and
     background alerts.
+*   `llm_util.py` — shared Gemini timeout/retry/model-ladder plumbing used by all three AI
+    pipelines.
 *   `alerts.py` / `alert_check.py` — rule evaluation and the Discord cron job.
 *   `github_sync.py` — atomic commits via the GitHub API, and workflow dispatch.
 *   `refresh_*.py` — background entry points run by GitHub Actions.
