@@ -74,9 +74,9 @@ Rough cost: two lightweight gate runs/day (a few seconds each) plus one full che
 
 ## 7. News digest (Discord + News tab)
 
-A second, independent GitHub Actions workflow, `.github/workflows/news-summary.yml`, builds a daily news digest for both watchlists: for each ticker, it uses Gemini (with Google Search grounding, so it's real, cited web search — not the model's training data) to find important announcements, results, and stock moves from the last 24 hours, collates each watchlist into one summary, saves the result to `news_summary.json`, and sends both summaries to Discord. The app's **News** tab just displays that same `news_summary.json`.
+A second, independent GitHub Actions workflow, `.github/workflows/news-summary.yml`, builds a daily news digest for every watchlist in scope (`news_watchlist_scope` in Settings — blank means all watchlists): for each ticker, it uses Gemini (with Google Search grounding, so it's real, cited web search — not the model's training data) to find important announcements, results, and stock moves from the last 24 hours, collates each watchlist into its own summary, saves the result to `news_summary.json`, and sends each summary to Discord. The app's **News** tab just displays that same `news_summary.json`.
 
-It runs once a day at **7:00 AM ET** (before market open), using the same two-UTC-cron-lines-plus-runtime-check pattern as the alerts workflow to handle daylight saving time correctly.
+It runs once a day at **8:00 PM ET**, using the same two-UTC-cron-lines-plus-runtime-check pattern as the alerts workflow to handle daylight saving time correctly.
 
 To enable it, add one more repo secret (repo → Settings → Secrets and variables → Actions → New repository secret):
 
@@ -92,17 +92,17 @@ A few things worth knowing:
 - **This workflow commits `news_summary.json` directly to the repo itself** (it needs `contents: write` permission, already set) — unlike the other config files, this one is machine-generated, not edited through the app UI, so there's nothing to push from the app's GitHub sync button for this file.
 - If the Gemini API call fails for a given day (rate limit, outage, etc.), that day's digest is simply skipped — no Discord message, no `news_summary.json` update, and the app's News tab keeps showing the last successful run until the next one succeeds.
 
-## 8. Daily data refresh (faster page loads)
+## 8. Data refresh (faster page loads)
 
-A third GitHub Actions workflow, `.github/workflows/data-refresh.yml`, fetches all watchlist tickers via yfinance once a day (also ~7:00 AM ET, same DST-safe pattern) and saves the result to `data_snapshot.json`. The app loads this snapshot on open instead of hitting yfinance live every session — much faster, and avoids every visitor re-fetching identical data.
+A third GitHub Actions workflow, `.github/workflows/data-refresh.yml`, fetches all watchlist tickers via yfinance and saves the result to `data_snapshot.json`. It runs **hourly, every hour, around the clock** — not just during US market hours, since India trades roughly 23:45-06:00 ET and a daytime-only window would sample that session exactly never. It's a single cron with no EDT/EST pair or gate job needed (an hourly cron fires correctly in both seasons), and idle hours cost nothing extra: the commit step no-ops when the snapshot is byte-identical to the last run. The app loads this snapshot on open instead of hitting yfinance live every session — much faster, and avoids every visitor re-fetching identical data.
 
 No new secret needed — it only needs `contents: write` (already set) to commit `data_snapshot.json` back to the repo.
 
 A few things worth knowing:
 
 - **The "Refresh Data" button in the sidebar still works exactly as before** — clicking it always fetches live data for that session, bypassing the snapshot entirely. The sidebar caption shows which one you're looking at: "(daily snapshot)" or "(live fetch)".
-- **The snapshot is skipped automatically, falling back to a live fetch, if it's stale in a way that matters**: if you've added a ticker to the watchlist since the last scheduled refresh (the snapshot won't have it yet), or changed a calc parameter in Settings (EMA lengths, thresholds, etc. — the snapshot was computed with whatever settings were live at refresh time). Either case just means one live fetch until tomorrow's 7 AM refresh catches up.
-- Same edge case as the other two workflows: GitHub's scheduler is best-effort, so a run can occasionally be delayed or skipped — the gate for this one (and the news digest) uses a 22-hour tolerance window to absorb realistic scheduler delay, the same fix applied to the alerts workflow after it silently missed a day from an exact-hour check with zero grace period.
+- **The snapshot is skipped automatically, falling back to a live fetch, if it's stale in a way that matters**: if you've added a ticker to the watchlist since the last scheduled refresh (the snapshot won't have it yet), or changed a calc parameter in Settings (EMA lengths, thresholds, etc. — the snapshot was computed with whatever settings were live at refresh time). Either case just means one live fetch until the next hourly refresh catches up.
+- GitHub's scheduler is best-effort, so a run can occasionally be delayed — with an hourly cron this self-heals within the hour. The once-a-day workflows (news digest, Expert Views, Fundamentals) deliberately don't try to skip a late run either: their gate only checks which of the two DST cron lines matches, and runs anyway if GitHub fires it late, on the reasoning that a late digest beats a skipped one.
 
 ## 9. Push config changes made through the deployed app back to GitHub
 
