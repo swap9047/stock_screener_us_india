@@ -1,6 +1,6 @@
 {
-  "as_of": "2026-09-12 08:42 ET",
-  "generated_at": "2026-09-12T12:42:46.038760+00:00",
+  "as_of": "2026-09-12 12:03 ET",
+  "generated_at": "2026-09-12T16:03:53.293985+00:00",
   "code_version": "0b2b27d01cce86e6",
   "per_market": {
     "india_invested": [
@@ -118,7 +118,7 @@
         "custom_w52lowdist": 41.36752136752136,
         "note": "",
         "flag": "Green",
-        "flag_reason": "4/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes, Sentiment=Bullish)"
+        "flag_reason": "3/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes)"
       },
       {
         "ticker": "CARYSIL.NS",
@@ -135,7 +135,7 @@
         "qtr_revenue_growth": 15.5,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 30.909817,
+        "trailing_pe": 30.959234,
         "forward_pe": 23.156952,
         "pb_ratio": 5.436222,
         "ev_ebitda": 18.802,
@@ -251,7 +251,7 @@
         "qtr_revenue_growth": 34.3,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 87.46615,
+        "trailing_pe": 87.72066,
         "forward_pe": 51.37971,
         "pb_ratio": 7.0918317,
         "ev_ebitda": 54.875,
@@ -367,7 +367,7 @@
         "qtr_revenue_growth": 23.9,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 25.524416,
+        "trailing_pe": 25.497349,
         "forward_pe": 17.052483,
         "pb_ratio": 3.2882032,
         "ev_ebitda": 13.548,
@@ -483,7 +483,7 @@
         "qtr_revenue_growth": 32.1,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 54.328537,
+        "trailing_pe": 54.634247,
         "forward_pe": 29.358532,
         "pb_ratio": 10.216767,
         "ev_ebitda": 37.88,
@@ -599,7 +599,7 @@
         "qtr_revenue_growth": 20.7,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 21.675653,
+        "trailing_pe": 21.691978,
         "forward_pe": 15.744306,
         "pb_ratio": 3.290105,
         "ev_ebitda": 15.309,
@@ -814,7 +814,7 @@
         "custom_w52lowdist": 233.69767441860466,
         "note": "",
         "flag": "Green",
-        "flag_reason": "3/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes)"
+        "flag_reason": "4/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes, Sentiment=Bullish)"
       },
       {
         "ticker": "KRISHNADEF.NS",
@@ -831,7 +831,7 @@
         "qtr_revenue_growth": -15.2,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 38.012844,
+        "trailing_pe": 38.02641,
         "forward_pe": null,
         "pb_ratio": 8.221894,
         "ev_ebitda": 30.688,
@@ -1295,7 +1295,7 @@
         "qtr_revenue_growth": 31.7,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 82.88786,
+        "trailing_pe": 82.647736,
         "forward_pe": 35.04914,
         "pb_ratio": 20.381483,
         "ev_ebitda": 59.015,
@@ -1527,7 +1527,7 @@
         "qtr_revenue_growth": 24.5,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 36.148647,
+        "trailing_pe": 36.232105,
         "forward_pe": 28.477413,
         "pb_ratio": 8.678693,
         "ev_ebitda": 25.641,
@@ -1858,7 +1858,7 @@
         "custom_w52lowdist": 202.7342031960123,
         "note": "",
         "flag": "Green",
-        "flag_reason": "4/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes, Sentiment=Bullish)"
+        "flag_reason": "3/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes)"
       },
       {
         "ticker": "SAREGAMA.NS",
@@ -1991,7 +1991,7 @@
         "qtr_revenue_growth": 44.9,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 63.108997,
+        "trailing_pe": 63.275185,
         "forward_pe": 46.070705,
         "pb_ratio": 7.256317,
         "ev_ebitda": 40.816,
@@ -2223,7 +2223,7 @@
         "qtr_revenue_growth": 116.0,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 62.742943,
+        "trailing_pe": 62.54687,
         "forward_pe": null,
         "pb_ratio": 6.607464,
         "ev_ebitda": 46.751,
@@ -2437,8 +2437,8 @@
         "custom_w52dist": -10.659340659340662,
         "custom_w52lowdist": 85.72244431753285,
         "note": "",
-        "flag": "Green",
-        "flag_reason": "3/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes)"
+        "flag": "Yellow",
+        "flag_reason": "3/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes) -- further study: vetoed by Sentiment=Bearish"
       },
       {
         "ticker": "TANFACIND.BO",
@@ -2554,7 +2554,7 @@
         "custom_w52lowdist": 107.00722773490139,
         "note": "",
         "flag": "Green",
-        "flag_reason": "4/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes, Sentiment=Bullish)"
+        "flag_reason": "3/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes)"
       },
       {
         "ticker": "TDPOWERSYS.NS",
@@ -2571,7 +2571,7 @@
         "qtr_revenue_growth": 72.1,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 86.92225,
+        "trailing_pe": 91.778786,
         "forward_pe": 54.110928,
         "pb_ratio": 23.463736,
         "ev_ebitda": 65.725,
@@ -3017,8 +3017,8 @@
         "custom_w52dist": -0.011142061281339582,
         "custom_w52lowdist": 960.756501182033,
         "note": "",
-        "flag": "",
-        "flag_reason": ""
+        "flag": "Green",
+        "flag_reason": "3/4 bullish votes (Expert Take=Hold, Trend=Uptrend, Sentiment=Bullish)"
       },
       {
         "ticker": "UFBL.NS",
@@ -3267,7 +3267,7 @@
         "qtr_revenue_growth": 32.6,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 29.331505,
+        "trailing_pe": 29.325651,
         "forward_pe": 17.149733,
         "pb_ratio": 5.9901624,
         "ev_ebitda": 14.983,
@@ -3948,7 +3948,7 @@
         "custom_w52lowdist": 56.69616519174042,
         "note": "",
         "flag": "Green",
-        "flag_reason": "3/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes)"
+        "flag_reason": "4/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes, Sentiment=Bullish)"
       },
       {
         "ticker": "KRYS",
@@ -3965,7 +3965,7 @@
         "qtr_revenue_growth": 24.1,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 43.320847,
+        "trailing_pe": 43.483707,
         "forward_pe": 36.924007,
         "pb_ratio": 7.5561266,
         "ev_ebitda": 47.337,
@@ -4081,7 +4081,7 @@
         "qtr_revenue_growth": 28.0,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 24.270786,
+        "trailing_pe": 24.389538,
         "forward_pe": 18.536509,
         "pb_ratio": 6.321011,
         "ev_ebitda": 15.256,
@@ -4411,8 +4411,8 @@
         "custom_w52dist": -54.07882676443629,
         "custom_w52lowdist": 31.266375545851538,
         "note": "",
-        "flag": "Yellow",
-        "flag_reason": "3/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No) -- further study: vetoed by Sentiment=Bullish"
+        "flag": "Red",
+        "flag_reason": "3/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No)"
       },
       {
         "ticker": "QURE",
@@ -4992,7 +4992,7 @@
         "custom_w52lowdist": 105.26315789473684,
         "note": "",
         "flag": "Green",
-        "flag_reason": "4/4 bullish votes (Expert Take=Hold, Trend=Uptrend, Tech Uptrend=Yes, Sentiment=Bullish)"
+        "flag_reason": "3/4 bullish votes (Expert Take=Hold, Trend=Uptrend, Tech Uptrend=Yes)"
       },
       {
         "ticker": "ASX",
@@ -5108,7 +5108,7 @@
         "custom_w52lowdist": 265.7407407407407,
         "note": "",
         "flag": "Green",
-        "flag_reason": "3/4 bullish votes (Expert Take=Hold, Trend=Uptrend, Tech Uptrend=Yes)"
+        "flag_reason": "4/4 bullish votes (Expert Take=Hold, Trend=Uptrend, Tech Uptrend=Yes, Sentiment=Bullish)"
       },
       {
         "ticker": "RGEN",
@@ -5224,7 +5224,7 @@
         "custom_w52lowdist": 63.56435643564355,
         "note": "",
         "flag": "Green",
-        "flag_reason": "4/4 bullish votes (Expert Take=Hold, Trend=Uptrend, Tech Uptrend=Yes, Sentiment=Bullish)"
+        "flag_reason": "3/4 bullish votes (Expert Take=Hold, Trend=Uptrend, Tech Uptrend=Yes)"
       },
       {
         "ticker": "AMKR",
@@ -5241,7 +5241,7 @@
         "qtr_revenue_growth": 25.6,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 22.201717,
+        "trailing_pe": 23.19731,
         "forward_pe": 18.433195,
         "pb_ratio": 2.758492,
         "ev_ebitda": 9.858,
@@ -5339,8 +5339,8 @@
         "custom_w52dist": -46.42487046632124,
         "custom_w52lowdist": 109.31174089068827,
         "note": "wrap",
-        "flag": "Yellow",
-        "flag_reason": "3/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No) -- further study: vetoed by Sentiment=Bullish"
+        "flag": "Red",
+        "flag_reason": "3/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No)"
       },
       {
         "ticker": "AVGO",
@@ -5473,8 +5473,8 @@
         "qtr_revenue_growth": 21.9,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 27.413233,
-        "forward_pe": 37.967712,
+        "trailing_pe": 27.476177,
+        "forward_pe": 37.821465,
         "pb_ratio": 21.32242,
         "ev_ebitda": 62.926,
         "p_cashflow": 18.03,
@@ -5589,7 +5589,7 @@
         "qtr_revenue_growth": 22.4,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 257.0777,
+        "trailing_pe": 270.19388,
         "forward_pe": 86.42648,
         "pb_ratio": 32.766983,
         "ev_ebitda": 262.661,
@@ -5687,8 +5687,8 @@
         "custom_w52dist": -41.506516456814666,
         "custom_w52lowdist": 164.8,
         "note": "",
-        "flag": "Yellow",
-        "flag_reason": "3/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No) -- further study: vetoed by Sentiment=Bullish"
+        "flag": "Red",
+        "flag_reason": "3/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No)"
       },
       {
         "ticker": "ACOG",
@@ -5804,7 +5804,7 @@
         "custom_w52lowdist": 97.77777777777779,
         "note": "",
         "flag": "Green",
-        "flag_reason": "3/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes)"
+        "flag_reason": "4/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes, Sentiment=Bullish)"
       },
       {
         "ticker": "CLPT",
@@ -5937,7 +5937,7 @@
         "qtr_revenue_growth": 62.4,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 33.776802,
+        "trailing_pe": 35.9865,
         "forward_pe": 17.731447,
         "pb_ratio": 16.072256,
         "ev_ebitda": 25.8,
@@ -6713,8 +6713,8 @@
         "custom_w52dist": -34.96884735202492,
         "custom_w52lowdist": 23.201770564367383,
         "note": "sajal kapoor",
-        "flag": "Red",
-        "flag_reason": "3/4 bearish votes (Trend=Downtrend, Tech Uptrend=No, Sentiment=Bearish)"
+        "flag": "",
+        "flag_reason": ""
       },
       {
         "ticker": "BETA.NS",
@@ -6830,7 +6830,7 @@
         "custom_w52lowdist": 113.96828603171399,
         "note": "soic",
         "flag": "Green",
-        "flag_reason": "3/4 bullish votes (Expert Take=Hold, Trend=Uptrend, Tech Uptrend=Yes)"
+        "flag_reason": "4/4 bullish votes (Expert Take=Hold, Trend=Uptrend, Tech Uptrend=Yes, Sentiment=Bullish)"
       },
       {
         "ticker": "BHAGYANGR.NS",
@@ -6847,7 +6847,7 @@
         "qtr_revenue_growth": 45.2,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 22.03076,
+        "trailing_pe": 21.503817,
         "forward_pe": null,
         "pb_ratio": 5.245419,
         "ev_ebitda": 12.568,
@@ -6945,8 +6945,8 @@
         "custom_w52dist": -2.266944251677079,
         "custom_w52lowdist": 379.0249433106576,
         "note": "soic",
-        "flag": "Yellow",
-        "flag_reason": "3/4 bullish votes (Expert Take=Accumulate, Trend=Strong Uptrend, Tech Uptrend=Yes) -- further study: vetoed by Sentiment=Bearish"
+        "flag": "Green",
+        "flag_reason": "4/4 bullish votes (Expert Take=Accumulate, Trend=Strong Uptrend, Tech Uptrend=Yes, Sentiment=Bullish)"
       },
       {
         "ticker": "CONCORDBIO.NS",
@@ -7195,7 +7195,7 @@
         "qtr_revenue_growth": 38.2,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 62.88188,
+        "trailing_pe": 62.90367,
         "forward_pe": 31.768864,
         "pb_ratio": 4.677793,
         "ev_ebitda": 29.69,
@@ -7311,7 +7311,7 @@
         "qtr_revenue_growth": 41.8,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 30.978643,
+        "trailing_pe": 30.961393,
         "forward_pe": 21.836273,
         "pb_ratio": 4.9539847,
         "ev_ebitda": 22.997,
@@ -7409,8 +7409,8 @@
         "custom_w52dist": -12.823996655518389,
         "custom_w52lowdist": 31.67574394190543,
         "note": "soic",
-        "flag": "Red",
-        "flag_reason": "3/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No)"
+        "flag": "Yellow",
+        "flag_reason": "3/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No) -- further study: vetoed by Sentiment=Bullish"
       },
       {
         "ticker": "INDGN.NS",
@@ -7526,7 +7526,7 @@
         "custom_w52lowdist": 40.29597282872391,
         "note": "ameya",
         "flag": "Green",
-        "flag_reason": "3/4 bullish votes (Expert Take=Accumulate, Trend=Strong Uptrend, Tech Uptrend=Yes)"
+        "flag_reason": "4/4 bullish votes (Expert Take=Accumulate, Trend=Strong Uptrend, Tech Uptrend=Yes, Sentiment=Bullish)"
       },
       {
         "ticker": "INNOVACAP.NS",
@@ -7659,7 +7659,7 @@
         "qtr_revenue_growth": 20.4,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 27.44672,
+        "trailing_pe": 27.468811,
         "forward_pe": 16.099056,
         "pb_ratio": 2.9872952,
         "ev_ebitda": 21.429,
@@ -7757,8 +7757,8 @@
         "custom_w52dist": -44.62561856088262,
         "custom_w52lowdist": 15.793044953350302,
         "note": "ameya",
-        "flag": "Red",
-        "flag_reason": "3/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No)"
+        "flag": "Yellow",
+        "flag_reason": "3/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No) -- further study: vetoed by Sentiment=Bullish"
       },
       {
         "ticker": "JMFINANCIL.NS",
@@ -7775,7 +7775,7 @@
         "qtr_revenue_growth": -10.3,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 11.450782,
+        "trailing_pe": 11.4718895,
         "forward_pe": 8.298,
         "pb_ratio": 1.116964,
         "ev_ebitda": null,
@@ -7874,7 +7874,7 @@
         "custom_w52lowdist": 12.873980054397101,
         "note": "soic",
         "flag": "Red",
-        "flag_reason": "4/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No, Sentiment=Bearish)"
+        "flag_reason": "3/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No)"
       },
       {
         "ticker": "LANDMARK.NS",
@@ -7891,7 +7891,7 @@
         "qtr_revenue_growth": 22.7,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 45.01384,
+        "trailing_pe": 45.055405,
         "forward_pe": 15.441456,
         "pb_ratio": 3.4572546,
         "ev_ebitda": 9.976,
@@ -8007,7 +8007,7 @@
         "qtr_revenue_growth": -6.2,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 112.0467,
+        "trailing_pe": 112.35537,
         "forward_pe": null,
         "pb_ratio": 5.4229603,
         "ev_ebitda": 75.235,
@@ -8105,8 +8105,8 @@
         "custom_w52dist": -20.688314213494067,
         "custom_w52lowdist": 37.5252865812542,
         "note": "soic",
-        "flag": "Yellow",
-        "flag_reason": "3/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes) -- further study: vetoed by Sentiment=Bearish"
+        "flag": "Green",
+        "flag_reason": "3/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes)"
       },
       {
         "ticker": "MTARTECH.NS",
@@ -8338,7 +8338,7 @@
         "custom_w52lowdist": 145.6013247774788,
         "note": "sajal kapoor",
         "flag": "Green",
-        "flag_reason": "4/4 bullish votes (Expert Take=Accumulate, Trend=Strong Uptrend, Tech Uptrend=Yes, Sentiment=Bullish)"
+        "flag_reason": "3/4 bullish votes (Expert Take=Accumulate, Trend=Strong Uptrend, Tech Uptrend=Yes)"
       },
       {
         "ticker": "NRBBEARING.NS",
@@ -8570,7 +8570,7 @@
         "custom_w52lowdist": 120.02174306939663,
         "note": "wrap",
         "flag": "Green",
-        "flag_reason": "3/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes)"
+        "flag_reason": "4/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes, Sentiment=Bullish)"
       },
       {
         "ticker": "SAILIFE.NS",
@@ -8587,7 +8587,7 @@
         "qtr_revenue_growth": 11.7,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 93.12573,
+        "trailing_pe": 93.45519,
         "forward_pe": 63.441208,
         "pb_ratio": 13.492806,
         "ev_ebitda": 50.34,
@@ -8819,7 +8819,7 @@
         "qtr_revenue_growth": 42.9,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 75.77485,
+        "trailing_pe": 72.99001,
         "forward_pe": 39.364597,
         "pb_ratio": 4.8159914,
         "ev_ebitda": 35.521,
@@ -9051,7 +9051,7 @@
         "qtr_revenue_growth": -23.1,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 161.24542,
+        "trailing_pe": 158.91698,
         "forward_pe": 44.749825,
         "pb_ratio": 4.3142486,
         "ev_ebitda": 53.808,
@@ -9167,7 +9167,7 @@
         "qtr_revenue_growth": 16.0,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 50.732216,
+        "trailing_pe": 50.0,
         "forward_pe": 34.33074,
         "pb_ratio": 5.874231,
         "ev_ebitda": 27.439,
@@ -9979,7 +9979,7 @@
         "qtr_revenue_growth": 16.4,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 83.30573,
+        "trailing_pe": 83.35883,
         "forward_pe": 27.709745,
         "pb_ratio": 4.8816633,
         "ev_ebitda": 18.484,
@@ -10561,7 +10561,7 @@
         "qtr_revenue_growth": 20.7,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 57.714287,
+        "trailing_pe": 59.121952,
         "forward_pe": null,
         "pb_ratio": 5.0837693,
         "ev_ebitda": -0.753,
@@ -10659,8 +10659,8 @@
         "custom_w52dist": -37.46770025839794,
         "custom_w52lowdist": 188.09523809523807,
         "note": "self",
-        "flag": "Green",
-        "flag_reason": "3/4 bullish votes (Expert Take=Hold, Trend=Uptrend, Sentiment=Bullish)"
+        "flag": "",
+        "flag_reason": ""
       },
       {
         "ticker": "Q",
@@ -10677,7 +10677,7 @@
         "qtr_revenue_growth": 22.1,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 44.041813,
+        "trailing_pe": 45.30466,
         "forward_pe": 23.50255,
         "pb_ratio": 3.6451726,
         "ev_ebitda": 19.854,
@@ -11007,8 +11007,8 @@
         "custom_w52dist": -30.627760788311253,
         "custom_w52lowdist": 1906.5110565110563,
         "note": "wrap",
-        "flag": "Green",
-        "flag_reason": "3/4 bullish votes (Expert Take=Hold, Trend=Uptrend, Sentiment=Bullish)"
+        "flag": "",
+        "flag_reason": ""
       },
       {
         "ticker": "VSH",
@@ -11123,8 +11123,8 @@
         "custom_w52dist": -52.09235209235209,
         "custom_w52lowdist": 186.20689655172416,
         "note": "self",
-        "flag": "Yellow",
-        "flag_reason": "3/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No) -- further study: vetoed by Sentiment=Bullish"
+        "flag": "Red",
+        "flag_reason": "3/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No)"
       },
       {
         "ticker": "WOLF",
@@ -11257,7 +11257,7 @@
         "qtr_revenue_growth": -1.1,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 17.44076,
+        "trailing_pe": 17.52381,
         "forward_pe": 16.061943,
         "pb_ratio": 3.671189,
         "ev_ebitda": 11.485,
@@ -11452,7 +11452,7 @@
         "rsi14_monthly": 70.0,
         "rsi12_monthly": 70.7,
         "adx_weekly_14": 16.4,
-        "adx_monthly_12": 30.4,
+        "adx_monthly_12": 33.0,
         "rs_daily": 2.9,
         "rs_weekly": -1.2,
         "rs_monthly": -0.8,
@@ -11839,7 +11839,7 @@
         "qtr_revenue_growth": 28.0,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 24.270786,
+        "trailing_pe": 24.389538,
         "forward_pe": 18.536509,
         "pb_ratio": 6.321011,
         "ev_ebitda": 15.256,
@@ -12303,7 +12303,7 @@
         "qtr_revenue_growth": 8.6,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 24.5618,
+        "trailing_pe": 24.672688,
         "forward_pe": 11.769765,
         "pb_ratio": 1.6321005,
         "ev_ebitda": 2.018,
@@ -12419,7 +12419,7 @@
         "qtr_revenue_growth": 19.6,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 20.28278,
+        "trailing_pe": 20.658085,
         "forward_pe": 24.681154,
         "pb_ratio": 5.0195484,
         "ev_ebitda": 17.159,
@@ -12634,7 +12634,7 @@
         "custom_w52lowdist": 541.522491349481,
         "note": "",
         "flag": "Green",
-        "flag_reason": "4/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes, Sentiment=Bullish)"
+        "flag_reason": "3/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes)"
       },
       {
         "ticker": "TSM",
@@ -12883,7 +12883,7 @@
         "qtr_revenue_growth": 17.7,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 27.39801,
+        "trailing_pe": 27.62709,
         "forward_pe": 21.025343,
         "pb_ratio": 8.320827,
         "ev_ebitda": 19.215,
@@ -12981,8 +12981,8 @@
         "custom_w52dist": -9.759650400582668,
         "custom_w52lowdist": 42.20946915351507,
         "note": "",
-        "flag": "Green",
-        "flag_reason": "3/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes)"
+        "flag": "Yellow",
+        "flag_reason": "3/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes) -- further study: vetoed by Sentiment=Bearish"
       },
       {
         "ticker": "AVGO",
@@ -13231,7 +13231,7 @@
         "qtr_revenue_growth": 22.4,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 257.0777,
+        "trailing_pe": 270.19388,
         "forward_pe": 86.42648,
         "pb_ratio": 32.766983,
         "ev_ebitda": 262.661,
@@ -13329,8 +13329,8 @@
         "custom_w52dist": -41.506516456814666,
         "custom_w52lowdist": 164.8,
         "note": "",
-        "flag": "Yellow",
-        "flag_reason": "3/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No) -- further study: vetoed by Sentiment=Bullish"
+        "flag": "Red",
+        "flag_reason": "3/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No)"
       },
       {
         "ticker": "RBRK",
@@ -13463,7 +13463,7 @@
         "qtr_revenue_growth": 11.0,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 14.177083,
+        "trailing_pe": 14.364116,
         "forward_pe": 13.033862,
         "pb_ratio": 2.8937223,
         "ev_ebitda": 1.985,
@@ -13677,8 +13677,8 @@
         "custom_w52dist": -17.499365965001267,
         "custom_w52lowdist": 74.37684266952559,
         "note": "",
-        "flag": "Red",
-        "flag_reason": "3/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No)"
+        "flag": "Yellow",
+        "flag_reason": "3/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No) -- further study: vetoed by Sentiment=Bullish"
       },
       {
         "ticker": "ZS",
@@ -13811,7 +13811,7 @@
         "qtr_revenue_growth": 21.3,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 57.14334,
+        "trailing_pe": 57.472084,
         "forward_pe": 28.28299,
         "pb_ratio": 1430.2621,
         "ev_ebitda": 2686.326,
@@ -14141,8 +14141,8 @@
         "custom_w52dist": -43.39622641509434,
         "custom_w52lowdist": 152.63157894736844,
         "note": "",
-        "flag": "Yellow",
-        "flag_reason": "3/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No) -- further study: vetoed by Sentiment=Bullish"
+        "flag": "Red",
+        "flag_reason": "3/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No)"
       },
       {
         "ticker": "AMKR",
@@ -14159,7 +14159,7 @@
         "qtr_revenue_growth": 25.6,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 22.201717,
+        "trailing_pe": 23.19731,
         "forward_pe": 18.433195,
         "pb_ratio": 2.758492,
         "ev_ebitda": 9.858,
@@ -14257,8 +14257,8 @@
         "custom_w52dist": -46.42487046632124,
         "custom_w52lowdist": 109.31174089068827,
         "note": "wrap",
-        "flag": "Yellow",
-        "flag_reason": "3/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No) -- further study: vetoed by Sentiment=Bullish"
+        "flag": "Red",
+        "flag_reason": "3/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No)"
       },
       {
         "ticker": "GEV",
@@ -14275,8 +14275,8 @@
         "qtr_revenue_growth": 21.9,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 27.413233,
-        "forward_pe": 37.967712,
+        "trailing_pe": 27.476177,
+        "forward_pe": 37.821465,
         "pb_ratio": 21.32242,
         "ev_ebitda": 62.926,
         "p_cashflow": 18.03,
@@ -14391,7 +14391,7 @@
         "qtr_revenue_growth": 62.4,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 33.776802,
+        "trailing_pe": 35.9865,
         "forward_pe": 17.731447,
         "pb_ratio": 16.072256,
         "ev_ebitda": 25.8,
@@ -14625,7 +14625,7 @@
         "qtr_revenue_growth": 19.8,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 122.19931,
+        "trailing_pe": 121.989716,
         "forward_pe": 35.500835,
         "pb_ratio": 3.9128954,
         "ev_ebitda": 21.234,
@@ -14724,7 +14724,7 @@
         "custom_w52lowdist": 54.8106225511537,
         "note": "",
         "flag": "Green",
-        "flag_reason": "3/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes)"
+        "flag_reason": "4/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes, Sentiment=Bullish)"
       },
       {
         "ticker": "MENONBE.NS",
@@ -15089,7 +15089,7 @@
         "qtr_revenue_growth": 32.1,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 54.328537,
+        "trailing_pe": 54.634247,
         "forward_pe": 29.358532,
         "pb_ratio": 10.216767,
         "ev_ebitda": 37.88,
@@ -15535,8 +15535,8 @@
         "custom_w52dist": -33.22485207100592,
         "custom_w52lowdist": 61.32952108649034,
         "note": "",
-        "flag": "Yellow",
-        "flag_reason": "3/4 bullish votes (Expert Take=Hold, Trend=Uptrend, Tech Uptrend=Yes) -- further study: vetoed by Sentiment=Bearish"
+        "flag": "Green",
+        "flag_reason": "3/4 bullish votes (Expert Take=Hold, Trend=Uptrend, Tech Uptrend=Yes)"
       },
       {
         "ticker": "UFBL.NS",
@@ -15768,7 +15768,7 @@
         "custom_w52lowdist": 513.6170212765958,
         "note": "",
         "flag": "Green",
-        "flag_reason": "3/4 bullish votes (Expert Take=Hold, Trend=Uptrend, Tech Uptrend=Yes)"
+        "flag_reason": "4/4 bullish votes (Expert Take=Hold, Trend=Uptrend, Tech Uptrend=Yes, Sentiment=Bullish)"
       },
       {
         "ticker": "STAR.NS",
@@ -16350,7 +16350,7 @@
         "custom_w52lowdist": 97.77777777777779,
         "note": "",
         "flag": "Green",
-        "flag_reason": "3/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes)"
+        "flag_reason": "4/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes, Sentiment=Bullish)"
       },
       {
         "ticker": "LITE",
@@ -16466,7 +16466,7 @@
         "custom_w52lowdist": 541.522491349481,
         "note": "",
         "flag": "Green",
-        "flag_reason": "4/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes, Sentiment=Bullish)"
+        "flag_reason": "3/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes)"
       },
       {
         "ticker": "AVGO",
@@ -16599,7 +16599,7 @@
         "qtr_revenue_growth": 25.6,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 22.201717,
+        "trailing_pe": 23.19731,
         "forward_pe": 18.433195,
         "pb_ratio": 2.758492,
         "ev_ebitda": 9.858,
@@ -16697,8 +16697,8 @@
         "custom_w52dist": -46.42487046632124,
         "custom_w52lowdist": 109.31174089068827,
         "note": "wrap",
-        "flag": "Yellow",
-        "flag_reason": "3/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No) -- further study: vetoed by Sentiment=Bullish"
+        "flag": "Red",
+        "flag_reason": "3/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No)"
       },
       {
         "ticker": "ARM",
@@ -16715,7 +16715,7 @@
         "qtr_revenue_growth": 22.4,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 257.0777,
+        "trailing_pe": 270.19388,
         "forward_pe": 86.42648,
         "pb_ratio": 32.766983,
         "ev_ebitda": 262.661,
@@ -16813,8 +16813,8 @@
         "custom_w52dist": -41.506516456814666,
         "custom_w52lowdist": 164.8,
         "note": "",
-        "flag": "Yellow",
-        "flag_reason": "3/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No) -- further study: vetoed by Sentiment=Bullish"
+        "flag": "Red",
+        "flag_reason": "3/4 bearish votes (Expert Take=Caution, Trend=Downtrend, Tech Uptrend=No)"
       },
       {
         "ticker": "SNOW",
@@ -16947,8 +16947,8 @@
         "qtr_revenue_growth": 21.9,
         "ttm_profit_growth": null,
         "ttm_revenue_growth": null,
-        "trailing_pe": 27.413233,
-        "forward_pe": 37.967712,
+        "trailing_pe": 27.476177,
+        "forward_pe": 37.821465,
         "pb_ratio": 21.32242,
         "ev_ebitda": 62.926,
         "p_cashflow": 18.03,
