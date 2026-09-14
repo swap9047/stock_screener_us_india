@@ -1,5 +1,6 @@
 """
-Weekly wrap-up: a Sunday digest over a user-chosen subset of alert rules.
+Weekly wrap-up: a Sunday digest over every enabled alert rule that has
+conditions (eligible_rules) -- including "Scan only" rules.
 
 Two parts, in this order:
 
@@ -115,12 +116,6 @@ def is_eligible(rule):
 
 def eligible_rules(rules):
     return [r for r in rules if is_eligible(r)]
-
-
-def selected_rules(rules):
-    """Rules that go into the wrap-up, in alerts_config.json order -- which
-    is what fixes the 1..N numbering the roll-up's Alerts# refers to."""
-    return [r for r in eligible_rules(rules) if r.get("weekly_wrapup")]
 
 
 # --- Columns -------------------------------------------------------------

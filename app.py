@@ -948,9 +948,27 @@ def build_ai_review_payload(
     return "\n".join(out)
 
 
+def _escape_markdown_dollars(text):
+    """Escape `$` so st.markdown doesn't render $...$ spans as LaTeX. Leaves an
+    already-escaped `\\$` alone."""
+    return re.sub(r"(?<!\\)\$", r"\\$", str(text))
+
+
+def _price_fmt(v):
+    """Price-denominated cells: 1 decimal under 1,000, whole numbers above.
+
+    These were all whole numbers ("{:,.0f}"), which hid the relationships the
+    row colouring depicts on low-priced tickers -- [ticker]'s last 8.9 vs 10 WEMA
+    8.7 both read "9", [ticker] 10.7 vs VStop 10.6 both "11". Stored values are
+    already rounded to 1 decimal, so more than 1 would only show padding."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return "—"
+    return f"{v:,.1f}" if abs(v) < 1000 else f"{v:,.0f}"
+
+
 def price_cols(ema_labels):
-    """Price-denominated columns -- shown as whole numbers (no decimal),
-    since sub-dollar/rupee precision isn't meaningful at a glance here."""
+    """Price-denominated columns -- formatted by _price_fmt (1 decimal under
+    1,000, whole numbers above)."""
     return ["Last", ema_labels["w_fast"], ema_labels["w_mid"], ema_labels["w_slow"],
             ema_labels["d_fast"], ema_labels["d_mid"], ema_labels["d_slow"],
             "VStop-W", "VStop-W (14)", "52W High", "52W Low", "5Y High"]
@@ -2357,6 +2375,8 @@ def apply_sort(rows, sort_field, ascending, rank=None):
         return rows
 
     def is_missing(v):
+        if sort_field == "reported_qtr" and v not in (None, "") and _quarter_sort_key(v) is None:
+            return True   # unparseable quarter label: last in BOTH directions, like a blank
         return v is None or v == "" or (isinstance(v, float) and pd.isna(v))
 
     present = [r for r in rows if not is_missing(r.get(sort_field))]
@@ -2366,6 +2386,8 @@ def apply_sort(rows, sort_field, ascending, rank=None):
         v = r[sort_field]
         if rank:
             return _rank_index(rank, v)
+        if sort_field == "reported_qtr":
+            return _quarter_sort_key(v)   # unparseable labels were routed to `missing` above
         return v.lower() if isinstance(v, str) else v
 
     return sorted(present, key=keyfn, reverse=not ascending) + missing
@@ -2403,7 +2425,31 @@ DIR_LABELS = {
     # A-Z would be a lie -- "top" is whatever sits first in the drag list.
     "rank": {"↑": "Top→Bottom", "↓": "Bottom→Top"},
 }
-_DATE_SHAPES = (re.compile(r"^\d{4}-\d{2}-\d{2}$"), re.compile(r"^Q[1-4] \d{4}$"))
+_DATE_SHAPES = (re.compile(r"^\d{4}-\d{2}-\d{2}$"), re.compile(r"^Q[1-4] \d{4}$"),
+                re.compile(r"^Q[1-4] FY\d{2}$"))
+_QTR_CAL = re.compile(r"^Q([1-4]) (\d{4})$")
+_QTR_FY = re.compile(r"^Q([1-4]) FY(\d{2})$")
+
+
+def _quarter_sort_key(value):
+    """(year, calendar quarter) for a Reported Qtr label, or None.
+
+    Two label families exist (stock_data's reported_qtr): US listings get
+    calendar "Q2 2026"; Indian listings get fiscal "Q1 FY27", where FY27 runs
+    Apr 2026 - Mar 2027, so Q1 FY27 is Apr-Jun 2026 = calendar (2026, 2) and
+    Q4 FY27 is Jan-Mar 2027 = (2027, 1). These used to sort as plain strings,
+    which is not chronological across a year ("Q1 2026" < "Q4 2025") and
+    interleaves the two families arbitrarily ("Q1 FY27" between "Q1 2026" and
+    "Q2 2026")."""
+    text = str(value).strip()
+    m = _QTR_CAL.match(text)
+    if m:
+        return int(m.group(2)), int(m.group(1))
+    m = _QTR_FY.match(text)
+    if m:
+        q, fy_end = int(m.group(1)), 2000 + int(m.group(2))
+        return (fy_end, 1) if q == 4 else (fy_end - 1, q + 1)
+    return None
 
 
 def _metric_kind(field, sample_rows):
@@ -3510,7 +3556,7 @@ def render_expert_view_expander(market, filtered_rows, settings, results=None):
                 st.markdown(
                     f"<div style='padding:10px 14px; margin-bottom:8px; border-radius:8px; "
                     f"border:1px solid rgba(128,128,128,0.25); background:rgba(128,128,128,0.05);'>"
-                    f"<b>{ticker}</b> &nbsp;⚪ Pending — no AI analysis yet.</div>",
+                    f"<b>{html.escape(ticker)}</b> &nbsp;⚪ Pending — no AI analysis yet.</div>",
                     unsafe_allow_html=True,
                 )
                 _reanalyze_button(ticker, row)
@@ -3522,23 +3568,28 @@ def render_expert_view_expander(market, filtered_rows, settings, results=None):
             news_source = view.get("news_source", "")
             as_of = view.get("as_of", "")
 
+            # Every model- or search-derived field is escaped: this is LLM output
+            # grounded on web search, interpolated into raw HTML, and a literal
+            # "<" (e.g. "P/E < 20") or stray markup used to break or swallow the
+            # rest of the card.
+            _e = lambda k, d="": html.escape(str(view.get(k, d)))
             card_html = (
                 f"<div style='padding:14px 16px; margin-bottom:10px; border-radius:10px; "
                 f"border-left:4px solid {color}; border:1px solid rgba(128,128,128,0.2); "
                 f"background:rgba(0,0,0,0.03);'>"
                 f"<div style='font-size:1.05em; font-weight:700; margin-bottom:4px;'>"
-                f"{ticker} &nbsp; <span style='color:{color}'>{badge}</span></div>"
+                f"{html.escape(ticker)} &nbsp; <span style='color:{color}'>{badge}</span></div>"
                 f"<div style='font-size:0.9em; margin-bottom:6px; opacity:0.85;'>"
-                f"<b>Headline:</b> {view.get('headline', '')}</div>"
+                f"<b>Headline:</b> {_e('headline')}</div>"
                 f"<div style='font-size:0.85em; margin-bottom:4px;'>"
-                f"<b>📊 Technical:</b> {view.get('technical_summary', '')}</div>"
+                f"<b>📊 Technical:</b> {_e('technical_summary')}</div>"
                 f"<div style='font-size:0.85em; margin-bottom:4px;'>"
-                f"<b>📰 Catalyst:</b> {view.get('catalyst_summary', '')}</div>"
+                f"<b>📰 Catalyst:</b> {_e('catalyst_summary')}</div>"
                 f"<div style='font-size:0.85em; background:rgba(0,100,255,0.06); "
                 f"border-radius:6px; padding:6px 10px; margin-bottom:6px;'>"
-                f"<b>💡 Action:</b> {view.get('actionable_take', '')}</div>"
+                f"<b>💡 Action:</b> {_e('actionable_take')}</div>"
                 f"<div style='font-size:0.75em; opacity:0.55;'>"
-                f"Generated: {as_of} · News: {news_source} · Model: {view.get('model_used', 'gemini-3.5-flash-lite')}</div>"
+                f"Generated: {html.escape(str(as_of))} · News: {html.escape(str(news_source))} · Model: {_e('model_used', 'gemini-3.5-flash-lite')}</div>"
                 f"</div>"
             )
             st.markdown(card_html, unsafe_allow_html=True)
@@ -4224,7 +4275,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             df.style
             .hide(axis="index")
             .apply(lambda row: style_row(row, labels), axis=1)
-            .format("{:,.0f}", subset=price_cs + custom_price_cs, na_rep="—")
+            .format(_price_fmt, subset=price_cs + custom_price_cs, na_rep="—")
             .format("{:.1f}", subset=ratio_cs, na_rep="—")
             .format("{:,.0f}", subset=vol_cols, na_rep="—")
         )
@@ -5267,7 +5318,10 @@ with tab_news:
             if not entry:
                 continue
             st.markdown(f"### {markets_registry_now.get(market, {}).get('label', MARKET_LABELS.get(market, market))}")
-            st.markdown(entry.get("summary", "_No summary available._"))
+            # `$` escaped: Streamlit renders $...$ as LaTeX, so a bullet quoting
+            # two dollar amounts ("raised $5B ... valued at $60B") came out as
+            # italic math with the text between them run together.
+            st.markdown(_escape_markdown_dollars(entry.get("summary") or "_No summary available._"))
 
             # Per-ticker run health. Without this a quiet news day and a run
             # where every search errored look identical -- both render as one
@@ -5299,7 +5353,7 @@ with tab_news:
                 with st.expander(f"Sources ({len(sources)})"):
                     for s in sources:
                         title = s.get("title") or s.get("url")
-                        st.markdown(f"- [{title}]({s.get('url')})")
+                        st.markdown(f"- [{_escape_markdown_dollars(title)}]({s.get('url')})")
             st.divider()
 
 with tab_alerts:
