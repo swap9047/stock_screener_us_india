@@ -87,6 +87,17 @@ CATEGORICAL_METRICS = {
 }
 
 
+# Metrics whose row value is TEXT, so they can't be a scaled Metric B (see
+# _resolve_metric_b). Categoricals are text except the two that are stored as
+# numbers/booleans (tech_uptrend 0/1, interested True/False), plus the free-text
+# and label fields. A text metric missing from here is only a UX gap -- the
+# builder offers it and the condition quietly never matches -- not a crash.
+TEXT_METRICS = (
+    {k for k in CATEGORICAL_METRICS if k not in ("tech_uptrend", "interested")}
+    | {"net_volume_10d_dir", "note", "index_name", "company_name", "data_end", "reported_qtr"}
+)
+
+
 def _normalize_conditions(val):
     """Accepts old formats -- a plain list with no per-item "logic" (implicit
     AND), or the short-lived {"logic": "AND"/"OR", "filters": [...]}
@@ -178,6 +189,17 @@ def _resolve_metric_b(row, filt):
     if filt["compare_type"] == "metric":
         b = row.get(filt["metric_b"])
         if b is None:
+            return None
+        # A text metric on the right (Trend, Flag, Company Name, ...) can't be
+        # scaled. This used to evaluate `b * multiplier + offset` regardless,
+        # and "Uptrend" * 1 + 0 raised TypeError -- uncaught in passes_filter,
+        # so one such condition took down every tab of the app AND the nightly
+        # alert_check.py run. The builder no longer offers text metrics as
+        # Metric B (see TEXT_METRICS), but a saved or hand-edited rule can still
+        # carry one, so fail the condition closed here as well.
+        if isinstance(b, bool):
+            b = int(b)
+        if not isinstance(b, (int, float)):
             return None
         multiplier = filt.get("multiplier", 1) or 1
         offset = filt.get("offset", 0) or 0

@@ -23,6 +23,7 @@ needing dependency ordering / cycle detection between custom columns.
 """
 
 import ast
+import math
 import json
 import os
 
@@ -125,7 +126,17 @@ class _Evaluator(ast.NodeVisitor):
         if isinstance(node.op, ast.Mod):
             return left % right if right != 0 else None
         if isinstance(node.op, ast.Pow):
-            return left ** right
+            # Float power, never int. Python raises int ** int exactly, with no
+            # size limit: `9**9**9` builds a ~370-million-digit integer and ran
+            # for minutes. Custom columns are evaluated on every render and
+            # inside fetch_all_markets, so one such formula froze the app AND
+            # the nightly alert/refresh jobs. In float arithmetic it overflows
+            # immediately instead; overflow means "no value", same as a
+            # division by zero.
+            try:
+                return float(left) ** float(right)
+            except (OverflowError, ZeroDivisionError):
+                return None
         raise FormulaError(f"Operator {type(node.op).__name__} isn't allowed.")
 
     def visit_UnaryOp(self, node):
@@ -139,7 +150,13 @@ class _Evaluator(ast.NodeVisitor):
         raise FormulaError(f"Operator {type(node.op).__name__} isn't allowed.")
 
     def visit_Constant(self, node):
-        return node.value
+        # Float for the same reason as Pow above: keeps every intermediate in
+        # bounded float arithmetic (a 400-digit literal becomes inf, not an
+        # exact bigint that later multiplications have to carry).
+        try:
+            return float(node.value)
+        except OverflowError:
+            return None
 
     def visit_Name(self, node):
         return self.variables.get(node.id)
@@ -167,9 +184,14 @@ def safe_eval_formula(formula, variables):
     if result is None:
         return None
     try:
-        return float(result)
+        value = float(result)
     except (TypeError, ValueError):
+        # e.g. a negative base to a fractional power, which Python returns as
+        # a complex number
         return None
+    # inf/-inf/nan from float overflow render as "inf" and sort and compare as
+    # real values; treat them like the other not-available cases.
+    return value if math.isfinite(value) else None
 
 
 def load_custom_columns():

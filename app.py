@@ -80,7 +80,8 @@ from weekly_wrapup import (
     build_discord_messages as build_wrapup_messages,
 )
 from filters import (get_market_filters, save_market_filters, apply_filters, describe_filter,
-                     describe_chain, describe_chain_with_values, passes_filter_chain, CATEGORICAL_METRICS)
+                     describe_chain, describe_chain_with_values, passes_filter_chain, CATEGORICAL_METRICS,
+                     TEXT_METRICS)
 from github_sync import (get_github_config, push_all_config, trigger_github_workflow,
                          pull_generated_files, SYNCABLE_FILES)
 from news_summary import (load_news_summary, MARKET_LABELS, get_gemini_api_key,
@@ -1952,8 +1953,12 @@ def render_condition_builder(key_prefix, metric_names, filterable_metrics, logic
                             key=f"{key_prefix}_ctype", horizontal=True)
     if compare_type == "Metric":
         init_b_label = label_by_metric.get(initial.get("metric_b"))
-        metric_b_label = c3.selectbox("Metric B", metric_names,
-                                      index=_initial_index(metric_names, init_b_label),
+        # Numeric metrics only: a text Metric B (Trend, Flag, Company Name...)
+        # can't be scaled by the multiplier/offset below, and used to crash the
+        # whole app when evaluated -- see filters.TEXT_METRICS.
+        metric_b_names = [n for n in metric_names if filterable_metrics[n] not in TEXT_METRICS]
+        metric_b_label = c3.selectbox("Metric B", metric_b_names,
+                                      index=_initial_index(metric_b_names, init_b_label),
                                       key=f"{key_prefix}_b")
         _explain(filterable_metrics[metric_b_label], container=c3)
         mc1, mc2, mc3 = st.columns([1, 1, 1])

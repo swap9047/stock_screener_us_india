@@ -165,6 +165,9 @@ somewhere. 14 columns were unfilterable for months this way.
    glossary and condition-builder captions resolve through them.
 3. **`CATEGORICAL_METRICS`** (`filters.py`) — only if it has a fixed value set. This also
    makes it rank-sortable (below) and gives it a dropdown instead of a typed value.
+   **`TEXT_METRICS`** (same file) — if its value is a string. That keeps it out of the
+   Metric B picker. If you miss it the column is still offered as Metric B but never
+   matches; the engine fails closed, it doesn't crash.
 4. **`_sort_label_to_field`** (`app.py`) — only when the sortable field differs from the
    column key.
 5. **`column_definitions`** (`app.py`) — the glossary entry and header tooltip.
