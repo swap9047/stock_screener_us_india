@@ -798,7 +798,7 @@ AI_REVIEW_INSTRUCTION = (
 AI_REVIEW_CORE_KEYS = [
     "ema200", "rsi14_daily", "rs_daily", "rs_monthly", "adx_weekly_14",
     "overhead_supply", "week52_high_age", "week52_high", "week52_low",
-    "high_5y", "high_5y_distance", "rel_ret_1m_n500", "rel_ret_6m_n500",
+    "high_5y", "high_5y_distance", "rel_ret_1m_index", "rel_ret_6m_index",
 ]
 
 
@@ -981,7 +981,7 @@ PERF_PCT_COLS = ["Perf 1M %", "Perf 3M %", "Perf 6M %", "Perf 1Y %", "Perf 3Y %"
 # decimal, not 0: these are scan inputs tested against thresholds as tight
 # as ">= 1", where PERF_PCT_COLS' whole-number rounding would render a 0.4
 # and a 1.4 identically.
-REL_PCT_COLS = ["1M Ret vs Nifty 500", "6M Ret vs Nifty 500"]
+REL_PCT_COLS = ["1M Ret vs Index", "6M Ret vs Index"]
 # Unsigned percentages -- always >= 0, so formatted WITHOUT a sign prefix.
 # PCT_COLS' "+12.5%" would read as 12.5% ABOVE the high for the distances,
 # the exact opposite of what they mean, and a signed share-of-volume makes
@@ -1220,8 +1220,9 @@ def column_definitions(settings, labels):
         "ADX-M": "Average Directional Index on MONTHLY bars, Wilder period 12. Same strength-not-direction reading as ADX-W but over a multi-year horizon. Needs 24 monthly bars.",
         "RSI-M (12)": "Monthly RSI at period 12, kept separate from RSI-M (period 14). On the ~60 monthly bars most tickers have, the two periods differ by several points, so they are not interchangeable.",
         "VStop-W (14)": "Weekly Volatility Stop at length 14, factor 2 — the same engine and settings as VStop-W, which uses length 10. A longer length sits further from price and flips less often.",
-        "1M Ret vs Nifty 500": "Stock's 1-month return minus the benchmark's, in percentage points. Positive = outperforming. Measured over a date-aligned calendar, so both sides span exactly the same sessions.",
-        "6M Ret vs Nifty 500": "Stock's 6-month return minus the benchmark's, in percentage points. Positive = outperforming.",
+        "1M Ret vs Index": "Stock's 1-month return minus its own index benchmark's, in percentage points — Nifty 500 (^CRSLDX) for Indian listings, S&P 500 (SPY) for US listings; see the Index column. Positive = outperforming. Measured over a date-aligned calendar, so both sides span exactly the same sessions.",
+        "6M Ret vs Index": "Stock's 6-month return minus its own index benchmark's (Nifty 500 for Indian listings, S&P 500 for US), in percentage points. Positive = outperforming.",
+        "1W Ret vs Index": "Stock's 1-week return (last ~5 sessions) minus its own index benchmark's (Nifty 500 for Indian listings, S&P 500 for US), in percentage points. Positive = outperforming.",
         "PAT Growth TTM %": "Net income over the trailing four quarters versus the four before that — needs eight quarters of income-statement history. CURRENTLY BLANK FOR EVERY TICKER: yfinance returns only about five quarters, so the comparison cannot be made. Use Qtr Profit Growth % (single quarter, year-on-year) instead; this column populates automatically if a deeper data source is ever wired in.",
         "Revenue Growth TTM %": "Total revenue over the trailing four quarters versus the four before that — needs eight quarters of income-statement history. CURRENTLY BLANK FOR EVERY TICKER: yfinance returns only about five quarters. Use Qtr Revenue Growth % instead; this column populates automatically if a deeper data source is ever wired in.",
     }
@@ -2250,8 +2251,8 @@ def build_column_defs(labels, custom_columns=None):
         ("avg_volume_10d", "Vol 10D"),
         ("avg_volume_20d", "Vol 20D"),
         ("avg_volume_100d", "Vol 100D"),
-        ("rel_ret_1m_n500", "1M Ret vs Nifty 500"),
-        ("rel_ret_6m_n500", "6M Ret vs Nifty 500"),
+        ("rel_ret_1m_index", "1M Ret vs Index"),
+        ("rel_ret_6m_index", "6M Ret vs Index"),
         ("perf_1m", "Perf 1M %"),
         ("perf_3m", "Perf 3M %"),
         ("perf_6m", "Perf 6M %"),
@@ -2284,7 +2285,7 @@ def build_column_defs(labels, custom_columns=None):
                       "Breakout Window", "26WH Distance", "52WH Distance", "52W High Age",
                       "Overhead Supply",
                       "5Y High", "5Y High Distance", "ADX-W", "ADX-M", "RSI-M (12)",
-                      "VStop-W (14)", "1M Ret vs Nifty 500", "6M Ret vs Nifty 500",
+                      "VStop-W (14)", "1M Ret vs Index", "6M Ret vs Index",
                       "PAT Growth TTM %", "Revenue Growth TTM %"}
     default_visible = [lbl for lbl in all_labels if lbl not in default_hidden]
     return optional_defs, label_by_key, key_by_label, all_labels, default_visible

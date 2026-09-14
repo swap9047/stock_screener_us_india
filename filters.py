@@ -87,6 +87,34 @@ CATEGORICAL_METRICS = {
 }
 
 
+# Old metric key -> current key, for keys that have been renamed. Applied when
+# rules, custom filters and snapshot rows are LOADED (migrate_condition_keys,
+# stock_data.load_data_snapshot), not only by migrating the JSON once: a stale
+# copy of alerts_config.json -- a container's local file pushed back with "Push
+# to GitHub", say -- would otherwise re-introduce an old key, and a condition on
+# a key no row carries silently never matches.
+#
+# The rel_ret_* trio were named for the Nifty 500 ("n500", and "n50" for the
+# 1-week one) and labelled "vs Nifty 500", but each row is measured against its
+# OWN index benchmark -- SPY for US listings -- so "1M Ret vs Nifty 500 > 5" on a
+# US ticker was really a test against the S&P 500.
+METRIC_RENAMES = {
+    "rel_ret_1w_n50": "rel_ret_1w_index",
+    "rel_ret_1m_n500": "rel_ret_1m_index",
+    "rel_ret_6m_n500": "rel_ret_6m_index",
+}
+
+
+def migrate_condition_keys(conditions):
+    """Rewrite renamed metric keys (METRIC_RENAMES) in a condition list, in
+    place. Returns the same list."""
+    for cond in conditions or []:
+        for field in ("metric_a", "metric_b"):
+            if cond.get(field) in METRIC_RENAMES:
+                cond[field] = METRIC_RENAMES[cond[field]]
+    return conditions
+
+
 # Metrics whose row value is TEXT, so they can't be a scaled Metric B (see
 # _resolve_metric_b). Categoricals are text except the two that are stored as
 # numbers/booleans (tech_uptrend 0/1, interested True/False), plus the free-text
@@ -114,7 +142,7 @@ def _normalize_conditions(val):
         item = dict(item)
         item.setdefault("logic", global_logic)
         out.append(item)
-    return out
+    return migrate_condition_keys(out)
 
 
 def load_custom_filters():

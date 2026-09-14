@@ -479,8 +479,9 @@ def get_filterable_metrics(settings=None):
         "ADX-M": "adx_monthly_12",
         "RSI-M (12)": "rsi12_monthly",
         "VStop-W (14)": "vstop_weekly_14",
-        "1M Ret vs Nifty 500": "rel_ret_1m_n500",
-        "6M Ret vs Nifty 500": "rel_ret_6m_n500",
+        # "vs Index" = vs each ticker's own index benchmark (see ticker_index.json)
+        "1M Ret vs Index": "rel_ret_1m_index",
+        "6M Ret vs Index": "rel_ret_6m_index",
         "PAT Growth TTM %": "ttm_profit_growth",
         "Revenue Growth TTM %": "ttm_revenue_growth",
         "% Chg": "pct_change_1d",
@@ -499,7 +500,7 @@ def get_filterable_metrics(settings=None):
         "Qtr Revenue Growth %": "qtr_revenue_growth",
         "VStop Weeks Ago": "vstop_weekly_weeks_since_change",
         "10/30 W Golden Cross (weeks ago)": "gc_weeks_10_30",
-        "1W Ret vs Nifty 500": "rel_ret_1w_n50",
+        "1W Ret vs Index": "rel_ret_1w_index",
         "Tech Uptrend": "tech_uptrend",
         "Flag": "flag",
         "Notes": "note",
@@ -2015,17 +2016,19 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
                     last_cross_pos = int(np.flatnonzero(crossed_up.to_numpy())[-1])
                     gc_weeks_10_30 = int(len(weekly) - 1 - last_cross_pos)
 
-            # Relative 1-week return vs the configured India benchmark (^CRSLDX,
-            # the app's Nifty 500 proxy): stock 1-week return minus benchmark
-            # 1-week return, trailing ~5 daily sessions.
-            rel_ret_1w_n50 = None
+            # Relative 1-week return vs this ticker's OWN index benchmark (the
+            # benchmark of its fetch group -- ^CRSLDX for Indian listings, SPY for
+            # US): stock 1-week return minus benchmark 1-week return, trailing ~5
+            # daily sessions. Was named rel_ret_1w_n50 / labelled "vs Nifty 500",
+            # which was only true for Indian rows -- see filters.METRIC_RENAMES.
+            rel_ret_1w_index = None
             if len(daily_close) >= 7 and len(bench_daily) >= 7:
                 try:
                     stock_1w = float(daily_close.iloc[-1]) / float(daily_close.iloc[-6]) - 1
                     bench_1w = float(bench_daily.iloc[-1]) / float(bench_daily.iloc[-6]) - 1
-                    rel_ret_1w_n50 = round((stock_1w - bench_1w) * 100, 1)
+                    rel_ret_1w_index = round((stock_1w - bench_1w) * 100, 1)
                 except (ZeroDivisionError, IndexError):
-                    rel_ret_1w_n50 = None
+                    rel_ret_1w_index = None
 
             # Same relative-return idea at 1 month and 6 months, for the Turbo
             # Surge and Alpha Leaders scans. Uses the SAME trading-day offsets
@@ -2055,8 +2058,8 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
                     return None
                 return round((stock_r - bench_r) * 100, 1)
 
-            rel_ret_1m_n500 = _rel_ret(22)
-            rel_ret_6m_n500 = _rel_ret(126)
+            rel_ret_1m_index = _rel_ret(22)
+            rel_ret_6m_index = _rel_ret(126)
 
             results.append({
                 "ticker": t,
@@ -2143,9 +2146,9 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
                 "vstop_weekly_weeks_since_change": vstop_weekly_weeks_since_change,
                 "vstop_weekly_flipped": vstop_weekly_flipped,
                 "gc_weeks_10_30": gc_weeks_10_30,
-                "rel_ret_1w_n50": rel_ret_1w_n50,
-                "rel_ret_1m_n500": rel_ret_1m_n500,
-                "rel_ret_6m_n500": rel_ret_6m_n500,
+                "rel_ret_1w_index": rel_ret_1w_index,
+                "rel_ret_1m_index": rel_ret_1m_index,
+                "rel_ret_6m_index": rel_ret_6m_index,
             })
         except Exception as e:
             print(f"  {t}: ERROR {e}")
@@ -2334,9 +2337,19 @@ def load_data_snapshot():
         return None
     try:
         with open(DATA_SNAPSHOT_FILE) as f:
-            return json.load(f)
+            snapshot = json.load(f)
     except Exception:
         return None
+    # A snapshot written before a metric rename still carries the old keys
+    # until the next refresh rewrites it; serve them under the current names so
+    # the columns and rules don't go blank in between.
+    from filters import METRIC_RENAMES
+    for rows in ((snapshot or {}).get("per_market") or {}).values():
+        for row in rows:
+            for old, new in METRIC_RENAMES.items():
+                if old in row and new not in row:
+                    row[new] = row.pop(old)
+    return snapshot
 
 
 def fill_snapshot_gaps(fresh_per_market, previous_per_market, watchlists):

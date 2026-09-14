@@ -36,7 +36,7 @@ from datetime import date
 
 import requests
 
-from filters import passes_filter_chain, describe_chain, describe_chain_with_values
+from filters import passes_filter_chain, describe_chain, describe_chain_with_values, migrate_condition_keys
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 RULES_FILE = os.path.join(SCRIPT_DIR, "alerts_config.json")
@@ -235,6 +235,7 @@ def normalize_rule(rule):
     is_current_format = (conditions is not None
                          and (len(conditions) == 0 or _is_current_condition(conditions[0])))
     if is_current_format:
+        migrate_condition_keys(conditions)
         rule.setdefault("name", "")
         rule.setdefault("scope", "ALL")
         rule.setdefault("enabled", True)
