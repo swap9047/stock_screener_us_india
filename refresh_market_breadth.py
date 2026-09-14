@@ -164,17 +164,20 @@ def calculate_breadth(tickers, label, tz, close_hhmm):
     highs_series = (is_new_high.sum(axis=1) / valid_counts) * 100
     lows_series = (is_new_low.sum(axis=1) / valid_counts) * 100
 
-    valid_mask = (valid_counts > 0) & (ma_counts > 0)
+    # Warmup: drop the first 252 rows of the DOWNLOADED panel so the 52w
+    # high/low window is full. This used to be `iloc[252:]` applied AFTER
+    # valid_mask -- but valid_mask had already removed the ~200-row SMA warmup,
+    # so the two stacked and ~450 rows were lost. The 6y download then only
+    # reached back ~4.2y, and the app's "5 Years" view sat blank for its first
+    # ~9 months (history started 2022-06-28 instead of ~2021-09).
+    # A panel too short to warm up keeps every row, as the old code did.
+    warm = pd.Series(len(closes) <= 252, index=closes.index)
+    warm.iloc[252:] = True
+    valid_mask = (valid_counts > 0) & (ma_counts > 0) & warm
     breadth_series = breadth_series[valid_mask]
     highs_series = highs_series[valid_mask]
     lows_series = lows_series[valid_mask]
-    
-    # Drop first 252 days for warmup
-    if len(breadth_series) > 252:
-        breadth_series = breadth_series.iloc[252:]
-        highs_series = highs_series.iloc[252:]
-        lows_series = lows_series.iloc[252:]
-        
+
     five_years_ago = pd.Timestamp.now(tz=breadth_series.index.tz) - pd.DateOffset(years=5)
     mask_5y = breadth_series.index >= five_years_ago
     

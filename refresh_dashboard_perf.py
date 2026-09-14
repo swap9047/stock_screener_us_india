@@ -16,6 +16,11 @@ Output schema:
 The benchmark ticker (US: SPY, INDIA: ^CRSLDX) is stored as a normal column
 within its market, matching what the app's calculate_portfolio_returns()
 expects.
+
+Closes are PRICE return (auto_adjust=False -> split-adjusted, dividends not
+reinvested). The India benchmark ^CRSLDX is a price index, so dividend-adjusted
+watchlist closes gave India Invested a ~1%/yr head start over it. SPY is
+price-only here too, so both markets compare like with like.
 """
 
 import io
@@ -43,7 +48,7 @@ def _download_series(tickers):
     try:
         buf = io.StringIO()
         with redirect_stderr(buf):
-            data = yf.download(failed, period="5y", interval="1d", auto_adjust=True, progress=False, threads=False)
+            data = yf.download(failed, period="5y", interval="1d", auto_adjust=False, progress=False, threads=False)
     except Exception as e:
         print(f"  bulk download error: {e}")
 
@@ -62,7 +67,7 @@ def _download_series(tickers):
         try:
             buf = io.StringIO()
             with redirect_stderr(buf):
-                rd = yf.download(t, period="5y", interval="1d", auto_adjust=True, progress=False)
+                rd = yf.download(t, period="5y", interval="1d", auto_adjust=False, progress=False)
             if not rd.empty and "Close" in rd.columns:
                 s = rd["Close"].dropna()
                 if isinstance(s, pd.DataFrame):

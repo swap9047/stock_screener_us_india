@@ -4724,7 +4724,16 @@ with tab_news:
         valid_tickers = [t for t in tickers if t in closes.columns]
         if not valid_tickers: return None
         
-        returns = closes[valid_tickers].pct_change()
+        # Fill interior gaps before taking returns. pandas 3 dropped
+        # pct_change's implicit forward-fill, so a ticker missing one day
+        # (yfinance calendars differ per stock) got a NaN return on the NEXT
+        # day too and its whole move across the gap vanished -- India Invested
+        # lost 44 returns and its 5Y curve read 686 instead of 697. The
+        # .where(bfill) mask keeps the fill inside each ticker's own history,
+        # so a late listing or a delisting isn't padded with fake 0% days.
+        raw = closes[valid_tickers]
+        filled = raw.ffill().where(raw.bfill().notna())
+        returns = filled.pct_change(fill_method=None)
         
         w_dict = {}
         for t in valid_tickers:
@@ -4840,7 +4849,11 @@ with tab_news:
                 df_perf_us = calculate_portfolio_returns(closes_us, us_tickers, "SPY", weights=None, filter_years=years)
             
         if perf_as_of:
-            st.caption(f"Portfolio & breadth data as of {perf_as_of} — refreshed by the scheduled GitHub Action.")
+            st.caption(
+                f"Portfolio & breadth data as of {perf_as_of} — refreshed by the scheduled GitHub Action. "
+                "Watchlist curves are the CURRENT watchlist, equal-weighted and rebalanced daily, "
+                "price return (no dividends) — a hindsight view, not your realized P&L."
+            )
             
         # market_breadth.json's "INDIA"/"US" keys are fixed national-index
         # breadth (Nifty 500 / S&P 500), independent of the watchlist
@@ -4894,8 +4907,11 @@ with tab_news:
             
         _ind_display_label = markets_registry_now.get("india_invested", {}).get("label", "India Invested")
         _us_display_label = markets_registry_now.get("us_invested", {}).get("label", "US Invested")
-        _ind_bench_label = markets_registry_now.get("india_invested", {}).get("benchmark", "Nifty 500")
-        _us_bench_label = markets_registry_now.get("us_invested", {}).get("benchmark", "S&P 500")
+        # These used to read markets.json's "benchmark", which holds the TICKER,
+        # so the title said "India Invested vs ^CRSLDX". The panels below
+        # always plot ^CRSLDX / SPY (hardcoded above), so name those directly.
+        _ind_bench_label = "Nifty 500"
+        _us_bench_label = "S&P 500"
         title_perf_ind = f"{_ind_display_label} vs {_ind_bench_label} ({get_perf(df_perf_ind)})"
         title_perf_us = f"{_us_display_label} vs {_us_bench_label} ({get_perf(df_perf_us)})"
 
@@ -4959,13 +4975,13 @@ with tab_news:
         _us_label = markets_registry_now.get("us_invested", {}).get("label", "US Invested")
         if df_perf_ind is not None and not df_perf_ind.empty:
             fig.add_trace(go.Scatter(x=df_perf_ind.index, y=df_perf_ind['Portfolio'], name=_ind_label, line=dict(color='#3498db', width=2), showlegend=False), row=3, col=1)
-            fig.add_trace(go.Scatter(x=df_perf_ind.index, y=df_perf_ind['Benchmark'], name="Nifty 500", line=dict(color='#95a5a6', width=1.5, dash='dot'), showlegend=False), row=3, col=1)
+            fig.add_trace(go.Scatter(x=df_perf_ind.index, y=df_perf_ind['Benchmark'], name=_ind_bench_label, line=dict(color='#95a5a6', width=1.5, dash='dot'), showlegend=False), row=3, col=1)
         else:
             _no_data(3, 1)
 
         if df_perf_us is not None and not df_perf_us.empty:
             fig.add_trace(go.Scatter(x=df_perf_us.index, y=df_perf_us['Portfolio'], name=_us_label, line=dict(color='#3498db', width=2), showlegend=False), row=3, col=2)
-            fig.add_trace(go.Scatter(x=df_perf_us.index, y=df_perf_us['Benchmark'], name="S&P 500", line=dict(color='#95a5a6', width=1.5, dash='dot'), showlegend=False), row=3, col=2)
+            fig.add_trace(go.Scatter(x=df_perf_us.index, y=df_perf_us['Benchmark'], name=_us_bench_label, line=dict(color='#95a5a6', width=1.5, dash='dot'), showlegend=False), row=3, col=2)
         else:
             _no_data(3, 2)
 
