@@ -32,6 +32,9 @@ concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
 
+permissions:
+  contents: write   # alert_state.json is committed back to the repo (see below)
+
 jobs:
   gate:
     runs-on: ubuntu-latest
@@ -67,10 +70,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Restore alert_state.json from cache so we don't re-fire alerts
-      # that already fired in a previous run (edge-triggered dedup)
-      - name: Restore alert state
-        uses: actions/cache@v4
+      # alert_state.json (edge-triggered dedup) is COMMITTED, like
+      # weekly_wrapup_state.json. It used to live only in actions/cache, where an
+      # eviction, a cache purge or a branch change silently reset it to empty --
+      # and the next run then re-fired every currently-true rule x ticker at
+      # once. This restore is the one-time migration from that cache: it only
+      # runs while the repo has no committed copy yet.
+      - name: Restore alert state from the old cache (migration only)
+        if: hashFiles('alert_state.json') == ''
+        uses: actions/cache/restore@v4
         with:
           path: alert_state.json
           key: alert-state-${{ github.run_id }}
@@ -94,9 +102,28 @@ jobs:
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
 
-      # Save updated alert_state.json so next run picks it up
-      - name: Save alert state
-        uses: actions/cache@v4
-        with:
-          path: alert_state.json
-          key: alert-state-${{ github.run_id }}
+      - name: Commit updated alert_state.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add alert_state.json
+          if ! git diff --staged --quiet; then
+            git commit -m "Update alert_state.json [automated]"
+            # Fail the step if every attempt fails (see data-refresh.yml).
+            pushed=false
+            for i in {1..5}; do
+              git fetch origin main
+              if git rebase -X theirs origin/main && git push origin main; then
+                pushed=true
+                break
+              fi
+              git rebase --abort 2>/dev/null || true
+              sleep 2
+            done
+            if [ "$pushed" != true ]; then
+              echo "::error::Push failed after 5 attempts -- this run's output was NOT committed."
+              exit 1
+            fi
+          else
+            echo "No changes to commit"
+          fi

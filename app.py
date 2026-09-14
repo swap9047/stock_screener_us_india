@@ -320,6 +320,13 @@ def require_login():
         st.session_state.authenticated = True
         # Ensure token is also in session state for this session
         st.session_state["_remember_token"] = token
+        # Drop the token from the address bar once it has done its job. It is
+        # re-injected from localStorage on the next fresh visit
+        # (_restore_stored_token), and this session keeps it in session_state.
+        # Left in the URL, a copied link or browser history carried a working
+        # 30-day sign-in to whoever received it.
+        if _query_param_token_key() in st.query_params:
+            del st.query_params[_query_param_token_key()]
         return
 
     # No token seen yet. On Cloud the server can't read cookies, so if the
@@ -335,7 +342,9 @@ def require_login():
         remember = st.checkbox("Stay signed in on this device for 30 days", value=True)
         submitted = st.form_submit_button("Sign in", type="primary")
     if submitted:
-        if u == username and p == password:
+        # Constant-time comparison, so response timing can't leak how much of
+        # the username/password matched.
+        if hmac.compare_digest(str(u), str(username)) and hmac.compare_digest(str(p), str(password)):
             st.session_state.authenticated = True
             if remember:
                 token = _make_remember_token(username, password)

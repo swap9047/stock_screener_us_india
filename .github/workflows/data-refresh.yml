@@ -9,7 +9,9 @@ env:
 # redundant identical fetches across visitors. The app's "Refresh Data"
 # button still fetches live data on demand regardless of this snapshot.
 #
-# Refreshes HOURLY, every hour of every day.
+# Scheduled HOURLY, every hour of every day. In practice GitHub throttles
+# top-of-hour crons: September 2026 saw 4-6 runs a day, 2-5 hours apart
+# (AGENTS.md, GitHub Actions section).
 #
 # This replaces six fixed ET slots (7, 10, 13, 16, 19, 22 ET) selected by a
 # gate job. The gate existed only to map those slots onto UTC crons across

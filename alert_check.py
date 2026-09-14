@@ -17,10 +17,12 @@ Config files (same folder):
 Run: python3 alert_check.py
 """
 
+import os
 import sys
 
 from stock_data import fetch_all_markets, load_settings, get_filterable_metrics
-from alerts import load_rules, load_state, save_state, load_discord_webhook, evaluate_and_fire, send_discord_batch, is_rule_due
+from alerts import (load_rules, load_state, save_state, load_discord_webhook, evaluate_and_fire,
+                    send_discord_batch, is_rule_due, STATE_FILE)
 
 
 def main():
@@ -54,10 +56,24 @@ def main():
     print(f"Checking {len(due_rules)} rule(s) (of {len(all_rules)} total) against {breakdown} tickers...")
 
     metric_labels = {v: k for k, v in get_filterable_metrics(settings).items()}
+    # No state file at all means we have no record of what already fired --
+    # a fresh install, or state lost. Evaluating against {} would treat every
+    # currently-true rule x ticker as newly triggered and flood Discord with
+    # them in one run (what an actions/cache eviction used to do). Record the
+    # current truth instead and send nothing; from the next run on, only real
+    # false->true transitions fire.
+    seeding = not os.path.exists(STATE_FILE)
     state = load_state()
     # Pass the FULL ruleset so any rule-references inside due_rules can resolve
     # against rules that aren't due today; only due_rules actually fires.
     messages, new_state = evaluate_and_fire(all_rules, combined, state, due_rules=due_rules, metric_labels=metric_labels)
+    if seeding:
+        save_state(new_state)
+        active = sum(1 for v in new_state.values() if v.get("was_active"))
+        print(f"No {os.path.basename(STATE_FILE)} found -- seeded it with {active} currently-active "
+              f"rule/ticker pair(s) and sent NOTHING ({len(messages)} message(s) suppressed). "
+              "Alerts fire on new transitions from the next run.")
+        return
 
     # Every rule x ticker key that just flipped false->true this run (i.e. a
     # newly-triggered occurrence) -- derived by diffing new_state against the

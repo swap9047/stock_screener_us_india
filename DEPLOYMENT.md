@@ -15,7 +15,7 @@ This turns your local app into a URL you can open from your phone or any browser
    git remote add origin https://github.com/<you>/<repo-name>.git
    git push -u origin main
    ```
-   `.gitignore` already excludes `discord_config.json`, `auth_config.json`, and `alert_state.json` — your secrets and local state never get committed.
+   `.gitignore` already excludes `discord_config.json` and `auth_config.json` — your secrets never get committed. (`alert_state.json` IS committed by the daily alert workflow; it only records which rule/ticker pairs are currently active.)
 
 ## 2. Deploy on Streamlit Community Cloud
 
@@ -66,7 +66,7 @@ The app's Alert Rules tab lets you choose which **days** a scheduled rule should
 1. Add the additional UTC cron trigger(s) in `.github/workflows/daily-alerts.yml`.
 2. Add the corresponding ET hour(s) to `ALLOWED_HOURS` / `HOUR_LABELS` in `alerts.py`.
 
-On each scheduled wakeup, a cheap "gate" job installs only `requests` and asks `alerts.is_rule_due()` whether any enabled rule is due at that ET day/hour. The full check job installs all app dependencies, fetches live prices, and runs `alert_check.py` only when the gate says something is due. `alert_state.json` tracks which rule/ticker pairs were already active so you don't get duplicate pings every day a condition remains true; GitHub Actions persists that file between runs via `actions/cache`.
+On each scheduled wakeup, a cheap "gate" job installs only `requests` and asks `alerts.is_rule_due()` whether any enabled rule is due at that ET day/hour. The full check job installs all app dependencies, fetches live prices, and runs `alert_check.py` only when the gate says something is due. `alert_state.json` tracks which rule/ticker pairs were already active so you don't get duplicate pings every day a condition remains true; the workflow commits it back to the repo after each run (it used to live in `actions/cache`, where an eviction reset it and re-fired everything). If the file is ever missing, `alert_check.py` records the current state and sends nothing that run instead of flooding Discord.
 
 `load_discord_webhook()` checks the `DISCORD_WEBHOOK_URL` environment variable first (falling back to `discord_config.json` for local runs), so you just need `DISCORD_WEBHOOK_URL` as a **repo secret** (repo → Settings → Secrets and variables → Actions → New repository secret) — separate from the Streamlit Cloud secret above, GitHub Actions doesn't share those.
 

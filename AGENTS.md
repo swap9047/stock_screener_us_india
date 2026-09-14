@@ -86,10 +86,12 @@ commit, and a whole-file push reverts it. Instead:
 
 **2. Generated data** — written and committed by workflows, not by hand:
 `data_snapshot.json` (prices + indicators), `expert_views.json`, `fundamentals.json`,
-`news_summary.json`, `market_breadth.json`, `dashboard_perf.json`.
+`news_summary.json`, `market_breadth.json`, `dashboard_perf.json`, and the two alert state
+files `alert_state.json` (daily edge-trigger dedup) and `weekly_wrapup_state.json`. Both
+state files are committed rather than cached: losing `alert_state.json` used to re-fire every
+currently-true alert at once. `alert_check.py` now seeds a missing file without sending.
 
-**3. Local only** — gitignored, never pushed: `auth_config.json`, `discord_config.json`,
-`alert_state.json`.
+**3. Local only** — gitignored, never pushed: `auth_config.json`, `discord_config.json`.
 
 Why it's built this way: on Streamlit Community Cloud the filesystem is ephemeral, so a
 config edited in the UI only survives if it's committed back to the repo. Hence
@@ -241,7 +243,7 @@ Each of these has actually bitten this codebase.
 | `expert-views.yml` | `refresh_data.py`, `refresh_expert_views.py` | `data_snapshot.json`, `expert_views.json` | 03:00 / 04:00 (11 PM ET) |
 | `fundamentals.yml` | `refresh_fundamentals.py` | `fundamentals.json` | 07:00 / 08:00 (3 AM ET) |
 | `news-summary.yml` | `news_check.py` | `news_summary.json` | 00:00 / 01:00 (8 PM ET) |
-| `daily-alerts.yml` | `alert_check.py` | — (Discord only) | 01:15 / 02:15 (9:15 PM ET) |
+| `daily-alerts.yml` | `alert_check.py` | `alert_state.json` | 01:15 / 02:15 (9:15 PM ET) |
 | `market-breadth.yml` | `refresh_market_breadth.py`, `refresh_dashboard_perf.py` | `market_breadth.json`, `dashboard_perf.json` | 02,03,14,15 |
 | `weekly-wrapup.yml` | `weekly_wrapup_check.py` | `weekly_wrapup_state.json` | Mon 01:00 / 02:00 |
 

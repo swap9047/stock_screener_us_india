@@ -2016,20 +2016,6 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
                     last_cross_pos = int(np.flatnonzero(crossed_up.to_numpy())[-1])
                     gc_weeks_10_30 = int(len(weekly) - 1 - last_cross_pos)
 
-            # Relative 1-week return vs this ticker's OWN index benchmark (the
-            # benchmark of its fetch group -- ^CRSLDX for Indian listings, SPY for
-            # US): stock 1-week return minus benchmark 1-week return, trailing ~5
-            # daily sessions. Was named rel_ret_1w_n50 / labelled "vs Nifty 500",
-            # which was only true for Indian rows -- see filters.METRIC_RENAMES.
-            rel_ret_1w_index = None
-            if len(daily_close) >= 7 and len(bench_daily) >= 7:
-                try:
-                    stock_1w = float(daily_close.iloc[-1]) / float(daily_close.iloc[-6]) - 1
-                    bench_1w = float(bench_daily.iloc[-1]) / float(bench_daily.iloc[-6]) - 1
-                    rel_ret_1w_index = round((stock_1w - bench_1w) * 100, 1)
-                except (ZeroDivisionError, IndexError):
-                    rel_ret_1w_index = None
-
             # Same relative-return idea at 1 month and 6 months, for the Turbo
             # Surge and Alpha Leaders scans. Uses the SAME trading-day offsets
             # as _perf() above (22 / 126) so "Perf 1M %" and this metric always
@@ -2042,8 +2028,8 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
             # runs 10 bars short of [ticker] over 5 years -- so counting 126
             # bars back on each lands on DIFFERENT dates (2026-02-05 vs
             # 2026-02-02 there) and silently compares mismatched windows. The
-            # drift grows with the lookback, which is why the pre-existing
-            # 1-week metric never showed it.
+            # drift grows with the lookback. The 1-week leg below uses the same
+            # aligned calendar.
             aligned_rel = pd.concat([daily_close, bench_daily], axis=1, join="inner").dropna()
 
             def _rel_ret(n):
@@ -2058,6 +2044,16 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
                     return None
                 return round((stock_r - bench_r) * 100, 1)
 
+            # Relative 1-week return vs this ticker's OWN index benchmark (the
+            # benchmark of its fetch group -- ^CRSLDX for Indian listings, SPY for
+            # US): stock return minus benchmark return over the last 5 sessions.
+            # Was named rel_ret_1w_n50 / labelled "vs Nifty 500" (see
+            # filters.METRIC_RENAMES). Now on the same date-aligned calendar as
+            # the 1M/6M legs; it used to slice each series positionally
+            # (iloc[-6] on independently dropna'd closes), which lands on
+            # different dates whenever the stock and benchmark have different
+            # sessions in the last week.
+            rel_ret_1w_index = _rel_ret(5)
             rel_ret_1m_index = _rel_ret(22)
             rel_ret_6m_index = _rel_ret(126)
 
