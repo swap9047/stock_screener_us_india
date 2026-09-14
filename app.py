@@ -98,7 +98,7 @@ from fundamentals_eval import (
     analyze_single_ticker_sentiment, _is_valid_view as _is_valid_sentiment_view,
 )
 from custom_columns import (
-    load_custom_columns, save_custom_columns, validate_formula, column_key,
+    load_custom_columns, save_custom_columns, validate_formula, column_key, custom_column_name_error,
     FORMAT_CHOICES, CUSTOM_COLUMNS_FILE, apply_custom_columns_to_rows,
 )
 from ticker_notes import (
@@ -2910,9 +2910,17 @@ def render_custom_columns_manager():
         # the WHOLE push if any targeted file doesn't exist yet, and
         # custom_columns.json is now in SYNCABLE_FILES.
         save_custom_columns(custom_columns)
-    metrics_by_label = get_filterable_metrics(load_settings())
+    _settings_cc = load_settings()
+    metrics_by_label = get_filterable_metrics(_settings_cc)
+    # Numeric metrics only -- a text metric (Trend, Flag, Company Name...) can't
+    # be used in arithmetic; see custom_columns.formula_variable_names.
+    metrics_by_label = {lbl: key for lbl, key in metrics_by_label.items() if key not in TEXT_METRICS}
     metric_labels_sorted = sorted(metrics_by_label.keys())
     valid_names = set(metrics_by_label.values())
+    # Every built-in label a custom column name must not reuse (A09).
+    _reserved_labels = (set(get_filterable_metrics(_settings_cc))
+                        | set(build_column_defs(ema_col_labels(_settings_cc), [])[1].values())
+                        | {"Ticker", "Last"})
 
     def _insert_metric_row(formula_key, widget_suffix):
         """Renders a 'pick a metric -> Insert' row that appends the chosen
@@ -2974,8 +2982,12 @@ def render_custom_columns_manager():
                     ok, err = validate_formula(new_formula, valid_names)
                     if not ok:
                         st.error(err)
+                    name_err = custom_column_name_error(new_name, custom_columns, _reserved_labels,
+                                                        exclude_id=col["id"])
+                    if name_err:
+                        st.error(name_err)
                     bcol1, bcol2 = st.columns(2)
-                    if bcol1.button("Save", key=f"cc_save_{col['id']}", disabled=not ok, width="stretch"):
+                    if bcol1.button("Save", key=f"cc_save_{col['id']}", disabled=not ok or bool(name_err), width="stretch"):
                         col["name"], col["formula"], col["format"], col["enabled"] = (
                             new_name.strip() or col["name"], new_formula, new_format, new_enabled,
                         )
@@ -3000,7 +3012,10 @@ def render_custom_columns_manager():
         add_ok, add_err = (False, "") if not add_formula.strip() else validate_formula(add_formula, valid_names)
         if add_formula.strip() and not add_ok:
             st.error(add_err)
-        if st.button("＋ Add custom column", disabled=not (add_name.strip() and add_ok), width="stretch"):
+        add_name_err = custom_column_name_error(add_name, custom_columns, _reserved_labels) if add_name.strip() else ""
+        if add_name_err:
+            st.error(add_name_err)
+        if st.button("＋ Add custom column", disabled=not (add_name.strip() and add_ok) or bool(add_name_err), width="stretch"):
             custom_columns.append({
                 "id": uuid.uuid4().hex[:8],
                 "name": add_name.strip(),

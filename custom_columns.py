@@ -165,6 +165,44 @@ class _Evaluator(ast.NodeVisitor):
         raise FormulaError(f"'{type(node).__name__}' isn't allowed in a formula.")
 
 
+def formula_variable_names(variables):
+    """The names a formula may reference in one row: its built-in NUMERIC
+    metrics. Excludes text metrics (filters.TEXT_METRICS, and any string value)
+    and every custom_* key.
+
+    This used to be set(variables.keys()) -- the whole row. So `trend * 100`
+    validated and then silently evaluated to None on every row, with no error
+    anywhere; and on the snapshot path the row already carried custom_<id>
+    values from the run that built it, so `custom_abc * 2` validated and read a
+    stale prior-run value -- the dependency-ordering problem this module's
+    docstring says it avoids by construction."""
+    from filters import TEXT_METRICS
+    return {k for k, v in variables.items()
+            if not k.startswith("custom_") and k not in TEXT_METRICS and not isinstance(v, str)}
+
+
+def custom_column_name_error(name, custom_columns, reserved_labels, exclude_id=None):
+    """"" if `name` is usable for a custom column, else the reason it isn't.
+
+    A name equal to a built-in column/metric label used to silently take that
+    label over: get_all_filterable_metrics and build_column_defs map label ->
+    key, so naming a custom column "RSI-D" made the condition builder's "RSI-D"
+    resolve to custom_<id>, and the sidebar's RSI-D sort sort by it; editing a
+    saved rule then rewrote it to the hijacking column. Same for two custom
+    columns sharing a name. Compared case-insensitively, as a user would read
+    them."""
+    clean = (name or "").strip()
+    if not clean:
+        return "Enter a name."
+    lowered = clean.lower()
+    if lowered in {str(l).strip().lower() for l in reserved_labels}:
+        return f"'{clean}' is already a built-in column or metric name -- choose another."
+    for col in custom_columns or []:
+        if col.get("id") != exclude_id and str(col.get("name", "")).strip().lower() == lowered:
+            return f"Another custom column is already named '{clean}'."
+    return ""
+
+
 def safe_eval_formula(formula, variables):
     """Evaluates `formula` (a validated arithmetic expression) against
     `variables` (dict of metric key -> numeric value or None for this
@@ -173,7 +211,7 @@ def safe_eval_formula(formula, variables):
     hit -- None propagates the same way the rest of the app already
     represents "not available" (e.g. RS when there's not enough history),
     rendering as "-" in the table rather than crashing or showing 0."""
-    ok, _ = validate_formula(formula, set(variables.keys()))
+    ok, _ = validate_formula(formula, formula_variable_names(variables))
     if not ok:
         return None
     try:
