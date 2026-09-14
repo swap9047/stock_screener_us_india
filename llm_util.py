@@ -11,6 +11,7 @@ other two. This module is the one implementation they now share.
 import concurrent.futures
 import os
 import random
+import re
 import threading
 import time
 
@@ -25,9 +26,46 @@ RETRY_BACKOFF_SECONDS = 5
 # key or an exhausted daily quota burns every tier of the ladder for every
 # ticker, and -- where a retry queue exists -- gets re-attempted ~100 more times
 # with a 30s sleep between each.
+#
+# Matched as WORDS in the error text, and HTTP status codes are read from the
+# exception's `code` (google-genai's APIError has one) or the message's leading
+# "NNN STATUS", never as substrings. These used to include "400"/"401"/"403" as
+# plain substrings, so an ordinary rate limit -- "429 RESOURCE_EXHAUSTED ...
+# Please retry in 14.400561298s" -- contained "400" and was treated as
+# terminal: no retry, ladder abandoned.
 TERMINAL_ERROR_MARKERS = (
-    "401", "403", "400", "unauthorized", "permission", "api key", "invalid argument",
+    "unauthorized", "permission denied", "permission_denied", "api key", "api_key_invalid",
+    "invalid argument", "invalid_argument",
 )
+TERMINAL_STATUS_CODES = {400, 401, 403}
+RETRYABLE_STATUS_CODES = {408, 409, 425, 429}   # plus every 5xx
+
+# Errors that belong to ONE API key rather than the request: a revoked/invalid
+# key, or a project without access. RotatingGeminiClient retires that key for
+# the rest of the run and retries the call on another one, instead of letting
+# the ladder give up on a ticker the other key could have served.
+AUTH_ERROR_MARKERS = ("api key not valid", "api_key_invalid", "permission denied",
+                      "permission_denied", "unauthorized", "unauthenticated")
+_LEADING_STATUS = re.compile(r"^\s*(\d{3})\b")
+
+
+def status_code(exc):
+    """HTTP status of an API exception, or None."""
+    for attr in ("code", "status_code"):
+        value = getattr(exc, attr, None)
+        if isinstance(value, int) and 100 <= value <= 599:
+            return value
+    m = _LEADING_STATUS.match(str(exc))
+    return int(m.group(1)) if m else None
+
+
+def is_auth_error(exc):
+    """True for a failure that is about the API KEY, not the request."""
+    code = status_code(exc)
+    text = f"{type(exc).__name__}: {exc}".lower()
+    if code in (401, 403):
+        return True
+    return any(marker in text for marker in AUTH_ERROR_MARKERS)
 
 
 def generate_with_timeout(client, model, contents, config, timeout=CALL_TIMEOUT_SECONDS):
@@ -53,11 +91,13 @@ def generate_with_timeout(client, model, contents, config, timeout=CALL_TIMEOUT_
 # fallback that would have worked perfectly.
 MODEL_UNAVAILABLE_MARKERS = (
     "not found", "does not exist", "is not supported", "unsupported model",
-    "no such model", "404",
+    "no such model",
 )
 
 
 def is_model_unavailable(exc):
+    if status_code(exc) == 404:
+        return True
     text = f"{type(exc).__name__}: {exc}".lower()
     return any(marker in text for marker in MODEL_UNAVAILABLE_MARKERS)
 
@@ -68,7 +108,14 @@ def is_retryable(exc):
         return True
     if is_model_unavailable(exc):
         return False          # retrying a missing model just burns time
+    code = status_code(exc)
+    if code is not None and (code in RETRYABLE_STATUS_CODES or code >= 500):
+        return True
     text = f"{type(exc).__name__}: {exc}".lower()
+    if _is_quota_error(exc):
+        return True
+    if code in TERMINAL_STATUS_CODES:
+        return False
     return not any(marker in text for marker in TERMINAL_ERROR_MARKERS)
 
 
@@ -98,7 +145,7 @@ def run_model_ladder(client, prompt, tiers, config_for, label="llm", subject="",
                 # still be fine, so step past instead of abandoning the ladder.
                 continue
             if not is_retryable(e):
-                # Bad key, exhausted quota: no model will work. Stop.
+                # Bad request or every key failing auth: no model will work. Stop.
                 break
     return None, None
 
@@ -154,10 +201,12 @@ BACKUP_KEY_NAME = "GEMINI_API_KEY_BACKUP"
 # remaining calls and fails every one of them.
 KEY_COOLDOWN_SECONDS = 120
 
-QUOTA_ERROR_MARKERS = ("429", "resource_exhausted", "quota", "rate limit", "too many requests")
+QUOTA_ERROR_MARKERS = ("resource_exhausted", "resource exhausted", "quota", "rate limit", "too many requests")
 
 
 def _is_quota_error(exc):
+    if status_code(exc) == 429:
+        return True
     text = f"{type(exc).__name__}: {exc}".lower()
     return any(m in text for m in QUOTA_ERROR_MARKERS)
 
@@ -218,6 +267,8 @@ class RotatingGeminiClient:
         self._keys = list(keys)
         self._clients = {}
         self._cooldown_until = {}
+        # Keys that returned an auth error this run -- see AUTH_ERROR_MARKERS.
+        self._dead = set()
         self._lock = threading.Lock()
         self.last_key_name = None
         # Call counts per key name, so a run can report how the load actually
@@ -239,14 +290,27 @@ class RotatingGeminiClient:
     def _pick(self):
         now = time.time()
         with self._lock:
-            live = [(n, k) for n, k in self._keys if self._cooldown_until.get(n, 0) <= now]
+            usable = [(n, k) for n, k in self._keys if n not in self._dead]
+            if not usable:
+                return None, None
+            live = [(n, k) for n, k in usable if self._cooldown_until.get(n, 0) <= now]
             # Every key cooling down: use them all rather than hard-failing --
             # a stale cooldown must never be the reason a run does nothing.
-            choices = live or self._keys
+            choices = live or usable
             name, key = random.choice(choices)
             self.call_counts[name] = self.call_counts.get(name, 0) + 1
             self.last_key_name = name
         return name, self._client_for(key)
+
+    def _mark_dead(self, name, exc):
+        with self._lock:
+            first = name not in self._dead
+            self._dead.add(name)
+            remaining = len([n for n, _ in self._keys if n not in self._dead])
+        if first:
+            print(f"  [key rotation] {name} failed authentication ({str(exc)[:80]}) -- "
+                  f"disabled for this run; {remaining} key(s) left")
+        return remaining
 
     def _mark_quota_error(self, name):
         with self._lock:
@@ -265,13 +329,29 @@ class _RotatingModels:
         self._parent = parent
 
     def generate_content(self, **kwargs):
-        name, client = self._parent._pick()
-        try:
-            return client.models.generate_content(**kwargs)
-        except Exception as e:
-            if _is_quota_error(e):
-                self._parent._mark_quota_error(name)
-            raise
+        # A key-specific auth failure retries the SAME call on another key.
+        # Previously it propagated, run_model_ladder treated it as terminal, and
+        # with keys picked at random one bad key abandoned ~half of all
+        # tickers (93/200 in a stubbed two-key test) though the other key worked.
+        last_exc = None
+        for _ in range(len(self._parent._keys)):
+            name, client = self._parent._pick()
+            if client is None:
+                break
+            try:
+                return client.models.generate_content(**kwargs)
+            except Exception as e:
+                last_exc = e
+                if is_auth_error(e):
+                    if self._parent._mark_dead(name, e):
+                        continue
+                    raise
+                if _is_quota_error(e):
+                    self._parent._mark_quota_error(name)
+                raise
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("No usable Gemini API key left (every configured key failed authentication)")
 
 
 def make_client(api_key=None, st_secrets=None):
