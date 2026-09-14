@@ -91,13 +91,23 @@ jobs:
           git add weekly_wrapup_state.json
           if ! git diff --staged --quiet; then
             git commit -m "Update weekly_wrapup_state.json [automated]"
+            # Fail the step if every attempt fails. The old `... && break || {
+            # sleep 2; }` loop exited with sleep's status (0), so a run whose
+            # push never landed still went green and its output was lost.
+            pushed=false
             for i in {1..5}; do
               git fetch origin main
-              git rebase -X theirs origin/main && git push origin main && break || {
-                git rebase --abort 2>/dev/null || true
-                sleep 2
-              }
+              if git rebase -X theirs origin/main && git push origin main; then
+                pushed=true
+                break
+              fi
+              git rebase --abort 2>/dev/null || true
+              sleep 2
             done
+            if [ "$pushed" != true ]; then
+              echo "::error::Push failed after 5 attempts -- this run's output was NOT committed."
+              exit 1
+            fi
           else
             echo "No changes to commit"
           fi

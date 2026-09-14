@@ -2211,7 +2211,8 @@ def _code_fingerprint():
         return "unknown"
 
 
-def save_data_snapshot(as_of, per_market, settings=None, merge=False, short_history=None):
+def save_data_snapshot(as_of, per_market, settings=None, merge=False, short_history=None,
+                       provenance=None):
     """Persists a fetch_all_markets() result to disk so the Streamlit app
     can load it directly instead of hitting yfinance live on every session
     -- meant to be called once/day by the scheduled data-refresh workflow
@@ -2229,7 +2230,13 @@ def save_data_snapshot(as_of, per_market, settings=None, merge=False, short_hist
 
     `short_history` is what THIS caller's fetch learned about tickers too new
     to compute (None if it fetched nothing); it is merged with what the file
-    already records -- see merge_short_history."""
+    already records -- see merge_short_history.
+
+    `provenance` ({"settings", "code_version"}) overrides the stamps written.
+    A caller that wrote back rows it did NOT recompute passes the stamps those
+    rows were actually computed under -- see the watchlist save in app.py.
+
+    Returns the `generated_at` stamp it wrote."""
     from datetime import timezone
     existing = load_data_snapshot() or {}
     if merge:
@@ -2237,15 +2244,19 @@ def save_data_snapshot(as_of, per_market, settings=None, merge=False, short_hist
         base.update(per_market)
         per_market = base
     short = merge_short_history(existing.get("short_history"), short_history, per_market, load_watchlists())
+    generated_at = datetime.now(timezone.utc).isoformat()
     with open(DATA_SNAPSHOT_FILE, "w") as f:
         json.dump({
             "as_of": as_of,
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "code_version": _code_fingerprint(),
+            "generated_at": generated_at,
+            "code_version": (provenance or {}).get("code_version", _code_fingerprint()),
             "per_market": per_market,
-            "settings": settings or {},
+            "settings": (provenance or {}).get("settings", settings or {}),
             "short_history": short,
         }, f, indent=2, default=_json_default)
+    # Returned so a caller holding the result in memory (app.py's
+    # _persist_and_serve) can tell when the file has since moved past it.
+    return generated_at
 
 
 def load_data_snapshot():
@@ -2425,6 +2436,23 @@ def rebuild_snapshot_for_market(snap_per_market, market, tickers, fetch_new):
     return merged, to_fetch
 
 
+def snapshot_calc_matches(snapshot, settings):
+    """True if the snapshot's rows were computed by this code with these
+    calculation settings -- the half of snapshot_is_usable that is about HOW
+    rows were computed rather than WHICH rows exist."""
+    if not snapshot:
+        return False
+    if snapshot.get("code_version") != _code_fingerprint():
+        return False
+    # Only compare calculation settings, ignoring pipeline/model choices and
+    # UI-only settings so changing a news model, sentiment model, or note
+    # dropdown labels doesn't invalidate the price snapshot!
+    _NON_CALC = ("news_", "expert_", "note_", "sentiment_")
+    snap_calc = {k: v for k, v in (snapshot.get("settings") or {}).items() if not k.startswith(_NON_CALC)}
+    curr_calc = {k: v for k, v in (settings or {}).items() if not k.startswith(_NON_CALC)}
+    return snap_calc == curr_calc
+
+
 def snapshot_is_usable(snapshot, watchlists, settings):
     """True if `snapshot` can be shown as-is: it has a row for every ticker
     currently in `watchlists` (for every market), AND it was computed with
@@ -2438,19 +2466,9 @@ def snapshot_is_usable(snapshot, watchlists, settings):
     if not snapshot or not isinstance(snapshot.get("per_market"), dict):
         return False
 
-    if snapshot.get("code_version") != _code_fingerprint():
+    if not snapshot_calc_matches(snapshot, settings):
         return False
 
-    # Only compare calculation settings, ignoring pipeline/model choices and
-    # UI-only settings so changing a news model, sentiment model, or note
-    # dropdown labels doesn't invalidate the price snapshot!
-    _NON_CALC = ("news_", "expert_", "note_", "sentiment_")
-    snap_calc = {k: v for k, v in snapshot.get("settings", {}).items() if not k.startswith(_NON_CALC)}
-    curr_calc = {k: v for k, v in settings.items() if not k.startswith(_NON_CALC)}
-    
-    if snap_calc != curr_calc:
-        return False
-        
     per_market = snapshot["per_market"]
     # Tickers too new to compute (see merge_short_history) have no row by
     # design; they must not make the whole snapshot count as out of date.

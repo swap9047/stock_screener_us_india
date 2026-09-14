@@ -60,7 +60,7 @@ from stock_data import (
     load_settings, save_settings, DEFAULT_SETTINGS, get_benchmarks, get_filterable_metrics,
     load_markets_registry, load_data_snapshot, snapshot_is_usable, save_data_snapshot,
     rebuild_snapshot_for_market, fill_snapshot_gaps, reject_stale_rows,
-    load_watchlist_groups, save_watchlist_groups, MIN_DAILY_BARS,
+    load_watchlist_groups, save_watchlist_groups, MIN_DAILY_BARS, snapshot_calc_matches,
 )
 import llm_util
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE,
@@ -405,14 +405,17 @@ def _bump_refresh():
     st.session_state.refresh_nonce = uuid.uuid4().hex
 
 
-def _persist_and_serve(per_market, as_of, settings, short_history=None):
+def _persist_and_serve(per_market, as_of, settings, short_history=None, provenance=None):
     """Writes a freshly-computed fetch result to data_snapshot.json AND stashes
     it in session state so the rerun following the action serves this exact
     result instead of fetching again. Called by the Refresh Data button and
     watchlist-save: those actions are the allowed live-fetch triggers, and the
     persisted snapshot also keeps later login/reloads clean."""
-    save_data_snapshot(as_of, per_market, settings=settings, short_history=short_history)
-    st.session_state["_served_snapshot"] = (as_of, per_market)
+    generated_at = save_data_snapshot(as_of, per_market, settings=settings, short_history=short_history,
+                                      provenance=provenance)
+    # Held only until data_snapshot.json is at least this new -- which is
+    # normally the very next run. See the snapshot-selection block below.
+    st.session_state["_served_snapshot"] = (as_of, per_market, generated_at)
     st.session_state["last_refresh_summary"] = {
         "as_of": as_of,
         "per_market_counts": {mkt: len(rows) for mkt, rows in per_market.items()},
@@ -1640,7 +1643,18 @@ def _apply_watchlist_tickers(market, market_label, existing_tickers, candidate_t
     )
     _as_of = _as_of_box[0] or datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    _persist_and_serve(_merged, _as_of, _curr_settings, short_history=_short_history)
+    # Rows reused from the snapshot keep the stamps they were computed under.
+    # Stamping current settings/code over them flipped snapshot_is_usable from
+    # False to True, so a save right after a settings change (or a calc-code
+    # deploy) hid the "out of date" warning while showing -- and pushing to
+    # GitHub -- indicators computed the old way. Only the newly fetched rows are
+    # current, so when the base snapshot wasn't, the result isn't either.
+    _provenance = None
+    if (_snapshot.get("per_market") and not snapshot_calc_matches(_snapshot, _curr_settings)):
+        _provenance = {"settings": _snapshot.get("settings") or {},
+                       "code_version": _snapshot.get("code_version")}
+    _persist_and_serve(_merged, _as_of, _curr_settings, short_history=_short_history,
+                       provenance=_provenance)
     _bump_refresh()
     _reused = len(valid_tickers) - len(_to_fetch)
     if _to_fetch:
@@ -4401,14 +4415,34 @@ except Exception as _e:                                  # never break the page
 
 using_snapshot = False
 snapshot_warning = None
-snapshot = None
+snapshot = load_data_snapshot()
 served = st.session_state.get("_served_snapshot")
+# The in-memory result of this session's own Refresh Data / watchlist save is a
+# fallback, not a pin. It used to be served on EVERY later run and never
+# cleared, so a session that had clicked Refresh Data ignored every later
+# snapshot -- the hourly workflow's and pull_generated_files' updates landed on
+# disk but never on screen, and after 6h the sidebar blamed the refresh job.
+# Now it is used only while the file is OLDER than it (the write failed, or has
+# not been re-read yet); once the file has caught up, this session goes back to
+# reading the file like any other, including resetting refresh_token so it
+# doesn't drop into the live-fetch path below.
 if served:
-    as_of, per_market = served
-    using_snapshot = True
+    def _stamp(value):
+        try:
+            return datetime.fromisoformat(str(value))
+        except (TypeError, ValueError):
+            return None
+    _served_stamp = _stamp(served[2]) if len(served) > 2 else None
+    _disk_stamp = _stamp((snapshot or {}).get("generated_at"))
+    if _served_stamp and _disk_stamp and _disk_stamp >= _served_stamp:
+        st.session_state.pop("_served_snapshot", None)
+        st.session_state.refresh_token = 0
+        served = None
+    else:
+        as_of, per_market = served[0], served[1]
+        using_snapshot = True
 
 if st.session_state.refresh_token == 0 and not using_snapshot:
-    snapshot = load_data_snapshot()
     if snapshot and snapshot_is_usable(snapshot, watchlists_now, settings_now):
         as_of = snapshot["as_of"]
         # Filter the snapshot to only include the tickers currently in the watchlist
