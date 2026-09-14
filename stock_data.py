@@ -27,7 +27,9 @@ EMA settings (Daily: 10/50/200, Weekly: 10/20/40):
     and implemented in TrendSpider's "RS Mode" indicator.
   - Weekly VStop (Volatility Stop), J. Welles Wilder's ATR-based stop-and-reverse
     system (a cousin of Parabolic SAR). Computed on weekly OHLC bars.
-    Length=20, ATR factor=2 -- TradingView's built-in "Volatility Stop" defaults.
+    Length=VSTOP_LENGTH (10; TradingView's own default is 20), ATR factor=2,
+    both editable in Settings. compute_vstop_tv follows Pine's volStop order:
+    ratchet the stop first, then read the trend off the new stop.
     Uptrend:   stop = max(previous stop, close - factor*ATR); flips to downtrend
                if close closes below that stop.
     Downtrend: stop = min(previous stop, close + factor*ATR); flips to uptrend
@@ -928,14 +930,22 @@ def compute_vstop_tv(ohlc_df, length=VSTOP_LENGTH, factor=VSTOP_FACTOR):
         rmax = max(rmax, src)
         rmin = min(rmin, src)
 
-        new_up = (src - prev_stop) >= 0.0
-
         if prev_uptrend:
             stop = max(prev_stop, rmax - a)
         else:
             stop = min(prev_stop, rmin + a)
 
-        uptrend = new_up
+        # Trend is read off the stop JUST ratcheted, as Pine's volStop does:
+        #     stop := uptrend ? max(stop, max - atrM) : min(stop, min + atrM)
+        #     uptrend := src - stop >= 0.0
+        # This used to test `src - prev_stop` before ratcheting. Because the stop
+        # only ever moves in the trend's favour, that test is more forgiving: a
+        # close between the old stop and the ratcheted one stayed "Up" while
+        # holding a stop ABOVE the close, a state a stop-and-reverse can't be
+        # in, and the flip landed a bar late. The flip DATE feeds
+        # vstop_weekly_weeks_since_change, tech_uptrend and the auto-flag, and on
+        # synthetic series it was off by up to 10 weeks.
+        uptrend = (src - stop) >= 0.0
 
         if uptrend != prev_uptrend:
             rmax = rmin = src
@@ -1310,6 +1320,48 @@ def drop_forming_daily_bars(raw, tickers, now=None):
     return raw, trimmed
 
 
+def _roce_from_statements(inc, bs):
+    """ROCE % = Operating Income / (Stockholders Equity + Long Term Debt), all
+    from ONE fiscal year: the latest year that reports both equity and
+    operating income. Returns None when it can't be computed honestly.
+
+    Three failures in the version this replaces, each picking up numbers that
+    looked real:
+      - Every input was `.dropna().iloc[0]` on its own row, so a blank latest
+        cell silently borrowed an OLDER year. Yahoo blanks Long Term Debt in
+        the year a company pays it off (Total Debt that year is only current
+        debt + leases), so [ticker] was divided by FY2024's 1,143M of since-repaid
+        notes, [ticker] by FY2025's 1,829M, [ticker] by FY2023's 283M -- 11 of 122
+        tickers in the 2026-09-14 data.
+      - With no Long Term Debt row at all it fell back to Total Debt (short-term
+        debt + leases), so the column mixed two definitions (6 tickers).
+      - A missing equity row became 0.0, so capital employed collapsed to debt
+        alone and a low-debt company showed a four-digit ROCE.
+    Long Term Debt that is blank or absent at the chosen date counts as 0,
+    which is what Yahoo's blanks mean in the cases above. A zero or negative
+    capital employed (negative equity) gives None rather than a sign-flipped
+    ratio."""
+    if "Operating Income" not in inc.index or "Stockholders Equity" not in bs.index:
+        return None
+    equity_row = bs.loc["Stockholders Equity"]
+    op_row = inc.loc["Operating Income"]
+    # [ticker] (2026-09-14) has FY2026 equity but no FY2026 operating income; the
+    # old code paired that equity with FY2025 income.
+    years = [d for d in bs.columns
+             if d in inc.columns and pd.notna(equity_row.get(d)) and pd.notna(op_row.get(d))]
+    if not years:
+        return None
+    year = max(years)
+    equity = float(equity_row[year])
+    debt = 0.0
+    if "Long Term Debt" in bs.index and pd.notna(bs.loc["Long Term Debt"].get(year)):
+        debt = float(bs.loc["Long Term Debt"][year])
+    cap_emp = equity + debt
+    if cap_emp <= 0:
+        return None
+    return round(float(op_row[year]) / cap_emp * 100, 1)
+
+
 def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, completed_sessions_only=False,
                    short_history=None):
     """Returns (results list of dicts, as_of timestamp string) for one market's tickers.
@@ -1371,6 +1423,10 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
         roe = cfo_op_5yr = roce = None
         perf_1m = perf_3m = perf_6m = perf_1y = perf_3y = None
         trailing_pe = forward_pe = pb_ratio = ev_ebitda = p_cashflow = reported_qtr = None
+        # Reset per ticker like everything above. If yf.Ticker() below raised,
+        # the statements block used to read the PREVIOUS ticker's object and
+        # store that company's ROCE/growth figures under this symbol.
+        yf_t = None
         try:
             yf_t = yf.Ticker(t)
             info = _fetch_info_with_retry(yf_t, t)
@@ -1418,6 +1474,8 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
         # Annual statements: each fetched independently so a timeout on one
         # doesn't zero out metrics computed from the others.
         try:
+            if yf_t is None:
+                raise RuntimeError("no yfinance Ticker object for this symbol")
             cf  = _safe_fetch(lambda: yf_t.cash_flow,    label=f"[{t}] cash_flow")
             inc = _safe_fetch(lambda: yf_t.income_stmt,   label=f"[{t}] income_stmt")
             bs  = _safe_fetch(lambda: yf_t.balance_sheet, label=f"[{t}] balance_sheet")
@@ -1480,19 +1538,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
                             cfo_op_5yr = round(float(cfo_s.loc[dates].sum()) / op_sum, 2)
 
             if inc is not None and bs is not None:
-                if "Operating Income" in inc.index:
-                    op_vals = inc.loc["Operating Income"].dropna()
-                    eq_vals = bs.loc["Stockholders Equity"].dropna() if "Stockholders Equity" in bs.index else None
-                    dt_row  = ("Long Term Debt" if "Long Term Debt" in bs.index
-                               else "Total Debt"    if "Total Debt"    in bs.index else None)
-                    dt_vals = bs.loc[dt_row].dropna() if dt_row else None
-                    if len(op_vals) > 0:
-                        op_inc = float(op_vals.iloc[0])
-                        equity = float(eq_vals.iloc[0]) if eq_vals is not None and len(eq_vals) > 0 else 0.0
-                        debt   = float(dt_vals.iloc[0]) if dt_vals is not None and len(dt_vals) > 0 else 0.0
-                        cap_emp = equity + debt
-                        if cap_emp != 0:
-                            roce = round(op_inc / cap_emp * 100, 1)
+                roce = _roce_from_statements(inc, bs)
         except Exception as e:
             print(f"  [{t}] Statement metrics failed: {e}")
 
@@ -1668,6 +1714,16 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
                         weeks_since = valid_dir.index.get_loc(valid_dir.index[-1]) - valid_dir.index.get_loc(last_change_idx)
                         vstop_weekly_weeks_since_change = int(weeks_since)
                         vstop_weekly_flipped = bool(weeks_since == 0)
+                    else:
+                        # Never flipped inside the window: the trend has held
+                        # for at least the whole valid series. This used to stay
+                        # None, and tech_uptrend requires a non-None value, so
+                        # the strongest possible trend (Up for 5 years) scored
+                        # Tech Uptrend 0, showed a blank VStop Weeks Ago, and
+                        # gave the auto-flag a bearish vote. The count is a lower
+                        # bound; vstop_weekly_last_change stays None because no
+                        # flip date exists, and the table renders it as "N+".
+                        vstop_weekly_weeks_since_change = int(len(valid_dir) - 1)
 
             # Length-14 weekly VStop, for the Turbo Surge scan's "Close >=
             # VSTOP 14W 2". Rides the same engine and the same weekly_complete
@@ -1741,17 +1797,27 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
 
             net_volume_10d_dir = None
             net_volume_10d_ratio = None
-            if len(daily_close) >= 11 and len(daily_volume) >= 10:
-                last_11_closes = daily_close.tail(11)
-                last_10_volumes = daily_volume.tail(10)
+            # Each session's volume, signed by that SAME session's close change.
+            # This used to take tail(11) of daily_close and tail(10) of
+            # daily_volume -- two independently dropna'd series -- and pair them
+            # by position, so one bar missing a Volume shifted every volume onto
+            # a neighbouring day's move (the hazard overhead_supply above already
+            # guards against). Aligned by date instead: the previous close comes
+            # from the close series itself, so a bar with no volume just drops
+            # out of the window without disturbing its neighbours.
+            _nv = pd.DataFrame({
+                "close": df["Close"],
+                "prev": daily_close.shift(1),
+                "vol": df["Volume"],
+            }).dropna().tail(10)
+            if len(_nv) >= 10:
                 net_vol = 0
                 total_vol = 0
-                for i in range(1, 11):
-                    vol = last_10_volumes.iloc[i-1]
+                for close_i, prev_i, vol in _nv[["close", "prev", "vol"]].itertuples(index=False):
                     total_vol += vol
-                    if last_11_closes.iloc[i] > last_11_closes.iloc[i-1]:
+                    if close_i > prev_i:
                         net_vol += vol
-                    elif last_11_closes.iloc[i] < last_11_closes.iloc[i-1]:
+                    elif close_i < prev_i:
                         net_vol -= vol
                 net_volume_10d_dir = "Positive" if net_vol > 0 else "Negative"
                 if total_vol > 0:
@@ -1771,13 +1837,17 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
             # bar is the high. Positional argmax rather than idxmax: idxmax
             # returns a timestamp that would need a second lookup to turn into
             # an age, and is ambiguous if the index ever holds duplicates.
-            # np.argmax returns the FIRST occurrence, so a high matched several
+            # np.nanargmax returns the FIRST occurrence, so a high matched several
             # times reports the oldest -- stable run to run rather than
-            # flip-flopping between equal bars.
+            # flip-flopping between equal bars. NaN-aware on purpose: .max()
+            # above skips NaN, but plain np.argmax returns the first NaN's
+            # position, so a row with a missing High (normal when one download
+            # unions two exchanges' calendars) pointed the age at that row
+            # instead of the high -- [10, 50, NaN, 20, 30] gave 2, not 3.
             week52_high_age = None
             highs_252 = window_252["High"]
             if highs_252.notna().any():
-                week52_high_age = int(len(highs_252) - 1 - int(np.argmax(highs_252.to_numpy())))
+                week52_high_age = int(len(highs_252) - 1 - int(np.nanargmax(highs_252.to_numpy())))
 
             # Assigned conditionally below, unlike week52_high/low which always
             # get a value -- without these defaults a ticker missing the inputs

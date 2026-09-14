@@ -1206,7 +1206,7 @@ def column_definitions(settings, labels):
         "P/Cashflow": "Calculated as Market Cap divided by Operating Cash Flow (Yahoo Finance).",
         "ROE %": "Return on Equity: Net Income / Shareholders Equity as a percentage (Yahoo Finance TTM).",
         "CFO/OP 5Y": "Cash Flow from Operations divided by Operating Income, summed over up to 5 fiscal years. Values > 1 indicate high earnings quality (the company converts more than its reported profit into actual cash). From yfinance annual statements.",
-        "ROCE %": "Return on Capital Employed: Operating Income / (Stockholders Equity + Long-term Debt) as a percentage, using the most recent annual figures from yfinance.",
+        "ROCE %": "Return on Capital Employed: Operating Income / (Stockholders Equity + Long-term Debt) as a percentage, all from the same (most recent) fiscal year in yfinance's annual statements. Long-term debt Yahoo leaves blank that year counts as 0. Blank when equity or that year's operating income is missing, or capital employed is zero or negative.",
         "Reported Qtr": "The most recent quarter for which the company reported earnings and revenue growth, mapped to the local financial year (Yahoo Finance).",
         "Perf 1M %": "Price return over the past ~1 month (22 trading days).",
         "Perf 3M %": "Price return over the past ~3 months (63 trading days).",
@@ -3826,9 +3826,14 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
 
     if filtered:
         def vstop_change_str(row):
-            if row["vstop_weekly_last_change"] is None:
+            weeks = row.get("vstop_weekly_weeks_since_change")
+            if weeks is None:
                 return "—"
-            return str(row["vstop_weekly_weeks_since_change"])
+            # No flip date = the stop never flipped inside the fetched history,
+            # so the count is a lower bound (see stock_data's weekly VStop block).
+            if row.get("vstop_weekly_last_change") is None:
+                return f"{weeks}+"
+            return str(weeks)
 
         raw_df = pd.DataFrame(filtered)
         raw_df["vstop_change"] = [vstop_change_str(r) for r in filtered]
