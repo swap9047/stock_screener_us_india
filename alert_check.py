@@ -46,7 +46,10 @@ def main():
         return
 
     settings = load_settings()
-    combined, as_of, per_market = fetch_all_markets(settings=settings)
+    # Completed sessions only: GitHub starts this "9:15 PM ET" job hours late,
+    # inside NSE's 23:45-06:00 ET session, and alerts must judge closes rather
+    # than a forming intraday bar -- see stock_data.drop_forming_daily_bars.
+    combined, as_of, per_market = fetch_all_markets(settings=settings, completed_sessions_only=True)
     breakdown = " + ".join(f"{len(rows)} {mkt}" for mkt, rows in per_market.items())
     print(f"Checking {len(due_rules)} rule(s) (of {len(all_rules)} total) against {breakdown} tickers...")
 

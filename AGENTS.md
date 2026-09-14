@@ -241,7 +241,21 @@ after the close). It's idempotent either way — the commit step no-ops when the
 byte-identical, so quiet hours add no commits.
 
 Every other workflow's two crons are the EDT/EST pair; a gate job checks the real ET hour
-and skips the wrong one, so a run isn't double-fired.
+and skips the wrong one, so a run isn't double-fired. `market-breadth.yml` is gated
+differently: once per 10 AM / 10 PM ET slot, de-duplicated on `market_breadth.json`'s
+`as_of` read from `main`.
+
+**GitHub starts scheduled runs hours late** — observed ~4-5 h in September 2026 (the
+9:15 PM ET alert check ran ~2 AM ET; the "hourly" data refresh managed 4-6 runs a day).
+Two consequences to design for:
+
+- A gate must not assume the run starts near its cron time. A window on
+  minutes-since-midnight can't wrap past 23:59; that bug skipped every nightly breadth
+  run for weeks.
+- A late evening job lands inside NSE's ~23:45-06:00 ET session and gets a forming India
+  bar. Jobs that judge closes pass `completed_sessions_only=True` to `fetch_all_markets`
+  (`alert_check.py`, `weekly_wrapup_check.py`), which drops each ticker's unfinished bar
+  by its own exchange. The dashboard and `refresh_data.py` leave it off to show live prices.
 
 `expert-views.yml` and `fundamentals.yml` accept a **`markets`** input (comma-separated
 market keys) which the app's per-tab "Re-analyze All" button uses to scope a run to one

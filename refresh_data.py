@@ -22,7 +22,7 @@ import os
 
 from stock_data import (
     load_watchlists, load_settings, fetch_all_markets, save_data_snapshot,
-    load_data_snapshot, fill_snapshot_gaps, reject_stale_rows,
+    load_data_snapshot, fill_snapshot_gaps, reject_stale_rows, MIN_DAILY_BARS,
 )
 
 
@@ -51,7 +51,14 @@ def main():
 
     breakdown = " + ".join(f"{len(tks)} {mkt}" for mkt, tks in watchlists.items())
     print(f"Fetching {total} tickers ({breakdown})...")
-    combined, as_of, per_market = fetch_all_markets(watchlists, settings=settings)
+    # Tickers skipped for too little history, so the snapshot can say "too new
+    # to compute" instead of looking incomplete -- see merge_short_history.
+    short_history = {}
+    combined, as_of, per_market = fetch_all_markets(watchlists, settings=settings, short_history=short_history)
+    if short_history:
+        print("Too little price history to compute yet (no row until "
+              f"{MIN_DAILY_BARS} bars): "
+              + ", ".join(f"{t} ({v['bars']})" for t, v in sorted(short_history.items())))
 
     # Anything Yahoo would not return keeps its last-known row instead of
     # vanishing. fetch_all_markets drops a whole benchmark group whose fetch
@@ -81,7 +88,8 @@ def main():
     # A scoped run only holds rows for the markets it fetched, so it must merge
     # rather than replace -- otherwise scoping the run would delete every other
     # market from the snapshot.
-    save_data_snapshot(as_of, per_market, settings=settings, merge=bool(only_markets))
+    save_data_snapshot(as_of, per_market, settings=settings, merge=bool(only_markets),
+                       short_history=short_history)
     print(f"Saved data_snapshot.json (as_of {as_of}, {len(combined)} rows).")
 
 

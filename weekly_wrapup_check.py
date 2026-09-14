@@ -41,7 +41,10 @@ def main():
         return
 
     settings = load_settings()
-    combined, as_of, per_market = fetch_all_markets(settings=settings)
+    # Completed sessions only: the "Sunday 9 PM ET" run actually lands ~2 AM
+    # Monday ET, mid India Monday session, and the digest reports week-end
+    # status -- see stock_data.drop_forming_daily_bars.
+    combined, as_of, per_market = fetch_all_markets(settings=settings, completed_sessions_only=True)
     breakdown = " + ".join(f"{len(rows)} {mkt}" for mkt, rows in per_market.items())
     print(f"Building weekly wrap-up over {len(chosen)} alert(s) against {breakdown} tickers...")
 

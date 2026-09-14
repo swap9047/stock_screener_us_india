@@ -60,7 +60,7 @@ from stock_data import (
     load_settings, save_settings, DEFAULT_SETTINGS, get_benchmarks, get_filterable_metrics,
     load_markets_registry, load_data_snapshot, snapshot_is_usable, save_data_snapshot,
     rebuild_snapshot_for_market, fill_snapshot_gaps, reject_stale_rows,
-    load_watchlist_groups, save_watchlist_groups,
+    load_watchlist_groups, save_watchlist_groups, MIN_DAILY_BARS,
 )
 import llm_util
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE,
@@ -404,13 +404,13 @@ def _bump_refresh():
     st.session_state.refresh_nonce = uuid.uuid4().hex
 
 
-def _persist_and_serve(per_market, as_of, settings):
+def _persist_and_serve(per_market, as_of, settings, short_history=None):
     """Writes a freshly-computed fetch result to data_snapshot.json AND stashes
     it in session state so the rerun following the action serves this exact
     result instead of fetching again. Called by the Refresh Data button and
     watchlist-save: those actions are the allowed live-fetch triggers, and the
     persisted snapshot also keeps later login/reloads clean."""
-    save_data_snapshot(as_of, per_market, settings=settings)
+    save_data_snapshot(as_of, per_market, settings=settings, short_history=short_history)
     st.session_state["_served_snapshot"] = (as_of, per_market)
     st.session_state["last_refresh_summary"] = {
         "as_of": as_of,
@@ -1623,12 +1623,14 @@ def _apply_watchlist_tickers(market, market_label, existing_tickers, candidate_t
 
     _snapshot = load_data_snapshot() or {}
     _as_of_box = [_snapshot.get("as_of")]
+    _short_history = {}
 
     def _fetch_new(tickers_needed):
         with st.spinner(f"Fetching {len(tickers_needed)} new ticker(s) from Yahoo Finance..."):
             # Pass the real market key so the benchmark fallback is right for any
             # ticker backfill_ticker_indices could not classify.
-            _c, _fetched_as_of, _fetched = fetch_all_markets({market: tickers_needed}, settings=_curr_settings)
+            _c, _fetched_as_of, _fetched = fetch_all_markets({market: tickers_needed}, settings=_curr_settings,
+                                                             short_history=_short_history)
         _as_of_box[0] = _fetched_as_of
         return _fetched.get(market, [])
 
@@ -1637,7 +1639,7 @@ def _apply_watchlist_tickers(market, market_label, existing_tickers, candidate_t
     )
     _as_of = _as_of_box[0] or datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    _persist_and_serve(_merged, _as_of, _curr_settings)
+    _persist_and_serve(_merged, _as_of, _curr_settings, short_history=_short_history)
     _bump_refresh()
     _reused = len(valid_tickers) - len(_to_fetch)
     if _to_fetch:
@@ -1649,6 +1651,17 @@ def _apply_watchlist_tickers(market, market_label, existing_tickers, candidate_t
         st.success(
             f"Saved {market_label} with {len(valid_tickers)} tickers — "
             "no Yahoo fetch needed, every ticker was already in the snapshot."
+        )
+
+    # validate_ticker accepts any ticker Yahoo has a bar for, but a row needs
+    # MIN_DAILY_BARS of history -- say so now rather than letting a new listing
+    # simply never appear in the table.
+    if _short_history:
+        st.warning(
+            "Saved, but not enough price history to show yet: "
+            + ", ".join(f"{t} ({v['bars']} trading day{'s' if v['bars'] != 1 else ''})"
+                        for t, v in sorted(_short_history.items()))
+            + f". Tickers appear in the table once they have {MIN_DAILY_BARS} trading days."
         )
 
     gh_token, gh_repo, gh_branch = get_github_config(st.secrets)
@@ -3492,7 +3505,7 @@ def render_expert_view_expander(market, filtered_rows, settings, results=None):
 
 
 def render_market_tab(market, results, settings, visible_keys, label_by_key, sort_levels=None,
-                       combined_markets=None, combined_label=None):
+                       combined_markets=None, combined_label=None, short_history=None):
     """Renders one watchlist table tab. `market` is either a real registry
     key (single-market tab) or a synthetic key like "all_invested" used only
     for widget-key namespacing / CSV filenames when `combined_markets` is
@@ -3776,6 +3789,21 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
 
     render_expert_analysis_control_bar(market, results, combined_markets=combined_markets)
     st.write(f"**Showing {len(filtered)} of {len(results)} tickers**")
+    # Watchlist tickers with no row because they are too new to compute (see
+    # stock_data.merge_short_history). Without this they just silently weren't
+    # in the table, and "of N tickers" didn't count them either.
+    _too_new = []
+    if short_history:   # usually empty -- skip the watchlist read entirely
+        _wl = load_watchlists()
+        _tab_tickers = {t for m in (combined_markets if combined_markets is not None else [market])
+                        for t in _wl.get(m, [])}
+        _too_new = sorted(t for t in short_history if t in _tab_tickers)
+    if _too_new:
+        st.caption(
+            "Not shown — too little price history yet (needs "
+            f"{MIN_DAILY_BARS} trading days): "
+            + ", ".join(f"{t} ({short_history[t]['bars']})" for t in _too_new)
+        )
 
     if filtered:
         def vstop_change_str(row):
@@ -4287,7 +4315,9 @@ st.sidebar.title("Stock Watchlist")
 sb1, sb2 = st.sidebar.columns(2)
 if sb1.button("Refresh Data", type="primary", width="stretch"):
     with st.spinner("Fetching latest prices & updating snapshot..."):
-        combined, as_of, per_market = fetch_all_markets(watchlists_now, settings=settings_now)
+        _short_history = {}
+        combined, as_of, per_market = fetch_all_markets(watchlists_now, settings=settings_now,
+                                                        short_history=_short_history)
         # Keep last-known rows for anything Yahoo would not return, rather than
         # persisting the gap as though those tickers no longer exist. A single
         # throttled click once cut India from 30 rows to 4 and pushed it.
@@ -4305,7 +4335,7 @@ if sb1.button("Refresh Data", type="primary", width="stretch"):
                 "last-known values rather than dropping them. Check the 'Data Thru' "
                 "column, and refresh again later for current prices."
             )
-        _persist_and_serve(per_market, as_of, settings_now)
+        _persist_and_serve(per_market, as_of, settings_now, short_history=_short_history)
         token, repo, branch = get_github_config(st.secrets)
         if token and repo:
             ok, msg = push_all_config(token, repo, branch, filenames=["data_snapshot.json", "ticker_index.json"], message=f"Refresh data snapshot via UI ({as_of})")
@@ -4366,6 +4396,7 @@ except Exception as _e:                                  # never break the page
 
 using_snapshot = False
 snapshot_warning = None
+snapshot = None
 served = st.session_state.get("_served_snapshot")
 if served:
     as_of, per_market = served
@@ -4482,6 +4513,14 @@ for _market_rows in per_market.values():
         # Attached HERE, in the enrichment loop, rather than in the render path,
         # so it is filterable and sortable -- see AGENTS.md's row-dict contract.
         _row["expert_news_backed"] = "Yes" if _expert_view_has_news(_view) else "No"
+
+# Read from the snapshot already parsed above when there is one; the served
+# and live-fetch paths fall back to the file. Only used for the per-tab
+# "too little history" caption.
+try:
+    short_history_now = (snapshot or load_data_snapshot() or {}).get("short_history") or {}
+except Exception:
+    short_history_now = {}
 
 source_label = "daily snapshot" if using_snapshot else "live fetch"
 st.sidebar.caption(f"Data as of: {as_of} ({source_label})")
@@ -4650,14 +4689,14 @@ for ck in combined_keys:
         render_market_tab(
             ck, combined_results, settings_now, shared_visible_keys, shared_label_by_key,
             saved_sort_levels(ck, shared_key_by_label), combined_markets=combined_markets_here,
-            combined_label=combined_display_label_by_key[ck],
+            combined_label=combined_display_label_by_key[ck], short_history=short_history_now,
         )
 
 for mkt in market_keys_now:
     with market_tabs[mkt]:
         render_market_tab(
             mkt, per_market.get(mkt, []), settings_now, shared_visible_keys, shared_label_by_key,
-            saved_sort_levels(mkt, shared_key_by_label),
+            saved_sort_levels(mkt, shared_key_by_label), short_history=short_history_now,
         )
 
 with tab_news:

@@ -1200,8 +1200,128 @@ def _safe_fetch(fn, label=""):
         return None
 
 
-def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
-    """Returns (results list of dicts, as_of timestamp string) for one market's tickers."""
+# Fewest daily bars fetch_snapshot will compute a row from. A ticker below it
+# (typically a fresh listing) gets no row at all.
+MIN_DAILY_BARS = 60
+# How long a short-history record is trusted without being seen again. See
+# merge_short_history for why it expires at all.
+SHORT_HISTORY_EXPIRY_DAYS = 120
+
+
+def merge_short_history(previous, fresh, per_market, watchlists, today=None):
+    """Combine the snapshot's record of tickers skipped for having fewer than
+    MIN_DAILY_BARS bars. Returns {ticker: {"bars": n, "seen": "YYYY-MM-DD"}}.
+
+    WHY this exists: fetch_snapshot silently skips such a ticker, so it never
+    gets a snapshot row, fill_snapshot_gaps has nothing to recover, and
+    snapshot_is_usable -- which requires a row for every watchlist ticker --
+    failed on every page load. From ~2026-08-17 one SME listing, [ticker]
+    (1 bar on Yahoo), kept the "Data snapshot is out of date (settings, code,
+    or watchlist changed...)" banner up for every visitor, for a reason the
+    banner doesn't mention, so the banner stopped meaning anything. Recording the
+    skip lets snapshot_is_usable tell "can't be computed yet" from "missing".
+
+    Union, then prune -- so every writer (full refresh, scoped refresh,
+    watchlist save, Refresh Data) can pass only what IT learned and nothing
+    learned earlier is lost:
+      - fresh entries override previous ones;
+      - a ticker that now HAS a row is dropped (it has grown enough history);
+      - a ticker no longer in any watchlist is dropped;
+      - an entry not re-seen for SHORT_HISTORY_EXPIRY_DAYS is dropped. That
+        valve matters: a record must not excuse a ticker forever. Past it, a
+        still-rowless ticker counts as missing again and the banner comes
+        back, which is the honest state."""
+    today = today or datetime.now(ZoneInfo("America/New_York")).date()
+    merged = dict(previous or {})
+    merged.update(fresh or {})
+    with_rows = {r.get("ticker") for rows in (per_market or {}).values() for r in rows}
+    in_watchlists = {t for tickers in (watchlists or {}).values() for t in tickers}
+    out = {}
+    for t, rec in merged.items():
+        if t in with_rows or t not in in_watchlists:
+            continue
+        seen = _parse_data_end((rec or {}).get("seen"))
+        if seen is None or (today - seen).days > SHORT_HISTORY_EXPIRY_DAYS:
+            continue
+        out[t] = rec
+    return out
+
+
+# Regular-session close per exchange, in the exchange's own timezone, plus a
+# settle margin before a closing print is trusted (same 30m the market-breadth
+# job uses in refresh_market_breadth.trim_to_completed_session).
+EXCHANGE_SESSIONS = {
+    "INDIA": ("Asia/Kolkata", 15, 30),
+    "US": ("America/New_York", 16, 0),
+}
+SESSION_SETTLE_MINUTES = 30
+# Index tickers carry no .NS/.BO suffix, so the suffix test alone would file
+# the Nifty 500 benchmark under the US session.
+INDIA_INDEX_TICKERS = {BENCHMARKS["INDIA"], "^NSEI", "^NSEBANK", "^BSESN"}
+
+
+def exchange_session(ticker):
+    """"INDIA" or "US" -- resolved off the ticker itself, same reasoning as
+    get_exchange_label: .NS/.BO (and the India index tickers) are Indian
+    listings whichever watchlist holds them, everything else is US-listed."""
+    if ticker.endswith((".NS", ".BO")) or ticker in INDIA_INDEX_TICKERS:
+        return "INDIA"
+    return "US"
+
+
+def drop_forming_daily_bars(raw, tickers, now=None):
+    """Blank out each ticker's trailing daily bar when its exchange session is
+    still open (or closed less than SESSION_SETTLE_MINUTES ago). Returns
+    (raw, [tickers trimmed]); `raw` is the group_by="ticker" frame from
+    _download_with_retries and is modified in place.
+
+    WHY: the nightly alert and weekly wrap-up jobs are scheduled for 9 PM ET,
+    before NSE opens at 23:45 ET, but GitHub starts them hours late -- they
+    actually ran at ~01:45-02:15 ET all through 2026-09-07..13, mid-NSE-session.
+    yfinance hands back the forming bar, so every India row was judged on a
+    partial day (the 2026-09-11 01:42 ET snapshot already carried data_end
+    2026-09-11 for all 31 India Invested rows). An edge-triggered alert can
+    fire on an intraday cross that reverses by the close, and it never
+    re-fires. Dropping the forming bar makes the job read the last COMPLETED
+    session whenever it happens to run.
+
+    Per ticker, not per frame: one download mixes exchanges (a US ticker can
+    sit in the ^CRSLDX group), and the frame's union calendar has a row for
+    today as soon as ANY ticker in it traded today. Only the dashboard's live
+    view wants forming bars, so this is opt-in (see fetch_snapshot)."""
+    now = now or datetime.now(ZoneInfo("UTC"))
+    trimmed = []
+    if raw is None or raw.empty:
+        return raw, trimmed
+    for t in tickers:
+        if t not in raw.columns.get_level_values(0):
+            continue
+        tz, close_h, close_m = EXCHANGE_SESSIONS[exchange_session(t)]
+        local_now = now.astimezone(ZoneInfo(tz))
+        last_idx = raw[t].dropna(how="all").index
+        if len(last_idx) == 0:
+            continue
+        last = last_idx[-1]
+        settled = local_now.replace(hour=close_h, minute=close_m, second=0, microsecond=0) \
+            + pd.Timedelta(minutes=SESSION_SETTLE_MINUTES)
+        if last.date() == local_now.date() and local_now < settled:
+            raw.loc[last, t] = np.nan
+            trimmed.append(t)
+    return raw, trimmed
+
+
+def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, completed_sessions_only=False,
+                   short_history=None):
+    """Returns (results list of dicts, as_of timestamp string) for one market's tickers.
+
+    `short_history`, if given, is a dict filled with {ticker: {"bars", "seen"}}
+    for every ticker skipped for having fewer than MIN_DAILY_BARS bars -- see
+    merge_short_history. A ticker Yahoo returned nothing for is NOT recorded:
+    that is a failed fetch, handled by fill_snapshot_gaps.
+
+    completed_sessions_only drops each ticker's still-forming daily bar (see
+    drop_forming_daily_bars) -- for the headless alert/wrap-up jobs, which must
+    judge closes. The dashboard leaves it off so it keeps showing live prices."""
     settings = settings or load_settings()
     rsi_period = settings["rsi_period"]
     w_fast, w_mid, w_slow = settings["ema_weekly"]
@@ -1224,6 +1344,13 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
 
     all_tickers = list(tickers) + [benchmark]
     raw = _download_with_retries(all_tickers, period)
+    if completed_sessions_only:
+        # Before the benchmark series below are derived, so RS and relative
+        # returns compare completed sessions on both sides.
+        raw, _forming = drop_forming_daily_bars(raw, all_tickers)
+        if _forming:
+            print(f"  [fetch_snapshot] dropped still-forming daily bar for {len(_forming)} ticker(s): "
+                  f"{', '.join(_forming[:10])}{' ...' if len(_forming) > 10 else ''}")
 
     bench_daily = raw[benchmark]["Close"].dropna()
     bench_df = raw[benchmark].dropna(how="all")
@@ -1371,7 +1498,14 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
 
         try:
             df = raw[t].dropna(how="all")
-            if df.empty or len(df) < 60:
+            if df.empty:
+                continue
+            if len(df) < MIN_DAILY_BARS:
+                if short_history is not None:
+                    short_history[t] = {
+                        "bars": int(len(df)),
+                        "seen": datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d"),
+                    }
                 continue
 
             daily_close = df["Close"].dropna()
@@ -1955,7 +2089,8 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None):
     return results, as_of
 
 
-def fetch_all_markets(watchlists=None, period="5y", settings=None):
+def fetch_all_markets(watchlists=None, period="5y", settings=None, completed_sessions_only=False,
+                      short_history=None):
     """Fetches every registered watchlist and returns a combined
     (results, as_of, per_market_results) tuple. per_market_results is
     {market_key: [...], ...}.
@@ -2004,7 +2139,9 @@ def fetch_all_markets(watchlists=None, period="5y", settings=None):
     as_of = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M ET")
     for bench, tickers in tickers_by_benchmark.items():
         try:
-            rows, as_of = fetch_snapshot(tickers, benchmark=bench, period=period, settings=settings)
+            rows, as_of = fetch_snapshot(tickers, benchmark=bench, period=period, settings=settings,
+                                         completed_sessions_only=completed_sessions_only,
+                                         short_history=short_history)
         except Exception as e:
             print(f"  [fetch_all_markets] skipping benchmark group {bench} ({len(tickers)} tickers): {e}")
             continue
@@ -2074,7 +2211,7 @@ def _code_fingerprint():
         return "unknown"
 
 
-def save_data_snapshot(as_of, per_market, settings=None, merge=False):
+def save_data_snapshot(as_of, per_market, settings=None, merge=False, short_history=None):
     """Persists a fetch_all_markets() result to disk so the Streamlit app
     can load it directly instead of hitting yfinance live on every session
     -- meant to be called once/day by the scheduled data-refresh workflow
@@ -2088,13 +2225,18 @@ def save_data_snapshot(as_of, per_market, settings=None, merge=False):
     it: this file holds every market in one blob, so writing just the
     markets you fetched would delete the others. That is not hypothetical
     -- refresh_market_breadth.py wrote its file the same unconditional way
-    and one failing leg silently destroyed 1055 days of US breadth."""
+    and one failing leg silently destroyed 1055 days of US breadth.
+
+    `short_history` is what THIS caller's fetch learned about tickers too new
+    to compute (None if it fetched nothing); it is merged with what the file
+    already records -- see merge_short_history."""
     from datetime import timezone
+    existing = load_data_snapshot() or {}
     if merge:
-        existing = load_data_snapshot() or {}
         base = dict(existing.get("per_market") or {})
         base.update(per_market)
         per_market = base
+    short = merge_short_history(existing.get("short_history"), short_history, per_market, load_watchlists())
     with open(DATA_SNAPSHOT_FILE, "w") as f:
         json.dump({
             "as_of": as_of,
@@ -2102,6 +2244,7 @@ def save_data_snapshot(as_of, per_market, settings=None, merge=False):
             "code_version": _code_fingerprint(),
             "per_market": per_market,
             "settings": settings or {},
+            "short_history": short,
         }, f, indent=2, default=_json_default)
 
 
@@ -2285,7 +2428,9 @@ def rebuild_snapshot_for_market(snap_per_market, market, tickers, fetch_new):
 def snapshot_is_usable(snapshot, watchlists, settings):
     """True if `snapshot` can be shown as-is: it has a row for every ticker
     currently in `watchlists` (for every market), AND it was computed with
-    the same settings as `settings`. If someone added a ticker since the
+    the same settings as `settings` (tickers recorded in the snapshot's
+    `short_history` as too new to compute are exempt from the row check -- see
+    merge_short_history). If someone added a ticker since the
     last scheduled refresh, or changed a calc parameter (SMA length, RSI
     threshold, etc.) in the Settings dialog, the snapshot no longer
     reflects reality -- the app should fall back to a live fetch rather
@@ -2307,9 +2452,12 @@ def snapshot_is_usable(snapshot, watchlists, settings):
         return False
         
     per_market = snapshot["per_market"]
+    # Tickers too new to compute (see merge_short_history) have no row by
+    # design; they must not make the whole snapshot count as out of date.
+    too_new = set(snapshot.get("short_history") or {})
     for market in watchlists.keys():
         snap_tickers = {r.get("ticker") for r in per_market.get(market, [])}
-        wanted = set(watchlists.get(market, []))
+        wanted = set(watchlists.get(market, [])) - too_new
         if not wanted.issubset(snap_tickers):
             return False
     return True

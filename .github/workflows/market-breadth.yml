@@ -2,12 +2,9 @@ name: Market Breadth Updater
 
 on:
   schedule:
-    # Runs at 10:00 AM and 10:00 PM ET, Mon-Sat. Eastern is UTC-4 (EDT) or
-    # UTC-5 (EST), so the cron covers both offsets (02/03 UTC = 10PM,
-    # 14/15 UTC = 10AM). The time_check gate keeps only the runs whose
-    # current ET time lands within a slot; a 6-hour grace window past each
-    # slot absorbs GitHub's schedule delays, and an is_valid_cron filter
-    # keeps exactly two in-season fires per day (10 AM and 10 PM ET).
+    # Two slots a day, 10:00 AM and 10:00 PM ET, Mon-Sat. The four UTC hours
+    # cover both DST offsets (02/03 UTC = 10 PM, 14/15 UTC = 10 AM), so each
+    # slot gets two fires; the slot guard below keeps exactly one run per slot.
     - cron: "0 2,3,14,15 * * *"
   workflow_dispatch:
 
@@ -33,39 +30,66 @@ jobs:
 
       - name: Check Timezone / Slot Guard
         id: time_check
-        env:
-          CRON_SCHEDULE: ${{ github.event.schedule }}
         run: |
-          # Keep only runs whose current ET time lands within the 10 AM / 10 PM
-          # ET slots (Mon-Sat), regardless of DST. A 6-hour grace window past
-          # each slot absorbs GitHub's schedule delays, and an is_valid_cron
-          # check filters the dual-offset cron down to the two in-season fires
-          # per day so the run fires once per slot, not twice.
+          # Run once per 10 AM / 10 PM ET slot (Mon-Sat), whenever GitHub
+          # actually gets around to starting us.
+          #
+          # This used to test `slot <= now_minutes < slot + 6h` on minutes since
+          # midnight, which cannot wrap: the 10 PM window silently ended at
+          # 23:59. GitHub starts these scheduled runs ~5 hours late (~03:00 ET),
+          # so EVERY nightly run was skipped (10-16s runs, 2026-09-04..13) and
+          # the only refresh left was ~13:30 ET, mid US session -- so S&P 500
+          # breadth was always one session behind. Its de-duplication was dead
+          # too: it read the fired hour from github.event.schedule, but that is
+          # the whole "0 2,3,14,15 * * *" string, which matched every time.
+          #
+          # Now: find the most recent slot start, run if we are within GRACE of
+          # it and market_breadth.json has not already been refreshed since
+          # then. The as_of check is what stops the second fire of a slot.
+          # It reads origin/main, not the checkout: a run queued behind the
+          # first one by the concurrency group is checked out at the SHA it was
+          # triggered on, which predates the first run's commit.
+          git fetch --quiet --depth=1 origin main || true
+          git show FETCH_HEAD:market_breadth.json > /tmp/breadth_main.json 2>/dev/null || cp market_breadth.json /tmp/breadth_main.json 2>/dev/null || true
           python3 - <<'EOF' >> "$GITHUB_OUTPUT"
-          import os
+          import json
+          import sys
+          from datetime import datetime, timedelta, timezone
           from zoneinfo import ZoneInfo
-          from datetime import datetime
-          now_et = datetime.now(ZoneInfo("America/New_York"))
 
-          slots = {10, 22}                 # 10 AM and 10 PM ET
-          grace_h = 6                      # tolerate GitHub schedule delays
-          cron = os.environ.get("CRON_SCHEDULE")
+          ET = ZoneInfo("America/New_York")
+          SLOT_HOURS = (10, 22)           # 10 AM and 10 PM ET
+          GRACE = timedelta(hours=10)     # < 12h, so a late run never reaches into the next slot
 
-          is_valid_cron = True
-          if cron:
-              try:
-                  cron_utc_hours = {int(h) for h in cron.split()[1].split(',')}
-                  expected_utc_hours = {int((slot - (now_et.utcoffset().total_seconds() / 3600)) % 24) for slot in slots}
-                  if not cron_utc_hours & expected_utc_hours:
-                      is_valid_cron = False
-              except Exception:
-                  pass
+          now_et = datetime.now(timezone.utc).astimezone(ET)
+          starts = []
+          for back in (0, 1):
+              d = (now_et - timedelta(days=back)).date()
+              for h in SLOT_HOURS:
+                  start = datetime(d.year, d.month, d.day, h, tzinfo=ET)
+                  if start <= now_et:
+                      starts.append(start)
+          slot = max(starts)
 
-          now_minutes = now_et.hour * 60 + now_et.minute
-          run = (is_valid_cron and now_et.isoweekday() <= 6 and
-                 any(s <= now_minutes < s + grace_h * 60
-                     for s in (slot * 60 for slot in slots)))
+          last_run = None
+          try:
+              with open("/tmp/breadth_main.json") as f:
+                  as_of = json.load(f).get("as_of")   # UTC, "YYYY-MM-DD HH:MM", stamped at run start
+              last_run = datetime.strptime(as_of, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+          except Exception:
+              pass   # unreadable -> treat the slot as not yet refreshed
 
+          in_window = now_et - slot < GRACE
+          slot_day_ok = slot.isoweekday() <= 6              # Mon-Sat slots
+          already_done = last_run is not None and last_run >= slot
+
+          # stderr, not stdout: stdout is appended to $GITHUB_OUTPUT, which
+          # only accepts key=value lines.
+          last_txt = f"{last_run:%Y-%m-%d %H:%M} UTC" if last_run else "unreadable"
+          print(f"now {now_et:%a %Y-%m-%d %H:%M} ET | slot {slot:%a %Y-%m-%d %H:%M} ET | "
+                f"last refresh {last_txt} | in_window={in_window} already_done={already_done}",
+                file=sys.stderr)
+          run = in_window and slot_day_ok and not already_done
           print(f"run={'true' if run else 'false'}")
           EOF
 
