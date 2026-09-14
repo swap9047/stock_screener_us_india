@@ -104,6 +104,13 @@ jobs:
 
       - name: Commit updated alert_state.json
         run: |
+          # alert_check.py returns before writing any state when no rule is
+          # configured or due; `git add` of a missing path would then fail
+          # this step (bash -e) and turn a no-op run red.
+          if [ ! -f alert_state.json ]; then
+            echo "No alert_state.json written this run -- nothing to commit"
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add alert_state.json

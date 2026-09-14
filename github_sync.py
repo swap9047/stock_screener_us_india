@@ -371,7 +371,7 @@ def read_remote_json(token, repo, branch, filename):
         return None
 
 
-def push_json_entry_changes(token, repo, branch, changes, message, attempts=3):
+def push_json_entry_changes(token, repo, branch, changes, message, attempts=3, newer_than_field=None):
     """Commit per-KEY changes to keyed JSON files ({ticker: view} stores such
     as expert_views.json / fundamentals.json) on top of what is on the branch
     NOW, as one atomic commit. Returns (ok, detail, merged) where merged is
@@ -391,7 +391,15 @@ def push_json_entry_changes(token, repo, branch, changes, message, attempts=3):
     means an unrelated ticker can never be reverted.
 
     If a workflow commits between our read and our ref move, GitHub rejects
-    the non-fast-forward update; we re-read and re-apply, up to `attempts`."""
+    the non-fast-forward update; we re-read and re-apply, up to `attempts`.
+
+    `newer_than_field` (e.g. "as_of") makes a "set" conditional: an entry is
+    only written if the branch has no entry for that key, or ours has a
+    strictly greater value in that field. Without it, an action that TRIED a
+    ticker and failed (so its local entry was left as it was) still pushed that
+    unchanged local entry, which could be older than what a workflow had
+    committed since this container last pulled. If nothing is newer, no commit
+    is made and the result is (True, "nothing newer ...", merged)."""
     if not token or not repo:
         return False, "GITHUB_TOKEN / GITHUB_REPO not configured (see Settings).", {}
     headers = _headers(token)
@@ -412,7 +420,7 @@ def push_json_entry_changes(token, repo, branch, changes, message, attempts=3):
                 return False, f"Couldn't read base tree ({tree_resp.status_code}): {_short(tree_resp)}", {}
             blob_sha_by_path = {e.get("path"): e.get("sha") for e in (tree_resp.json().get("tree") or [])}
 
-            merged, tree_entries = {}, []
+            merged, tree_entries, applied = {}, [], 0
             for filename, change in changes.items():
                 current = {}
                 if blob_sha_by_path.get(filename):
@@ -427,11 +435,24 @@ def push_json_entry_changes(token, repo, branch, changes, message, attempts=3):
                     current = json.loads(blob.content.decode("utf-8"))
                     if not isinstance(current, dict):
                         return False, f"{filename} on {branch} is not a JSON object -- not pushing", {}
+                changed = False
                 for key, value in (change.get("set") or {}).items():
+                    if newer_than_field and key in current:
+                        ours = str((value or {}).get(newer_than_field) or "")
+                        theirs = str((current.get(key) or {}).get(newer_than_field) or "")
+                        if not ours or ours <= theirs:
+                            continue    # branch already has this entry or a newer one
                     current[key] = value
+                    changed = True
+                    applied += 1
                 for key in change.get("delete") or []:
-                    current.pop(key, None)
+                    if key in current:
+                        current.pop(key)
+                        changed = True
+                        applied += 1
                 merged[filename] = current
+                if not changed:
+                    continue
                 body = json.dumps(current, indent=2)   # same format as stock_data.atomic_write_json
                 blob_resp = requests.post(
                     f"{base_url}/git/blobs", headers=headers,
@@ -443,6 +464,8 @@ def push_json_entry_changes(token, repo, branch, changes, message, attempts=3):
                 tree_entries.append({"path": filename, "mode": "100644", "type": "blob",
                                      "sha": blob_resp.json()["sha"]})
 
+            if not tree_entries:
+                return True, "nothing newer than what is already on GitHub -- no commit made", merged
             new_tree = requests.post(f"{base_url}/git/trees", headers=headers,
                                      json={"base_tree": base_tree_sha, "tree": tree_entries}, timeout=15)
             if new_tree.status_code != 201:
@@ -456,8 +479,7 @@ def push_json_entry_changes(token, repo, branch, changes, message, attempts=3):
             move = requests.patch(f"{base_url}/git/refs/heads/{branch}", headers=headers,
                                   json={"sha": new_commit_sha}, timeout=15)
             if move.status_code == 200:
-                touched = sum(len((c.get("set") or {})) + len(c.get("delete") or []) for c in changes.values())
-                return True, (f"Pushed {touched} entr{'y' if touched == 1 else 'ies'} in "
+                return True, (f"Pushed {applied} entr{'y' if applied == 1 else 'ies'} in "
                               f"{', '.join(changes)} ({new_commit_sha[:7]})."), merged
             last_detail = f"branch moved during push ({move.status_code}): {_short(move)}"
         except (requests.RequestException, ValueError) as e:

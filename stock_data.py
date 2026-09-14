@@ -2358,6 +2358,17 @@ def save_data_snapshot(as_of, per_market, settings=None, merge=False, short_hist
     existing = load_data_snapshot() or {}
     if merge:
         base = dict(existing.get("per_market") or {})
+        # A scoped refresh recomputes only its own markets; every other market
+        # keeps rows computed under the EXISTING snapshot's stamps. If those
+        # don't match the current code/settings, stamping current over the
+        # merge hid the "out of date" warning for rows nobody recomputed -- the
+        # same failure as the watchlist save (N4). Keep the old stamps then; the
+        # next full refresh re-stamps honestly.
+        untouched = set(base) - set(per_market)
+        if (provenance is None and untouched and base
+                and not snapshot_calc_matches(existing, settings)):
+            provenance = {"settings": existing.get("settings") or {},
+                          "code_version": existing.get("code_version")}
         base.update(per_market)
         per_market = base
     short = merge_short_history(existing.get("short_history"), short_history, per_market, load_watchlists())

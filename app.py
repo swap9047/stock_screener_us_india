@@ -3195,7 +3195,11 @@ def sync_ai_views_to_github(message, filenames=("expert_views.json", "fundamenta
     if not changes:
         st.toast("✓ Nothing changed to sync.")
         return
-    ok, msg, merged = push_json_entry_changes(token, repo, branch, changes, message)
+    # newer_than_field: a ticker this action tried but failed to re-analyze
+    # keeps its old local entry, which must not overwrite a newer one a
+    # workflow committed meanwhile. Views carry a UTC "YYYY-MM-DD HH:MM" as_of.
+    ok, msg, merged = push_json_entry_changes(token, repo, branch, changes, message,
+                                              newer_than_field="as_of")
     if ok:
         for fname, data in merged.items():
             loaders[fname][1](data)
