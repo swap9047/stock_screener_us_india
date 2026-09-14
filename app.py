@@ -61,7 +61,7 @@ from stock_data import (
     load_markets_registry, load_data_snapshot, snapshot_is_usable, save_data_snapshot,
     rebuild_snapshot_for_market, fill_snapshot_gaps, reject_stale_rows,
     load_watchlist_groups, save_watchlist_groups, MIN_DAILY_BARS, snapshot_calc_matches,
-    apply_view_fields_to_rows,
+    apply_view_fields_to_rows, calc_settings, calc_settings_diff,
 )
 import llm_util
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE,
@@ -84,7 +84,8 @@ from filters import (get_market_filters, save_market_filters, apply_filters, des
                      describe_chain, describe_chain_with_values, passes_filter_chain, CATEGORICAL_METRICS,
                      TEXT_METRICS)
 from github_sync import (get_github_config, push_all_config, trigger_github_workflow,
-                         pull_generated_files, SYNCABLE_FILES)
+                         pull_generated_files, SYNCABLE_FILES, WORKFLOW_GENERATED_FILES,
+                         push_json_entry_changes, read_remote_json)
 from news_summary import (load_news_summary, MARKET_LABELS, get_gemini_api_key,
                           get_gemini_api_keys, resolve_news_scope, DEFAULT_NEWS_SCOPE_GROUP)
 from expert_views import (load_expert_views, save_expert_views, analyze_single_ticker,
@@ -3094,26 +3095,43 @@ def render_ticker_notes_manager():
                 st.markdown(line)
 
 
-def sync_ai_views_to_github(message, filenames=("expert_views.json", "fundamentals.json")):
-    """Push the AI result files back to GitHub.
+def sync_ai_views_to_github(message, filenames=("expert_views.json", "fundamentals.json"),
+                            tickers=(), deleted=()):
+    """Push the AI result entries this action changed back to GitHub.
+
+    Only the named `tickers` (set from the local file) and `deleted` keys are
+    committed, on top of the file as it is on GitHub NOW -- see
+    github_sync.push_json_entry_changes. This used to push the whole local file,
+    which reverted every verdict a workflow had committed since this container
+    last pulled. The merged result is written back locally so the table shows
+    both this action's result and the workflow's.
 
     Covers fundamentals.json as well as expert_views.json: the re-analyze
-    buttons now refresh Sentiment too, and a local-only fundamentals.json would
-    be silently overwritten by the next pull.
+    buttons refresh Sentiment too, and a local-only fundamentals.json would be
+    silently overwritten by the next pull.
     """
+    loaders = {"expert_views.json": (load_expert_views, save_expert_views),
+               "fundamentals.json": (load_fundamentals, save_fundamentals)}
     token, repo, branch = get_github_config(st.secrets)
-    if token and repo:
-        ok, msg = push_all_config(
-            token, repo, branch,
-            filenames=list(filenames),
-            message=message
-        )
-        if ok:
-            st.toast("✓ Saved & committed updated AI views to GitHub!")
-        else:
-            st.toast(f"✓ Saved locally! (GitHub sync: {msg})")
-    else:
+    if not (token and repo):
         st.toast("✓ Saved updated AI views!")
+        return
+    changes = {}
+    for fname in filenames:
+        local = loaders[fname][0]()
+        upd = {t: local[t] for t in tickers if t in local}
+        if upd or deleted:
+            changes[fname] = {"set": upd, "delete": list(deleted)}
+    if not changes:
+        st.toast("✓ Nothing changed to sync.")
+        return
+    ok, msg, merged = push_json_entry_changes(token, repo, branch, changes, message)
+    if ok:
+        for fname, data in merged.items():
+            loaders[fname][1](data)
+        st.toast("✓ Saved & committed updated AI views to GitHub!")
+    else:
+        st.toast(f"✓ Saved locally! (GitHub sync: {msg})")
 
 
 def trigger_ai_refresh_workflow(workflow_file, name, label, markets):
@@ -3224,7 +3242,7 @@ def _reanalyze_tickers_in_dashboard(tickers, results, api_key, sync_message,
     # Only the one file this pass could have written -- a narrower commit than
     # the old both-columns default.
     filename = "expert_views.json" if scope == "expert" else "fundamentals.json"
-    sync_ai_views_to_github(sync_message, filenames=(filename,))
+    sync_ai_views_to_github(sync_message, filenames=(filename,), tickers=tickers)
     st.rerun()
 
 
@@ -3250,6 +3268,7 @@ def render_expert_analysis_control_bar(market, results, combined_markets=None):
         sync_ai_views_to_github(
             f"Auto-cleanup: removed {len(stale_keys)} deleted ticker(s) from expert_views",
             filenames=("expert_views.json",),  # cleanup touches only this file
+            deleted=stale_keys,
         )
 
     # --- Detect pending tickers per AI column (includes newly added ones with
@@ -3462,7 +3481,7 @@ def render_expert_view_expander(market, filtered_rows, settings, results=None):
                         st.warning(f"Expert Take updated; Sentiment refresh failed: {e}")
                     else:
                         st.error(f"Sentiment refresh failed: {e}")
-                sync_ai_views_to_github(f"Re-analyze single ticker ({ticker}) via UI")
+                sync_ai_views_to_github(f"Re-analyze single ticker ({ticker}) via UI", tickers=[ticker])
                 st.rerun()
 
         for ticker in tickers:
@@ -4414,7 +4433,12 @@ render_logout_button()
 # leaves the app running on whatever it already had.
 try:
     _gh_token, _gh_repo, _gh_branch = get_github_config(st.secrets)
-    _pulled, _pull_note = pull_generated_files(_gh_token, _gh_repo, _gh_branch)
+    if os.environ.get("SKIP_GITHUB_PULL"):
+        # Local runs and AppTest: the pull rewrites tracked JSON in a working
+        # tree (data_snapshot.json and friends then show up in git status).
+        _pulled, _pull_note = [], "skipped (SKIP_GITHUB_PULL set)"
+    else:
+        _pulled, _pull_note = pull_generated_files(_gh_token, _gh_repo, _gh_branch)
     if _pulled:
         print(f"[data sync] refreshed from GitHub: {', '.join(_pulled)}")
 except Exception as _e:                                  # never break the page
@@ -4470,10 +4494,23 @@ if st.session_state.refresh_token == 0 and not using_snapshot:
             filtered_per_market[mkt] = [r for r in snapshot["per_market"].get(mkt, []) if r.get("ticker") in wl]
         per_market = filtered_per_market
         using_snapshot = True
-        snapshot_warning = (
-            "Data snapshot is out of date (settings, code, or watchlist changed since it was built). "
-            "Showing last-known data — click **Refresh Data** to recompute."
-        )
+        # Say WHICH kind of staleness. A calc-settings change is worse than a
+        # missing ticker: the column headers come from the CURRENT settings
+        # (e.g. "50 WEMA") while the values were computed under the old ones
+        # (40), so the table is mislabelled, not just old.
+        _changed = calc_settings_diff(snapshot.get("settings"), settings_now)
+        if _changed:
+            snapshot_warning = (
+                "Data snapshot was computed with different calculation settings — "
+                + "; ".join(f"`{k}`: {a} → {b}" for k, (a, b) in _changed.items())
+                + ". Column headers show the NEW settings but the values are from the OLD ones. "
+                "Click **Refresh Data** to recompute."
+            )
+        else:
+            snapshot_warning = (
+                "Data snapshot is out of date (calculation code changed, or a watchlist ticker has no row). "
+                "Showing last-known data — click **Refresh Data** to recompute."
+            )
     else:
         per_market = {}
         using_snapshot = True
@@ -4484,13 +4521,12 @@ if not using_snapshot:
     # Filter out pipeline/UI settings so changing a news model, sentiment
     # model, or note dropdown labels doesn't bust the cache and trigger a
     # live fetch when refresh_token > 0
-    _NON_CALC = ("news_", "expert_", "note_", "sentiment_")
-    calc_settings = {k: v for k, v in settings_now.items() if not k.startswith(_NON_CALC)}
-    
+    _calc_settings = calc_settings(settings_now)
+
     as_of, per_market = cached_fetch_all(
         st.session_state.refresh_nonce,
         json.dumps(watchlists_now, sort_keys=True),
-        json.dumps(calc_settings, sort_keys=True),
+        json.dumps(_calc_settings, sort_keys=True),
     )
 
 if snapshot_warning:
@@ -4518,7 +4554,8 @@ for _market_rows in per_market.values():
     # every run, same reasoning as custom columns above, so a note/flag you
     # just saved shows up immediately even when serving from this morning's
     # snapshot instead of waiting for the next refresh.
-    apply_notes_to_rows(_market_rows, ticker_notes_now, min_vstop_weeks=settings_now.get("tech_uptrend_min_vstop_weeks", 3))
+    apply_notes_to_rows(_market_rows, ticker_notes_now, min_vstop_weeks=settings_now.get("tech_uptrend_min_vstop_weeks", 3),
+                        expert_views=expert_views_now_global, fundamentals=fundamentals_now_global)
     # Interested / Sentiment / Expert Take / Expert News? -- re-applied live
     # every run (like notes above) from the files already loaded once here.
     # Resolved in this loop, before any tab or the sidebar renders, so they are
@@ -5903,11 +5940,30 @@ with tab_alerts:
             st.caption(f"Target: `{gh_repo}` @ `{gh_branch}`")
             st.caption(
                 "Pushes all configuration files (watchlists, filters, settings, alerts) "
-                "plus the current data snapshot as one combined commit -- important on "
-                "Streamlit Cloud, which auto-redeploys the instant any commit lands."
+                "as one combined commit -- important on Streamlit Cloud, which "
+                "auto-redeploys the instant any commit lands. The data snapshot is "
+                "included only when this app's copy is newer than GitHub's; AI "
+                "results are synced per ticker by the actions that change them."
             )
             if st.button("Push to GitHub", width="stretch"):
-                targets = [fname for fname, label in SYNCABLE_FILES]
+                # Workflow-generated files are NOT pushed wholesale from this
+                # container's disk. This button used to push all of
+                # SYNCABLE_FILES, and a legal fast-forward commit then replaced
+                # newer expert_views.json / fundamentals.json / data_snapshot.json
+                # that GitHub Actions had committed since the container last
+                # pulled (audit finding A03). The AI files are pushed per entry
+                # by sync_ai_views_to_github. The snapshot is still offered, because
+                # the Refresh Data warning tells you to retry a failed push here,
+                # but only if ours is actually newer.
+                targets = [fname for fname, label in SYNCABLE_FILES if fname not in WORKFLOW_GENERATED_FILES]
+                try:
+                    _local_stamp = (load_data_snapshot() or {}).get("generated_at")
+                    _remote_stamp = (read_remote_json(gh_token, gh_repo, gh_branch, "data_snapshot.json") or {}).get("generated_at")
+                    if _local_stamp and (not _remote_stamp
+                                         or datetime.fromisoformat(_local_stamp) > datetime.fromisoformat(_remote_stamp)):
+                        targets.append("data_snapshot.json")
+                except (TypeError, ValueError):
+                    pass
                 ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=targets)
                 (st.success if ok else st.error)(msg)
                 if ok:

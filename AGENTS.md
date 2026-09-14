@@ -76,6 +76,14 @@ The authoritative list is `SYNCABLE_FILES` in `github_sync.py`:
 `ticker_notes.json`, `expert_views.json`, `fundamentals.json`, `ticker_index.json`,
 `data_snapshot.json`, `watchlist_groups.json`.
 
+Three of those are also class 2 (`WORKFLOW_GENERATED_FILES`), and the app must never push
+them wholesale from its own disk. The container's copy can be older than a workflow
+commit, and a whole-file push reverts it. Instead:
+- The "Push to GitHub" button skips them. It includes `data_snapshot.json` only when the
+  local `generated_at` is newer than GitHub's.
+- Dashboard AI actions push only the tickers they changed, via
+  `push_json_entry_changes` (it reads the file from `main` and edits only those keys).
+
 **2. Generated data** — written and committed by workflows, not by hand:
 `data_snapshot.json` (prices + indicators), `expert_views.json`, `fundamentals.json`,
 `news_summary.json`, `market_breadth.json`, `dashboard_perf.json`.
@@ -286,6 +294,10 @@ Useful handles: `at.sidebar.selectbox(key=...)`, `at.button(key=...).click().run
 `at.multiselect(key=...).set_value([...]).run()`, and the rendered tables, which are HTML
 inside `at.markdown` blocks (search for `"<table"`) since the tables are built as raw HTML,
 not `st.dataframe`.
+
+Set **`SKIP_GITHUB_PULL=1`** in the environment for local and `AppTest` runs. Otherwise
+`pull_generated_files` downloads the generated JSON from GitHub into your working tree
+and it shows up in `git status`.
 
 Two things that will waste your time otherwise:
 

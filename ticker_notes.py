@@ -178,7 +178,7 @@ def compute_auto_flag(row, expert_verdict=None, sentiment=None):
     return "", ""
 
 
-def apply_notes_to_rows(rows, notes=None, min_vstop_weeks=3):
+def apply_notes_to_rows(rows, notes=None, min_vstop_weeks=3, expert_views=None, fundamentals=None):
     """Attaches `note`, `flag`, and `flag_reason` fields onto every row dict
     in place, from the shared ticker_notes.json (or an already-loaded `notes`
     dict, to avoid re-reading the file once per market).
@@ -209,8 +209,11 @@ def apply_notes_to_rows(rows, notes=None, min_vstop_weeks=3):
 
     from expert_views import load_expert_views
     from fundamentals_eval import load_fundamentals, _validate_sentiment
-    expert_views = load_expert_views()
-    fundamentals = load_fundamentals()
+    # Accepted pre-loaded for the same reason as `notes`: app.py calls this once
+    # per watchlist per render and already holds both files, so re-reading them
+    # here cost ~14 redundant parses of ~270 KB on every interaction.
+    expert_views = load_expert_views() if expert_views is None else expert_views
+    fundamentals = load_fundamentals() if fundamentals is None else fundamentals
 
     for row in rows:
         ticker = row.get("ticker")

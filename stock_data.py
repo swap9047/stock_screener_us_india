@@ -194,7 +194,7 @@ DEFAULT_SETTINGS = {
     # broad search found a known earnings announcement but no figures for it
     # (see fundamentals_eval.needs_targeted_retry). Set false to disable the
     # extra calls entirely. Prefixed "sentiment_" so it counts as a UI/pipeline
-    # setting and does not invalidate the snapshot cache -- see _NON_CALC.
+    # setting and does not invalidate the snapshot cache -- see calc_settings.
     "sentiment_targeted_retry": True,
 
     "note_dropdown_options": "",
@@ -2567,6 +2567,29 @@ def rebuild_snapshot_for_market(snap_per_market, market, tickers, fetch_new):
     return merged, to_fetch
 
 
+# Settings that change nothing about how a snapshot row is computed. Prefixes
+# cover the AI pipeline and note-dropdown settings; the exact keys are a
+# display toggle and two legacy benchmark settings that markets.json has
+# replaced (they are read only once, by the markets.json migration in
+# load_markets_registry). Flipping show_fundamental_columns used to invalidate
+# the snapshot and force a live Yahoo fetch for a column-visibility change.
+NON_CALC_SETTING_PREFIXES = ("news_", "expert_", "note_", "sentiment_")
+NON_CALC_SETTING_KEYS = {"show_fundamental_columns", "benchmark_us", "benchmark_india"}
+
+
+def calc_settings(settings):
+    """The subset of `settings` that affects computed row values."""
+    return {k: v for k, v in (settings or {}).items()
+            if not k.startswith(NON_CALC_SETTING_PREFIXES) and k not in NON_CALC_SETTING_KEYS}
+
+
+def calc_settings_diff(snapshot_settings, settings):
+    """{key: (snapshot value, current value)} for every calc setting that
+    differs -- what the out-of-date warning names."""
+    a, b = calc_settings(snapshot_settings), calc_settings(settings)
+    return {k: (a.get(k), b.get(k)) for k in sorted(set(a) | set(b)) if a.get(k) != b.get(k)}
+
+
 def snapshot_calc_matches(snapshot, settings):
     """True if the snapshot's rows were computed by this code with these
     calculation settings -- the half of snapshot_is_usable that is about HOW
@@ -2575,13 +2598,8 @@ def snapshot_calc_matches(snapshot, settings):
         return False
     if snapshot.get("code_version") != _code_fingerprint():
         return False
-    # Only compare calculation settings, ignoring pipeline/model choices and
-    # UI-only settings so changing a news model, sentiment model, or note
-    # dropdown labels doesn't invalidate the price snapshot!
-    _NON_CALC = ("news_", "expert_", "note_", "sentiment_")
-    snap_calc = {k: v for k, v in (snapshot.get("settings") or {}).items() if not k.startswith(_NON_CALC)}
-    curr_calc = {k: v for k, v in (settings or {}).items() if not k.startswith(_NON_CALC)}
-    return snap_calc == curr_calc
+    # Only calculation settings -- see NON_CALC_SETTING_PREFIXES/KEYS.
+    return calc_settings(snapshot.get("settings")) == calc_settings(settings)
 
 
 def snapshot_is_usable(snapshot, watchlists, settings):

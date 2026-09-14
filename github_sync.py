@@ -66,6 +66,12 @@ SYNCABLE_FILES = [
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
+# Written by workflows (or by a dashboard action that pushes them itself, with
+# their own freshness protection). The "Push to GitHub" button must never
+# push these wholesale from the container's disk -- see app.py's button and
+# push_json_entry_changes.
+WORKFLOW_GENERATED_FILES = {"data_snapshot.json", "expert_views.json", "fundamentals.json"}
+
 # Files the WORKFLOWS generate and the app only ever reads. These are the ones
 # safe to pull at runtime. User config (watchlist.json, settings.json, notes,
 # ...) is deliberately NOT here: it is edited in the UI and pushed from there,
@@ -340,6 +346,125 @@ def push_all_config(token, repo, branch="main", filenames=None, message=None):
         return False, f"Couldn't move branch ref ({move_resp.status_code}): {_short(move_resp)}"
 
     return True, f"Pushed {len(targets)} file(s) in one commit ({new_commit_sha[:7]}): {', '.join(targets)}."
+
+
+def read_remote_json(token, repo, branch, filename):
+    """The parsed JSON of `filename` at the tip of `branch`, or None if it is
+    missing, unreadable, or not JSON. Content is fetched by blob SHA (not the
+    raw CDN) for the same cache reason as pull_generated_files."""
+    if not repo:
+        return None
+    headers = _headers(token) if token else {"Accept": "application/vnd.github+json"}
+    try:
+        tree = requests.get(f"{GITHUB_API}/repos/{repo}/git/trees/{branch}", headers=headers, timeout=15)
+        if tree.status_code != 200:
+            return None
+        sha = {e.get("path"): e.get("sha") for e in (tree.json().get("tree") or [])}.get(filename)
+        if not sha:
+            return None
+        blob = requests.get(f"{GITHUB_API}/repos/{repo}/git/blobs/{sha}",
+                            headers={**headers, "Accept": "application/vnd.github.raw"}, timeout=30)
+        if blob.status_code != 200:
+            return None
+        return json.loads(blob.content.decode("utf-8"))
+    except (requests.RequestException, ValueError):
+        return None
+
+
+def push_json_entry_changes(token, repo, branch, changes, message, attempts=3):
+    """Commit per-KEY changes to keyed JSON files ({ticker: view} stores such
+    as expert_views.json / fundamentals.json) on top of what is on the branch
+    NOW, as one atomic commit. Returns (ok, detail, merged) where merged is
+    {filename: dict} -- the content that was committed, for the caller to
+    write back locally.
+
+    `changes` is {filename: {"set": {key: value}, "delete": [key, ...]}}.
+
+    WHY: the dashboard's AI actions (re-analyze a ticker, Retry Pending, the
+    stale-ticker cleanup) used to push the WHOLE local file with
+    push_all_config. The container's copy is only as fresh as its last
+    pull_generated_files (up to SYNC_MIN_INTERVAL_SECONDS old, and these files
+    carry no timestamp for that pull to compare), so re-analyzing one ticker
+    could revert every verdict the nightly workflow had committed since --
+    the same failure as audit finding A03 on the "Push to GitHub" button.
+    Reading the file from the branch tip and changing only the touched keys
+    means an unrelated ticker can never be reverted.
+
+    If a workflow commits between our read and our ref move, GitHub rejects
+    the non-fast-forward update; we re-read and re-apply, up to `attempts`."""
+    if not token or not repo:
+        return False, "GITHUB_TOKEN / GITHUB_REPO not configured (see Settings).", {}
+    headers = _headers(token)
+    base_url = f"{GITHUB_API}/repos/{repo}"
+    last_detail = "no attempt made"
+    for attempt in range(1, attempts + 1):
+        try:
+            ref_resp = requests.get(f"{base_url}/git/ref/heads/{branch}", headers=headers, timeout=15)
+            if ref_resp.status_code != 200:
+                return False, f"Couldn't read branch '{branch}' ({ref_resp.status_code}): {_short(ref_resp)}", {}
+            base_commit_sha = ref_resp.json()["object"]["sha"]
+            commit_resp = requests.get(f"{base_url}/git/commits/{base_commit_sha}", headers=headers, timeout=15)
+            if commit_resp.status_code != 200:
+                return False, f"Couldn't read base commit ({commit_resp.status_code}): {_short(commit_resp)}", {}
+            base_tree_sha = commit_resp.json()["tree"]["sha"]
+            tree_resp = requests.get(f"{base_url}/git/trees/{base_tree_sha}", headers=headers, timeout=15)
+            if tree_resp.status_code != 200:
+                return False, f"Couldn't read base tree ({tree_resp.status_code}): {_short(tree_resp)}", {}
+            blob_sha_by_path = {e.get("path"): e.get("sha") for e in (tree_resp.json().get("tree") or [])}
+
+            merged, tree_entries = {}, []
+            for filename, change in changes.items():
+                current = {}
+                if blob_sha_by_path.get(filename):
+                    blob = requests.get(
+                        f"{base_url}/git/blobs/{blob_sha_by_path[filename]}",
+                        headers={**headers, "Accept": "application/vnd.github.raw"}, timeout=30,
+                    )
+                    if blob.status_code != 200:
+                        return False, f"Couldn't read {filename} from {branch} ({blob.status_code})", {}
+                    # A body that isn't a JSON object must stop the push: merging
+                    # into {} would commit a file holding only our keys.
+                    current = json.loads(blob.content.decode("utf-8"))
+                    if not isinstance(current, dict):
+                        return False, f"{filename} on {branch} is not a JSON object -- not pushing", {}
+                for key, value in (change.get("set") or {}).items():
+                    current[key] = value
+                for key in change.get("delete") or []:
+                    current.pop(key, None)
+                merged[filename] = current
+                body = json.dumps(current, indent=2)   # same format as stock_data.atomic_write_json
+                blob_resp = requests.post(
+                    f"{base_url}/git/blobs", headers=headers,
+                    json={"content": base64.b64encode(body.encode("utf-8")).decode("ascii"), "encoding": "base64"},
+                    timeout=15,
+                )
+                if blob_resp.status_code != 201:
+                    return False, f"Couldn't create blob for {filename} ({blob_resp.status_code}): {_short(blob_resp)}", {}
+                tree_entries.append({"path": filename, "mode": "100644", "type": "blob",
+                                     "sha": blob_resp.json()["sha"]})
+
+            new_tree = requests.post(f"{base_url}/git/trees", headers=headers,
+                                     json={"base_tree": base_tree_sha, "tree": tree_entries}, timeout=15)
+            if new_tree.status_code != 201:
+                return False, f"Couldn't create tree ({new_tree.status_code}): {_short(new_tree)}", {}
+            new_commit = requests.post(f"{base_url}/git/commits", headers=headers,
+                                       json={"message": message, "tree": new_tree.json()["sha"],
+                                             "parents": [base_commit_sha]}, timeout=15)
+            if new_commit.status_code != 201:
+                return False, f"Couldn't create commit ({new_commit.status_code}): {_short(new_commit)}", {}
+            new_commit_sha = new_commit.json()["sha"]
+            move = requests.patch(f"{base_url}/git/refs/heads/{branch}", headers=headers,
+                                  json={"sha": new_commit_sha}, timeout=15)
+            if move.status_code == 200:
+                touched = sum(len((c.get("set") or {})) + len(c.get("delete") or []) for c in changes.values())
+                return True, (f"Pushed {touched} entr{'y' if touched == 1 else 'ies'} in "
+                              f"{', '.join(changes)} ({new_commit_sha[:7]})."), merged
+            last_detail = f"branch moved during push ({move.status_code}): {_short(move)}"
+        except (requests.RequestException, ValueError) as e:
+            last_detail = f"{type(e).__name__}: {e}"
+        if attempt < attempts:
+            time.sleep(1.5 * attempt)
+    return False, f"Push failed after {attempts} attempts -- {last_detail}", {}
 
 
 def _short(resp):
