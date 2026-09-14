@@ -140,29 +140,26 @@ def describe_schedule(rule):
     return f"🔔 {days_str} @ {time_et} ET"
 
 
-DUE_TOLERANCE_HOURS = 22
-# GitHub Actions' scheduler is documented as best-effort: a cron trigger can
-# be delayed well past its nominal time, especially during high load (we
-# saw this directly -- both of the day's cron runs landed as gate-only
-# "not due" on 2026-07-23 even though one of them nominally corresponds to
-# exactly 22:00 ET). An exact-hour match has zero tolerance for that delay,
-# so a late-running trigger silently misses its whole day. Widening the
-# match to a +/-1 hour window absorbs realistic scheduler delay (up to
-# ~60 min) without any real downside: the workflow only ever wakes up
-# around this one daily window, and alerts are edge-triggered (see
-# evaluate_and_fire), so if both of the day's cron lines happen to land
-# inside the window, the second run just finds nothing new to fire.
+# There is deliberately NO hour-of-day window in is_rule_due. There used to be
+# one, `hour_diff <= DUE_TOLERANCE_HOURS` with DUE_TOLERANCE_HOURS = 22, billed
+# as a +/-1h tolerance for scheduler delay -- but hour_diff is a distance on a
+# 24h circle, so it maxes out at 12 and the test was always true. It gated
+# nothing (a Monday 21:00 rule was "due" at 09:00, 13:00 and 21:00). Removed
+# rather than repaired, as in the three AI workflows' gates: GitHub starts these
+# runs hours late (~01:45-02:15 ET in Sept 2026 for a 21:15 cron), so a real
+# window would drop whole days. What does the gating: the day-of-week check
+# (with the past-midnight / Saturday rollback) and, for scheduled runs, the
+# DST cron-pair match.
 
 
 def is_rule_due(rule, et_now=None, cron_schedule=None):
     """Is this rule due to be checked right now? Compares the rule's
     schedule against `et_now` (a tz-aware America/New_York datetime;
-    defaults to the current time). Matches on day-of-week, then hour within
-    DUE_TOLERANCE_HOURS of the scheduled hour -- the workflow YAML owns
-    which hour(s) actually wake up, and ALLOWED_HOURS keeps the app's
-    schedule picker aligned with those cron triggers, but a scheduler delay
-    of up to DUE_TOLERANCE_HOURS still counts as on-time rather than being
-    silently missed. Rejects cron schedules that belong to the off-season."""
+    defaults to the current time). Matches on day-of-week (an evening rule
+    that lands after midnight or on Saturday counts for the previous day), and
+    rejects a cron line that belongs to the other DST season. No hour-of-day
+    window -- see the note above. The workflow YAML owns which hour(s) wake up;
+    ALLOWED_HOURS keeps the app's schedule picker aligned with them."""
     sched = rule.get("schedule", {})
     if sched.get("type") == "none":
         return False
@@ -212,8 +209,7 @@ def is_rule_due(rule, et_now=None, cron_schedule=None):
         except Exception:
             pass
 
-    hour_diff = min((et_now.hour - rule_hour) % 24, (rule_hour - et_now.hour) % 24)
-    return hour_diff <= DUE_TOLERANCE_HOURS
+    return True
 
 
 

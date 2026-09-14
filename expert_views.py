@@ -148,6 +148,19 @@ def _is_valid_view(view):
     return True
 
 
+# Sentinels the Expert Take search stage writes when it found nothing. An empty
+# news_used means the same thing. Shared so the dashboard's enrichment, its cell
+# tooltip and the headless alert rows agree on "no news behind this verdict".
+EXPERT_NO_NEWS_MARKERS = ("no recent news found", "no news found", "no material news found", "nothing")
+
+
+def expert_view_has_news(view):
+    text = str((view or {}).get("news_used") or "").strip().lower().rstrip(".")
+    if not text:
+        return False
+    return not any(text.startswith(m) for m in EXPERT_NO_NEWS_MARKERS)
+
+
 def is_pending_view(view):
     """True if a record EXISTS but is a failure/pending placeholder rather than
     a real analysis.

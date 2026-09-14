@@ -2257,7 +2257,55 @@ def fetch_all_markets(watchlists=None, period="5y", settings=None, completed_ses
     from ticker_notes import apply_notes_to_rows
     apply_notes_to_rows(combined, min_vstop_weeks=settings.get("tech_uptrend_min_vstop_weeks", 3))
 
+    # And the AI/interested fields, for the same reason: without them an alert
+    # on Sentiment / Interested / Expert News? could never fire headless.
+    apply_view_fields_to_rows(combined)
+
     return combined, as_of, per_market
+
+
+def apply_view_fields_to_rows(rows, fundamentals=None, expert_views=None, interested=None):
+    """Attach `interested`, `sentiment`, `expert_take` and `expert_news_backed`
+    to every row, in place -- the fields that come from interested.json and the
+    two AI result files rather than from prices.
+
+    ONE implementation for every consumer. These used to be attached only in
+    app.py's enrichment loop, so the dashboard's rows had them and
+    fetch_all_markets' rows -- what alert_check.py and weekly_wrapup_check.py
+    evaluate -- did not. passes_filter fails a condition on a missing metric,
+    so an alert on Sentiment, Interested or Expert News? matched in the app's
+    preview and could never fire in Discord. (expert_take limped along on a
+    per-row fallback in filters._get_metric_val that re-read expert_views.json
+    for every row and skipped the pending/staleness guards below.)
+
+    The loaded dicts are optional so a caller that already has them (the app,
+    once per run) doesn't re-parse the files per call.
+
+    Semantics, unchanged from the app loop they came from:
+      - sentiment is the GUARDED value (_validate_sentiment), not the raw one;
+      - expert_take checks is_pending_view first -- a failed-generation
+        placeholder stores verdict "HOLD", and keying off the verdict alone
+        made a broken analysis filterable as a genuine Hold -- then the guarded
+        validate_verdict, which demotes an unsupported ACCUMULATE and ages out a
+        stale view;
+      - expert_news_backed is "Yes"/"No" from expert_view_has_news."""
+    from expert_views import load_expert_views, is_pending_view, validate_verdict, expert_view_has_news
+    from fundamentals_eval import load_fundamentals, _validate_sentiment
+    fundamentals = load_fundamentals() if fundamentals is None else fundamentals
+    expert_views = load_expert_views() if expert_views is None else expert_views
+    interested = load_interested() if interested is None else interested
+    for row in rows:
+        ticker = row.get("ticker")
+        row["interested"] = ticker in interested
+        row["sentiment"] = _validate_sentiment(fundamentals.get(ticker, {}))[0]
+        view = expert_views.get(ticker, {})
+        if is_pending_view(view):
+            row["expert_take"] = "Pending"
+        else:
+            verdict, _flag = validate_verdict(view, row)
+            row["expert_take"] = verdict.title() if verdict in ("ACCUMULATE", "HOLD", "CAUTION") else "Pending"
+        row["expert_news_backed"] = "Yes" if expert_view_has_news(view) else "No"
+    return rows
 
 
 def _json_default(o):

@@ -61,6 +61,7 @@ from stock_data import (
     load_markets_registry, load_data_snapshot, snapshot_is_usable, save_data_snapshot,
     rebuild_snapshot_for_market, fill_snapshot_gaps, reject_stale_rows,
     load_watchlist_groups, save_watchlist_groups, MIN_DAILY_BARS, snapshot_calc_matches,
+    apply_view_fields_to_rows,
 )
 import llm_util
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE,
@@ -89,7 +90,8 @@ from news_summary import (load_news_summary, MARKET_LABELS, get_gemini_api_key,
 from expert_views import (load_expert_views, save_expert_views, analyze_single_ticker,
                           generate_expert_view, _is_valid_view, is_pending_view,
                           VERDICT_RULES, VERDICT_GUARD_RULES,
-                          validate_verdict, verdict_flag_note)
+                          validate_verdict, verdict_flag_note,
+                          expert_view_has_news as _expert_view_has_news)
 from fundamentals_eval import (
     load_fundamentals, _validate_sentiment, SENTIMENT_STALE_DAYS,
     analyze_single_ticker_sentiment, _is_valid_view as _is_valid_sentiment_view,
@@ -699,19 +701,6 @@ def tech_uptrend_tooltip(row, settings, labels):
         f"→ {'Yes' if row.get('tech_uptrend') else 'No'}",
     ]
     return "\n".join(lines)
-
-
-# Sentinels the Expert Take search stage writes when it found nothing. An empty
-# news_used means the same thing. Kept as a helper so the enrichment loop and
-# the cell tooltip agree on what "no news behind this verdict" means.
-_EXPERT_NO_NEWS = ("no recent news found", "no news found", "no material news found", "nothing")
-
-
-def _expert_view_has_news(view):
-    text = str((view or {}).get("news_used") or "").strip().lower().rstrip(".")
-    if not text:
-        return False
-    return not any(text.startswith(m) for m in _EXPERT_NO_NEWS)
 
 
 # Expert Take dropdown label -> the value row["expert_take"] carries. "Any" maps
@@ -1978,7 +1967,9 @@ def render_condition_builder(key_prefix, metric_names, filterable_metrics, logic
         _explain(filterable_metrics[metric_b_label], container=c3)
         mc1, mc2, mc3 = st.columns([1, 1, 1])
         multiplier = mc1.number_input(
-            "× Multiplier (optional)", value=float(initial.get("multiplier") or 1.0),
+            "× Multiplier (optional)",
+            # `is None`, not `or`: editing a saved 0 multiplier must show 0, not 1.
+            value=1.0 if initial.get("multiplier") is None else float(initial["multiplier"]),
             step=0.1, format="%.2f", key=f"{key_prefix}_mult",
             help="e.g. set to 1.4 for 'Vol 10D Avg >= 1.4 × Vol 100D Avg'.",
         )
@@ -3738,9 +3729,19 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         below = row["last_close"] < val
         return below if mode == "Below" else not below
 
-    def in_range(val, lo, hi):
-        if val is None:
+    def in_range(val, lo, hi, full):
+        # A slider left at its full range is no filter at all -- keep every row,
+        # including ones with no value (new listings lack RSI-M/RS-M) and ones
+        # outside the slider's span. Once narrowed, a missing value FAILS, the
+        # same convention as passes_ema above and filters.passes_filter. This
+        # used to return True for None unconditionally, so narrowing RSI-D to
+        # 60-80 kept tickers with no RSI while "Above 40 WEMA" dropped tickers
+        # with no WEMA; and a default -150..150 RS slider silently dropped any
+        # ticker with RS outside that span.
+        if (lo, hi) == full:
             return True
+        if val is None:
+            return False
         return lo <= val <= hi
 
     filtered = []
@@ -3757,17 +3758,17 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             continue
         if not passes_ema(row, "ema200", f_ema200):
             continue
-        if not in_range(row["rsi14_daily"], *f_rsi_d):
+        if not in_range(row["rsi14_daily"], *f_rsi_d, (0, 100)):
             continue
-        if not in_range(row["rsi14_weekly"], *f_rsi_w):
+        if not in_range(row["rsi14_weekly"], *f_rsi_w, (0, 100)):
             continue
-        if not in_range(row["rsi14_monthly"], *f_rsi_m):
+        if not in_range(row["rsi14_monthly"], *f_rsi_m, (0, 100)):
             continue
-        if not in_range(row["rs_daily"], *f_rs_d):
+        if not in_range(row["rs_daily"], *f_rs_d, (-150, 150)):
             continue
-        if not in_range(row["rs_weekly"], *f_rs_w):
+        if not in_range(row["rs_weekly"], *f_rs_w, (-150, 150)):
             continue
-        if not in_range(row["rs_monthly"], *f_rs_m):
+        if not in_range(row["rs_monthly"], *f_rs_m, (-150, 150)):
             continue
         if search and search not in row["ticker"]:
             continue
@@ -4518,46 +4519,13 @@ for _market_rows in per_market.values():
     # just saved shows up immediately even when serving from this morning's
     # snapshot instead of waiting for the next refresh.
     apply_notes_to_rows(_market_rows, ticker_notes_now, min_vstop_weeks=settings_now.get("tech_uptrend_min_vstop_weeks", 3))
-    # Interested status lives in interested.json (ticked in the watchlist
-    # editor), not the technical snapshot -- attach it here, same reasoning as
-    # notes/flags above, so it's sortable and exportable like any other column.
-    #
-    # Sentiment likewise comes from fundamentals.json rather than the snapshot.
-    # It used to be resolved only at table-render time, i.e. AFTER filtering
-    # and sorting had already run, which is why it could be displayed but
-    # never filtered, alerted or sorted on. Resolving it here -- once per row,
-    # before any tab renders -- is what makes it a first-class metric, and it
-    # covers the combined tabs too since they reuse these same row dicts.
-    # expert_take moved up here from render_market_tab's filter loop for two
-    # reasons: it has to exist BEFORE the sidebar renders for the sort control
-    # to type it as text rather than numeric, and the old site called the
-    # uncached load_expert_views() once PER ROW -- re-reading and re-parsing
-    # the whole file ~760 times a render across every row of every tab.
-    for _row in _market_rows:
-        _row["interested"] = _row["ticker"] in interested_now
-        _row["sentiment"] = _validate_sentiment(fundamentals_now_global.get(_row["ticker"], {}))[0]
-        _view = expert_views_now_global.get(_row["ticker"], {})
-        # Guarded verdict, not the raw model one -- validate_verdict demotes an
-        # ACCUMULATE whose trend/VStop/RS preconditions aren't actually met and
-        # ages out a view the pipeline has stopped refreshing, the same way
-        # _validate_sentiment guards the Sentiment column.
-        #
-        # is_pending_view comes first for the same reason it does in the badge:
-        # a failed-generation placeholder stores verdict "HOLD", so keying off
-        # the verdict alone made a broken analysis filterable and sortable as a
-        # genuine Hold.
-        if is_pending_view(_view):
-            _row["expert_take"] = "Pending"
-        else:
-            _verdict, _vflag = validate_verdict(_view, _row)
-            _row["expert_take"] = _verdict.title() if _verdict in ("ACCUMULATE", "HOLD", "CAUTION") else "Pending"
-        # Whether the verdict had any news behind it. 30% of stored verdicts
-        # rest on "No recent news found." -- which is a legitimate
-        # technicals-only read (VERDICT_RULES says absent news leans HOLD, and
-        # the data bears that out), but nothing in the UI distinguished the two.
-        # Attached HERE, in the enrichment loop, rather than in the render path,
-        # so it is filterable and sortable -- see AGENTS.md's row-dict contract.
-        _row["expert_news_backed"] = "Yes" if _expert_view_has_news(_view) else "No"
+    # Interested / Sentiment / Expert Take / Expert News? -- re-applied live
+    # every run (like notes above) from the files already loaded once here.
+    # Resolved in this loop, before any tab or the sidebar renders, so they are
+    # filterable and sortable (AGENTS.md's row-dict contract), and via the SAME
+    # function fetch_all_markets uses, so the nightly alert job evaluates them
+    # identically -- see stock_data.apply_view_fields_to_rows.
+    apply_view_fields_to_rows(_market_rows, fundamentals_now_global, expert_views_now_global, interested_now)
 
 # Read from the snapshot already parsed above when there is one; the served
 # and live-fetch paths fall back to the file. Only used for the per-tab

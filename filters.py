@@ -229,8 +229,11 @@ def _resolve_metric_b(row, filt):
             b = int(b)
         if not isinstance(b, (int, float)):
             return None
-        multiplier = filt.get("multiplier", 1) or 1
-        offset = filt.get("offset", 0) or 0
+        # `is None`, not `or 1`: a multiplier of 0 is a real value, and `0 or 1`
+        # silently turned "Vol 10D > 0 x Vol 100D" into "Vol 10D > Vol 100D".
+        multiplier = filt.get("multiplier")
+        multiplier = 1 if multiplier is None else multiplier
+        offset = filt.get("offset") or 0
         return b * multiplier + offset
     if filt.get("operator") == "in":
         return filt.get("value")
@@ -238,18 +241,13 @@ def _resolve_metric_b(row, filt):
 
 
 def _get_metric_val(row, metric_key):
-    val = row.get(metric_key)
-    if val is None and metric_key == "expert_take":
-        try:
-            from expert_views import load_expert_views
-            ev = load_expert_views().get(row.get("ticker", ""), {})
-            verdict = ev.get("verdict", "").title()
-            if not verdict or verdict in ("Pending", "Failed"):
-                verdict = "Pending"
-            return verdict
-        except Exception:
-            return "Pending"
-    return val
+    # There used to be a per-row fallback here for a missing expert_take that
+    # re-read expert_views.json for every row (inside compute_rule_truth's
+    # fixed-point loop) and returned the raw verdict title-cased -- so a
+    # failed-generation placeholder counted as "Hold" headless while the app
+    # said "Pending". Every row source now carries the guarded value
+    # (stock_data.apply_view_fields_to_rows), so a missing one is just missing.
+    return row.get(metric_key)
 
 
 def passes_filter(row, filt):
@@ -345,7 +343,8 @@ def _metric_b_expr(filt, metric_labels):
     if filt["compare_type"] != "metric":
         return str(filt["value"])
     label_b = metric_labels.get(filt["metric_b"], filt["metric_b"])
-    multiplier = filt.get("multiplier", 1) or 1
+    multiplier = filt.get("multiplier")
+    multiplier = 1 if multiplier is None else multiplier
     offset = filt.get("offset", 0) or 0
     expr = label_b
     if multiplier != 1:
