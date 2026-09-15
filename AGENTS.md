@@ -66,10 +66,21 @@ not a fourth copy.
 
 ## JSON files are the database
 
-There is no DB. Everything is JSON in the repo root, in **three classes that must not be
-conflated**:
+There is no DB. Everything is JSON, and **none of it is committed to this repo**. This code
+repo is public (free Actions minutes), so the data lives in the private repo
+`github_sync.DATA_REPO_DEFAULT`. The code repo ignores root `*.json`.
+- At runtime the files still sit in the app folder, so every `*_FILE` path is unchanged.
+- The app downloads missing files at startup with `bootstrap_data_files`, and reads and
+  writes through `get_data_repo_config` (`DATA_REPO_TOKEN`). `get_github_config`
+  (`GITHUB_TOKEN`) is only for dispatching workflows. Never use it for data: that would
+  push holdings back into the public repo.
+- Workflows use `.github/actions/load-data` (checks the data repo out into `data/` and
+  copies its JSON in) and `.github/actions/commit-data` (copies named outputs back and
+  pushes them).
 
-**1. User config** — edited in the UI, pushed to GitHub by `github_sync.push_all_config`.
+The files fall into **three classes that must not be conflated**:
+
+**1. User config** — edited in the UI, pushed to the data repo by `github_sync.push_all_config`.
 The authoritative list is `SYNCABLE_FILES` in `github_sync.py`:
 `watchlist.json`, `markets.json`, `interested.json`, `custom_filters.json`,
 `settings.json`, `alerts_config.json`, `column_prefs.json`, `custom_columns.json`,
@@ -84,7 +95,7 @@ commit, and a whole-file push reverts it. Instead:
 - Dashboard AI actions push only the tickers they changed, via
   `push_json_entry_changes` (it reads the file from `main` and edits only those keys).
 
-**2. Generated data** — written and committed by workflows, not by hand:
+**2. Generated data** — written by workflows and committed to the data repo, not by hand:
 `data_snapshot.json` (prices + indicators), `expert_views.json`, `fundamentals.json`,
 `news_summary.json`, `market_breadth.json`, `dashboard_perf.json`, and the two alert state
 files `alert_state.json` (daily edge-trigger dedup) and `weekly_wrapup_state.json`. Both
@@ -94,9 +105,10 @@ currently-true alert at once. `alert_check.py` now seeds a missing file without 
 **3. Local only** — gitignored, never pushed: `auth_config.json`, `discord_config.json`.
 
 Why it's built this way: on Streamlit Community Cloud the filesystem is ephemeral, so a
-config edited in the UI only survives if it's committed back to the repo. Hence
-`push_all_config`, which writes **one atomic commit** — several sequential commits would
-race the auto-redeploy that any commit triggers.
+config edited in the UI only survives if it's committed to the data repo. Hence
+`push_all_config`, which writes **one atomic commit**. That used to be about racing the
+auto-redeploy a code-repo commit triggers; data commits no longer redeploy anything, but a
+multi-file change still must not be half-applied.
 
 ---
 
@@ -209,6 +221,17 @@ the same thing on every column — preserve that when adding one.
 
 Each of these has actually bitten this codebase.
 
+- **Nothing in `app.py` may load a data file before the `bootstrap_data_files` block.**
+  The loaders create an empty default for a missing file. On a fresh container, the next
+  save would then push those blanks over the real data. The block stops the app instead.
+- **This repo and its Actions logs are public.**
+  - A new workflow step that runs Python must use `shell: bash` and pipe through
+    `2>&1 | python -u log_redact.py`, which masks tickers, company names and watchlist
+    names.
+  - A script that lists members of a *public* index prints counts, not symbols. Masking
+    only the held symbols among them would reveal which are held.
+  - Don't put real tickers in comments, docs or commit messages; use neutral examples.
+
 - **Streamlit strips `<style>` and `<script>` from markdown**, even with
   `unsafe_allow_html=True`. Inline `style="..."` *attributes* survive. That's why all
   sticky-table CSS is regex-injected onto each tag in `sticky_header_html` (`app.py`).
@@ -237,7 +260,7 @@ Each of these has actually bitten this codebase.
 
 ## GitHub Actions
 
-| Workflow | Runs | Commits | Schedule (UTC) |
+| Workflow | Runs | Commits (to the data repo) | Schedule (UTC) |
 |---|---|---|---|
 | `data-refresh.yml` | `refresh_data.py` | `data_snapshot.json` | hourly, every hour, around the clock |
 | `expert-views.yml` | `refresh_data.py`, `refresh_expert_views.py` | `data_snapshot.json`, `expert_views.json` | 03:00 / 04:00 (11 PM ET) |
@@ -297,9 +320,9 @@ Useful handles: `at.sidebar.selectbox(key=...)`, `at.button(key=...).click().run
 inside `at.markdown` blocks (search for `"<table"`) since the tables are built as raw HTML,
 not `st.dataframe`.
 
-Set **`SKIP_GITHUB_PULL=1`** in the environment for local and `AppTest` runs. Otherwise
-`pull_generated_files` downloads the generated JSON from GitHub into your working tree
-and it shows up in `git status`.
+Set **`SKIP_GITHUB_PULL=1`** in the environment for local and `AppTest` runs. It skips
+both the startup download and `pull_generated_files`, so the run uses the JSON already in
+your folder and doesn't overwrite it with the data repo's copies.
 
 Two things that will waste your time otherwise:
 

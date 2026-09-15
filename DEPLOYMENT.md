@@ -15,7 +15,18 @@ This turns your local app into a URL you can open from your phone or any browser
    git remote add origin https://github.com/<you>/<repo-name>.git
    git push -u origin main
    ```
-   `.gitignore` already excludes `discord_config.json` and `auth_config.json` — your secrets never get committed. (`alert_state.json` IS committed by the daily alert workflow; it only records which rule/ticker pairs are currently active.)
+   `.gitignore` excludes every root `*.json` — your secrets (`discord_config.json`, `auth_config.json`) and all data files. The data lives in a separate private repo (next step).
+
+## 1b. Create the private data repo
+
+The code repo can stay **public** (free, unlimited GitHub Actions minutes — the AI workflows use far more than a private repo's 2,000 free minutes a month), because no data is ever committed to it. Watchlists, notes, alert rules, settings, snapshots, AI results and alert state all live in a **private** repo instead:
+
+1. Create an empty private repo, e.g. `<you>/stock_screener_data`, and push this folder's root `*.json` files to it (except `auth_config.json` / `discord_config.json`).
+2. Set `DATA_REPO_DEFAULT` in `github_sync.py` and the `repository` default in `.github/actions/load-data/action.yml` to that repo (or set a `DATA_REPO` secret/env var).
+3. **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**, scoped to **only the data repo**, with **Contents: Read and write**.
+4. Add it as `DATA_REPO_TOKEN` in two places: the Streamlit Cloud secrets (step 5) and this code repo's Actions secrets (repo → Settings → Secrets and variables → Actions).
+
+On start, the app downloads any data file it doesn't have from the data repo, and shows an error instead of running if it can't (so it never creates empty files that a later save would push over your data). Workflows check the data repo out into `data/`, run, and commit their output there. Their logs — public, like the repo — pass through `log_redact.py`, which masks tickers, company names and watchlist names.
 
 ## 2. Deploy on Streamlit Community Cloud
 
@@ -66,7 +77,7 @@ The app's Alert Rules tab lets you choose which **days** a scheduled rule should
 1. Add the additional UTC cron trigger(s) in `.github/workflows/daily-alerts.yml`.
 2. Add the corresponding ET hour(s) to `ALLOWED_HOURS` / `HOUR_LABELS` in `alerts.py`.
 
-On each scheduled wakeup, a cheap "gate" job installs only `requests` and asks `alerts.is_rule_due()` whether any enabled rule is due at that ET day/hour. The full check job installs all app dependencies, fetches live prices, and runs `alert_check.py` only when the gate says something is due. `alert_state.json` tracks which rule/ticker pairs were already active so you don't get duplicate pings every day a condition remains true; the workflow commits it back to the repo after each run (it used to live in `actions/cache`, where an eviction reset it and re-fired everything). If the file is ever missing, `alert_check.py` records the current state and sends nothing that run instead of flooding Discord.
+On each scheduled wakeup, a cheap "gate" job installs only `requests` and asks `alerts.is_rule_due()` whether any enabled rule is due at that ET day/hour. The full check job installs all app dependencies, fetches live prices, and runs `alert_check.py` only when the gate says something is due. `alert_state.json` tracks which rule/ticker pairs were already active so you don't get duplicate pings every day a condition remains true; the workflow commits it to the private data repo after each run (it used to live in `actions/cache`, where an eviction reset it and re-fired everything). If the file is ever missing, `alert_check.py` records the current state and sends nothing that run instead of flooding Discord.
 
 `load_discord_webhook()` checks the `DISCORD_WEBHOOK_URL` environment variable first (falling back to `discord_config.json` for local runs), so you just need `DISCORD_WEBHOOK_URL` as a **repo secret** (repo → Settings → Secrets and variables → Actions → New repository secret) — separate from the Streamlit Cloud secret above, GitHub Actions doesn't share those.
 
@@ -89,14 +100,14 @@ Get a free key at [Google AI Studio](https://aistudio.google.com/apikey). The wo
 A few things worth knowing:
 
 - **Free-tier quotas are account-specific.** Check your own limits at AI Studio's Rate Limit dashboard before changing the model or batch size — this project's `gemini-2.5-flash` + 13-tickers-per-batch choice was tuned to fit comfortably under a 20-requests/day cap that's tighter than Google's generic published numbers, and the entire Gemini 3.x model family (3, 3.1, 3.5, 3.6, Lite or not) had **zero** free Search-grounding quota on the account this was built against.
-- **This workflow commits `news_summary.json` directly to the repo itself** (it needs `contents: write` permission, already set) — unlike the other config files, this one is machine-generated, not edited through the app UI, so there's nothing to push from the app's GitHub sync button for this file.
+- **This workflow commits `news_summary.json` to the private data repo itself** (via `DATA_REPO_TOKEN`) — unlike the other config files, this one is machine-generated, not edited through the app UI, so there's nothing to push from the app's GitHub sync button for this file.
 - If the Gemini API call fails for a given day (rate limit, outage, etc.), that day's digest is simply skipped — no Discord message, no `news_summary.json` update, and the app's News tab keeps showing the last successful run until the next one succeeds.
 
 ## 8. Data refresh (faster page loads)
 
 A third GitHub Actions workflow, `.github/workflows/data-refresh.yml`, fetches all watchlist tickers via yfinance and saves the result to `data_snapshot.json`. It runs **hourly, every hour, around the clock** — not just during US market hours, since India trades roughly 23:45-06:00 ET and a daytime-only window would sample that session exactly never. It's a single cron with no EDT/EST pair or gate job needed (an hourly cron fires correctly in both seasons), and idle hours cost nothing extra: the commit step no-ops when the snapshot is byte-identical to the last run. The app loads this snapshot on open instead of hitting yfinance live every session — much faster, and avoids every visitor re-fetching identical data.
 
-No new secret needed — it only needs `contents: write` (already set) to commit `data_snapshot.json` back to the repo.
+No new secret needed beyond `DATA_REPO_TOKEN` — it commits `data_snapshot.json` to the private data repo.
 
 A few things worth knowing:
 
@@ -106,28 +117,19 @@ A few things worth knowing:
 
 ## 9. Push config changes made through the deployed app back to GitHub
 
-Here's a gap worth knowing about: if you edit alert rules, the watchlist, custom filters, or Settings through the **deployed** app's UI, that write only lands on that Streamlit Cloud instance's local disk. It does **not** reach your GitHub repo — so the GitHub Actions workflow above (which always checks out the repo's committed version of `alerts_config.json`) won't see those edits, and a redeploy wipes them.
+If you edit alert rules, the watchlist, custom filters, or Settings through the **deployed** app's UI, that write first lands on that Streamlit Cloud instance's local disk, which a restart wipes and the GitHub Actions workflows never see. So the app commits those edits to the **private data repo** via GitHub's REST API (no git/SSH needed — just HTTPS with `requests`): saving a watchlist, adding or renaming one, and the AI re-analyze buttons push automatically, and the Alert Rules tab's **☁️ Push config to GitHub** section pushes the rest (rules, filters, settings, column prefs, notes).
 
-The Alert Rules tab's **☁️ Push config to GitHub** section closes this gap: it commits the selected app-managed config files straight to your repo via GitHub's REST API (no git/SSH needed — just an HTTPS call using `requests`, which is already a dependency). The pushable files are:
+This uses the same `DATA_REPO_TOKEN` as step 1b — nothing else to set up. Each push is **one combined commit**, so a multi-file change (watchlist + interested + snapshot) is never half-applied.
 
-- `watchlist.json`
-- `custom_filters.json`
-- `settings.json`
-- `alerts_config.json`
-- `column_prefs.json`
+The **Re-analyze All** and **Refresh news** buttons start GitHub Actions runs instead, which needs a second token on the *code* repo:
 
-To enable it:
-
-1. On GitHub: **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**. Scope it to just this repo, with **Contents: Read and write** permission (nothing else needed).
-2. Add to your Streamlit Cloud secrets (same panel as step 5):
+1. Fine-grained token scoped to this code repo, with **Actions: Read and write**.
+2. Add to your Streamlit Cloud secrets:
    ```toml
    GITHUB_TOKEN = "github_pat_xxxxx"
-   GITHUB_REPO = "your-username/your-repo-name"
+   GITHUB_REPO = "your-username/your-code-repo"
    GITHUB_BRANCH = "main"
    ```
-3. Reload the app — the Alert Rules tab's GitHub push section will show which files it can push instead of the setup instructions.
-
-Each push creates **one combined commit** containing all selected files. That matters on Streamlit Cloud because any commit can trigger a redeploy; bundling the files together avoids a partial update where the app restarts after the first file lands but before the rest are pushed.
 
 ## Summary of what's free vs. what needs setup
 
@@ -137,6 +139,7 @@ Each push creates **one combined commit** containing all selected files. That ma
 | Login gate | Built in, just needs `AUTH_USERNAME`/`AUTH_PASSWORD` secrets set |
 | Discord alerts (manual "Send test message") | Works once webhook secret is set |
 | Discord alerts (automatic, per-rule schedule) | Needs `DISCORD_WEBHOOK_URL` repo secret — GitHub Actions workflow is already committed |
-| Push config edits (made on the deployed app) back to GitHub | Needs `GITHUB_TOKEN`/`GITHUB_REPO` secrets — sidebar button already built |
+| Data storage + push config edits (made on the deployed app) | Needs a private data repo and `DATA_REPO_TOKEN` (Streamlit + Actions secrets) |
+| Re-analyze / Refresh news buttons | Needs `GITHUB_TOKEN`/`GITHUB_REPO` secrets (Actions permission on the code repo) |
 | Daily news digest (News tab + Discord, 7 AM ET) | Needs `GEMINI_API_KEY` repo secret (free at aistudio.google.com) — GitHub Actions workflow is already committed |
 | Daily data refresh (faster page loads, 7 AM ET) | No new secret needed — GitHub Actions workflow is already committed |

@@ -25,3 +25,11 @@ docs/CODEBASE_REVIEW_*.md
 
 # Re-runnable verification scripts that accompany the local-only reviews.
 docs/review-checks-*/
+
+# Data lives in the private data repo, never in this public code repo. Root
+# only: .devcontainer/devcontainer.json and .claude/settings.json are code.
+/*.json
+# Workflows check the data repo out here (.github/actions/load-data).
+data/
+# Local-only design notes about what this public repo exposed.
+docs/private/
