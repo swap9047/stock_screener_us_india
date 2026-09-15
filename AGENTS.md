@@ -70,6 +70,10 @@ There is no DB. Everything is JSON, and **none of it is committed to this repo**
 repo is public (free Actions minutes), so the data lives in the private repo
 `github_sync.DATA_REPO_DEFAULT`. The code repo ignores root `*.json`.
 - At runtime the files still sit in the app folder, so every `*_FILE` path is unchanged.
+- A running app re-pulls data files every 5 minutes (`pull_generated_files`). Generated
+  files never go backwards in time. User config is only overwritten while the local copy
+  is still byte-identical to the last pull or push. Data commits don't redeploy the app,
+  so without this a running container would keep stale config and push it back.
 - The app downloads missing files at startup with `bootstrap_data_files`, and reads and
   writes through `get_data_repo_config` (`DATA_REPO_TOKEN`). `get_github_config`
   (`GITHUB_TOKEN`) is only for dispatching workflows. Never use it for data: that would

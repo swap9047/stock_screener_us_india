@@ -44,6 +44,7 @@ One-time setup (GitHub -> Settings -> Developer settings -> Fine-grained tokens)
 """
 
 import base64
+import hashlib
 import json
 import os
 import time
@@ -85,10 +86,8 @@ DATA_REPO_DEFAULT = "swap9047/stock_screener_data"
 # push_json_entry_changes.
 WORKFLOW_GENERATED_FILES = {"data_snapshot.json", "expert_views.json", "fundamentals.json"}
 
-# Files the WORKFLOWS generate and the app only ever reads. These are the ones
-# safe to pull at runtime. User config (watchlist.json, settings.json, notes,
-# ...) is deliberately NOT here: it is edited in the UI and pushed from there,
-# so pulling it could overwrite an edit the user is in the middle of making.
+# Files the WORKFLOWS generate. Pulled at runtime with the "never go backwards"
+# timestamp guard, since the app also writes some of them itself.
 PULLABLE_FILES = [
     "data_snapshot.json",
     "expert_views.json",
@@ -96,12 +95,32 @@ PULLABLE_FILES = [
     "news_summary.json",
     "market_breadth.json",
     "dashboard_perf.json",
+    "weekly_wrapup_state.json",   # read by the Alert Rules tab's wrap-up preview
 ]
+
+# User config, edited in the UI. Also pulled at runtime, but only over a local
+# copy that is still byte-identical to what was last pulled or pushed -- an
+# unpushed local edit is never overwritten. This refresh used to be implicit:
+# every config push landed as a code-repo commit that redeployed the app with
+# fresh files. Data commits no longer redeploy anything, so without it a running
+# container kept an old watchlist.json after an edit made elsewhere (a local run,
+# the GitHub UI) and its next save pushed that old copy back over the edit.
+CONFIG_PULLABLE_FILES = [name for name, _ in SYNCABLE_FILES if name not in WORKFLOW_GENERATED_FILES]
 
 # Every file the app reads from the data repo. A fresh Streamlit Cloud container
 # has none of them (the code repo tracks no JSON), so bootstrap_data_files
 # downloads whichever are missing before anything loads.
 DATA_FILES = sorted({name for name, _ in SYNCABLE_FILES} | set(PULLABLE_FILES))
+
+
+def _git_blob_sha(path):
+    """The SHA git (and GitHub's tree API) would give this file's bytes, or None."""
+    try:
+        with open(path, "rb") as f:
+            body = f.read()
+    except OSError:
+        return None
+    return hashlib.sha1(b"blob %d\0" % len(body) + body).hexdigest()
 
 # Container-local, gitignored. Remembers the blob SHA of each file we last
 # pulled plus when we last checked, so a rerun costs one small API call at
@@ -161,7 +180,11 @@ def _remote_tree(token, repo, branch):
 
 def pull_generated_files(token, repo, branch="main", files=None,
                          min_interval=SYNC_MIN_INTERVAL_SECONDS, force=False):
-    """Refresh the generated JSON files from GitHub. Returns (updated, note).
+    """Refresh data files from the data repo. Returns (updated, note).
+
+    Generated files (PULLABLE_FILES) are refreshed unless the local copy is
+    newer by its own timestamp; user config (CONFIG_PULLABLE_FILES) only when
+    the local copy is unchanged since it was last pulled or pushed.
 
     WHY this exists: on Streamlit Community Cloud the app reads these files
     from its container's checkout, which only changes when the app REDEPLOYS.
@@ -180,7 +203,7 @@ def pull_generated_files(token, repo, branch="main", files=None,
 
     Never raises: a failed sync must leave the app running on its local files.
     """
-    files = list(files or PULLABLE_FILES)
+    files = list(files or (PULLABLE_FILES + CONFIG_PULLABLE_FILES))
     state = _read_sync_state()
     now = time.time()
     if not force and now - float(state.get("checked_at") or 0) < min_interval:
@@ -195,7 +218,7 @@ def pull_generated_files(token, repo, branch="main", files=None,
         return [], err
 
     known = dict(state.get("blobs") or {})
-    updated, skipped = [], []
+    updated, skipped, kept_edits = [], [], []
     for name in files:
         remote_sha = entries.get(name)
         if not remote_sha:
@@ -203,6 +226,14 @@ def pull_generated_files(token, repo, branch="main", files=None,
         path = os.path.join(root, name)
         if known.get(name) == remote_sha and os.path.exists(path):
             continue
+        if name in CONFIG_PULLABLE_FILES and os.path.exists(path):
+            local_sha = _git_blob_sha(path)
+            if local_sha == remote_sha:        # e.g. this app just pushed it
+                known[name] = remote_sha
+                continue
+            if local_sha != known.get(name):   # edited here and not (yet) pushed
+                kept_edits.append(name)
+                continue
         try:
             blob = requests.get(
                 f"{GITHUB_API}/repos/{repo}/git/blobs/{remote_sha}",
@@ -242,6 +273,8 @@ def pull_generated_files(token, repo, branch="main", files=None,
     note = f"updated {len(updated)}" if updated else "up to date"
     if skipped:
         note += f"; kept newer local copy of {', '.join(skipped)}"
+    if kept_edits:
+        note += f"; kept unpushed local edits to {', '.join(kept_edits)}"
     return updated, note
 
 
