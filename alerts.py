@@ -76,7 +76,7 @@ def _scope_label(scope):
 #
 # ALLOWED_HOURS must always match EXACTLY which hour(s) the GitHub Actions
 # workflow (daily-alerts.yml) actually wakes up at -- currently just
-# 10:00 PM ET, once/day, to keep Actions usage minimal. It was briefly
+# 9:00 PM ET (crons at :15), once/day, to keep Actions usage minimal. It was briefly
 # widened to all 24 hours (workflow running hourly) but that decoupled the
 # picker from reality: the dropdown let you pick, say, 3:00 PM, but the
 # workflow never woke up then, so that rule would silently never fire.

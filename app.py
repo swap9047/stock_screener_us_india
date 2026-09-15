@@ -1254,7 +1254,11 @@ def get_all_filterable_metrics(settings, custom_columns=None):
     moment it's created, with zero special-casing at those call sites."""
     metrics = dict(get_filterable_metrics(settings))
     for col in (custom_columns if custom_columns is not None else load_custom_columns()):
-        if col.get("enabled", True):
+        # A name equal to a built-in label would overwrite that metric's key, so
+        # every rule and filter on it silently read the custom column instead.
+        # The manager refuses such names, but custom_columns.json can be edited
+        # (or pushed) by hand; the built-in wins and the manager flags the clash.
+        if col.get("enabled", True) and col["name"] not in metrics:
             metrics[col["name"]] = column_key(col)
     return metrics
 
@@ -2281,8 +2285,11 @@ def build_column_defs(labels, custom_columns=None):
     from stock_data import load_settings
     if not load_settings().get("show_fundamental_columns", True):
         optional_defs = [(k, lbl) for k, lbl in optional_defs if k not in FUNDAMENTAL_COLUMN_KEYS]
+    _builtin_labels = {lbl for _, lbl in optional_defs}
     for col in (custom_columns if custom_columns is not None else load_custom_columns()):
-        if col.get("enabled", True):
+        # Same guard as get_all_filterable_metrics: a hand-edited clashing name
+        # must not take over a built-in column's label.
+        if col.get("enabled", True) and col["name"] not in _builtin_labels:
             optional_defs.append((column_key(col), col["name"]))
     label_by_key = dict(optional_defs)
     key_by_label = {lbl: k for k, lbl in optional_defs}
@@ -3013,6 +3020,10 @@ def render_custom_columns_manager():
             for col in list(custom_columns):
                 with st.container(border=True):
                     st.markdown(f"**{col['name']}** {'' if col.get('enabled', True) else '_(disabled)_'}")
+                    _clash = custom_column_name_error(col["name"], custom_columns, _reserved_labels,
+                                                      exclude_id=col.get("id"))
+                    if _clash:
+                        st.warning(f"{_clash} Rename it: where a built-in has this exact name, the built-in is shown instead.")
                     st.code(col.get("formula", ""), language=None)
                     cc1, cc2, cc3 = st.columns(3)
                     new_name = cc1.text_input("Name", value=col["name"], key=f"cc_name_{col['id']}")
@@ -4312,7 +4323,9 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         count_cs = [c for c in COUNT_COLS if c in df.columns]
         if count_cs:
             styled = styled.format("{:,.0f}", subset=count_cs, na_rep="—")
-        header_tooltips = {**column_definitions(settings, labels), **custom_column_tooltips(custom_columns)}
+        # Built-in definitions last, so they win: a custom column hand-edited to a
+        # built-in's name (A09) would otherwise relabel that column's tooltip.
+        header_tooltips = {**custom_column_tooltips(custom_columns), **column_definitions(settings, labels)}
         table_html = add_header_tooltips(sticky_header_html(styled), header_tooltips)
         st.markdown(table_html, unsafe_allow_html=True)
 
@@ -6017,16 +6030,27 @@ with tab_alerts:
         "instead of typing it here (don't commit webhook URLs to a public repo)."
     )
     current_webhook = get_discord_webhook() or ""
-    webhook_input = st.text_input("Webhook URL", value=current_webhook, type="password")
+    # Never pre-filled: a type="password" input still sends its value to the
+    # browser, so the configured webhook (from secrets) was readable in the page
+    # source by anyone signed in. The field only takes a NEW URL; the test
+    # button falls back to the configured one.
+    if current_webhook:
+        st.caption("A webhook is configured. Enter a URL below only to replace it.")
+    webhook_input = st.text_input("Webhook URL", value="", type="password",
+                                  placeholder="https://discord.com/api/webhooks/...")
     wc1, wc2 = st.columns(2)
     if wc1.button("Save locally"):
-        save_discord_webhook_local(webhook_input)
-        st.success("Saved to discord_config.json (local only, not committed to git).")
-    if wc2.button("Send test message"):
         if not webhook_input:
             st.error("Enter a webhook URL first.")
         else:
-            ok, detail = send_discord_batch(webhook_input, ["✅ Test alert from your Stock Watchlist app."])
+            save_discord_webhook_local(webhook_input)
+            st.success("Saved to discord_config.json (local only, not committed to git).")
+    if wc2.button("Send test message"):
+        test_url = webhook_input or current_webhook
+        if not test_url:
+            st.error("Enter a webhook URL first.")
+        else:
+            ok, detail = send_discord_batch(test_url, ["✅ Test alert from your Stock Watchlist app."])
             st.success("Sent!") if ok else st.error(f"Failed to send — {detail}")
 
     st.divider()
