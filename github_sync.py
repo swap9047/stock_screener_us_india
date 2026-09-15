@@ -10,6 +10,13 @@ than the git CLI -- Streamlit Cloud containers don't have your SSH keys or
 git configured, but they always have outbound network access and
 `requests` is already a dependency (see alerts.py's Discord webhook calls).
 
+WHERE THE DATA LIVES: every JSON data file is in the PRIVATE repo
+DATA_REPO_DEFAULT, not in the public code repo the app is deployed from. The
+code repo stays public for free Actions minutes, and its committed JSON used to
+expose holdings, notes and alert rules to anyone. So there are two configs:
+get_data_repo_config (DATA_REPO_TOKEN) for every data read and write here, and
+get_github_config (GITHUB_TOKEN / GITHUB_REPO) only to dispatch workflows.
+
 IMPORTANT: multiple files are pushed as ONE atomic commit (blobs -> one
 tree -> one commit -> move the branch ref), not one commit per file. This
 matters specifically because Streamlit Community Cloud auto-redeploys the
@@ -21,19 +28,19 @@ whatever hadn't been pushed yet (e.g. a newly-created alert rule that only
 ever existed on that container's ephemeral disk). Bundling every changed
 file into a single commit closes that race -- either everything lands
 together, or nothing does, and there's no in-between state for a redeploy
-to interrupt.
+to interrupt. Data commits now land in the data repo, which Streamlit doesn't
+watch, so the race itself is gone; the single commit stays so a multi-file
+change (watchlist + interested + snapshot) is never half-applied.
 
-One-time setup:
-  1. Create a GitHub Personal Access Token scoped to just this repo, with
-     "Contents: Read and write" AND "Actions: Read and write" permissions 
-     (GitHub -> Settings -> Developer settings -> Personal access tokens -> Fine-grained tokens).
-  2. Set it as a Streamlit secret named GITHUB_TOKEN. Never paste a token
-     into a text box on a public deployment -- same rule this app already
-     follows for the Discord webhook.
-  3. Set GITHUB_REPO ("your-username/your-repo-name") and optionally
-     GITHUB_BRANCH (defaults to "main") -- these aren't secret, but the
-     Streamlit secrets panel is the easiest place to set them alongside the
-     token.
+One-time setup (GitHub -> Settings -> Developer settings -> Fine-grained tokens):
+  1. Data: a token with "Contents: Read and write" on the data repo only, set
+     as DATA_REPO_TOKEN in Streamlit secrets AND in the code repo's Actions
+     secrets. A fork points DATA_REPO ("owner/repo") at its own data repo.
+  2. Background jobs: a token with "Actions: Read and write" on the code repo,
+     set as GITHUB_TOKEN, plus GITHUB_REPO ("owner/code-repo") and optionally
+     GITHUB_BRANCH (defaults to "main").
+  Never paste a token into a text box on a public deployment -- same rule this
+  app already follows for the Discord webhook.
 """
 
 import base64
@@ -65,6 +72,12 @@ SYNCABLE_FILES = [
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# The JSON data lives in this PRIVATE repo, not in the public code repo -- the
+# code repo is public for free Actions minutes, and its JSON exposed holdings,
+# notes and alert rules to anyone. Not a secret; DATA_REPO only exists so a fork
+# can point at its own data repo.
+DATA_REPO_DEFAULT = "swap9047/stock_screener_data"
+
 
 # Written by workflows (or by a dashboard action that pushes them itself, with
 # their own freshness protection). The "Push to GitHub" button must never
@@ -85,10 +98,15 @@ PULLABLE_FILES = [
     "dashboard_perf.json",
 ]
 
+# Every file the app reads from the data repo. A fresh Streamlit Cloud container
+# has none of them (the code repo tracks no JSON), so bootstrap_data_files
+# downloads whichever are missing before anything loads.
+DATA_FILES = sorted({name for name, _ in SYNCABLE_FILES} | set(PULLABLE_FILES))
+
 # Container-local, gitignored. Remembers the blob SHA of each file we last
 # pulled plus when we last checked, so a rerun costs one small API call at
 # most -- Streamlit re-executes the whole script on every interaction.
-SYNC_STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".data_sync_state.json")
+SYNC_STATE_FILE = os.path.join(SCRIPT_DIR, ".data_sync_state.json")
 SYNC_MIN_INTERVAL_SECONDS = 300
 
 # Timestamp fields used to refuse a backwards pull, in preference order.
@@ -129,6 +147,18 @@ def _local_freshness(path):
     return None
 
 
+def _remote_tree(token, repo, branch):
+    """({path: blob sha} for the branch's root files, None), or (None, error text)."""
+    headers = _headers(token) if token else {"Accept": "application/vnd.github+json"}
+    try:
+        resp = requests.get(f"{GITHUB_API}/repos/{repo}/git/trees/{branch}", headers=headers, timeout=15)
+        if resp.status_code != 200:
+            return None, f"tree lookup failed: {_short(resp)}"
+        return {e.get("path"): e.get("sha") for e in (resp.json().get("tree") or [])}, None
+    except requests.RequestException as e:
+        return None, f"tree lookup failed: {e}"
+
+
 def pull_generated_files(token, repo, branch="main", files=None,
                          min_interval=SYNC_MIN_INTERVAL_SECONDS, force=False):
     """Refresh the generated JSON files from GitHub. Returns (updated, note).
@@ -156,20 +186,13 @@ def pull_generated_files(token, repo, branch="main", files=None,
     if not force and now - float(state.get("checked_at") or 0) < min_interval:
         return [], "skipped (checked recently)"
     if not repo:
-        return [], "no GITHUB_REPO configured"
+        return [], "no data repo configured"
 
     headers = _headers(token) if token else {"Accept": "application/vnd.github+json"}
-    root = os.path.dirname(os.path.abspath(__file__))
-    try:
-        tree_resp = requests.get(
-            f"{GITHUB_API}/repos/{repo}/git/trees/{branch}",
-            headers=headers, timeout=15,
-        )
-        if tree_resp.status_code != 200:
-            return [], f"tree lookup failed: {_short(tree_resp)}"
-        entries = {e.get("path"): e.get("sha") for e in (tree_resp.json().get("tree") or [])}
-    except requests.RequestException as e:
-        return [], f"tree lookup failed: {e}"
+    root = SCRIPT_DIR
+    entries, err = _remote_tree(token, repo, branch)
+    if entries is None:
+        return [], err
 
     known = dict(state.get("blobs") or {})
     updated, skipped = [], []
@@ -222,26 +245,70 @@ def pull_generated_files(token, repo, branch="main", files=None,
     return updated, note
 
 
-def get_github_config(st_secrets=None):
-    """Returns (token, repo, branch), reading GITHUB_TOKEN / GITHUB_REPO /
-    GITHUB_BRANCH from Streamlit secrets first, then environment variables.
-    `st_secrets` is passed in (rather than importing streamlit here) so
-    this module has zero Streamlit dependency and stays independently
-    testable/importable from alert_check.py or a plain script if ever
-    needed. Returns (None, None, "main") if nothing is configured."""
-    def _get(key, default=None):
-        if st_secrets is not None:
-            try:
-                if key in st_secrets:
-                    return st_secrets[key]
-            except Exception:
-                pass
-        return os.environ.get(key, default)
+def _config_value(st_secrets, key, default=None):
+    """Streamlit secrets first, then environment variables. `st_secrets` is
+    passed in (rather than importing streamlit here) so this module has zero
+    Streamlit dependency and stays importable from plain scripts."""
+    if st_secrets is not None:
+        try:
+            if key in st_secrets:
+                return st_secrets[key]
+        except Exception:
+            pass
+    return os.environ.get(key, default)
 
-    token = _get("GITHUB_TOKEN")
-    repo = _get("GITHUB_REPO")
-    branch = _get("GITHUB_BRANCH", "main")
-    return token, repo, branch
+
+def get_github_config(st_secrets=None):
+    """(token, repo, branch) of the CODE repo, from GITHUB_TOKEN / GITHUB_REPO /
+    GITHUB_BRANCH. Only for dispatching workflows and linking to their logs --
+    data reads and writes use get_data_repo_config. Returns (None, None, "main")
+    if nothing is configured."""
+    return (_config_value(st_secrets, "GITHUB_TOKEN"),
+            _config_value(st_secrets, "GITHUB_REPO"),
+            _config_value(st_secrets, "GITHUB_BRANCH", "main"))
+
+
+def get_data_repo_config(st_secrets=None):
+    """(token, repo, branch) of the private DATA repo, from DATA_REPO_TOKEN,
+    DATA_REPO (default DATA_REPO_DEFAULT) and DATA_REPO_BRANCH (default "main").
+    Deliberately no fallback to GITHUB_TOKEN / GITHUB_REPO: without
+    DATA_REPO_TOKEN that fallback would push holdings and notes straight back
+    into the public code repo."""
+    return (_config_value(st_secrets, "DATA_REPO_TOKEN"),
+            _config_value(st_secrets, "DATA_REPO", DATA_REPO_DEFAULT),
+            _config_value(st_secrets, "DATA_REPO_BRANCH", "main"))
+
+
+def bootstrap_data_files(token, repo, branch="main", files=None):
+    """Download every data file that is missing on disk. Returns (ok, missing, note).
+
+    Runs before the app's first load_*(). Those loaders create an empty default
+    when their file is absent, so on a fresh container with an unreadable data
+    repo the app would render blank watchlists -- and the next save would push
+    those blanks over the real data. `ok` is False exactly when that could
+    happen: the tree lookup failed while something is missing, or a file that
+    exists remotely still isn't on disk. A file the data repo doesn't have is
+    fine; its loader creating the default is the right outcome.
+
+    Ignores pull_generated_files' rate limit, which answers "checked recently"
+    even when files are missing. Makes no network call when nothing is missing.
+    """
+    files = list(files or DATA_FILES)
+    missing = [n for n in files if not os.path.exists(os.path.join(SCRIPT_DIR, n))]
+    if not missing:
+        return True, [], "all data files present"
+    if not token or not repo:
+        return False, missing, "DATA_REPO_TOKEN is not configured"
+    entries, err = _remote_tree(token, repo, branch)
+    if entries is None:
+        return False, missing, err
+    wanted = [n for n in missing if n in entries]
+    if wanted:
+        pull_generated_files(token, repo, branch, files=wanted, force=True)
+    still = [n for n in wanted if not os.path.exists(os.path.join(SCRIPT_DIR, n))]
+    if still:
+        return False, still, f"could not download {', '.join(still)}"
+    return True, [], f"downloaded {len(wanted)} file(s)"
 
 
 def _headers(token):
@@ -261,7 +328,7 @@ def push_all_config(token, repo, branch="main", filenames=None, message=None):
     if not targets:
         return False, "No files selected."
     if not token or not repo:
-        return False, "GITHUB_TOKEN / GITHUB_REPO not configured (see Settings)."
+        return False, "DATA_REPO_TOKEN not configured (see Settings)."
 
     missing = [f for f in targets if not os.path.exists(os.path.join(SCRIPT_DIR, f))]
     if missing:
@@ -401,7 +468,7 @@ def push_json_entry_changes(token, repo, branch, changes, message, attempts=3, n
     committed since this container last pulled. If nothing is newer, no commit
     is made and the result is (True, "nothing newer ...", merged)."""
     if not token or not repo:
-        return False, "GITHUB_TOKEN / GITHUB_REPO not configured (see Settings).", {}
+        return False, "DATA_REPO_TOKEN not configured (see Settings).", {}
     headers = _headers(token)
     base_url = f"{GITHUB_API}/repos/{repo}"
     last_detail = "no attempt made"
