@@ -96,7 +96,10 @@ def main():
     # `markets` input). Blank/absent means every watchlist, which is what
     # the nightly schedule always gets.
     only_markets = {m.strip() for m in os.environ.get("REFRESH_MARKETS", "").split(",") if m.strip()}
-    print(f"[{_ts()}] Scope: {', '.join(sorted(only_markets)) if only_markets else 'all watchlists'}")
+    limit = llm_util.refresh_limit()
+    print(f"[{_ts()}] Scope: {', '.join(sorted(only_markets)) if only_markets else 'all watchlists'}"
+          + (f", first {limit} ticker(s) only" if limit else ""))
+    analysed = 0
 
     total_processed = 0
     total_failed = 0
@@ -110,6 +113,8 @@ def main():
 
     # Process each market
     for market, mkt_tickers in watchlists.items():
+        if limit and analysed >= limit:
+            break
         if only_markets and market not in only_markets:
             continue
         if market not in snapshot["per_market"]:
@@ -127,6 +132,8 @@ def main():
             print(f"[{_ts()}] Alert rules currently true for {len(alerts_by_ticker)}/{len(results)} tickers in {market}")
 
         for idx, tk in enumerate(mkt_tickers):
+            if limit and analysed >= limit:
+                break
             if tk in seen:
                 print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - SKIP (already analyzed this run)")
                 continue
@@ -147,6 +154,7 @@ def main():
                 continue
 
             company_name = row.get("company_name", tk)
+            analysed += 1
             print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} ({company_name}) - starting...")
 
             old_view = expert_views.get(tk)

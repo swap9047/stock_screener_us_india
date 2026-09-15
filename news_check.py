@@ -19,8 +19,10 @@ Config/env (same folder):
 Run: python3 news_check.py
 """
 
+import os
 import sys
 
+from llm_util import refresh_limit
 from stock_data import load_watchlists
 from alerts import load_discord_webhook, send_discord_batch
 from news_summary import (
@@ -28,6 +30,7 @@ from news_summary import (
     build_news_summary,
     save_news_summary,
     build_discord_messages,
+    load_news_summary,
 )
 
 
@@ -42,15 +45,46 @@ def main():
         print("All watchlists are empty. Nothing to summarize.")
         return
 
+    # A PARTIAL run (REFRESH_MARKETS and/or REFRESH_LIMIT, the workflow's
+    # `markets`/`limit` inputs) is a smoke test: it covers only those watchlists
+    # and their first N tickers, replaces only those watchlists' digests in
+    # news_summary.json, and never posts to Discord -- a two-ticker digest is not
+    # the day's news. Scheduled runs set neither.
+    only_markets = {m.strip() for m in os.environ.get("REFRESH_MARKETS", "").split(",") if m.strip()}
+    limit = refresh_limit()
+    partial = bool(only_markets or limit)
+    if partial:
+        remaining = limit
+        scoped = {}
+        for mkt, tks in watchlists.items():
+            if only_markets and mkt not in only_markets:
+                continue
+            if remaining is not None:
+                tks = tks[:remaining]
+                remaining -= len(tks)
+            if tks:
+                scoped[mkt] = tks
+        watchlists = scoped
+        if not watchlists:
+            print("Partial run selected no tickers. Nothing to summarize.")
+            return
+
     breakdown = " + ".join(f"{len(tks)} {mkt}" for mkt, tks in watchlists.items())
-    print(f"Building news summary for {breakdown} tickers via Gemini grounded search...")
+    print(f"Building news summary for {breakdown} tickers via Gemini grounded search"
+          + (" (partial run)..." if partial else "..."))
     news_data = build_news_summary(watchlists, api_key)
-    save_news_summary(news_data)
+    to_save = news_data
+    if partial:
+        previous = load_news_summary() or {}
+        to_save = {**news_data, "markets": {**(previous.get("markets") or {}), **(news_data.get("markets") or {})}}
+    save_news_summary(to_save)
     totals = news_data.get("totals", {})
     print(f"Saved news_summary.json (as_of {news_data['as_of']}). Totals: {totals}")
 
     webhook = load_discord_webhook()
-    if webhook:
+    if partial:
+        print("Partial run -- summary was NOT sent to Discord.")
+    elif webhook:
         messages = build_discord_messages(news_data)
         if messages:
             # stop_on_failure=False: one rejected part must not swallow the

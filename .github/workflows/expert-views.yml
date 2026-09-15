@@ -24,6 +24,10 @@ on:
         description: "Comma-separated market keys to process (blank = all watchlists)"
         required: false
         default: ""
+      limit:
+        description: "Analyse only the first N tickers in scope (blank = all). A number, never ticker names: step env is printed in this public repo's logs"
+        required: false
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}
@@ -122,6 +126,7 @@ jobs:
           # github.event.inputs (not `inputs`) so scheduled runs, which carry
           # no inputs at all, resolve to an empty string = every watchlist.
           REFRESH_MARKETS: ${{ github.event.inputs.markets }}
+          REFRESH_LIMIT: ${{ github.event.inputs.limit }}
 
       - name: Commit updated data_snapshot.json and expert_views.json
         # always(): commit whatever the run produced even when it failed, so

@@ -366,3 +366,15 @@ def make_client(api_key=None, st_secrets=None):
     if not keys:
         return None
     return RotatingGeminiClient(keys)
+
+
+def refresh_limit():
+    """REFRESH_LIMIT as a positive int, or None (no limit).
+
+    Caps how many tickers a workflow run analyses -- the first N in scope. It is
+    for smoke-testing an AI workflow on a couple of tickers. The dispatch input is
+    a number rather than ticker names on purpose: Actions logs of this public repo
+    print each step's env verbatim, before log_redact.py ever sees the output.
+    """
+    value = os.environ.get("REFRESH_LIMIT", "").strip()
+    return int(value) if value.isdigit() and int(value) > 0 else None

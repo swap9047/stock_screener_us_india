@@ -302,6 +302,14 @@ market keys) which the app's per-tab "Re-analyze All" button uses to scope a run
 watchlist. The scripts read it back as `REFRESH_MARKETS`; blank means all watchlists,
 which is what every scheduled run gets.
 
+For smoke tests, those two workflows plus `news-summary.yml` also accept **`limit`**
+(`REFRESH_LIMIT`): analyse only the first N tickers in scope. `news-summary.yml` also takes
+`markets`. A news run with either input is partial: it replaces only those watchlists'
+digests and posts nothing to Discord.
+
+Pass a number, never ticker names. This repo's Actions logs are public, and they print
+each step's env before `log_redact.py` sees any output.
+
 ---
 
 ## Verifying a change
