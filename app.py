@@ -83,8 +83,8 @@ from weekly_wrapup import (
 from filters import (get_market_filters, save_market_filters, apply_filters, describe_filter,
                      describe_chain, describe_chain_with_values, passes_filter_chain, CATEGORICAL_METRICS,
                      TEXT_METRICS)
-from github_sync import (get_github_config, push_all_config, trigger_github_workflow,
-                         pull_generated_files, SYNCABLE_FILES, WORKFLOW_GENERATED_FILES,
+from github_sync import (get_github_config, get_data_repo_config, bootstrap_data_files,
+                         push_all_config, trigger_github_workflow, pull_generated_files, SYNCABLE_FILES, WORKFLOW_GENERATED_FILES,
                          push_json_entry_changes, read_remote_json)
 from news_summary import (load_news_summary, MARKET_LABELS, get_gemini_api_key,
                           get_gemini_api_keys, resolve_news_scope, DEFAULT_NEWS_SCOPE_GROUP)
@@ -1419,7 +1419,7 @@ def settings_dialog():
                 changed = True
             if changed:
                 save_markets_registry(markets_registry)
-                gh_token, gh_repo, gh_branch = get_github_config(getattr(st, "secrets", None))
+                gh_token, gh_repo, gh_branch = get_data_repo_config(getattr(st, "secrets", None))
                 if gh_token and gh_repo:
                     with st.spinner("Pushing rename to GitHub..."):
                         ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=["markets.json"], message=f"Rename watchlist {mkey}")
@@ -1441,7 +1441,7 @@ def settings_dialog():
             st.error("Both a label and a benchmark ticker are required.")
         else:
             add_watchlist(new_wl_label.strip(), new_wl_bench.strip())
-            gh_token, gh_repo, gh_branch = get_github_config(getattr(st, "secrets", None))
+            gh_token, gh_repo, gh_branch = get_data_repo_config(getattr(st, "secrets", None))
             if gh_token and gh_repo:
                 with st.spinner("Pushing new watchlist to GitHub..."):
                     ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=["markets.json", "watchlist.json", "custom_filters.json"], message=f"Add watchlist {new_wl_label.strip()}")
@@ -1697,7 +1697,7 @@ def _apply_watchlist_tickers(market, market_label, existing_tickers, candidate_t
             + f". Tickers appear in the table once they have {MIN_DAILY_BARS} trading days."
         )
 
-    gh_token, gh_repo, gh_branch = get_github_config(st.secrets)
+    gh_token, gh_repo, gh_branch = get_data_repo_config(st.secrets)
     if gh_token and gh_repo:
         with st.spinner("Pushing watchlist to GitHub..."):
             ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=["watchlist.json", "interested.json", "data_snapshot.json", "ticker_index.json"], message=f"Update {market_label}")
@@ -3182,7 +3182,7 @@ def sync_ai_views_to_github(message, filenames=("expert_views.json", "fundamenta
     """
     loaders = {"expert_views.json": (load_expert_views, save_expert_views),
                "fundamentals.json": (load_fundamentals, save_fundamentals)}
-    token, repo, branch = get_github_config(st.secrets)
+    token, repo, branch = get_data_repo_config(st.secrets)
     if not (token and repo):
         st.toast("✓ Saved updated AI views!")
         return
@@ -3695,7 +3695,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
                 groups = load_watchlist_groups()
                 groups[market] = new_members
                 save_watchlist_groups(groups)
-                gh_token, gh_repo, gh_branch = get_github_config(getattr(st, "secrets", None))
+                gh_token, gh_repo, gh_branch = get_data_repo_config(getattr(st, "secrets", None))
                 if gh_token and gh_repo:
                     ok, msg = push_all_config(
                         gh_token, gh_repo, gh_branch, filenames=["watchlist_groups.json"],
@@ -4429,6 +4429,27 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
 # APP LAYOUT
 # ============================================================
 
+# Data comes from the PRIVATE data repo (github_sync.DATA_REPO_DEFAULT), not from
+# this app's checkout: the code repo is public and tracks no JSON. On a fresh
+# container every data file is missing, so download them BEFORE the first load
+# below -- load_watchlists() and friends create an empty default for a missing
+# file, and the next save would push those blanks over the real data. If the
+# download fails, stop here rather than render (and later save) empties.
+# SKIP_GITHUB_PULL: local runs and AppTest already have the files.
+if not os.environ.get("SKIP_GITHUB_PULL"):
+    try:
+        _data_token, _data_repo, _data_branch = get_data_repo_config(st.secrets)
+        _boot_ok, _boot_missing, _boot_note = bootstrap_data_files(_data_token, _data_repo, _data_branch)
+    except Exception as _e:
+        _boot_ok, _boot_missing, _boot_note = False, [], f"unexpected error: {_e}"
+    if not _boot_ok:
+        st.error(
+            f"Could not load the app's data from the private data repo ({_boot_note}). "
+            "Check the DATA_REPO_TOKEN secret: it needs Contents read/write on the data repo. "
+            "Nothing was created or saved."
+        )
+        st.stop()
+
 if "refresh_token" not in st.session_state:
     st.session_state.refresh_token = 0
     st.session_state.refresh_nonce = uuid.uuid4().hex
@@ -4460,7 +4481,7 @@ if sb1.button("Refresh Data", type="primary", width="stretch"):
                 "column, and refresh again later for current prices."
             )
         _persist_and_serve(per_market, as_of, settings_now, short_history=_short_history)
-        token, repo, branch = get_github_config(st.secrets)
+        token, repo, branch = get_data_repo_config(st.secrets)
         if token and repo:
             ok, msg = push_all_config(token, repo, branch, filenames=["data_snapshot.json", "ticker_index.json"], message=f"Refresh data snapshot via UI ({as_of})")
             if ok:
@@ -4500,18 +4521,19 @@ render_logout_button()
 # A freshly-persisted result (Refresh button / watchlist save) is stashed in
 # session state so the rerun that follows those actions serves that exact
 # result -- no duplicate fetch on top of the one the action already did.
-# Pull the newest generated files from GitHub before anything reads them.
+# Pull the newest generated files from the private data repo before anything
+# reads them (missing files were already downloaded by the bootstrap above).
 #
-# On Streamlit Community Cloud these files come from the container's checkout,
-# which only changes when the app REDEPLOYS -- so when redeploys stopped firing
-# (2026-09-06 to 2026-09-09) the dashboard silently served three-day-old AI
-# verdicts while every workflow kept running green. Nothing errored; the app
-# just had no way to know it was behind. This makes freshness the app's own
-# job. Rate-limited internally to one check per SYNC_MIN_INTERVAL_SECONDS, so
+# Workflows keep committing these files to the data repo while a container runs,
+# and nothing tells the container. Freshness used to ride on redeploys of the
+# code repo checkout -- when redeploys stopped firing (2026-09-06 to 2026-09-09)
+# the dashboard silently served three-day-old AI verdicts while every workflow
+# kept running green. Now the files aren't in the checkout at all, so this pull
+# is the only way new results reach a running app. Rate-limited internally to one check per SYNC_MIN_INTERVAL_SECONDS, so
 # calling it on every rerun is cheap, and it never raises -- a failed sync
 # leaves the app running on whatever it already had.
 try:
-    _gh_token, _gh_repo, _gh_branch = get_github_config(st.secrets)
+    _gh_token, _gh_repo, _gh_branch = get_data_repo_config(st.secrets)
     if os.environ.get("SKIP_GITHUB_PULL"):
         # Local runs and AppTest: the pull rewrites tracked JSON in a working
         # tree (data_snapshot.json and friends then show up in git status).
@@ -4784,7 +4806,7 @@ with dash2:
             else:
                 from stock_data import add_watchlist as _dash_add_watchlist
                 _dash_add_watchlist(dash_wl_label.strip(), dash_wl_bench.strip())
-                gh_token, gh_repo, gh_branch = get_github_config(getattr(st, "secrets", None))
+                gh_token, gh_repo, gh_branch = get_data_repo_config(getattr(st, "secrets", None))
                 if gh_token and gh_repo:
                     with st.spinner("Pushing new watchlist to GitHub..."):
                         ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=["markets.json", "watchlist.json", "custom_filters.json"], message=f"Add watchlist {dash_wl_label.strip()}")
@@ -6009,21 +6031,21 @@ with tab_alerts:
 
     st.divider()
     with st.expander("☁️ Push config to GitHub", expanded=False):
-        gh_token, gh_repo, gh_branch = get_github_config(getattr(st, "secrets", None))
+        gh_token, gh_repo, gh_branch = get_data_repo_config(getattr(st, "secrets", None))
         if not gh_token or not gh_repo:
             st.caption(
                 "Edits made here (watchlist, custom filters, settings, alert rules) only live on "
                 "this instance's disk -- they won't reach GitHub Actions (or survive a redeploy) "
-                "until pushed. Set **GITHUB_TOKEN** (a fine-grained PAT with Contents: read/write "
-                "on this repo) and **GITHUB_REPO** (`owner/repo-name`) as secrets to enable this -- "
-                "see DEPLOYMENT.md."
+                "until pushed. Set **DATA_REPO_TOKEN** (a fine-grained PAT with Contents: read/write "
+                "on the private data repo) as a secret to enable this -- see DEPLOYMENT.md. "
+                "**GITHUB_TOKEN** + **GITHUB_REPO** are only for starting background jobs."
             )
         else:
             st.caption(f"Target: `{gh_repo}` @ `{gh_branch}`")
             st.caption(
                 "Pushes all configuration files (watchlists, filters, settings, alerts) "
-                "as one combined commit -- important on Streamlit Cloud, which "
-                "auto-redeploys the instant any commit lands. The data snapshot is "
+                "to the private data repo as one combined commit, so a multi-file "
+                "change is never half-applied. The data snapshot is "
                 "included only when this app's copy is newer than GitHub's; AI "
                 "results are synced per ticker by the actions that change them."
             )
@@ -6048,5 +6070,4 @@ with tab_alerts:
                     pass
                 ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=targets)
                 (st.success if ok else st.error)(msg)
-                if ok:
-                    st.caption("Your app may restart shortly since Streamlit Cloud watches this repo.")
+
