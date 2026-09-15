@@ -100,7 +100,7 @@ VSTOP_FACTOR = 2
 # entire flip history back to wherever the series starts -- so a short or
 # truncated weekly window doesn't just mean "less smoothing", it can put the
 # stop on a genuinely different path than a full history would (confirmed:
-# [ticker] served a spurious 1317/Down stop from a run whose fetch
+# an India ticker served a spurious 1317/Down stop from a run whose fetch
 # evidently returned less history than a clean pull, while `>= vstop_length
 # + 5` -- just 15 bars -- happily passed). Requiring roughly a year of
 # weekly bars before trusting the recursion doesn't fix a bad fetch, but it
@@ -398,8 +398,8 @@ def get_exchange_label(market, ticker=None):
     hardcoded, so every other watchlist fell through to a generic
     f"{registry label}-listed" -- which fed the search model literal nonsense:
     india_watchlist's 32 .NS tickers were described as "India Watchlist-listed"
-    and [watchlist]'s 22 as
-    "[watchlist]-listed". That was 65 of 110 tickers getting a
+    and a user-created watchlist's 22 as
+    "<its label>-listed". That was 65 of 110 tickers getting a
     meaningless exchange phrase, and it silently got worse every time a
     watchlist was added, since the registry label is whatever the user typed in
     the add-watchlist form.
@@ -557,7 +557,7 @@ def load_watchlists():
     # a SET, so the order came from string hash randomization and changed every
     # process. That mattered well beyond cosmetics: the AI refresh scripts key
     # their stores by bare ticker, so for a ticker in more than one watchlist
-    # ([ticker] is in three) it was last-write-wins with a nondeterministic winner,
+    # (one is in three) it was last-write-wins with a nondeterministic winner,
     # and the Expert Take prompt embeds the market name and benchmark -- so
     # which analysis survived, and which benchmark the model was shown, varied
     # run to run.
@@ -636,7 +636,7 @@ def save_ticker_index(data):
 def tradingview_url(ticker):
     """Best-effort TradingView chart URL for a yfinance-style ticker.
     TradingView resolves a bare symbol (no exchange prefix) to its listed
-    exchange automatically (e.g. symbol=[ticker] -> NYSE:[ticker] chart), so we
+    exchange automatically (e.g. symbol=IBM -> NYSE:IBM chart), so we
     just strip the .NS/.BO suffix used for Indian tickers and link straight
     to the interactive chart view (not the symbol overview page)."""
     bare = ticker
@@ -675,7 +675,7 @@ def wilder_smooth(raw, period):
     on a stock with only ~2 years of history since its IPO, or ATR/VStop on
     a recently-listed ticker with few weekly bars -- the wrong seed never
     fully washes out and can be off by 10+ points vs TradingView. Confirmed
-    on [ticker] (India, IPO'd Feb 2024, only 30 monthly bars): the old
+    on an India ticker (IPO'd Feb 2024, only 30 monthly bars): the old
     ewm-from-bar-zero code gave RSI-M 44.2, correct Wilder seeding gives
     53.6, TradingView showed 54.1.
     """
@@ -1226,7 +1226,7 @@ def merge_short_history(previous, fresh, per_market, watchlists, today=None):
     WHY this exists: fetch_snapshot silently skips such a ticker, so it never
     gets a snapshot row, fill_snapshot_gaps has nothing to recover, and
     snapshot_is_usable -- which requires a row for every watchlist ticker --
-    failed on every page load. From ~2026-08-17 one SME listing, [ticker]
+    failed on every page load. From ~2026-08-17 one SME listing
     (1 bar on Yahoo), kept the "Data snapshot is out of date (settings, code,
     or watchlist changed...)" banner up for every visitor, for a reason the
     banner doesn't mention, so the banner stopped meaning anything. Recording the
@@ -1331,8 +1331,8 @@ def _roce_from_statements(inc, bs):
       - Every input was `.dropna().iloc[0]` on its own row, so a blank latest
         cell silently borrowed an OLDER year. Yahoo blanks Long Term Debt in
         the year a company pays it off (Total Debt that year is only current
-        debt + leases), so [ticker] was divided by FY2024's 1,143M of since-repaid
-        notes, [ticker] by FY2025's 1,829M, [ticker] by FY2023's 283M -- 11 of 122
+        debt + leases), so one ticker was divided by FY2024's 1,143M of since-repaid
+        notes, another by FY2025's 1,829M, a third by FY2023's 283M -- 11 of 122
         tickers in the 2026-09-14 data.
       - With no Long Term Debt row at all it fell back to Total Debt (short-term
         debt + leases), so the column mixed two definitions (6 tickers).
@@ -1346,7 +1346,7 @@ def _roce_from_statements(inc, bs):
         return None
     equity_row = bs.loc["Stockholders Equity"]
     op_row = inc.loc["Operating Income"]
-    # [ticker] (2026-09-14) has FY2026 equity but no FY2026 operating income; the
+    # One ticker (2026-09-14) had FY2026 equity but no FY2026 operating income; the
     # old code paired that equity with FY2025 income.
     years = [d for d in bs.columns
              if d in inc.columns and pd.notna(equity_row.get(d)) and pd.notna(op_row.get(d))]
@@ -1765,8 +1765,8 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
             # close -- how much stock is underwater and liable to sell into a
             # rally. Complements breakout_window rather than duplicating it:
             # that measures the AGE of the nearest barrier, this measures the
-            # WEIGHT of all of it. [ticker] carries 10 confirmed pivots above
-            # today and ~30% of a year's volume trapped, while [ticker] has 12
+            # WEIGHT of all of it. One ticker carried 10 confirmed pivots above
+            # today and ~30% of a year's volume trapped, while another had 12
             # pivots above yet 0%, because all of its overhead predates the
             # window -- counting levels misleads, weighing recent supply does not.
             #
@@ -1869,7 +1869,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
             # this subtraction, so a close sitting marginally above the rounded
             # high produces a tiny negative that rounds to -0.0 and renders as
             # "-0.0%" -- a minus sign on a metric defined as always positive
-            # ([ticker] hit exactly this). A close cannot genuinely exceed its
+            # (an India ticker hit exactly this). A close cannot genuinely exceed its
             # own trailing intraday high, so 0 is the correct floor.
             if week26_high:
                 week26_distance = round(max(0.0, (week26_high - last_close) / week26_high * 100), 1)
@@ -1904,7 +1904,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
             #
             # (b) means a minor overshoot part-way through a base doesn't reset
             # the window: the walk-back runs past every close within the band
-            # to the last real breach. [ticker] read 1 under the old rule
+            # to the last real breach. One India ticker read 1 under the old rule
             # despite three years in a tight range; it reads 769 here. A close
             # BELOW today was never overhead, so it never stops the walk and is
             # already inside the window -- which is why the band's 97% floor
@@ -1921,7 +1921,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
             #
             # A corollary of (a): a brand-new high is not resistance until
             # BREAKOUT_PIVOT_WIDTH sessions confirm it. That is deliberate --
-            # [ticker] peaked 7% above today just two sessions ago, which
+            # one India ticker peaked 7% above today just two sessions ago, which
             # the old rule treated as a wall (window 2) rather than as an
             # unfinished move; it now reads 293, its real base.
             #
@@ -1930,14 +1930,14 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
             #  1. The blue-sky test runs BEFORE any of this, so 0 keeps meaning
             #     "no prior close was ever this high" and nothing else. Testing
             #     the band first hands 0 to any name whose entire overhead sits
-            #     within 5%, silently dropping it from every scan ([ticker]
-            #     397 -> 0, plus 10 others).
+            #     within 5%, silently dropping it from every scan (one
+            #     went 397 -> 0, plus 10 others).
             #  2. max() is the fallback when no bar satisfies (a) AND (b) --
             #     keep the strict answer rather than reporting 0. This is what
-            #     holds [ticker] at 397 and [ticker] at 35. Consequence:
+            #     holds those at 397 and 35. Consequence:
             #     the metric is NOT monotonic in the tolerance -- widening it
             #     past a ticker's highest overhead drops the value back to
-            #     strict ([ticker]: 16 at 3%, 1 at 5%).
+            #     strict (one ticker: 16 at 3%, 1 at 5%).
             #  3. The lookback slice is applied AFTER dropping today's bar, so
             #     it covers BREAKOUT_LOOKBACK *prior* sessions.
             #
@@ -2025,7 +2025,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
             # technique as mansfield_rs), not by slicing each series
             # positionally. The two series are dropna()'d independently and a
             # benchmark can be missing sessions the stock traded -- ^CRSLDX
-            # runs 10 bars short of [ticker] over 5 years -- so counting 126
+            # runs 10 bars short of one India ticker over 5 years -- so counting 126
             # bars back on each lands on DIFFERENT dates (2026-02-05 vs
             # 2026-02-02 there) and silently compares mismatched windows. The
             # drift grows with the lookback. The 1-week leg below uses the same

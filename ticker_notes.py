@@ -6,7 +6,7 @@ that being a computed metric like custom_columns.py's formulas.
 
 Stored in ticker_notes.json as {ticker: {"note": str, "flag": str}}, keyed
 by the SAME ticker symbol used everywhere else in the app (e.g. "AAPL",
-"[ticker]") -- global across both markets, not per-market, since a
+"TCS.NS") -- global across both markets, not per-market, since a
 ticker symbol is already unique across the whole watchlist.
 
 Both fields flow into every row dict via apply_notes_to_rows(), called from

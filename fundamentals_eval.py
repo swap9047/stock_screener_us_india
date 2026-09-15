@@ -19,7 +19,7 @@ FUNDAMENTALS_FILE = os.path.join(SCRIPT_DIR, "fundamentals.json")
 # window -- the same shape as the old get_exchange_label bug (see
 # stock_data.py), and it failed the same way: watchlists are user-creatable
 # from the dashboard, so every new one silently got a US window. That is not
-# hypothetical -- "[watchlist]" was added with 11 .NS/.BO tickers
+# hypothetical -- a user-created watchlist was added with 11 .NS/.BO tickers
 # and a ^CRSLDX benchmark, and every one of them was being searched with a
 # 25-day window instead of 45.
 INDIA_SEARCH_WINDOW_DAYS = 45
@@ -314,7 +314,7 @@ def _validate_sentiment(view):
                         evidence. Verdict unchanged; the flag exists because
                         "we found nothing solid" and "the picture is genuinely
                         balanced" are different claims that rendered
-                        identically. [ticker] is the worked example: bullish
+                        identically. The worked example was an India small-cap: bullish
                         -sounding prose (expansion plans, a "Strong Buy" from
                         an algorithmic site) whose only real number -- EPS
                         Rs 7.59 -- belonged to the PREVIOUS quarter, correctly
@@ -399,7 +399,7 @@ def needs_targeted_retry(view, market=None, ticker=None):
     KNOW the company reported, and when -- so a narrower query has something to
     aim at.
 
-    This is the [ticker] case: the broad search found the Q1 FY27 results
+    This is the case that motivated it: for an India small-cap the broad search found the Q1 FY27 results
     were announced on 2026-08-10 but returned no revenue or EPS for that
     quarter (the only figures it surfaced belonged to the previous one, which
     it correctly refused to use), so the view landed on an unexplained Neutral
@@ -412,9 +412,9 @@ def needs_targeted_retry(view, market=None, ticker=None):
       - an announcement date exists, so the query has an anchor;
       - that date sits inside the window the first search already covered, so
         we are not chasing an old quarter.
-    On 2026-09-03's store this fires for 3 of 117 tickers ([ticker],
-    [ticker], [ticker]) -- 6 more are evidence-less but have no report
-    inside the window to chase ([ticker] last reported 50 days ago, [ticker] 49, [ticker] 100),
+    On 2026-09-03's store this fires for 3 of 117 tickers (all India
+    small-caps) -- 6 more are evidence-less but have no report
+    inside the window to chase (US names last reported 49-100 days ago),
     which is a genuine absence of recent news rather than a search miss. So the
     cost is ~+2.6% of the run's calls, not one extra pass per Neutral.
     """
@@ -442,7 +442,7 @@ def fetch_targeted_earnings_numbers(client, ticker, company_name, market, announ
     re-roll of the one that already came back empty. It then falls back through
     the standard ladder (31b again after a backoff, then 26b).
 
-    The ladder is not optional here. Measured live on [ticker]: a first 31b
+    The ladder is not optional here. Measured live on one India ticker: a first 31b
     call timed out at 120s, a second identical call answered in 85s with the
     exact figures, and 26b timed out at 110s. These grounded searches are
     simply slow, so a single-shot attempt -- which is what this function did
@@ -528,7 +528,7 @@ def generate_fundamental_view(client, row_data, news_text=None, news_source=None
         # it considers null -- so an omitted key silently drops a brand-new
         # view onto the LEGACY free-text branch, where soft prose counts as
         # hard evidence and an unsupported Positive escapes both the PARTIAL
-        # and NO_EVIDENCE guards. Caught live on [ticker], whose
+        # and NO_EVIDENCE guards. Caught live on an India ticker whose
         # future_guidance ("Management targets 40-50% CAGR over the next 4-5
         # years") is exactly the kind of aspiration that branch would accept.
         # The legacy branch must only ever serve genuinely pre-schema records.

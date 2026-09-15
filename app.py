@@ -967,8 +967,8 @@ def _price_fmt(v):
     """Price-denominated cells: 1 decimal under 1,000, whole numbers above.
 
     These were all whole numbers ("{:,.0f}"), which hid the relationships the
-    row colouring depicts on low-priced tickers -- [ticker]'s last 8.9 vs 10 WEMA
-    8.7 both read "9", [ticker] 10.7 vs VStop 10.6 both "11". Stored values are
+    row colouring depicts on low-priced tickers -- a last of 8.9 vs a 10 WEMA of
+    8.7 both read "9", a last of 10.7 vs a VStop of 10.6 both "11". Stored values are
     already rounded to 1 decimal, so more than 1 would only show padding."""
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return "—"
@@ -1152,8 +1152,8 @@ def column_definitions(settings, labels):
             "a loss overhead. Weighs shares, not sessions, so a heavy distribution day counts for "
             "far more than a quiet drift day. Complements Breakout Window rather than repeating it: "
             "that gives the AGE of the nearest barrier, this gives the WEIGHT of all of it — "
-            "[ticker] shows a 190-day window but ~30% supply because ten more levels sit above, "
-            "while [ticker] has twelve levels above yet ~0% because all of them predate the year."
+            "one stock can show a 190-day window but ~30% supply because ten more levels sit above, "
+            "while another has twelve levels above yet ~0% because all of them predate the year."
         ),
         "52W High Age": (
             "Trading days since the 52-week high was SET — 0 means the high is today's bar. Pairs "
@@ -4820,11 +4820,11 @@ for ck in combined_keys:
     with combined_tabs[ck]:
         combined_markets_here = combined_markets_by_key[ck]
         # De-duplicated by ticker, first member wins. A ticker can sit in more
-        # than one member watchlist ([ticker] is in both US Watchlist and
-        # [watchlist]), and a raw concatenation rendered it
+        # than one member watchlist (one was in both US Watchlist and another
+        # member), and a raw concatenation rendered it
         # twice -- which crashed the tab outright, because the per-ticker
         # widgets downstream are keyed on {market}_{ticker} and the second copy
-        # collided (StreamlitDuplicateElementKey on re_ev_all_watchlist_[ticker]).
+        # collided (StreamlitDuplicateElementKey on re_ev_all_watchlist_<ticker>).
         # Which copy survives doesn't change any displayed number: the rows are
         # identical apart from their `market` tag, since every metric including
         # Mansfield RS is computed against the ticker's own index (see

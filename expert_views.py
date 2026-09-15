@@ -43,7 +43,7 @@ def fetch_gemma_expert_news(client, ticker, market, company_name, is_retry=False
     # 23:00 ET the PREVIOUS day, so a UTC date ran one day ahead of the US
     # session being analysed: a run at 2026-08-14 23:33 ET asked for news
     # "between 2026-08-14 and 2026-08-15", dropping Aug 13 entirely and
-    # requesting a New York date that had not happened yet. [ticker]'s stored
+    # requesting a New York date that had not happened yet. A US ticker's stored
     # news_used from that run contains items dated August 15. India was fine
     # either way (03:00 UTC = 08:30 IST), which is why only US tickers drifted.
     as_of_date = market_window_date(market, [ticker])
@@ -200,8 +200,8 @@ def validate_verdict(view, row):
 
     VERDICT_RULES was enforced by prompt compliance alone, even though every
     input it names is already a structured field on the snapshot row. Replaying
-    the guard over the 49 stored ACCUMULATE verdicts caught two: [ticker]
-    (trend=Downtrend) and [ticker] (VStop up only 1 week). 4% is a low
+    the guard over the 49 stored ACCUMULATE verdicts caught two: a US
+    ticker with trend=Downtrend and an India ticker with VStop up only 1 week. 4% is a low
     rate, but it was unbounded and unmonitored, and it moves with any model
     swap in the ladder.
 

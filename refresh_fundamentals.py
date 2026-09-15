@@ -92,8 +92,8 @@ def _prune_orphans(store, watchlists, label):
 
     Nothing ever removed these, so they sat in the file forever, never
     refreshed, ageing past the staleness threshold -- fundamentals.json carried
-    four ([ticker], [ticker], [ticker], and [ticker], a ghost of the
-    current [ticker]) and they were precisely the entries exceeding it.
+    four (one of them a .BO ghost of a ticker since re-added as .NS) and they
+    were precisely the entries exceeding it.
     """
     live = {t for tks in watchlists.values() for t in tks}
     orphans = [t for t in store if t not in live]
@@ -133,8 +133,8 @@ def main():
     retry_queue = []
     # A ticker in several watchlists is one analysis, not several. The store is
     # keyed by bare ticker, so the extra runs were pure waste that overwrote
-    # each other -- 110 slots for 105 unique tickers today ([ticker] x3,
-    # [ticker]/[ticker]/[ticker] x2), i.e. 5 redundant search+reasoning pairs a night.
+    # each other -- 110 slots for 105 unique tickers today (one x3,
+    # three x2), i.e. 5 redundant search+reasoning pairs a night.
     seen = set()
 
     for market, mkt_tickers in watchlists.items():

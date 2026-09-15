@@ -20,7 +20,7 @@ Perplexity-Finance-style digest built with a 3-stage per-ticker architecture:
 
 Roughly 105 search + 105 reasoning + 5 collation calls per run at today's
 watchlist sizes. Stages 1 and 2 are memoised per (ticker, window date), so a
-ticker in three watchlists ([ticker] today) costs one search, not three, while still
+ticker in three watchlists costs one search, not three, while still
 appearing in all three digests -- only Stage 3 is genuinely per-market.
 
 News is generated once/day at 8:00 PM ET via GitHub Actions (news-summary.yml).
@@ -32,9 +32,9 @@ to sit under Stage 1; it was removed because it was contributing noise rather
 than coverage -- the yfinance tier silently returned nothing at all on yfinance
 1.5.x (the schema moved to item["content"], so the old title/providerPublishTime
 reads yielded None for every item and the guard skipped them), the DuckDuckGo
-tier queried bare tickers with no company name ("Q stock news"), and the tier
+tier queried bare tickers with no company name ("X stock news"), and the tier
 above both grepped the previous run's news_summary.json with naive substring
-matching, so ticker "[ticker]" matched every line containing the letter q. A ticker
+matching, so a one-letter ticker matched every line containing that letter. A ticker
 whose search ladder is exhausted is now recorded as `failed` instead, which the
 output schema actually reports.
 """
@@ -185,7 +185,7 @@ def get_gemini_api_keys(st_secrets=None):
 
 def _bare_ticker(ticker):
     """Strips the .NS/.BO exchange suffix so the search prompt reads
-    naturally (e.g. "[ticker]" instead of "[ticker]")."""
+    naturally (e.g. "TCS" instead of "TCS.NS")."""
     if ticker.endswith(_INDIA_SUFFIXES):
         return ticker.rsplit(".", 1)[0]
     return ticker
@@ -431,9 +431,9 @@ def collate_market_summary(client, market, batch_texts, as_of_date=None,
     # this stage to judge those bars a second time made it lossy and
     # inconsistent: on 2026-08-20 Stage 2 marked 60 tickers material and Stage 3
     # emitted only 34 bullets -- india_invested went from 8 down to 1. The
-    # giveaway was [ticker] and [ticker], which are in two watchlists and so
-    # share one cached Stage 2 result: identical input text, kept in the wrap
-    # earnings digest, dropped from india_invested.
+    # giveaway was two India tickers that are in two watchlists and so
+    # share one cached Stage 2 result: identical input text, kept in the other
+    # watchlist's digest, dropped from india_invested.
     #
     # Two instructions caused it, both of which I added and neither of which the
     # original had. "drop any undated note" is fatal because Stage 2 rewrites
@@ -493,16 +493,16 @@ def collation_dropped_tickers(summary, material_tickers):
     A prompt cannot be trusted to be lossless, so the loss is measured rather
     than assumed -- this is what turns "the digest looks thin" into a number in
     the output. Matches on the bare ticker, case-insensitively, since Stage 3
-    renders "[ticker]" rather than "[ticker]".
+    renders "TCS" rather than "TCS.NS".
     """
     haystack = (summary or "").upper()
-    # Word boundaries, not a bare substring test. "[ticker]" ([company]) matches inside
-    # "[ticker]" and "Q1", "[ticker]" inside "RAISED", "[ticker]" inside "NON-FARM" -- so a
+    # Word boundaries, not a bare substring test. A one-letter ticker matches
+    # inside "Q1", a two-letter one inside "RAISED", a three-letter one inside "NON-FARM" -- so a
     # short ticker that Stage 3 really did drop would be reported as present.
     # Nothing was mis-reported in the 2026-09-02 digest (the colliding symbols
     # were all quiet, and this function only looks at material ones), but the
     # module docstring records this exact class of bug biting the removed
-    # DuckDuckGo tier, where ticker "[ticker]" matched every line containing a q.
+    # DuckDuckGo tier, where a one-letter ticker matched every line containing it.
     return [t for t in material_tickers
             if not re.search(rf"\b{re.escape(_bare_ticker(t).upper())}\b", haystack)]
 
@@ -568,8 +568,8 @@ def build_news_summary(watchlists, api_key):
                     ticker_names[row["ticker"]] = row["company_name"]
 
     # Stage 1 and Stage 2 are both purely per-ticker, so memoise them for the
-    # whole run. Today 110 watchlist slots are 105 unique tickers -- [ticker] sits
-    # in three watchlists and [ticker]/[ticker]/[ticker] in two -- and every repeat
+    # whole run. Today 110 watchlist slots are 105 unique tickers -- one sits
+    # in three watchlists and three more in two -- and every repeat
     # used to cost a fresh grounded search plus a fresh reasoning call, and
     # produced independently-worded text so the same news read differently in
     # each digest. Keyed on the WINDOW DATE as well as the ticker so a ticker
@@ -762,7 +762,7 @@ def build_news_summary(watchlists, api_key):
 
         # Dedup the flat source list the app renders -- Stage 1 results are
         # pooled per market and repeated URLs were common (46 entries for 36
-        # unique URLs in the [watchlist] watchlist). Per-ticker attribution lives
+        # unique URLs in one watchlist). Per-ticker attribution lives
         # in `tickers` below; this list backs the "Sources (N)" expander only.
         seen_urls, deduped = set(), []
         for s in all_sources:

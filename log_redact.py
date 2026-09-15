@@ -74,7 +74,7 @@ def _watchlists(folder):
 
 
 def build_patterns(folder="."):
-    """[(regex, placeholder)], longest literal first so "[ticker]" wins over "[ticker]"."""
+    """[(regex, placeholder)], longest literal first so "ABC.NS" wins over "ABC"."""
     literals = {}
     for name in _watchlists(folder):
         literals[name] = "[watchlist]"

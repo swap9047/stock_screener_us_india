@@ -9,8 +9,6 @@ automated alerts to Discord.
 
 *   **Registry-driven watchlists:** Watchlists are defined in `markets.json`, each with its
     own benchmark — add one from the dashboard without touching code.
-    Currently 7: US Invested, India Invested, US Watchlist, India Watchlist,
-    [watchlist], [watchlist], and Tracking.
 *   **Combined views:** Two roll-up tabs, *All Invested* and *All Watchlist*, merge any
     watchlists you choose (membership is editable in the UI, stored in
     `watchlist_groups.json`) and de-duplicate tickers that appear in more than one.

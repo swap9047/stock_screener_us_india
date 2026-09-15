@@ -59,8 +59,8 @@ def _prune_orphans(store, watchlists, label):
 
     Nothing ever removed these, so they sat in the file forever, never
     refreshed, ageing past the staleness threshold -- fundamentals.json carried
-    four ([ticker], [ticker], [ticker], and [ticker], a ghost of the
-    current [ticker]) and they were precisely the entries exceeding it.
+    four (one of them a .BO ghost of a ticker since re-added as .NS) and they
+    were precisely the entries exceeding it.
     """
     live = {t for tks in watchlists.values() for t in tks}
     orphans = [t for t in store if t not in live]
