@@ -1,0 +1,33 @@
+name: Load data files
+description: >
+  Check out the private data repo into data/ and copy its JSON into the
+  workspace root, where every script reads it. The code repo is public and
+  tracks no JSON (see AGENTS.md, "JSON files are the database").
+inputs:
+  token:
+    description: DATA_REPO_TOKEN (Contents read/write on the data repo)
+    required: true
+  repository:
+    description: The private data repo
+    required: false
+    default: swap9047/stock_screener_data
+runs:
+  using: composite
+  steps:
+    # Checked out at the branch tip when this step runs, not at the SHA the
+    # run was triggered on -- so a run queued behind another sees its commit.
+    - uses: actions/checkout@v4
+      with:
+        repository: ${{ inputs.repository }}
+        token: ${{ inputs.token }}
+        path: data
+    - shell: bash
+      run: |
+        shopt -s nullglob
+        files=(data/*.json)
+        if [ ${#files[@]} -eq 0 ]; then
+          echo "::error::The data repo has no JSON files -- refusing to run on empty data."
+          exit 1
+        fi
+        cp "${files[@]}" .
+        echo "Loaded ${#files[@]} data file(s)"

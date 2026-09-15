@@ -30,7 +30,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write   # needed to commit expert_views.json back to the repo
+  contents: read   # data is committed to the private data repo, never to this public one
 
 jobs:
   gate:
@@ -88,6 +88,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: ./.github/actions/load-data
+        with:
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -96,7 +100,8 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Refresh data snapshot
-        run: python -u refresh_data.py
+        shell: bash
+        run: python -u refresh_data.py 2>&1 | python -u log_redact.py
         env:
           # Same scoping as the AI step below. Without this the snapshot leg
           # ignored `markets` entirely, so "Re-analyze All" clicked on a
@@ -106,7 +111,8 @@ jobs:
           REFRESH_MARKETS: ${{ github.event.inputs.markets }}
 
       - name: Generate AI Expert Views
-        run: python -u refresh_expert_views.py
+        shell: bash
+        run: python -u refresh_expert_views.py 2>&1 | python -u log_redact.py
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           # Second key so llm_util.make_client can spread the run's calls
@@ -121,29 +127,7 @@ jobs:
         # always(): commit whatever the run produced even when it failed, so
         # the partial results and any pruning survive for diagnosis.
         if: always()
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data_snapshot.json expert_views.json
-          if ! git diff --staged --quiet; then
-            git commit -m "Update data_snapshot.json + expert_views.json [automated]"
-            # Fail the step if every attempt fails. The old `... && break || {
-            # sleep 2; }` loop exited with sleep's status (0), so a run whose
-            # push never landed still went green and its output was lost.
-            pushed=false
-            for i in {1..5}; do
-              git fetch origin main
-              if git rebase -X theirs origin/main && git push origin main; then
-                pushed=true
-                break
-              fi
-              git rebase --abort 2>/dev/null || true
-              sleep 2
-            done
-            if [ "$pushed" != true ]; then
-              echo "::error::Push failed after 5 attempts -- this run's output was NOT committed."
-              exit 1
-            fi
-          else
-            echo "No changes to commit"
-          fi
+        uses: ./.github/actions/commit-data
+        with:
+          files: data_snapshot.json expert_views.json
+          message: "Update data_snapshot.json + expert_views.json [automated]"

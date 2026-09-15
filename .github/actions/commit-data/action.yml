@@ -1,0 +1,61 @@
+name: Commit data files
+description: >
+  Copy this job's output files back into data/ and push them to the private
+  data repo, retrying through concurrent commits from other workflows.
+inputs:
+  files:
+    description: Space-separated file names this job owns
+    required: true
+  message:
+    description: Commit message (keep it generic -- no tickers)
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        FILES: ${{ inputs.files }}
+        MESSAGE: ${{ inputs.message }}
+      run: |
+        present=()
+        for f in $FILES; do
+          # A job can legitimately end without writing a file (alert_check.py
+          # returns early when no rule is due); `git add` of a missing path
+          # would fail the step under bash -e and turn a no-op run red.
+          if [ -f "$f" ]; then
+            cp "$f" "data/$f"
+            present+=("$f")
+          else
+            echo "$f not written this run -- skipping it"
+          fi
+        done
+        if [ ${#present[@]} -eq 0 ]; then
+          echo "Nothing to commit"
+          exit 0
+        fi
+        cd data
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add -- "${present[@]}"
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+          exit 0
+        fi
+        git commit -m "$MESSAGE"
+        # Fail the step if every attempt fails. The old `... && break || {
+        # sleep 2; }` loop exited with sleep's status (0), so a run whose push
+        # never landed still went green and its output was lost.
+        pushed=false
+        for i in {1..5}; do
+          git fetch origin main
+          if git rebase -X theirs origin/main && git push origin HEAD:main; then
+            pushed=true
+            break
+          fi
+          git rebase --abort 2>/dev/null || true
+          sleep 2
+        done
+        if [ "$pushed" != true ]; then
+          echo "::error::Push failed after 5 attempts -- this run's output was NOT committed."
+          exit 1
+        fi

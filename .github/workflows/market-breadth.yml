@@ -12,15 +12,20 @@ concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
 
+permissions:
+  contents: read   # data is committed to the private data repo, never to this public one
+
 jobs:
   update_breadth:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - uses: ./.github/actions/load-data
+        with:
+          token: ${{ secrets.DATA_REPO_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -46,11 +51,10 @@ jobs:
           # Now: find the most recent slot start, run if we are within GRACE of
           # it and market_breadth.json has not already been refreshed since
           # then. The as_of check is what stops the second fire of a slot.
-          # It reads origin/main, not the checkout: a run queued behind the
-          # first one by the concurrency group is checked out at the SHA it was
-          # triggered on, which predates the first run's commit.
-          git fetch --quiet --depth=1 origin main || true
-          git show FETCH_HEAD:market_breadth.json > /tmp/breadth_main.json 2>/dev/null || cp market_breadth.json /tmp/breadth_main.json 2>/dev/null || true
+          # It reads the data repo checkout, which load-data takes at the
+          # branch tip when this job starts -- so a run queued behind the first
+          # one by the concurrency group sees that run's commit.
+          cp data/market_breadth.json /tmp/breadth_main.json 2>/dev/null || true
           python3 - <<'EOF' >> "$GITHUB_OUTPUT"
           import json
           import sys
@@ -101,42 +105,22 @@ jobs:
 
       - name: Calculate Market Breadth
         if: steps.time_check.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
+        shell: bash
         run: |
-          python -u refresh_market_breadth.py
+          python -u refresh_market_breadth.py 2>&1 | python -u log_redact.py
 
       - name: Refresh Dashboard Performance Data
         if: steps.time_check.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
+        shell: bash
         run: |
-          python -u refresh_dashboard_perf.py
+          python -u refresh_dashboard_perf.py 2>&1 | python -u log_redact.py
 
       - name: Commit and push changes
         if: steps.time_check.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
-        run: |
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git add market_breadth.json dashboard_perf.json
-          if ! git diff --staged --quiet; then
-            git commit -m "Update market breadth & dashboard performance data [automated]"
-            # Fail the step if every attempt fails. The old `... && break || {
-            # sleep 2; }` loop exited with sleep's status (0), so a run whose
-            # push never landed still went green and its output was lost.
-            pushed=false
-            for i in {1..5}; do
-              git fetch origin main
-              if git rebase -X theirs origin/main && git push origin main; then
-                pushed=true
-                break
-              fi
-              git rebase --abort 2>/dev/null || true
-              sleep 2
-            done
-            if [ "$pushed" != true ]; then
-              echo "::error::Push failed after 5 attempts -- this run's output was NOT committed."
-              exit 1
-            fi
-          else
-            echo "No changes to commit"
-          fi
+        uses: ./.github/actions/commit-data
+        with:
+          files: market_breadth.json dashboard_perf.json
+          message: "Update market breadth & dashboard performance data [automated]"
 
       # Runs AFTER the commit on purpose. A leg that fails still leaves the
       # other market refreshed and worth committing, and refresh_market_breadth.py

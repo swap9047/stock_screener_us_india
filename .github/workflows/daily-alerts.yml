@@ -33,7 +33,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write   # alert_state.json is committed back to the repo (see below)
+  contents: read   # data (alert_state.json too) is committed to the private data repo, never to this public one
 
 jobs:
   gate:
@@ -42,6 +42,12 @@ jobs:
       due: ${{ steps.check.outputs.due }}
     steps:
       - uses: actions/checkout@v4
+
+      # load_rules() below reads alerts_config.json. Without the data files the
+      # gate would see no rules and skip every night.
+      - uses: ./.github/actions/load-data
+        with:
+          token: ${{ secrets.DATA_REPO_TOKEN }}
 
       - uses: actions/setup-python@v5
         with:
@@ -70,12 +76,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Before the migration restore below, so hashFiles sees the data repo's copy.
+      - uses: ./.github/actions/load-data
+        with:
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+
       # alert_state.json (edge-triggered dedup) is COMMITTED, like
       # weekly_wrapup_state.json. It used to live only in actions/cache, where an
       # eviction, a cache purge or a branch change silently reset it to empty --
       # and the next run then re-fired every currently-true rule x ticker at
       # once. This restore is the one-time migration from that cache: it only
-      # runs while the repo has no committed copy yet.
+      # runs while the data repo has no alert_state.json yet.
       - name: Restore alert state from the old cache (migration only)
         if: hashFiles('alert_state.json') == ''
         uses: actions/cache/restore@v4
@@ -93,44 +104,20 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run alert check
+        shell: bash
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            python -u alert_check.py --force
+            python -u alert_check.py --force 2>&1 | python -u log_redact.py
           else
-            python -u alert_check.py
+            python -u alert_check.py 2>&1 | python -u log_redact.py
           fi
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
 
+      # commit-data skips a file the run didn't write: alert_check.py returns
+      # before writing any state when no rule is configured or due.
       - name: Commit updated alert_state.json
-        run: |
-          # alert_check.py returns before writing any state when no rule is
-          # configured or due; `git add` of a missing path would then fail
-          # this step (bash -e) and turn a no-op run red.
-          if [ ! -f alert_state.json ]; then
-            echo "No alert_state.json written this run -- nothing to commit"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add alert_state.json
-          if ! git diff --staged --quiet; then
-            git commit -m "Update alert_state.json [automated]"
-            # Fail the step if every attempt fails (see data-refresh.yml).
-            pushed=false
-            for i in {1..5}; do
-              git fetch origin main
-              if git rebase -X theirs origin/main && git push origin main; then
-                pushed=true
-                break
-              fi
-              git rebase --abort 2>/dev/null || true
-              sleep 2
-            done
-            if [ "$pushed" != true ]; then
-              echo "::error::Push failed after 5 attempts -- this run's output was NOT committed."
-              exit 1
-            fi
-          else
-            echo "No changes to commit"
-          fi
+        uses: ./.github/actions/commit-data
+        with:
+          files: alert_state.json
+          message: "Update alert_state.json [automated]"

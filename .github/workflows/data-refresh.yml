@@ -38,13 +38,17 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write   # needed to commit data_snapshot.json back to the repo
+  contents: read   # data is committed to the private data repo, never to this public one
 
 jobs:
   refresh:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/load-data
+        with:
+          token: ${{ secrets.DATA_REPO_TOKEN }}
 
       - uses: actions/setup-python@v5
         with:
@@ -54,32 +58,11 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Refresh data snapshot
-        run: python -u refresh_data.py
+        shell: bash
+        run: python -u refresh_data.py 2>&1 | python -u log_redact.py
 
-      - name: Commit and push updated data_snapshot.json
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data_snapshot.json
-          if ! git diff --staged --quiet; then
-            git commit -m "Update data_snapshot.json [automated]"
-            # Fail the step if every attempt fails. The old `... && break || {
-            # sleep 2; }` loop exited with sleep's status (0), so a run whose
-            # push never landed still went green and its output was lost.
-            pushed=false
-            for i in {1..5}; do
-              git fetch origin main
-              if git rebase -X theirs origin/main && git push origin main; then
-                pushed=true
-                break
-              fi
-              git rebase --abort 2>/dev/null || true
-              sleep 2
-            done
-            if [ "$pushed" != true ]; then
-              echo "::error::Push failed after 5 attempts -- this run's output was NOT committed."
-              exit 1
-            fi
-          else
-            echo "No changes to commit"
-          fi
+      - name: Commit updated data_snapshot.json
+        uses: ./.github/actions/commit-data
+        with:
+          files: data_snapshot.json
+          message: "Update data_snapshot.json [automated]"
