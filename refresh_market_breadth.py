@@ -90,7 +90,9 @@ def calculate_breadth(tickers, label, tz, close_hhmm):
             
         print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {label}: Processed {min(i+batch_size, len(tickers))}/{len(tickers)}. Failures in this batch: {len(missing)}")
         if missing:
-            print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Failed tickers in this batch: {missing}")
+            # Count only -- see log_redact.py: this list is public index members, and
+            # masking just the held ones among them would reveal which are held.
+            print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Failed tickers in this batch: {len(missing)}")
             
         if i + batch_size < len(tickers):
             time.sleep(120) # 2 minute wait between batches
@@ -126,7 +128,9 @@ def calculate_breadth(tickers, label, tz, close_hhmm):
             time.sleep(3)
             
     if failed_tickers:
-        print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Final failures that could not be downloaded: {failed_tickers}")
+        # Count only -- see log_redact.py: this list is public index members, and
+        # masking just the held ones among them would reveal which are held.
+        print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Final failures that could not be downloaded: {len(failed_tickers)}")
         
     print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Calculating Historical Metrics...")
     closes = pd.concat(all_data, axis=1)
