@@ -166,16 +166,36 @@ def rows_for(markets):
     return {m: [{"ticker": t, "company_name": t, "last_close": 1.0} for t in tickers]
             for m, tickers in markets.items()}
 
+# One enabled, scheduled rule, so the jobs reach the coverage guard instead of
+# returning early. They must not depend on alerts_config.json existing: CI runs
+# on a checkout with no data files at all.
+RULE = {"id": "r1", "name": "check rule", "enabled": True, "scope": "ALL",
+        "conditions": [{"metric_a": "last_close", "operator": ">", "compare_type": "value",
+                        "value": 0, "logic": "AND"}],
+        "schedule": {"type": "scheduled", "days": list("MON TUE WED THU FRI SAT SUN".split()),
+                     "time_et": "21:00"},
+        "weekly_wrapup": True}
+
+STUBBED = ("fetch_all_markets", "send_discord_batch", "load_watchlists", "load_rules",
+           "load_state", "save_state", "load_data_snapshot", "is_rule_due",
+           "load_wrapup_state", "save_wrapup_state")
+
+
 def run_job(mod, fetch_fn):
     """Runs main() with everything external stubbed; returns 'exit<N>' or 'returned'."""
-    saved = {k: getattr(mod, k) for k in ("fetch_all_markets", "send_discord_batch", "load_watchlists") if hasattr(mod, k)}
-    extra = {k: getattr(mod, k) for k in ("load_state", "save_state", "load_data_snapshot") if hasattr(mod, k)}
+    saved = {k: getattr(mod, k) for k in STUBBED if hasattr(mod, k)}
     sent = []
     try:
         mod.fetch_all_markets = fetch_fn
         mod.send_discord_batch = lambda *a, **kw: sent.append(1) or (True, "")
         mod.load_watchlists = lambda: WL
         mod.load_data_snapshot = lambda: {"short_history": {}}
+        mod.load_rules = lambda: [dict(RULE)]
+        if hasattr(mod, "is_rule_due"):
+            mod.is_rule_due = lambda *a, **kw: True
+        if hasattr(mod, "load_wrapup_state"):
+            mod.load_wrapup_state = lambda: {"last_run": None, "entries": {}}
+            mod.save_wrapup_state = lambda s: None
         if hasattr(mod, "load_state"):
             mod.load_state = lambda: {"x": {"was_active": True, "last_triggered_date": "2026-09-01"}}
             mod.save_state = lambda s: None
@@ -185,7 +205,7 @@ def run_job(mod, fetch_fn):
         except SystemExit as e:
             return f"exit{e.code}", sent
     finally:
-        for k, v in {**saved, **extra}.items():
+        for k, v in saved.items():
             setattr(mod, k, v)
 
 for mod, name in ((alert_check, "alert_check"), (weekly_wrapup_check, "weekly_wrapup_check")):

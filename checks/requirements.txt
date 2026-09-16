@@ -1,0 +1,4 @@
+# Extra dependency the offline checks need on top of requirements.txt:
+# they parse the workflow YAML (test_workflows.py). Kept out of the app's own
+# requirements so production installs nothing it does not import.
+pyyaml~=6.0

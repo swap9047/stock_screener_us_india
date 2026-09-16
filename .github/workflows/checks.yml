@@ -39,7 +39,7 @@ jobs:
       # The pinned set from requirements.txt, so a check runs against what the
       # scheduled workflows and Streamlit Cloud actually install.
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt -r checks/requirements.txt
 
       - name: Offline checks
         run: python3 checks/run_all.py
