@@ -291,6 +291,12 @@ Three things about it you cannot guess:
 - **`days` filters the SLOT's weekday, not the run's.** The Sunday wrap-up slot is still
   Sunday's when the run starts on Monday morning.
 
+**An "hourly" cron is not hourly.** GitHub throttles it to 4-6 runs a day, 2-5 hours
+apart (measured on `data-refresh.yml`, 2026-09-07..10). That is still several chances per
+slot, which is the point, but it means a slot's work can start hours after the slot -- so
+`grace-hours` has to be generous (22 h, or 10 h where slots are 12 h apart) and
+`SNAPSHOT_STALE_WARN_HOURS = 6` sits close to the real gap between data refreshes.
+
 This replaced a cron pair per workflow (one line per DST season) plus a gate that rejected
 the line belonging to the other season. It only worked while GitHub fired the right line:
 on 2026-09-14 it fired only the EST line for the 9:15 PM ET alert slot, the gate rejected

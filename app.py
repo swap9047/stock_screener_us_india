@@ -1204,12 +1204,14 @@ def column_definitions(settings, labels):
             "and a strong contradicting signal downgrades either to Yellow ('further study'). Hover a "
             "flagged cell for the exact vote/veto breakdown."
         ),
+        "Expert Take": "AI-generated synthesis of technical indicators and recent analyst coverage: ACCUMULATE, HOLD, or CAUTION.",
         "Expert News?": (
             "Whether the Expert Take verdict had any news behind it. \"No\" means the grounded search "
             "returned nothing for this ticker, so the verdict is a technicals-only read -- still valid "
             "(the rules say absent news leans Hold), but not news-informed. Roughly 30% of verdicts are "
             "technicals-only on a typical day."
         ),
+        "10/30 W Golden Cross (weeks ago)": "Weeks since the 10-week EMA crossed above the 30-week EMA. Lower numbers mean a more recent bullish cross.",
         "Notes": "Your free-text note for this ticker, set via the sidebar 'Ticker Notes' panel. Hover/tap a truncated note to see the full text.",
         "Interested": "Whether you ticked this ticker as Interested in the watchlist editor.",
         "Sentiment": "AI fundamental sentiment (Positive / Neutral / Negative) from the most recent earnings, guidance and analyst coverage. 'Unknown' means the view is stale, predates a confirmed earnings report, or had no hard evidence to stand on -- not that sentiment is neutral.",

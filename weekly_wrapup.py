@@ -231,11 +231,10 @@ def build_wrapup(rules, snapshot_results, state, metric_labels=None,
             "tickers": tickers,
             "weeks": weeks,
             # Human-readable condition summary, e.g. "10 WEMA > 40 WEMA AND RSI > 45".
-            # metric_labels is passed in reverse (key=internal, value=display) so we
-            # build the forward map on the fly: {internal_key: display_label}.
+            # metric_labels is {internal_key: display_label}, as expected by describe_chain.
             "description": describe_chain(
                 rule.get("conditions", []),
-                {v: k for k, v in (metric_labels or {}).items()},
+                metric_labels or {},
                 rules_by_id,
             ),
         })

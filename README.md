@@ -30,8 +30,8 @@ automated alerts to Discord.
 *   **Discord integrations:** GitHub Actions cron jobs evaluate your rules and ping a
     Discord webhook when they trigger, plus a weekly wrap-up digest.
 *   **State persistence:** Configuration changed in the UI is committed straight back to
-    the GitHub repository as a single atomic commit, so it survives Streamlit Community
-    Cloud redeploys — where the filesystem is ephemeral.
+    the private data repository as a single atomic commit, so it survives Streamlit
+    Community Cloud redeploys — where the container filesystem is ephemeral.
 
 ## 🧠 AI Pipelines
 
@@ -72,7 +72,9 @@ to just the tab you clicked from.
 *   `github_sync.py` — atomic commits via the GitHub API, and workflow dispatch.
 *   `refresh_*.py` — background entry points run by GitHub Actions.
 
-There is no database: all state is JSON in the repo root. See
+There is no database: all state is stored as JSON in a separate private repository
+(`swap9047/stock_screener_data`), keeping personal holdings, notes, and alerts private
+while the code repository stays public for unlimited free GitHub Actions minutes. See
 [AGENTS.md](AGENTS.md) for the full architecture, the row-dict contract, the
 registration checklist for adding a column, and the known traps — read it before
 contributing (or before pointing an AI agent at this codebase).
@@ -80,5 +82,6 @@ contributing (or before pointing an AI agent at this codebase).
 ## ⚙️ Setup & Deployment
 
 Designed to run for free on Streamlit Community Cloud, with GitHub Actions for the
-background jobs. For API keys (`GEMINI_API_KEY`, `GITHUB_TOKEN`, `DISCORD_WEBHOOK_URL`)
-and workflow setup, see the [Deployment Guide](DEPLOYMENT.md).
+background jobs. For API tokens and keys (`DATA_REPO_TOKEN`, `GITHUB_TOKEN`,
+`GEMINI_API_KEY`, `DISCORD_WEBHOOK_URL`) and workflow setup, see the
+[Deployment Guide](DEPLOYMENT.md).
