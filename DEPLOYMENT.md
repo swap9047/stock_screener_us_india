@@ -103,7 +103,7 @@ Rough cost: an hourly gate run (a few seconds each) plus one full check per due 
 
 A second, independent GitHub Actions workflow, `.github/workflows/news-summary.yml`, builds a daily news digest for every watchlist in scope (`news_watchlist_scope` in Settings — blank means all watchlists): for each ticker, it uses Gemini (with Google Search grounding, so it's real, cited web search — not the model's training data) to find important announcements, results, and stock moves from the last 24 hours, collates each watchlist into its own summary, saves the result to `news_summary.json`, and sends each summary to Discord. The app's **News** tab just displays that same `news_summary.json`.
 
-It runs once a day at **8:00 PM ET**, using the same two-UTC-cron-lines-plus-runtime-check pattern as the alerts workflow to handle daylight saving time correctly.
+It does its work once per **8:00 PM ET** slot: the workflow wakes hourly and the shared slot gate lets the first run after the slot through (same pattern as every other scheduled workflow — see AGENTS.md).
 
 To enable it, add one more repo secret (repo → Settings → Secrets and variables → Actions → New repository secret):
 
@@ -112,6 +112,8 @@ GEMINI_API_KEY = <your key from aistudio.google.com>
 ```
 
 Get a free key at [Google AI Studio](https://aistudio.google.com/apikey). The workflow reuses the same `DISCORD_WEBHOOK_URL` secret as the alerts workflow.
+
+**Spreading the load over several keys.** A nightly AI run is ~250 calls against one project's free quota, so the three AI workflows rotate across every key they find, picking one per call. Any secret or env var whose **name starts with `GEMINI_API_KEY`** counts — `GEMINI_API_KEY_BACKUP`, `GEMINI_API_KEY_BACKUP_B`, `GEMINI_API_KEY_2`, whatever you like. Two steps per key: add the repo secret, then add a matching line to the `env:` block of the AI steps in `news-summary.yml`, `expert-views.yml` and `fundamentals.yml` (Actions only exposes secrets a step names explicitly). Each run logs `[key rotation] N key(s): ...` so you can confirm it sees them all. For local runs, put the keys in `.env`.
 
 A few things worth knowing:
 
@@ -184,7 +186,7 @@ The **Re-analyze All** and **Refresh news** buttons start GitHub Actions runs in
 | Re-analyze / Refresh news buttons | Needs `GITHUB_TOKEN`/`GITHUB_REPO` secrets (Actions permission on the code repo) |
 | Daily news digest (News tab + Discord, 8:00 PM ET) | Needs `GEMINI_API_KEY` repo secret (free at aistudio.google.com) — GitHub Actions workflow is already committed |
 | Hourly data refresh (around the clock) | No new secret needed — GitHub Actions workflow is already committed |
-| Daily Expert Views (11:00 PM ET) | Needs `GEMINI_API_KEY` repo secret — GitHub Actions workflow is already committed |
-| Daily Fundamental Views (3:00 AM ET) | Needs `GEMINI_API_KEY` repo secret — GitHub Actions workflow is already committed |
+| Daily Expert Views (1:00 AM ET) | Needs `GEMINI_API_KEY` repo secret — GitHub Actions workflow is already committed |
+| Daily Fundamental Views (9:00 PM ET) | Needs `GEMINI_API_KEY` repo secret — GitHub Actions workflow is already committed |
 | Market Breadth & Performance (10 AM & 10 PM ET) | No new secret needed — GitHub Actions workflow is already committed |
 | Weekly Wrap-up digest (Sunday 9:00 PM ET) | Uses `DISCORD_WEBHOOK_URL` repo secret — GitHub Actions workflow is already committed |

@@ -178,10 +178,10 @@ def retry_pair_tiers(primary, fallback, backoff=RETRY_BACKOFF_SECONDS):
 # ---------------------------------------------------------------------------
 # API key rotation
 #
-# Two Gemini keys are configured (GEMINI_API_KEY, GEMINI_API_KEY_BACKUP), both
-# as repo secrets and in .env. The point is to halve the per-key load: a
-# nightly run is ~250 calls against one project's quota, and the search stages
-# are the slow, rate-limit-prone ones.
+# Several Gemini keys are configured (GEMINI_API_KEY, GEMINI_API_KEY_BACKUP,
+# GEMINI_API_KEY_BACKUP_B as of 2026-09-16), as repo secrets and in .env. The
+# point is to divide the per-key load: a nightly run is ~250 calls against one
+# project's quota, and the search stages are the slow, rate-limit-prone ones.
 #
 # Rotation is PER CALL, not per run or per script. A run picks a client once
 # and then makes every call through it, so per-run rotation would still put a
@@ -191,8 +191,13 @@ def retry_pair_tiers(primary, fallback, backoff=RETRY_BACKOFF_SECONDS):
 # call sites.
 # ---------------------------------------------------------------------------
 
-# In priority order. Anything matching GEMINI_API_KEY_<N> is picked up too, so
-# adding a third key is a config change rather than a code change.
+# Discovery is by NAME PREFIX: any secret or environment variable whose name
+# starts with GEMINI_API_KEY is a key, whatever the suffix (_BACKUP, _BACKUP_B,
+# _2, ...). It used to be a fixed list of names, which silently ignored
+# GEMINI_API_KEY_BACKUP_B when that key was added -- the run kept splitting
+# across two keys and nothing said so. These two names are ranked first, and
+# everything else follows in name order, so rotation logs stay predictable.
+KEY_NAME_PREFIX = "GEMINI_API_KEY"
 PRIMARY_KEY_NAME = "GEMINI_API_KEY"
 BACKUP_KEY_NAME = "GEMINI_API_KEY_BACKUP"
 
@@ -200,6 +205,18 @@ BACKUP_KEY_NAME = "GEMINI_API_KEY_BACKUP"
 # this, a key whose daily quota is exhausted keeps getting picked for half the
 # remaining calls and fails every one of them.
 KEY_COOLDOWN_SECONDS = 120
+
+# Local runs only: app.py loads .env for the dashboard, but the headless
+# scripts (refresh_*.py, news_check.py, alert_check.py) had no way to see it, so
+# testing key rotation locally meant exporting the keys by hand. Actions has no
+# .env, and load_dotenv never overrides a variable that is already set, so this
+# changes nothing in CI.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(".env")
+except Exception:
+    pass
 
 QUOTA_ERROR_MARKERS = ("resource_exhausted", "resource exhausted", "quota", "rate limit", "too many requests")
 
@@ -209,6 +226,33 @@ def _is_quota_error(exc):
         return True
     text = f"{type(exc).__name__}: {exc}".lower()
     return any(m in text for m in QUOTA_ERROR_MARKERS)
+
+
+def _key_names(st_secrets=None):
+    """Every secret/env name that looks like a Gemini key, primary and backup
+    first. GitHub upper-cases secret names (GEMINI_API_KEY_BACKUP_B) while a
+    .env file keeps whatever case you typed, so match case-insensitively but
+    return the name as configured -- that is what the rotation logs show."""
+    names = []
+
+    def consider(name):
+        if isinstance(name, str) and name.upper().startswith(KEY_NAME_PREFIX) and name not in names:
+            names.append(name)
+
+    if st_secrets is not None:
+        try:
+            for name in st_secrets:
+                consider(name)
+        except Exception:
+            pass   # a secrets object that will not iterate: fall back to env
+    for name in os.environ:
+        consider(name)
+
+    def rank(name):
+        upper = name.upper()
+        return (0 if upper == PRIMARY_KEY_NAME else 1 if upper == BACKUP_KEY_NAME else 2, upper)
+
+    return sorted(names, key=rank)
 
 
 def gemini_api_keys(st_secrets=None, extra=None):
@@ -230,8 +274,7 @@ def gemini_api_keys(st_secrets=None, extra=None):
 
     # Named discovery first, so a key the caller also passed keeps its real
     # name in the rotation logs instead of showing up as "caller[0]".
-    names = [PRIMARY_KEY_NAME, BACKUP_KEY_NAME] + [f"{PRIMARY_KEY_NAME}_{n}" for n in range(2, 10)]
-    for name in names:
+    for name in _key_names(st_secrets):
         if st_secrets is not None:
             try:
                 if name in st_secrets:
@@ -365,6 +408,11 @@ def make_client(api_key=None, st_secrets=None):
     keys = gemini_api_keys(st_secrets=st_secrets, extra=api_key)
     if not keys:
         return None
+    # Log the names (not the values): discovery is by prefix, so this is the
+    # only place a run says how many keys it is actually spreading load across.
+    # A key added as a secret but not passed through the workflow's `env:` would
+    # otherwise silently leave the run on fewer keys.
+    print(f"  [key rotation] {len(keys)} key(s): {', '.join(n for n, _ in keys)}")
     return RotatingGeminiClient(keys)
 
 

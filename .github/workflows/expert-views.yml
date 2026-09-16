@@ -95,6 +95,9 @@ jobs:
           # across both projects' quotas -- see llm_util's rotation section.
           # Absent/blank is fine: rotation just falls back to one key.
           GEMINI_API_KEY_BACKUP: ${{ secrets.GEMINI_API_KEY_BACKUP }}
+          # A third key (2026-09-16). Actions only exposes secrets a step names, so
+          # each new key needs a line here; llm_util discovers it by name prefix.
+          GEMINI_API_KEY_BACKUP_B: ${{ secrets.GEMINI_API_KEY_BACKUP_B }}
           # github.event.inputs (not `inputs`) so scheduled runs, which carry
           # no inputs at all, resolve to an empty string = every watchlist.
           REFRESH_MARKETS: ${{ github.event.inputs.markets }}

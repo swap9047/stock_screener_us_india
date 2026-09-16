@@ -24,7 +24,16 @@ credentials are configured, and in headless tests you bypass it by seeding
 
 Secrets come from Streamlit secrets first, then env vars: `DATA_REPO_TOKEN`,
 `GEMINI_API_KEY`, `GITHUB_TOKEN`, `GITHUB_REPO`, `GITHUB_BRANCH`, `DISCORD_WEBHOOK_URL`,
-`AUTH_USERNAME`, `AUTH_PASSWORD`. See `DEPLOYMENT.md`.
+`AUTH_USERNAME`, `AUTH_PASSWORD`. See `DEPLOYMENT.md`. Locally, `llm_util` and `app.py`
+also load `.env`.
+
+**Gemini keys are discovered by name prefix:** every secret or env var starting with
+`GEMINI_API_KEY` joins the rotation (`llm_util.gemini_api_keys`), and
+`RotatingGeminiClient` picks one per call to divide the ~250-call nightly load. Adding a
+key is a config change here, but a workflow change too -- Actions only exposes secrets a
+step names, so each key needs a line in the AI steps' `env:` blocks. Every run logs
+`[key rotation] N key(s): ...`; if that number is lower than expected, that line is
+missing.
 
 **There is no test suite.** Changes are verified by rendering the app headlessly — recipe
 at the bottom.
