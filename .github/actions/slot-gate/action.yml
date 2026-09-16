@@ -1,0 +1,46 @@
+name: Slot gate
+description: >
+  Should this run do its schedule slot's work? Workflows wake hourly and this
+  answers once per slot, so a cron line GitHub never fires (or fires hours late)
+  no longer costs a slot. See slot_gate.py for why.
+inputs:
+  slots:
+    description: Slot start hours in ET, comma-separated (e.g. "21", or "10,22")
+    required: true
+  grace-hours:
+    description: How late a run may still do the slot's work. Must stay below the gap between slots.
+    required: true
+  days:
+    description: 'Weekday codes the slot applies to (e.g. "SUN"); blank = every day'
+    required: false
+    default: ""
+  work-job:
+    description: >
+      Name of the job that does the work. A run whose gate said "no" still
+      reports success, so the gate looks for THIS job succeeding.
+    required: true
+  workflow-file:
+    description: This workflow's file name, e.g. daily-alerts.yml
+    required: true
+  token:
+    description: Token with actions:read on this repo (github.token is enough)
+    required: true
+outputs:
+  run:
+    description: "true when this run should do the work"
+    value: ${{ steps.gate.outputs.run }}
+runs:
+  using: composite
+  steps:
+    - id: gate
+      shell: bash
+      env:
+        SLOT_HOURS_ET: ${{ inputs.slots }}
+        GRACE_HOURS: ${{ inputs.grace-hours }}
+        DAYS: ${{ inputs.days }}
+        WORK_JOB: ${{ inputs.work-job }}
+        WORKFLOW_FILE: ${{ inputs.workflow-file }}
+        REPO: ${{ github.repository }}
+        RUN_ID: ${{ github.run_id }}
+        GH_TOKEN: ${{ inputs.token }}
+      run: python3 "$GITHUB_ACTION_PATH/slot_gate.py" >> "$GITHUB_OUTPUT"

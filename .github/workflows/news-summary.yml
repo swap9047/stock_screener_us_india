@@ -3,20 +3,15 @@ name: Daily Watchlist News Summary
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
-# Runs once/day at 8:00 PM ET (after market close), building a Gemini
-# grounded-search news digest (major announcements/developments/stock moves
-# in the last 24h) for each watchlist and sending it to Discord.
-#
-# 8:00 PM ET is 00:00 UTC during EDT (mid-Mar to early Nov) and 01:00 UTC
-# during EST (early Nov to mid-Mar) -- GitHub Actions cron is UTC-only and
-# does NOT adjust for daylight saving, so both lines are scheduled and a
-# cheap "gate" job checks the real America/New_York wall-clock hour at run
-# time so only the correct one for the current season actually proceeds
-# (mirrors the same DST pattern used in daily-alerts.yml).
+# Does its work once per 8:00 PM ET slot, building a Gemini grounded-search news
+# digest (major announcements/developments/stock moves in the last 24h) for each
+# watchlist and sending it to Discord. The slot gate keeps that to one run a day.
 on:
+  # ONE hourly wake-up, not a cron per DST season. The slot gate below decides
+  # whether this run does the work, so a line GitHub never fires (it dropped the
+  # 9:15 PM ET alert line on 2026-09-14) or fires 5 h late no longer costs a slot.
   schedule:
-    - cron: "0 0 * * *"   # 00:00 UTC = 8:00 PM ET during EDT
-    - cron: "0 1 * * *"   # 01:00 UTC = 8:00 PM ET during EST
+    - cron: "0 * * * *"
   # Run manually from the Actions tab anytime, bypasses the gate. `markets` and
   # `limit` make it a partial smoke-test run: only those watchlists' first N
   # tickers, only their digests replaced, and nothing posted to Discord (see
@@ -38,59 +33,29 @@ concurrency:
 
 permissions:
   contents: read   # data is committed to the private data repo, never to this public one
+  actions: read    # the slot gate reads this workflow's own run history
 
 jobs:
   gate:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      due: ${{ steps.check.outputs.due }}
+      run: ${{ steps.slot.outputs.run }}
     steps:
-      - id: check
-        name: Is it ~8 PM ET right now?
-        env:
-          CRON_SCHEDULE: ${{ github.event.schedule }}
-        run: |
-          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
-          # Which of the two crons is the right one for the current DST season
-          # is the ONLY question here. There used to be a second condition,
-          #     hour_diff = min((h - 20) % 24, (20 - h) % 24)
-          #     due = is_valid_cron and (hour_diff <= 22)
-          # described as a "22 hour tolerance for scheduler delays" -- but that
-          # expression is a distance on a 24h circle and so maxes out at 12,
-          # making `<= 22` unconditionally true. It gated nothing and only
-          # obscured the cron match, which does the real work. Deliberately not
-          # replaced with a working hour window: GitHub can delay a scheduled
-          # run substantially, and skipping the digest entirely is worse than
-          # running it late.
-          import os
-          from zoneinfo import ZoneInfo
-          from datetime import datetime
-          now_et = datetime.now(ZoneInfo("America/New_York"))
+      - uses: actions/checkout@v4
 
-          rule_hour = 20
-          cron = os.environ.get("CRON_SCHEDULE")
-
-          # No cron in the env means this wasn't a scheduled run (the build job
-          # lets workflow_dispatch through regardless), so default to due.
-          due = True
-          if cron:
-              try:
-                  cron_utc_hour = int(cron.split()[1])
-                  expected_utc_hour = int((rule_hour - (now_et.utcoffset().total_seconds() / 3600)) % 24)
-                  due = cron_utc_hour == expected_utc_hour
-              except Exception as e:
-                  # Was `pass`, which left due=True -- so an unparseable cron
-                  # made BOTH scheduled lines fire and double-ran the digest.
-                  print(f"# could not parse CRON_SCHEDULE {cron!r}: {e}")
-                  due = False
-
-          print(f"due={'true' if due else 'false'}")
-          EOF
+      - id: slot
+        uses: ./.github/actions/slot-gate
+        with:
+          slots: "20"
+          grace-hours: "22"
+          work-job: build
+          workflow-file: news-summary.yml
+          token: ${{ github.token }}
 
   build:
     needs: gate
-    if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.due == 'true'
+    if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     # ~105 tickers x up to 5 LLM calls at a 120s timeout, plus the retry
     # queue's 30s-per-ticker pacing. Without a bound the worst case creeps

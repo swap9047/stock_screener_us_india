@@ -3,16 +3,16 @@ name: Daily Fundamental Views Generation
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
-# Runs once/day at 3:00 AM ET. It generates AI Fundamental Views for all
-# tickers, reading data_snapshot.json rather than refreshing it itself.
-# Scheduled 4 hours after expert-views.yml's 11:00 PM ET run (which is what
-# actually refreshes data_snapshot.json, as its first step) so this workflow
-# has a large buffer to guarantee that snapshot is fresh and already
-# committed by the time it reads it, rather than racing a 30-minute gap.
+# AI Fundamental Views for all tickers, once per 9:00 PM ET slot. It reads
+# data_snapshot.json rather than refreshing it, and at 9 PM ET the freshest copy
+# is the hourly data-refresh's (US close is 4 PM ET, India's session has not
+# opened), not expert-views.yml's -- that one now runs later, at 1:00 AM ET.
 on:
+  # ONE hourly wake-up, not a cron per DST season. The slot gate below decides
+  # whether this run does the work, so a line GitHub never fires (it dropped the
+  # 9:15 PM ET alert line on 2026-09-14) or fires 5 h late no longer costs a slot.
   schedule:
-    - cron: "0 7 * * *"   # 07:00 UTC = 3:00 AM ET during EDT
-    - cron: "0 8 * * *"   # 08:00 UTC = 3:00 AM ET during EST
+    - cron: "0 * * * *"
   # `markets` lets the dashboard's "Re-analyze All" button scope a run to just
   # the watchlist(s) behind the tab it was clicked from, instead of always
   # re-running every watchlist. Blank (and every scheduled run) = all.
@@ -33,54 +33,29 @@ concurrency:
 
 permissions:
   contents: read   # data is committed to the private data repo, never to this public one
+  actions: read    # the slot gate reads this workflow's own run history
 
 jobs:
   gate:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
-      due: ${{ steps.check.outputs.due }}
+      run: ${{ steps.slot.outputs.run }}
     steps:
-      - id: check
-        name: Is it ~3:00 AM ET right now?
-        env:
-          CRON_SCHEDULE: ${{ github.event.schedule }}
-        run: |
-          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
-          import os
-          from zoneinfo import ZoneInfo
-          from datetime import datetime
-          now_et = datetime.now(ZoneInfo("America/New_York"))
+      - uses: actions/checkout@v4
 
-          rule_hour = 3
-          cron = os.environ.get("CRON_SCHEDULE")
-          
-          # Which of the two crons matches the current DST season is the ONLY
-          # question here. There used to be a second condition,
-          #     hour_diff = min((h - R) % 24, (R - h) % 24)
-          #     due = is_valid_cron and (hour_diff <= 22)
-          # billed as a tolerance for scheduler delays -- but that expression is
-          # a distance on a 24h circle, so it maxes out at 12 and `<= 22` was
-          # unconditionally true. It gated nothing. Deliberately not replaced
-          # with a working hour window: GitHub can delay a scheduled run, and
-          # skipping the refresh entirely is worse than running it late.
-          due = True
-          if cron:
-              try:
-                  cron_utc_hour = int(cron.split()[1])
-                  expected_utc_hour = int((rule_hour - (now_et.utcoffset().total_seconds() / 3600)) % 24)
-                  due = cron_utc_hour == expected_utc_hour
-              except Exception as e:
-                  # Was `pass`, which left due=True -- so an unparseable cron
-                  # fired BOTH scheduled lines and double-ran ~110 tickers.
-                  print(f"# could not parse CRON_SCHEDULE {cron!r}: {e}")
-                  due = False
-          
-          print(f"due={'true' if due else 'false'}")
-          EOF
+      - id: slot
+        uses: ./.github/actions/slot-gate
+        with:
+          slots: "21"
+          grace-hours: "22"
+          work-job: build
+          workflow-file: fundamentals.yml
+          token: ${{ github.token }}
 
   build:
     needs: gate
-    if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.due == 'true'
+    if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     # ~110 tickers x up to 5 LLM calls at a 120s timeout, plus retry
     # pacing. Unbounded, the worst case creeps toward GitHub's 6h cap and

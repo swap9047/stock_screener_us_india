@@ -74,17 +74,11 @@ def _scope_label(scope):
 # never sent to Discord, but still usable as a watchlist filter (see
 # app.py's "Filter by Saved Scans / Alerts").
 #
-# ALLOWED_HOURS must always match EXACTLY which hour(s) the GitHub Actions
-# workflow (daily-alerts.yml) actually wakes up at -- currently just
-# 9:00 PM ET (crons at :15), once/day, to keep Actions usage minimal. It was briefly
-# widened to all 24 hours (workflow running hourly) but that decoupled the
-# picker from reality: the dropdown let you pick, say, 3:00 PM, but the
-# workflow never woke up then, so that rule would silently never fire.
-# Restricting ALLOWED_HOURS back down to exactly what the workflow supports
-# means the picker can never offer an hour that doesn't actually work --
-# if you want more/different hours later, both this list AND the workflow's
-# `on.schedule` cron lines need to change together (see daily-alerts.yml's
-# comment block for the DST-safe two-line-per-hour pattern).
+# ALLOWED_HOURS must always match EXACTLY the slot(s) daily-alerts.yml's gate
+# acts on -- currently just 9:00 PM ET, once/day. The workflow wakes hourly, but
+# the slot gate only lets one run per 21:00 ET slot through, so an hour this list
+# offered without a matching slot would silently never fire. To add an alert
+# time, add it here AND to the gate's `slots` input (see daily-alerts.yml).
 # normalize_schedule() clamps any invalid/unsupported hour to the nearest
 # allowed one, so a stale or corrupted schedule can never silently hold up
 # a rule.
@@ -145,21 +139,24 @@ def describe_schedule(rule):
 # as a +/-1h tolerance for scheduler delay -- but hour_diff is a distance on a
 # 24h circle, so it maxes out at 12 and the test was always true. It gated
 # nothing (a Monday 21:00 rule was "due" at 09:00, 13:00 and 21:00). Removed
-# rather than repaired, as in the three AI workflows' gates: GitHub starts these
-# runs hours late (~01:45-02:15 ET in Sept 2026 for a 21:15 cron), so a real
-# window would drop whole days. What does the gating: the day-of-week check
-# (with the past-midnight / Saturday rollback) and, for scheduled runs, the
-# DST cron-pair match.
+# rather than repaired: GitHub starts these runs hours late (~01:45-02:15 ET in
+# Sept 2026 for a 21:15 cron), so a real window would drop whole days. What does
+# the gating: the day-of-week check here (with the past-midnight / Saturday
+# rollback), plus .github/actions/slot-gate, which owns "once per slot" for the
+# workflow. The old cron_schedule argument -- which rejected the cron line
+# belonging to the other DST season -- is gone with those cron pairs: when
+# GitHub fired only the EST line on 2026-09-14, it rejected the run and that
+# day's alerts never went out.
 
 
-def is_rule_due(rule, et_now=None, cron_schedule=None):
+def is_rule_due(rule, et_now=None):
     """Is this rule due to be checked right now? Compares the rule's
     schedule against `et_now` (a tz-aware America/New_York datetime;
-    defaults to the current time). Matches on day-of-week (an evening rule
-    that lands after midnight or on Saturday counts for the previous day), and
-    rejects a cron line that belongs to the other DST season. No hour-of-day
-    window -- see the note above. The workflow YAML owns which hour(s) wake up;
-    ALLOWED_HOURS keeps the app's schedule picker aligned with them."""
+    defaults to the current time). Matches on day-of-week only -- an evening
+    rule that lands after midnight or on Saturday counts for the previous day.
+    No hour-of-day window, and no cron-season test: the workflow's slot gate
+    owns "once per slot" (see the note above). ALLOWED_HOURS keeps the app's
+    schedule picker aligned with the slots the gate acts on."""
     sched = rule.get("schedule", {})
     if sched.get("type") == "none":
         return False
@@ -199,15 +196,6 @@ def is_rule_due(rule, et_now=None, cron_schedule=None):
     allowed_days = sched.get("days", DEFAULT_DAYS)
     if day_code not in allowed_days:
         return False
-
-    if cron_schedule:
-        try:
-            cron_utc_hour = int(cron_schedule.split()[1])
-            expected_utc_hour = int((rule_hour - (et_now.utcoffset().total_seconds() / 3600)) % 24)
-            if cron_utc_hour != expected_utc_hour:
-                return False
-        except Exception:
-            pass
 
     return True
 

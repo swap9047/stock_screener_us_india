@@ -22,9 +22,9 @@ There is a login gate (`get_auth_credentials`, `app.py`). It's skipped entirely 
 credentials are configured, and in headless tests you bypass it by seeding
 `session_state["authenticated"] = True` (see **Verifying a change**).
 
-Secrets come from Streamlit secrets first, then env vars: `GEMINI_API_KEY`,
-`GITHUB_TOKEN`, `GITHUB_REPO`, `GITHUB_BRANCH`, `DISCORD_WEBHOOK_URL`, `AUTH_USERNAME`,
-`AUTH_PASSWORD`. See `DEPLOYMENT.md`.
+Secrets come from Streamlit secrets first, then env vars: `DATA_REPO_TOKEN`,
+`GEMINI_API_KEY`, `GITHUB_TOKEN`, `GITHUB_REPO`, `GITHUB_BRANCH`, `DISCORD_WEBHOOK_URL`,
+`AUTH_USERNAME`, `AUTH_PASSWORD`. See `DEPLOYMENT.md`.
 
 **There is no test suite.** Changes are verified by rendering the app headlessly — recipe
 at the bottom.
@@ -33,22 +33,22 @@ at the bottom.
 
 ## Module map
 
-~12.6k lines total. The weighting matters: `app.py` is nearly half of it.
+~15.4k lines total. The weighting matters: `app.py` is nearly 40% of it.
 
 | File | Lines | What it owns |
 |---|---:|---|
-| `app.py` | 5846 | The entire UI: tabs, tables, sidebar, filters, sort, editors, AI control bars, News + Alert Rules tabs |
-| `stock_data.py` | 2320 | yfinance fetching, all indicator maths, watchlist/markets registry IO, `get_filterable_metrics` |
-| `alerts.py` | 858 | Alert rule evaluation + Discord message building |
+| `app.py` | 6099 | The entire UI: tabs, tables, sidebar, filters, sort, editors, AI control bars, News + Alert Rules tabs |
+| `stock_data.py` | 2642 | yfinance fetching, all indicator maths, watchlist/markets registry IO, `get_filterable_metrics` |
+| `alerts.py` | 855 | Alert rule evaluation + Discord message building |
 | `news_summary.py` | 839 | News gathering + LLM summarisation |
 | `fundamentals_eval.py` | 672 | Sentiment ("fundamental view") generation + validation |
-| `expert_views.py` | 558 | Expert Take verdict generation |
-| `github_sync.py` | 374 | Atomic config push + `workflow_dispatch` trigger |
-| `filters.py` | 353 | The boolean condition engine — shared by UI filters **and** background alerts |
-| `weekly_wrapup.py` | 361 | Weekly Discord digest |
-| `llm_util.py` | 288 | Shared Gemini-call plumbing (timeout wrapper, retry/model-ladder logic) for the three AI pipelines |
-| `ticker_notes.py` | 230 | Per-ticker notes/flags + auto-flag voting |
-| `custom_columns.py` | 229 | User-defined formula columns |
+| `github_sync.py` | 621 | Atomic config push + `workflow_dispatch` trigger |
+| `expert_views.py` | 571 | Expert Take verdict generation |
+| `filters.py` | 402 | The boolean condition engine — shared by UI filters **and** background alerts |
+| `llm_util.py` | 380 | Shared Gemini-call plumbing (timeout wrapper, retry/model-ladder logic) for the three AI pipelines |
+| `weekly_wrapup.py` | 355 | Weekly Discord digest |
+| `custom_columns.py` | 289 | User-defined formula columns |
+| `ticker_notes.py` | 233 | Per-ticker notes/flags + auto-flag voting |
 
 `refresh_*.py` and `*_check.py` are thin entry points that exist only to be run by GitHub
 Actions. They contain no logic worth duplicating — they call into the modules above.
@@ -264,38 +264,47 @@ Each of these has actually bitten this codebase.
 
 ## GitHub Actions
 
-| Workflow | Runs | Commits (to the data repo) | Schedule (UTC) |
-|---|---|---|---|
-| `data-refresh.yml` | `refresh_data.py` | `data_snapshot.json` | hourly, every hour, around the clock |
-| `expert-views.yml` | `refresh_data.py`, `refresh_expert_views.py` | `data_snapshot.json`, `expert_views.json` | 03:00 / 04:00 (11 PM ET) |
-| `fundamentals.yml` | `refresh_fundamentals.py` | `fundamentals.json` | 07:00 / 08:00 (3 AM ET) |
-| `news-summary.yml` | `news_check.py` | `news_summary.json` | 00:00 / 01:00 (8 PM ET) |
-| `daily-alerts.yml` | `alert_check.py` | `alert_state.json` | 01:15 / 02:15 (9:15 PM ET) |
-| `market-breadth.yml` | `refresh_market_breadth.py`, `refresh_dashboard_perf.py` | `market_breadth.json`, `dashboard_perf.json` | 02,03,14,15 |
-| `weekly-wrapup.yml` | `weekly_wrapup_check.py` | `weekly_wrapup_state.json` | Mon 01:00 / 02:00 |
+| Workflow | Runs | Commits (to the data repo) | Slot (ET) | Stale after |
+|---|---|---|---|---|
+| `data-refresh.yml` | `refresh_data.py` | `data_snapshot.json` | every hour, no gate | n/a |
+| `news-summary.yml` | `news_check.py` | `news_summary.json` | 8:00 PM | 22 h |
+| `fundamentals.yml` | `refresh_fundamentals.py` | `fundamentals.json` | 9:00 PM | 22 h |
+| `daily-alerts.yml` | `alert_check.py` | `alert_state.json` | 9:15 PM | 22 h |
+| `expert-views.yml` | `refresh_data.py`, `refresh_expert_views.py` | `data_snapshot.json`, `expert_views.json` | 1:00 AM | 22 h |
+| `market-breadth.yml` | `refresh_market_breadth.py`, `refresh_dashboard_perf.py` | `market_breadth.json`, `dashboard_perf.json` | 10:00 AM + 10:00 PM | 10 h |
+| `weekly-wrapup.yml` | `weekly_wrapup_check.py` | `weekly_wrapup_state.json` | Sunday 9:00 PM | 22 h |
 
-`data-refresh.yml` is the exception to the pattern below: it's a single hourly cron with no
-gate job, deliberately running around the clock rather than only during US/India market
-hours, since a fixed daytime window sampled India's ~23:45-06:00 ET session never (only
-after the close). It's idempotent either way — the commit step no-ops when the snapshot is
-byte-identical, so quiet hours add no commits.
+**Every workflow wakes hourly (`cron: "0 * * * *"`) and a `gate` job decides whether this
+run does the work** -- `.github/actions/slot-gate`, inputs `slots` (ET hours), `grace-hours`,
+optional `days`, and `work-job`. It finds the most recent slot in New York time, skips it
+when it is older than `grace-hours`, and otherwise asks the GitHub API whether an earlier
+run of the same workflow has already done it. `data-refresh.yml` needs no gate: every hour
+is a real run.
 
-Every other workflow's two crons are the EDT/EST pair; a gate job checks the real ET hour
-and skips the wrong one, so a run isn't double-fired. `market-breadth.yml` is gated
-differently: once per 10 AM / 10 PM ET slot, de-duplicated on `market_breadth.json`'s
-`as_of` read from `main`.
+Three things about it you cannot guess:
 
-**GitHub starts scheduled runs hours late** — observed ~4-5 h in September 2026 (the
-9:15 PM ET alert check ran ~2 AM ET; the "hourly" data refresh managed 4-6 runs a day).
-Two consequences to design for:
+- **"Done" means the WORK JOB succeeded**, not the run. A run whose gate said "no" also
+  reports success, and counting those would skip the slot forever. Hence `work-job`, and
+  hence the gate needs `actions: read`.
+- **`grace-hours` must stay below the gap between slots.** Breadth has two slots 12 h
+  apart, so it keeps 10 h; the others have one slot a day and use 22 h.
+- **`days` filters the SLOT's weekday, not the run's.** The Sunday wrap-up slot is still
+  Sunday's when the run starts on Monday morning.
 
-- A gate must not assume the run starts near its cron time. A window on
-  minutes-since-midnight can't wrap past 23:59; that bug skipped every nightly breadth
-  run for weeks.
-- A late evening job lands inside NSE's ~23:45-06:00 ET session and gets a forming India
-  bar. Jobs that judge closes pass `completed_sessions_only=True` to `fetch_all_markets`
-  (`alert_check.py`, `weekly_wrapup_check.py`), which drops each ticker's unfinished bar
-  by its own exchange. The dashboard and `refresh_data.py` leave it off to show live prices.
+This replaced a cron pair per workflow (one line per DST season) plus a gate that rejected
+the line belonging to the other season. It only worked while GitHub fired the right line:
+on 2026-09-14 it fired only the EST line for the 9:15 PM ET alert slot, the gate rejected
+it, and that day's alerts never went out. **GitHub starts scheduled runs hours late**
+(observed ~4-5 h) **and drops lines outright**, so no single cron can be load-bearing.
+
+A late evening job lands inside NSE's ~23:45-06:00 ET session and gets a forming India
+bar. Jobs that judge closes pass `completed_sessions_only=True` to `fetch_all_markets`
+(`alert_check.py`, `weekly_wrapup_check.py`), which drops each ticker's unfinished bar
+by its own exchange. The dashboard and `refresh_data.py` leave it off to show live prices.
+
+`alerts.ALLOWED_HOURS` must match the alert gate's `slots`, or the app's schedule picker
+would offer an hour nothing wakes up for. `daily-alerts.yml`'s gate also asks
+`is_rule_due()` whether any rule is due for that slot's day before starting the heavy job.
 
 `expert-views.yml` and `fundamentals.yml` accept a **`markets`** input (comma-separated
 market keys) which the app's per-tab "Re-analyze All" button uses to scope a run to one

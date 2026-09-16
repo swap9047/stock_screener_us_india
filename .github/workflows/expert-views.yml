@@ -3,17 +3,15 @@ name: Daily Expert Views Generation
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
-# Runs once/day at 11:00 PM ET. First refreshes data_snapshot.json (replaces
-# the standalone data-refresh workflow), then generates AI Expert Takes for
-# all tickers. Running data refresh here ensures expert views always work
-# from same-day price data.
-#
-# 11:00 PM ET is 03:00 UTC during EDT (mid-Mar to early Nov) and 04:00 UTC
-# during EST (early Nov to mid-Mar).
+# Does its work once per 1:00 AM ET slot. First refreshes data_snapshot.json, then
+# generates AI Expert Takes for all tickers, so the views always work from same-day
+# price data. The slot gate keeps that to one run a day.
 on:
+  # ONE hourly wake-up, not a cron per DST season. The slot gate below decides
+  # whether this run does the work, so a line GitHub never fires (it dropped the
+  # 9:15 PM ET alert line on 2026-09-14) or fires 5 h late no longer costs a slot.
   schedule:
-    - cron: "0 3 * * *"   # 03:00 UTC = 11:00 PM ET during EDT
-    - cron: "0 4 * * *"   # 04:00 UTC = 11:00 PM ET during EST
+    - cron: "0 * * * *"
   # Run manually from the Actions tab anytime, bypasses the gate. `markets`
   # lets the dashboard's "Re-analyze All" button scope a run to just the
   # watchlist(s) behind the tab it was clicked from, instead of always
@@ -35,55 +33,29 @@ concurrency:
 
 permissions:
   contents: read   # data is committed to the private data repo, never to this public one
+  actions: read    # the slot gate reads this workflow's own run history
 
 jobs:
   gate:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
-      due: ${{ steps.check.outputs.due }}
+      run: ${{ steps.slot.outputs.run }}
     steps:
-      - id: check
-        name: Is it ~11 PM ET right now?
-        env:
-          CRON_SCHEDULE: ${{ github.event.schedule }}
-        run: |
-          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
-          # 22 hour tolerance for GitHub's scheduler delays.
-          import os
-          from zoneinfo import ZoneInfo
-          from datetime import datetime
-          now_et = datetime.now(ZoneInfo("America/New_York"))
-          
-          rule_hour = 23
-          cron = os.environ.get("CRON_SCHEDULE")
-          
-          # Which of the two crons matches the current DST season is the ONLY
-          # question here. There used to be a second condition,
-          #     hour_diff = min((h - R) % 24, (R - h) % 24)
-          #     due = is_valid_cron and (hour_diff <= 22)
-          # billed as a tolerance for scheduler delays -- but that expression is
-          # a distance on a 24h circle, so it maxes out at 12 and `<= 22` was
-          # unconditionally true. It gated nothing. Deliberately not replaced
-          # with a working hour window: GitHub can delay a scheduled run, and
-          # skipping the refresh entirely is worse than running it late.
-          due = True
-          if cron:
-              try:
-                  cron_utc_hour = int(cron.split()[1])
-                  expected_utc_hour = int((rule_hour - (now_et.utcoffset().total_seconds() / 3600)) % 24)
-                  due = cron_utc_hour == expected_utc_hour
-              except Exception as e:
-                  # Was `pass`, which left due=True -- so an unparseable cron
-                  # fired BOTH scheduled lines and double-ran ~110 tickers.
-                  print(f"# could not parse CRON_SCHEDULE {cron!r}: {e}")
-                  due = False
-          
-          print(f"due={'true' if due else 'false'}")
-          EOF
+      - uses: actions/checkout@v4
+
+      - id: slot
+        uses: ./.github/actions/slot-gate
+        with:
+          slots: "1"
+          grace-hours: "22"
+          work-job: build
+          workflow-file: expert-views.yml
+          token: ${{ github.token }}
 
   build:
     needs: gate
-    if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.due == 'true'
+    if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     # ~110 tickers x up to 5 LLM calls at a 120s timeout, plus retry
     # pacing. Unbounded, the worst case creeps toward GitHub's 6h cap and

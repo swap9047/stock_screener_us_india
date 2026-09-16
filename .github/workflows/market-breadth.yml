@@ -1,11 +1,10 @@
 name: Market Breadth Updater
 
 on:
+  # ONE hourly wake-up, not four cron lines across two DST seasons. The gate job
+  # decides which of the two daily slots (10 AM / 10 PM ET) this run owns.
   schedule:
-    # Two slots a day, 10:00 AM and 10:00 PM ET, Mon-Sat. The four UTC hours
-    # cover both DST offsets (02/03 UTC = 10 PM, 14/15 UTC = 10 AM), so each
-    # slot gets two fires; the slot guard below keeps exactly one run per slot.
-    - cron: "0 2,3,14,15 * * *"
+    - cron: "0 * * * *"
   workflow_dispatch:
 
 concurrency:
@@ -14,9 +13,32 @@ concurrency:
 
 permissions:
   contents: read   # data is committed to the private data repo, never to this public one
+  actions: read    # the slot gate reads this workflow's own run history
 
 jobs:
+  # Once per 10 AM / 10 PM ET slot, Mon-Sat. 10 h window: it must stay below the
+  # 12 h between slots, or a late run could no longer tell which slot it owns.
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.slot.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: slot
+        uses: ./.github/actions/slot-gate
+        with:
+          slots: "10,22"
+          grace-hours: "10"
+          days: "MON,TUE,WED,THU,FRI,SAT"
+          work-job: update_breadth
+          workflow-file: market-breadth.yml
+          token: ${{ github.token }}
+
   update_breadth:
+    needs: gate
+    if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -33,90 +55,22 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Check Timezone / Slot Guard
-        id: time_check
-        run: |
-          # Run once per 10 AM / 10 PM ET slot (Mon-Sat), whenever GitHub
-          # actually gets around to starting us.
-          #
-          # This used to test `slot <= now_minutes < slot + 6h` on minutes since
-          # midnight, which cannot wrap: the 10 PM window silently ended at
-          # 23:59. GitHub starts these scheduled runs ~5 hours late (~03:00 ET),
-          # so EVERY nightly run was skipped (10-16s runs, 2026-09-04..13) and
-          # the only refresh left was ~13:30 ET, mid US session -- so S&P 500
-          # breadth was always one session behind. Its de-duplication was dead
-          # too: it read the fired hour from github.event.schedule, but that is
-          # the whole "0 2,3,14,15 * * *" string, which matched every time.
-          #
-          # Now: find the most recent slot start, run if we are within GRACE of
-          # it and market_breadth.json has not already been refreshed since
-          # then. The as_of check is what stops the second fire of a slot.
-          # It reads the data repo checkout, which load-data takes at the
-          # branch tip when this job starts -- so a run queued behind the first
-          # one by the concurrency group sees that run's commit.
-          cp data/market_breadth.json /tmp/breadth_main.json 2>/dev/null || true
-          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
-          import json
-          import sys
-          from datetime import datetime, timedelta, timezone
-          from zoneinfo import ZoneInfo
-
-          ET = ZoneInfo("America/New_York")
-          SLOT_HOURS = (10, 22)           # 10 AM and 10 PM ET
-          GRACE = timedelta(hours=10)     # < 12h, so a late run never reaches into the next slot
-
-          now_et = datetime.now(timezone.utc).astimezone(ET)
-          starts = []
-          for back in (0, 1):
-              d = (now_et - timedelta(days=back)).date()
-              for h in SLOT_HOURS:
-                  start = datetime(d.year, d.month, d.day, h, tzinfo=ET)
-                  if start <= now_et:
-                      starts.append(start)
-          slot = max(starts)
-
-          last_run = None
-          try:
-              with open("/tmp/breadth_main.json") as f:
-                  as_of = json.load(f).get("as_of")   # UTC, "YYYY-MM-DD HH:MM", stamped at run start
-              last_run = datetime.strptime(as_of, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
-          except Exception:
-              pass   # unreadable -> treat the slot as not yet refreshed
-
-          in_window = now_et - slot < GRACE
-          slot_day_ok = slot.isoweekday() <= 6              # Mon-Sat slots
-          already_done = last_run is not None and last_run >= slot
-
-          # stderr, not stdout: stdout is appended to $GITHUB_OUTPUT, which
-          # only accepts key=value lines.
-          last_txt = f"{last_run:%Y-%m-%d %H:%M} UTC" if last_run else "unreadable"
-          print(f"now {now_et:%a %Y-%m-%d %H:%M} ET | slot {slot:%a %Y-%m-%d %H:%M} ET | "
-                f"last refresh {last_txt} | in_window={in_window} already_done={already_done}",
-                file=sys.stderr)
-          run = in_window and slot_day_ok and not already_done
-          print(f"run={'true' if run else 'false'}")
-          EOF
-
       - name: Install dependencies
-        if: steps.time_check.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Calculate Market Breadth
-        if: steps.time_check.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
           python -u refresh_market_breadth.py 2>&1 | python -u log_redact.py
 
       - name: Refresh Dashboard Performance Data
-        if: steps.time_check.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
           python -u refresh_dashboard_perf.py 2>&1 | python -u log_redact.py
 
       - name: Commit and push changes
-        if: steps.time_check.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
         uses: ./.github/actions/commit-data
         with:
           files: market_breadth.json dashboard_perf.json
@@ -128,7 +82,6 @@ jobs:
       # visible. Without it, 8 consecutive runs reported "success" while the S&P
       # 500 breadth charts were blank.
       - name: Verify every market refreshed
-        if: steps.time_check.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
         run: |
           python3 - <<'EOF'
           import json, sys

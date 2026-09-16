@@ -4,7 +4,7 @@ This turns your local app into a URL you can open from your phone or any browser
 
 ## 1. Push the folder to GitHub
 
-1. Create a new **private** repo on GitHub (Settings → your data stays out of search engines; private repos deploy fine on Streamlit Cloud).
+1. Create a new repo on GitHub (can be **public** or private — keeping the code repo public gives you unlimited free GitHub Actions minutes for the background workflows, while all personal data, watchlists, notes, and alerts live in the private data repo in step 1b).
 2. From this folder:
    ```bash
    cd stock_alert_app
@@ -52,14 +52,30 @@ This is a simple session-based gate suitable for keeping casual visitors out, no
 In your app's dashboard: **⋮ menu → Settings → Secrets**, paste:
 
 ```toml
-DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/xxxx/yyyy"
+# Login gate (step 4)
 AUTH_USERNAME = "yourname"
 AUTH_PASSWORD = "choose-a-real-password"
+
+# Private data repo sync (step 1b) — required for persisting UI edits across redeploys
+DATA_REPO_TOKEN = "github_pat_xxxx"
+DATA_REPO = "your-username/stock_screener_data"   # optional if matching DATA_REPO_DEFAULT
+DATA_REPO_BRANCH = "main"                         # optional, defaults to main
+
+# Code repo workflow dispatch (step 9) — required for Re-analyze All / Refresh news buttons
+GITHUB_TOKEN = "github_pat_yyyy"
+GITHUB_REPO = "your-username/your-code-repo"
+GITHUB_BRANCH = "main"                            # optional, defaults to main
+
+# Discord webhook for manual "Send test message" / UI alerts (step 3)
+DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/xxxx/yyyy"
+
+# Gemini API key for single-ticker on-demand AI analysis in the app UI
+GEMINI_API_KEY = "AIzaSy..."
 ```
 
-Save — the app restarts automatically and picks these up (`get_discord_webhook()` and `get_auth_credentials()` both check `st.secrets` first). Choose your own username/password here; nothing to send back to me.
+Save — the app restarts automatically and picks these up (`get_discord_webhook()`, `get_auth_credentials()`, `get_data_repo_config()`, and `get_gemini_api_key()` all check `st.secrets` first). Choose your own username/password here.
 
-For **local runs**, the equivalent is a `.streamlit/secrets.toml` file (same format, gitignored already) or the two local JSON files: `discord_config.json` (`{"webhook_url": "..."}`) and `auth_config.json` (`{"username": "...", "password": "..."}`).
+For **local runs**, the equivalent is a `.streamlit/secrets.toml` file (same format, gitignored already) or local env vars / JSON files (`discord_config.json`, `auth_config.json`).
 
 ## 6. Schedule the alert check (Discord messages)
 
@@ -81,7 +97,7 @@ On each scheduled wakeup, a cheap "gate" job installs only `requests` and asks `
 
 `load_discord_webhook()` checks the `DISCORD_WEBHOOK_URL` environment variable first (falling back to `discord_config.json` for local runs), so you just need `DISCORD_WEBHOOK_URL` as a **repo secret** (repo → Settings → Secrets and variables → Actions → New repository secret) — separate from the Streamlit Cloud secret above, GitHub Actions doesn't share those.
 
-Rough cost: two lightweight gate runs/day (a few seconds each) plus one full check on due days, comfortably under GitHub's free 2,000 minutes/month for a private repo (or free either way on a public repo). One thing to know: GitHub auto-disables scheduled workflows after 60 days with no commits to the repo (it does email a heads-up first, sent to whoever last enabled the workflow) — a trivial commit (even just touching this README) resets that clock, so if you go quiet on the repo for ~2 months, either push something small or manually re-enable the workflow from the Actions tab. Also worth knowing: GitHub's scheduler is documented as best-effort, so scheduled runs can occasionally be delayed or skipped.
+Rough cost: an hourly gate run (a few seconds each) plus one full check per due slot, comfortably under GitHub's free 2,000 minutes/month for a private repo (or free either way on a public repo). One thing to know: GitHub auto-disables scheduled workflows after 60 days with no commits to the repo (it does email a heads-up first, sent to whoever last enabled the workflow) — a trivial commit (even just touching this README) resets that clock, so if you go quiet on the repo for ~2 months, either push something small or manually re-enable the workflow from the Actions tab. Also worth knowing: GitHub's scheduler is documented as best-effort, so scheduled runs can occasionally be delayed or skipped.
 
 ## 7. News digest (Discord + News tab)
 
@@ -102,6 +118,7 @@ A few things worth knowing:
 - **Free-tier quotas are account-specific.** Check your own limits at AI Studio's Rate Limit dashboard before changing the model or batch size — this project's `gemini-2.5-flash` + 13-tickers-per-batch choice was tuned to fit comfortably under a 20-requests/day cap that's tighter than Google's generic published numbers, and the entire Gemini 3.x model family (3, 3.1, 3.5, 3.6, Lite or not) had **zero** free Search-grounding quota on the account this was built against.
 - **This workflow commits `news_summary.json` to the private data repo itself** (via `DATA_REPO_TOKEN`) — unlike the other config files, this one is machine-generated, not edited through the app UI, so there's nothing to push from the app's GitHub sync button for this file.
 - If the Gemini API call fails for a given day (rate limit, outage, etc.), that day's digest is simply skipped — no Discord message, no `news_summary.json` update, and the app's News tab keeps showing the last successful run until the next one succeeds.
+- **Manual smoke tests:** The workflow accepts `markets` (comma-separated watchlist keys) and `limit` (max tickers to analyze) inputs on manual `workflow_dispatch`. When either is provided, the run is considered a partial test: it replaces only those watchlists' digests in `news_summary.json` and skips posting to Discord.
 
 ## 8. Data refresh (faster page loads)
 
@@ -114,6 +131,30 @@ A few things worth knowing:
 - **The "Refresh Data" button in the sidebar still works exactly as before** — clicking it always fetches live data for that session, bypassing the snapshot entirely. The sidebar caption shows which one you're looking at: "(daily snapshot)" or "(live fetch)".
 - **The snapshot is skipped automatically, falling back to a live fetch, if it's stale in a way that matters**: if you've added a ticker to the watchlist since the last scheduled refresh (the snapshot won't have it yet), or changed a calc parameter in Settings (EMA lengths, thresholds, etc. — the snapshot was computed with whatever settings were live at refresh time). Either case just means one live fetch until the next hourly refresh catches up.
 - GitHub's scheduler is best-effort, so a run can occasionally be delayed — with an hourly cron this self-heals within the hour. The once-a-day workflows (news digest, Expert Views, Fundamentals) deliberately don't try to skip a late run either: their gate only checks which of the two DST cron lines matches, and runs anyway if GitHub fires it late, on the reasoning that a late digest beats a skipped one.
+
+## 8b. Expert Views generation
+
+A fourth GitHub Actions workflow, `.github/workflows/expert-views.yml`, runs daily at **11:00 PM ET** (03:00 / 04:00 UTC). It refreshes `data_snapshot.json` first to guarantee same-day price data, then generates AI Expert Take verdicts (`ACCUMULATE`, `HOLD`, `CAUTION`) across all tickers and commits `expert_views.json` (and the updated snapshot) to the private data repo.
+
+It uses `GEMINI_API_KEY` and `DATA_REPO_TOKEN` repo secrets. It supports `workflow_dispatch` with optional `markets` and `limit` inputs for scoped runs and smoke tests.
+
+## 8c. Fundamental Views generation
+
+A fifth GitHub Actions workflow, `.github/workflows/fundamentals.yml`, runs daily at **3:00 AM ET** (07:00 / 08:00 UTC). It reads the latest `data_snapshot.json` and evaluates quarterly earnings, filings, and analyst coverage to produce fundamental sentiment (`fundamentals.json`), committing the results to the private data repo.
+
+It uses `GEMINI_API_KEY` and `DATA_REPO_TOKEN` repo secrets. It supports `workflow_dispatch` with optional `markets` and `limit` inputs.
+
+## 8d. Market breadth & dashboard performance
+
+A sixth GitHub Actions workflow, `.github/workflows/market-breadth.yml`, runs twice daily at **10:00 AM** and **10:00 PM ET** (02,03,14,15 UTC). It runs `refresh_market_breadth.py` and `refresh_dashboard_perf.py` to compute advance/decline breadth metrics (`market_breadth.json`) and portfolio performance metrics (`dashboard_perf.json`), committing both to the private data repo.
+
+No new secret needed beyond `DATA_REPO_TOKEN`.
+
+## 8e. Weekly wrap-up digest
+
+A seventh GitHub Actions workflow, `.github/workflows/weekly-wrapup.yml`, runs once a week on **Sunday at 9:00 PM ET** (Monday 01:00 / 02:00 UTC, ~6:30 AM IST before Monday's India market open). It runs `weekly_wrapup_check.py` to evaluate all rules against Friday's weekly close, formats active alerts and roll-up metrics, sends the weekly wrap-up digest to Discord, and commits state (`weekly_wrapup_state.json`) to the private data repo.
+
+It uses `DISCORD_WEBHOOK_URL` and `DATA_REPO_TOKEN` repo secrets.
 
 ## 9. Push config changes made through the deployed app back to GitHub
 
@@ -138,8 +179,12 @@ The **Re-analyze All** and **Refresh news** buttons start GitHub Actions runs in
 | Public URL for the dashboard | Free via Streamlit Community Cloud |
 | Login gate | Built in, just needs `AUTH_USERNAME`/`AUTH_PASSWORD` secrets set |
 | Discord alerts (manual "Send test message") | Works once webhook secret is set |
-| Discord alerts (automatic, per-rule schedule) | Needs `DISCORD_WEBHOOK_URL` repo secret — GitHub Actions workflow is already committed |
+| Discord alerts (automatic, 9:00 PM ET) | Needs `DISCORD_WEBHOOK_URL` repo secret — GitHub Actions workflow is already committed |
 | Data storage + push config edits (made on the deployed app) | Needs a private data repo and `DATA_REPO_TOKEN` (Streamlit + Actions secrets) |
 | Re-analyze / Refresh news buttons | Needs `GITHUB_TOKEN`/`GITHUB_REPO` secrets (Actions permission on the code repo) |
-| Daily news digest (News tab + Discord, 7 AM ET) | Needs `GEMINI_API_KEY` repo secret (free at aistudio.google.com) — GitHub Actions workflow is already committed |
-| Daily data refresh (faster page loads, 7 AM ET) | No new secret needed — GitHub Actions workflow is already committed |
+| Daily news digest (News tab + Discord, 8:00 PM ET) | Needs `GEMINI_API_KEY` repo secret (free at aistudio.google.com) — GitHub Actions workflow is already committed |
+| Hourly data refresh (around the clock) | No new secret needed — GitHub Actions workflow is already committed |
+| Daily Expert Views (11:00 PM ET) | Needs `GEMINI_API_KEY` repo secret — GitHub Actions workflow is already committed |
+| Daily Fundamental Views (3:00 AM ET) | Needs `GEMINI_API_KEY` repo secret — GitHub Actions workflow is already committed |
+| Market Breadth & Performance (10 AM & 10 PM ET) | No new secret needed — GitHub Actions workflow is already committed |
+| Weekly Wrap-up digest (Sunday 9:00 PM ET) | Uses `DISCORD_WEBHOOK_URL` repo secret — GitHub Actions workflow is already committed |
