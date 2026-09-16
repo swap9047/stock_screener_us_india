@@ -35,8 +35,11 @@ step names, so each key needs a line in the AI steps' `env:` blocks. Every run l
 `[key rotation] N key(s): ...`; if that number is lower than expected, that line is
 missing.
 
-**There is no test suite.** Changes are verified by rendering the app headlessly — recipe
-at the bottom.
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 190
+offline regression checks in ~30 s (no secrets, no network, no data files), and
+`.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
+private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
+verified by rendering the app headlessly; recipe at the bottom.
 
 ---
 
@@ -305,6 +308,10 @@ Each of these has actually bitten this codebase.
 | `market-breadth.yml` | `refresh_market_breadth.py`, `refresh_dashboard_perf.py` | `market_breadth.json`, `dashboard_perf.json` | 10:00 AM + 10:00 PM | 10 h |
 | `weekly-wrapup.yml` | `weekly_wrapup_check.py` | `weekly_wrapup_state.json` | Sunday 9:00 PM | 22 h |
 
+`checks.yml` is not in this table: it runs `checks/run_all.py` on every push, touches no
+data and needs no secrets (so it works from a fork). Keep it that way — `test_workflows.py`
+asserts it.
+
 **Every workflow wakes hourly (`cron: "0 * * * *"`) and a `gate` job decides whether this
 run does the work** -- `.github/actions/slot-gate`, inputs `slots` (ET hours), `grace-hours`,
 optional `days`, and `work-job`. It finds the most recent slot in New York time, skips it
@@ -392,6 +399,10 @@ Two things that will waste your time otherwise:
 
 Prefer comparing against an **independently computed** expectation over asserting the code
 agrees with itself.
+
+When you add a check, put it in `checks/` if it can run offline with invented fixtures
+(`ACME`, `ZED.NS`) — that is what CI can protect. Anything that reads the real snapshot or
+hits the network belongs in `docs/private/checks/`, which is gitignored.
 
 ---
 

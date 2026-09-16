@@ -1,0 +1,64 @@
+name: Checks
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+# The offline checks (checks/run_all.py). They exist because this repo has no
+# test framework and its failures have historically been silent: a workflow goes
+# green while the data goes wrong. They need no secrets, no network and no data
+# files, so they run on every push -- including from a fork, where secrets are
+# not available.
+#
+# What they do NOT cover, by design: anything needing real prices, the private
+# data repo or a live GitHub API (the AppTest renders, the end-to-end edit test,
+# the job simulation). Those are run by hand -- see checks/README.md.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # The pinned set from requirements.txt, so a check runs against what the
+      # scheduled workflows and Streamlit Cloud actually install.
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Offline checks
+        run: python3 checks/run_all.py
+
+      # Cheap and catches a whole class of mistake the checks cannot: a YAML or
+      # shell error in a workflow only shows up when that workflow next runs.
+      - name: Compile every module
+        run: python3 -m compileall -q *.py checks/*.py .github/actions/slot-gate/slot_gate.py
+
+      - name: Parse every workflow and action
+        run: |
+          python3 - <<'EOF'
+          import glob, sys, yaml
+          bad = 0
+          for path in sorted(glob.glob(".github/**/*.yml", recursive=True)):
+              try:
+                  yaml.safe_load(open(path))
+              except Exception as e:
+                  print(f"::error file={path}::{e}"); bad += 1
+          print(f"parsed {len(glob.glob('.github/**/*.yml', recursive=True))} file(s), {bad} bad")
+          sys.exit(1 if bad else 0)
+          EOF

@@ -1,4 +1,16 @@
-streamlit
+# Versions are the ones GitHub Actions actually installed on 2026-09-16, which
+# is also what Streamlit Cloud resolves from this file. Pinned because an
+# unpinned dependency has broken this app silently twice (see yfinance and lxml
+# below), and because a workflow picks up a new release mid-run with no signal:
+# the jobs still report success, the data just goes wrong. `~=X.Y.Z` allows
+# patch releases only; `~=X.Y` allows minor ones where the API is stable.
+#
+# To move a pin: bump it here, run the offline checks (checks/README.md), and
+# render the app headlessly before pushing.
+
+# The AppTest API the checks drive, and the widget behaviour the UI depends on,
+# both move across Streamlit minor releases.
+streamlit~=1.63.0
 # Pinned to the minor series: yfinance moved its .news schema under
 # item["content"] in the 0.2.4x -> 1.x line, and because nothing was pinned the
 # change landed in production silently -- the old title/providerPublishTime
@@ -6,15 +18,24 @@ streamlit
 # fallback returned nothing at all with no exception and no warning. That code
 # is gone now, but yfinance is still the price/indicator source, so bound it.
 yfinance~=1.5.0
-pandas
-numpy
-requests
-jinja2
-streamlit-sortables
+# pandas 3.0 stopped filling gaps before pct_change(), which silently dropped a
+# return across every data gap in the portfolio curves (~10 pp over 5 years on
+# one watchlist) until the calculation was made explicit. Minor releases of this
+# library change default behaviour; hold the series.
+pandas~=3.0.5
+# Indicator maths only uses stable numpy API (nanargmax, isfinite), so minor
+# releases are allowed -- local runs 2.5.x and CI 2.4.x with identical results.
+numpy~=2.4
+requests~=2.34
+jinja2~=3.1
+streamlit-sortables~=0.3.1
 google-genai~=2.14.0
-python-dotenv
+python-dotenv~=1.2
+# Unused: nothing imports openai (checked 2026-09-16). Kept in case the
+# OpenAI-compatible endpoint experiment resumes -- delete it if not.
 openai
-plotly
+# The News tab's performance charts. Major releases rename figure APIs.
+plotly~=7.0
 tzdata
 # Required by pandas.read_html in refresh_market_breadth.py (the S&P 500
 # constituent scrape) -- nothing imports lxml directly, so it reads as

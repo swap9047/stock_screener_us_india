@@ -85,9 +85,12 @@ def main():
     combined = [r for rows in per_market.values() for r in rows]
 
     short_history = {**((load_data_snapshot() or {}).get("short_history") or {}), **fresh_short_history}
-    gaps = missing_row_tickers(per_market, short_history=short_history)
+    # Pass the watchlists explicitly: the job has already loaded them for the
+    # fetch, and a helper that re-reads them from disk hides that dependency.
+    watchlists = load_watchlists()
+    gaps = missing_row_tickers(per_market, watchlists, short_history=short_history)
     n_gaps = sum(len(v) for v in gaps.values())
-    universe = sum(len(v) for v in load_watchlists().values()) or 1
+    universe = sum(len(v) for v in watchlists.values()) or 1
     if skipped_groups or n_gaps > MAX_MISSING_FRACTION * universe:
         print(f"::error::Incomplete data: {len(skipped_groups)} benchmark group(s) skipped, "
               f"{n_gaps} of {universe} ticker(s) without a row. Not building the digest on a partial "
