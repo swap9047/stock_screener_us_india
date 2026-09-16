@@ -20,9 +20,16 @@ Run: python3 alert_check.py
 import os
 import sys
 
-from stock_data import fetch_all_markets, load_settings, get_filterable_metrics
+from stock_data import (fetch_all_markets, load_settings, get_filterable_metrics,
+                        load_data_snapshot, missing_row_tickers,
+                        reject_stale_rows, load_watchlists)
 from alerts import (load_rules, load_state, save_state, load_discord_webhook, evaluate_and_fire,
                     send_discord_batch, is_rule_due, STATE_FILE)
+
+
+# Above this share of the universe missing, the run is treated as a throttled
+# fetch rather than a few dud tickers -- see the guard in main().
+MAX_MISSING_FRACTION = 0.10
 
 
 def main():
@@ -51,9 +58,50 @@ def main():
     # Completed sessions only: GitHub starts this "9:15 PM ET" job hours late,
     # inside NSE's 23:45-06:00 ET session, and alerts must judge closes rather
     # than a forming intraday bar -- see stock_data.drop_forming_daily_bars.
-    combined, as_of, per_market = fetch_all_markets(settings=settings, completed_sessions_only=True)
+    skipped_groups = {}
+    combined, as_of, per_market = fetch_all_markets(settings=settings, completed_sessions_only=True,
+                                                    skipped_groups=skipped_groups)
     breakdown = " + ".join(f"{len(rows)} {mkt}" for mkt, rows in per_market.items())
     print(f"Checking {len(due_rules)} rule(s) (of {len(all_rules)} total) against {breakdown} tickers...")
+
+    # A job that JUDGES this data needs to know whether it is looking at the
+    # whole universe. fetch_all_markets drops whatever Yahoo would not hand over
+    # -- a whole benchmark group whose fetch raised, or a ticker that came back
+    # empty -- and refresh_data.py absorbs that with reject_stale_rows /
+    # fill_snapshot_gaps. Here there is no backstop, so:
+    #
+    #   - a skipped GROUP, or more than MAX_MISSING_FRACTION of the universe
+    #     missing, is systemic (a throttle): fail, and let the hourly slot gate
+    #     (.github/actions/slot-gate) retry the same slot on a later wake-up;
+    #   - a handful of individual misses only warns. Failing on those would let
+    #     one delisted ticker block sending alerts indefinitely, every slot, forever.
+    #
+    # A row Yahoo served OLDER than the one already stored is stale data, not
+    # news, so keep the stored one (same call refresh_data.py makes).
+    previous = (load_data_snapshot() or {}).get("per_market") or {}
+    per_market, stale = reject_stale_rows(per_market, previous)
+    if stale:
+        print(f"WARNING: {sum(len(v) for v in stale.values())} ticker(s) came back older than "
+              "the stored row; kept the newer stored one.")
+    combined = [r for rows in per_market.values() for r in rows]
+
+    short_history = (load_data_snapshot() or {}).get("short_history") or {}
+    gaps = missing_row_tickers(per_market, short_history=short_history)
+    n_gaps = sum(len(v) for v in gaps.values())
+    universe = sum(len(v) for v in load_watchlists().values()) or 1
+    if skipped_groups or n_gaps > MAX_MISSING_FRACTION * universe:
+        print(f"::error::Incomplete data: {len(skipped_groups)} benchmark group(s) skipped, "
+              f"{n_gaps} of {universe} ticker(s) without a row. Not sending alerts on a partial "
+              "universe; the slot gate will retry this slot on a later run.")
+        for bench, tickers in sorted(skipped_groups.items()):
+            print(f"  skipped group {bench}: {len(tickers)} ticker(s)")
+        for mkt, tickers in sorted(gaps.items()):
+            print(f"  {mkt}: {len(tickers)} ticker(s) missing")
+        sys.exit(1)
+    if gaps:
+        print(f"WARNING: {n_gaps} ticker(s) have no row this run and cannot match anything: "
+              + ", ".join(f"{mkt} ({len(t)})" for mkt, t in sorted(gaps.items())))
+
 
     metric_labels = {v: k for k, v in get_filterable_metrics(settings).items()}
     # No state file at all means we have no record of what already fired --

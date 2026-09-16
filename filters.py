@@ -58,6 +58,12 @@ OPERATORS = {
     "==": None,  # handled with tolerance below
 }
 
+# "in" is implemented inline in passes_filter (it needs the candidate list, not
+# a two-argument operator), so it is NOT a key in OPERATORS -- hence this set for
+# "is this operator one we implement?". Leaving it out silently rejected every
+# categorical condition (flag in [Green], trend in [Uptrend, ...]).
+VALID_OPERATORS = set(OPERATORS) | {"in"}
+
 EQ_TOLERANCE = 0.05  # values are rounded to 1 decimal, so treat "==" as approx-equal
 
 # Metric field -> its full set of valid values, for any metric that's really
@@ -153,17 +159,17 @@ def load_custom_filters():
     silently dropped."""
     from stock_data import load_markets_registry
     registry_keys = set(load_markets_registry().keys())
+    from stock_data import read_json_strict
     if not os.path.exists(CUSTOM_FILTERS_FILE):
         return {k: [] for k in registry_keys}
-    with open(CUSTOM_FILTERS_FILE) as f:
-        data = json.load(f)
+    data = read_json_strict(CUSTOM_FILTERS_FILE, {}) or {}
     all_keys = registry_keys | set(data.keys())
     return {k: _normalize_conditions(data.get(k, [])) for k in all_keys}
 
 
 def save_custom_filters(all_filters):
-    with open(CUSTOM_FILTERS_FILE, "w") as f:
-        json.dump(all_filters, f, indent=2)
+    from stock_data import atomic_write_json
+    atomic_write_json(CUSTOM_FILTERS_FILE, all_filters)
 
 
 def get_market_filters(market):
@@ -214,8 +220,8 @@ def _resolve_metric_b(row, filt):
     item gets coerced individually in passes_filter, since they need to be
     compared against `a` one at a time); otherwise coerces a single text
     fixed value (see _coerce_fixed_value)."""
-    if filt["compare_type"] == "metric":
-        b = row.get(filt["metric_b"])
+    if filt.get("compare_type") == "metric":
+        b = row.get(filt.get("metric_b"))
         if b is None:
             return None
         # A text metric on the right (Trend, Flag, Company Name, ...) can't be
@@ -237,7 +243,13 @@ def _resolve_metric_b(row, filt):
         return b * multiplier + offset
     if filt.get("operator") == "in":
         return filt.get("value")
-    return _coerce_fixed_value(row.get(filt["metric_a"]), filt["value"])
+    if filt.get("compare_type") != "value" or "value" not in filt:
+        # Neither a metric nor a fixed value: malformed. Guessing "value" here
+        # would compare against whatever `value` happened to be (or KeyError).
+        # No saved condition omits compare_type -- checked across all 60 in
+        # alerts_config.json and custom_filters.json.
+        return None
+    return _coerce_fixed_value(row.get(filt.get("metric_a")), filt["value"])
 
 
 def _get_metric_val(row, metric_key):
@@ -252,14 +264,28 @@ def _get_metric_val(row, metric_key):
 
 def passes_filter(row, filt):
     """Returns True/False for a single condition against one row. A missing
-    value (metric not computed for this ticker) fails the condition."""
-    a = _get_metric_val(row, filt["metric_a"])
+    value (metric not computed for this ticker) fails the condition.
+
+    A MALFORMED condition also fails rather than raising. The keys used to be
+    read with [], so a condition missing metric_a/operator/compare_type, or
+    carrying an operator this engine doesn't implement, raised KeyError -- and
+    with no try/except anywhere above (passes_filter_chain, compute_rule_truth,
+    evaluate_and_fire) that took down every tab of the app AND the nightly
+    alert_check.py. The builders can't produce such a condition, but
+    alerts_config.json / custom_filters.json are hand-editable and pushed
+    between machines. Failing closed matches the same choice made for a
+    non-numeric Metric B in _resolve_metric_b.
+    """
+    metric_a = filt.get("metric_a")
+    operator_symbol = filt.get("operator")
+    if not isinstance(metric_a, str) or operator_symbol not in VALID_OPERATORS:
+        return False
+    a = _get_metric_val(row, metric_a)
     if a is None:
         return False
     b = _resolve_metric_b(row, filt)
     if b is None:
         return False
-    operator_symbol = filt["operator"]
 
     if operator_symbol == "in":
         # Matches if `a` equals ANY of the selected values -- e.g. Trend in
@@ -340,9 +366,13 @@ def _metric_b_expr(filt, metric_labels):
     if filt.get("operator") == "in":
         values = filt.get("value") or []
         return "[" + ", ".join(str(v) for v in values) + "]"
-    if filt["compare_type"] != "metric":
-        return str(filt["value"])
-    label_b = metric_labels.get(filt["metric_b"], filt["metric_b"])
+    # .get() for the same reason passes_filter fails closed: a hand-edited
+    # condition must not crash the description path either, which the UI and the
+    # Discord message builder both call.
+    if filt.get("compare_type") != "metric":
+        return str(filt.get("value"))
+    metric_b = filt.get("metric_b")
+    label_b = metric_labels.get(metric_b, metric_b)
     multiplier = filt.get("multiplier")
     multiplier = 1 if multiplier is None else multiplier
     offset = filt.get("offset", 0) or 0

@@ -36,21 +36,18 @@ NO_FLAG = ""  # stored value for "no flag set"
 
 
 def load_ticker_notes():
-    if not os.path.exists(TICKER_NOTES_FILE):
-        return {}
-    try:
-        with open(TICKER_NOTES_FILE) as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            return data
-    except Exception:
-        pass
-    return {}
+    """Notes and flags per ticker. Raises stock_data.DataFileError on a corrupt
+    file rather than returning {} -- hand-written notes are the least
+    replaceable data here, and an empty default would render none and let the
+    next save write that emptiness back."""
+    from stock_data import read_json_strict
+    data = read_json_strict(TICKER_NOTES_FILE, {})
+    return data if isinstance(data, dict) else {}
 
 
 def save_ticker_notes(notes):
-    with open(TICKER_NOTES_FILE, "w") as f:
-        json.dump(notes, f, indent=2)
+    from stock_data import atomic_write_json
+    atomic_write_json(TICKER_NOTES_FILE, notes)
 
 
 def get_ticker_note(notes, ticker):

@@ -213,20 +213,15 @@ def load_settings():
     """Returns the current calculation settings, merged over defaults so a
     partially-written or older settings.json never crashes the app."""
     settings = dict(DEFAULT_SETTINGS)
-    if os.path.exists(SETTINGS_FILE):
-        try:
-            with open(SETTINGS_FILE) as f:
-                saved = json.load(f)
-            settings.update({k: v for k, v in saved.items() if k in DEFAULT_SETTINGS})
-        except Exception:
-            pass
+    saved = read_json_strict(SETTINGS_FILE)
+    if isinstance(saved, dict):
+        settings.update({k: v for k, v in saved.items() if k in DEFAULT_SETTINGS})
     return settings
 
 
 def save_settings(settings):
     clean = {k: settings.get(k, DEFAULT_SETTINGS[k]) for k in DEFAULT_SETTINGS}
-    with open(SETTINGS_FILE, "w") as f:
-        json.dump(clean, f, indent=2)
+    atomic_write_json(SETTINGS_FILE, clean)
 
 
 def _slugify_market_key(label):
@@ -259,14 +254,10 @@ def load_markets_registry():
         }
         save_markets_registry(registry)
         return registry
-    try:
-        with open(MARKETS_FILE) as f:
-            registry = json.load(f)
-        if not registry:
-            raise ValueError("empty registry")
+    registry = read_json_strict(MARKETS_FILE)
+    if registry:
         return registry
-    except Exception:
-        return {
+    return {
             "us_invested": {"label": "US Invested", "benchmark": BENCHMARKS["US"]},
             "india_invested": {"label": "India Invested", "benchmark": BENCHMARKS["INDIA"]},
             "india_watchlist": {"label": "India Watchlist", "benchmark": BENCHMARKS["INDIA"]},
@@ -275,11 +266,41 @@ def load_markets_registry():
 
 
 def save_markets_registry(registry):
-    with open(MARKETS_FILE, "w") as f:
-        json.dump(registry, f, indent=2)
+    atomic_write_json(MARKETS_FILE, registry)
 
 
-def atomic_write_json(path, data):
+class DataFileError(RuntimeError):
+    """A user-data JSON file on disk is unreadable.
+
+    Raised instead of returning an empty default, because these files ARE the
+    database and an empty default is indistinguishable from real emptiness: the
+    app would render no watchlists / no rules / no notes, and the next save
+    (or "Push to GitHub") would write that emptiness over the real data in the
+    data repo. Regenerable state (alert_state.json, weekly_wrapup_state.json)
+    is the opposite case and still falls back to a default -- losing it costs
+    one run's dedup, not the data.
+    """
+
+
+def read_json_strict(path, default=None):
+    """Parse a user-data file; return `default` if it does not exist yet, and
+    raise DataFileError -- naming the file -- if it exists but will not parse.
+    A torn file is what a crash mid-write used to leave behind; every writer
+    now goes through atomic_write_json, so this should only ever fire on a file
+    damaged from outside the app."""
+    if not os.path.exists(path):
+        return default
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
+        raise DataFileError(
+            f"{os.path.basename(path)} is unreadable ({e}). Nothing was loaded or changed -- "
+            "restore it from the data repo, or delete it to start that file from defaults."
+        ) from e
+
+
+def atomic_write_json(path, data, default=None):
     """Write JSON via temp file + os.replace.
 
     The plain truncate-and-write this replaces was called once PER TICKER by
@@ -297,7 +318,7 @@ def atomic_write_json(path, data):
     """
     tmp = f"{path}.tmp"
     with open(tmp, "w") as f:
-        json.dump(data, f, indent=2)
+        json.dump(data, f, indent=2, default=default)
     os.replace(tmp, path)
 
 
@@ -314,20 +335,15 @@ def load_watchlist_groups():
         save_watchlist_groups(DEFAULT_WATCHLIST_GROUPS)
         groups = dict(DEFAULT_WATCHLIST_GROUPS)
     else:
-        try:
-            with open(WATCHLIST_GROUPS_FILE) as f:
-                groups = json.load(f)
-            if not isinstance(groups, dict):
-                raise ValueError("not a dict")
-        except Exception:
+        groups = read_json_strict(WATCHLIST_GROUPS_FILE)
+        if not isinstance(groups, dict):
             groups = dict(DEFAULT_WATCHLIST_GROUPS)
     registry_keys = set(load_markets_registry().keys())
     return {gk: [m for m in members if m in registry_keys] for gk, members in groups.items()}
 
 
 def save_watchlist_groups(groups):
-    with open(WATCHLIST_GROUPS_FILE, "w") as f:
-        json.dump(groups, f, indent=2)
+    atomic_write_json(WATCHLIST_GROUPS_FILE, groups)
 
 
 def get_market_keys():
@@ -548,8 +564,7 @@ def load_watchlists():
     registry_keys = set(load_markets_registry().keys())
     if not os.path.exists(WATCHLIST_FILE):
         return {k: [] for k in registry_keys}
-    with open(WATCHLIST_FILE) as f:
-        data = json.load(f)
+    data = read_json_strict(WATCHLIST_FILE, {})
     # Registry order first (that's the order markets.json declares and the
     # tabs render in), then any extra keys the raw file carries, sorted.
     #
@@ -567,8 +582,7 @@ def load_watchlists():
 
 
 def save_watchlists(watchlists):
-    with open(WATCHLIST_FILE, "w") as f:
-        json.dump(watchlists, f, indent=2)
+    atomic_write_json(WATCHLIST_FILE, watchlists)
 
 
 def load_watchlist(market):
@@ -589,17 +603,13 @@ def load_interested():
     that every entry set to 1.0 (i.e. equal-weight, the same as no weights at
     all). Missing file means nothing is flagged yet.
     """
-    if not os.path.exists(INTERESTED_FILE):
-        return set()
-    with open(INTERESTED_FILE) as f:
-        return set(json.load(f))
+    return set(read_json_strict(INTERESTED_FILE, []) or [])
 
 
 def save_interested(tickers):
     """Writes the flagged tickers as a sorted list, so the file diffs cleanly
     when it's pushed to GitHub rather than reshuffling on every save."""
-    with open(INTERESTED_FILE, "w") as f:
-        json.dump(sorted(tickers), f, indent=2)
+    atomic_write_json(INTERESTED_FILE, sorted(tickers))
 
 
 def load_ticker_index():
@@ -618,19 +628,12 @@ def load_ticker_index():
     if not os.path.exists(TICKER_INDEX_FILE):
         save_ticker_index({})
         return {}
-    try:
-        with open(TICKER_INDEX_FILE) as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            return data
-    except Exception:
-        pass
-    return {}
+    data = read_json_strict(TICKER_INDEX_FILE, {})
+    return data if isinstance(data, dict) else {}
 
 
 def save_ticker_index(data):
-    with open(TICKER_INDEX_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+    atomic_write_json(TICKER_INDEX_FILE, data)
 
 
 def tradingview_url(ticker):
@@ -2159,7 +2162,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
 
 
 def fetch_all_markets(watchlists=None, period="5y", settings=None, completed_sessions_only=False,
-                      short_history=None):
+                      short_history=None, skipped_groups=None):
     """Fetches every registered watchlist and returns a combined
     (results, as_of, per_market_results) tuple. per_market_results is
     {market_key: [...], ...}.
@@ -2212,7 +2215,14 @@ def fetch_all_markets(watchlists=None, period="5y", settings=None, completed_ses
                                          completed_sessions_only=completed_sessions_only,
                                          short_history=short_history)
         except Exception as e:
+            # Recorded, not just printed: a caller that JUDGES this data (alerts,
+            # the weekly digest) has to know it is looking at a partial universe
+            # rather than a quiet market. refresh_data.py survives a skip via
+            # fill_snapshot_gaps; the headless judges have no such backstop, so
+            # they fail the run and let the slot gate retry.
             print(f"  [fetch_all_markets] skipping benchmark group {bench} ({len(tickers)} tickers): {e}")
+            if skipped_groups is not None:
+                skipped_groups[bench] = list(tickers)
             continue
         for r in rows:
             results_by_ticker[r["ticker"]] = r
@@ -2373,15 +2383,14 @@ def save_data_snapshot(as_of, per_market, settings=None, merge=False, short_hist
         per_market = base
     short = merge_short_history(existing.get("short_history"), short_history, per_market, load_watchlists())
     generated_at = datetime.now(timezone.utc).isoformat()
-    with open(DATA_SNAPSHOT_FILE, "w") as f:
-        json.dump({
-            "as_of": as_of,
-            "generated_at": generated_at,
-            "code_version": (provenance or {}).get("code_version", _code_fingerprint()),
-            "per_market": per_market,
-            "settings": (provenance or {}).get("settings", settings or {}),
-            "short_history": short,
-        }, f, indent=2, default=_json_default)
+    atomic_write_json(DATA_SNAPSHOT_FILE, {
+        "as_of": as_of,
+        "generated_at": generated_at,
+        "code_version": (provenance or {}).get("code_version", _code_fingerprint()),
+        "per_market": per_market,
+        "settings": (provenance or {}).get("settings", settings or {}),
+        "short_history": short,
+    }, default=_json_default)
     # Returned so a caller holding the result in memory (app.py's
     # _persist_and_serve) can tell when the file has since moved past it.
     return generated_at
@@ -2405,6 +2414,23 @@ def load_data_snapshot():
                 if old in row and new not in row:
                     row[new] = row.pop(old)
     return snapshot
+
+
+def missing_row_tickers(per_market, watchlists=None, short_history=None):
+    """{market: [tickers with no row]}, ignoring tickers that legitimately
+    cannot have one yet (fewer than MIN_DAILY_BARS bars -- see
+    merge_short_history). Same exemption snapshot_is_usable applies, pulled out
+    so the headless jobs can ask "is this the whole universe?" before they judge
+    it."""
+    watchlists = load_watchlists() if watchlists is None else watchlists
+    too_new = set(short_history or {})
+    out = {}
+    for market, tickers in watchlists.items():
+        have = {r.get("ticker") for r in per_market.get(market) or []}
+        gone = [t for t in tickers if t not in have and t not in too_new]
+        if gone:
+            out[market] = gone
+    return out
 
 
 def fill_snapshot_gaps(fresh_per_market, previous_per_market, watchlists):

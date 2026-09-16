@@ -245,6 +245,28 @@ Each of these has actually bitten this codebase.
     only the held symbols among them would reveal which are held.
   - Don't put real tickers in comments, docs or commit messages; use neutral examples.
 
+- **A corrupt user-data file is loud, not empty.** `stock_data.read_json_strict` raises
+  `DataFileError` for `watchlist.json`, `markets.json`, `settings.json`, `interested.json`,
+  `watchlist_groups.json`, `ticker_index.json`, `alerts_config.json`, `custom_filters.json`,
+  `custom_columns.json`, `ticker_notes.json` -- an empty default is indistinguishable from
+  real emptiness, and the next save (or "Push to GitHub") would write it over the data repo.
+  `app.py` reads them all once in a preflight block and stops with the filename. Regenerable
+  state (`alert_state.json`, `weekly_wrapup_state.json`) is the opposite: it falls back to
+  empty on purpose. **Every writer must go through `atomic_write_json`** -- a torn file is
+  what a crash mid-write leaves behind.
+- **`passes_filter` fails closed, it never raises.** A condition missing `metric_a` /
+  `operator` / `compare_type`, or carrying an operator this engine does not implement,
+  returns False. There is no `try` above it (`passes_filter_chain`, `compute_rule_truth`,
+  `evaluate_and_fire`), so a raise there takes down every tab AND the nightly job. Note
+  `"in"` is implemented inline and is NOT a key in `OPERATORS` -- check against
+  `VALID_OPERATORS`, or you silently reject every categorical condition.
+- **A job that JUDGES prices needs the whole universe.** `fetch_all_markets` drops a
+  benchmark group whose fetch raised (it reports them via `skipped_groups=`) and any ticker
+  that came back empty. `refresh_data.py` absorbs that with `reject_stale_rows` /
+  `fill_snapshot_gaps`; `alert_check.py` and `weekly_wrapup_check.py` cannot, so they fail
+  the run (`MAX_MISSING_FRACTION`) and let the slot gate retry the slot. A handful of
+  individual misses only warns -- failing on those would let one delisted ticker block
+  alerts every slot forever.
 - **Streamlit strips `<style>` and `<script>` from markdown**, even with
   `unsafe_allow_html=True`. Inline `style="..."` *attributes* survive. That's why all
   sticky-table CSS is regex-injected onto each tag in `sticky_header_html` (`app.py`).

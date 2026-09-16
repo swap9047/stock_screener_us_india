@@ -62,6 +62,7 @@ from stock_data import (
     rebuild_snapshot_for_market, fill_snapshot_gaps, reject_stale_rows,
     load_watchlist_groups, save_watchlist_groups, MIN_DAILY_BARS, snapshot_calc_matches,
     apply_view_fields_to_rows, calc_settings, calc_settings_diff,
+    load_interested, load_ticker_index, DataFileError, read_json_strict, atomic_write_json,
 )
 import llm_util
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE,
@@ -80,7 +81,7 @@ from weekly_wrapup import (
     build_wrapup, eligible_rules, load_wrapup_state, _pretty_date,
     build_discord_messages as build_wrapup_messages,
 )
-from filters import (get_market_filters, save_market_filters, apply_filters, describe_filter,
+from filters import (load_custom_filters, get_market_filters, save_market_filters, apply_filters, describe_filter,
                      describe_chain, describe_chain_with_values, passes_filter_chain, CATEGORICAL_METRICS,
                      TEXT_METRICS)
 from github_sync import (get_github_config, get_data_repo_config, bootstrap_data_files,
@@ -116,19 +117,19 @@ COLUMN_PREFS_FILE = os.path.join(SCRIPT_DIR, "column_prefs.json")
 
 
 def load_column_prefs_full():
-    if not os.path.exists(COLUMN_PREFS_FILE): return {}
-    try:
-        with open(COLUMN_PREFS_FILE) as f:
-            data = json.load(f)
-            return data if isinstance(data, dict) else {"order": data}
-    except Exception:
-        return {}
+    """Column order and the per-market sort levels. Raises DataFileError on a
+    corrupt file, like the other user-data loaders: silently returning {} would
+    render the default layout and the very next render (the sort control
+    persists on every run) would save that over the real prefs."""
+    data = read_json_strict(COLUMN_PREFS_FILE, {})
+    if isinstance(data, dict):
+        return data
+    return {"order": data} if data else {}
 
 def update_column_prefs(key, value):
     data = load_column_prefs_full()
     data[key] = value
-    with open(COLUMN_PREFS_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+    atomic_write_json(COLUMN_PREFS_FILE, data)
 
 def load_column_prefs():
     """Returns the saved column order (list of data keys, visible ones only,
@@ -4464,6 +4465,22 @@ if not os.environ.get("SKIP_GITHUB_PULL"):
             "Nothing was created or saved."
         )
         st.stop()
+
+# Read every user-data file once, up front. The loaders raise DataFileError on
+# a file that exists but will not parse, instead of returning an empty default
+# that would render as "you have no watchlists / no rules / no notes" and let
+# the next save push that emptiness to the data repo. Doing it here means the
+# failure names the file and stops, rather than surfacing as a stack trace
+# somewhere mid-tab. Regenerable state (alert_state.json) is not in this list:
+# it falls back to empty by design.
+try:
+    for _preflight in (load_settings, load_markets_registry, load_watchlists, load_interested,
+                       load_watchlist_groups, load_ticker_index, load_rules, load_custom_filters,
+                       load_custom_columns, load_ticker_notes, load_column_prefs_full):
+        _preflight()
+except DataFileError as _e:
+    st.error(f"{_e}")
+    st.stop()
 
 if "refresh_token" not in st.session_state:
     st.session_state.refresh_token = 0

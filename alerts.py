@@ -246,28 +246,43 @@ def normalize_rule(rule):
 
 
 def load_rules():
-    if not os.path.exists(RULES_FILE):
-        return []
-    with open(RULES_FILE) as f:
-        raw = json.load(f)
-    return [normalize_rule(r) for r in raw]
+    """Every rule, upgraded to the current schema. Raises
+    stock_data.DataFileError if alerts_config.json exists but will not parse --
+    rules are user data, and returning [] would render an empty Alert Rules tab
+    whose next save would overwrite the real file (see read_json_strict)."""
+    from stock_data import read_json_strict
+    raw = read_json_strict(RULES_FILE, [])
+    return [normalize_rule(r) for r in (raw or [])]
 
 
 def save_rules(rules):
-    with open(RULES_FILE, "w") as f:
-        json.dump(rules, f, indent=2)
+    from stock_data import atomic_write_json
+    atomic_write_json(RULES_FILE, rules)
 
 
 def load_state():
+    """The edge-trigger dedup state, or {} when it is missing or unreadable.
+
+    Guarded rather than loud, unlike load_rules: this file is regenerable, and
+    alert_check.py already treats a missing state as "seed it and send nothing"
+    (see its `seeding` branch). Blocking the whole alert run over a torn dedup
+    file would be the worse failure. Same reasoning as
+    weekly_wrapup.load_wrapup_state."""
     if not os.path.exists(STATE_FILE):
         return {}
-    with open(STATE_FILE) as f:
-        return json.load(f)
+    try:
+        with open(STATE_FILE) as f:
+            state = json.load(f)
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
+        print(f"WARNING: {os.path.basename(STATE_FILE)} is unreadable ({e}) -- "
+              "treating it as empty; this run seeds state and sends nothing.")
+        return {}
+    return state if isinstance(state, dict) else {}
 
 
 def save_state(state):
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
+    from stock_data import atomic_write_json
+    atomic_write_json(STATE_FILE, state)
 
 
 def load_discord_webhook():

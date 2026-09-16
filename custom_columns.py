@@ -233,21 +233,17 @@ def safe_eval_formula(formula, variables):
 
 
 def load_custom_columns():
-    if not os.path.exists(CUSTOM_COLUMNS_FILE):
-        return []
-    try:
-        with open(CUSTOM_COLUMNS_FILE) as f:
-            data = json.load(f)
-        if isinstance(data, list):
-            return data
-    except Exception:
-        pass
-    return []
+    """The saved formula columns. Raises stock_data.DataFileError on a corrupt
+    file rather than returning [] -- these are user definitions, and an empty
+    default would drop every custom column and let the next save persist that."""
+    from stock_data import read_json_strict
+    data = read_json_strict(CUSTOM_COLUMNS_FILE, [])
+    return data if isinstance(data, list) else []
 
 
 def save_custom_columns(columns):
-    with open(CUSTOM_COLUMNS_FILE, "w") as f:
-        json.dump(columns, f, indent=2)
+    from stock_data import atomic_write_json
+    atomic_write_json(CUSTOM_COLUMNS_FILE, columns)
 
 
 def column_key(col):
