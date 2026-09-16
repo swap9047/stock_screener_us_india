@@ -59,8 +59,14 @@ def main():
     # inside NSE's 23:45-06:00 ET session, and alerts must judge closes rather
     # than a forming intraday bar -- see stock_data.drop_forming_daily_bars.
     skipped_groups = {}
+    # short_history collects tickers Yahoo has too few bars for to compute at all
+    # (MIN_DAILY_BARS). Reading it only from the stored snapshot missed one that
+    # drops below the floor in THIS fetch -- dropping a forming bar can do it --
+    # and the coverage check below then counted it as a gap.
+    fresh_short_history = {}
     combined, as_of, per_market = fetch_all_markets(settings=settings, completed_sessions_only=True,
-                                                    skipped_groups=skipped_groups)
+                                                    skipped_groups=skipped_groups,
+                                                    short_history=fresh_short_history)
     breakdown = " + ".join(f"{len(rows)} {mkt}" for mkt, rows in per_market.items())
     print(f"Checking {len(due_rules)} rule(s) (of {len(all_rules)} total) against {breakdown} tickers...")
 
@@ -85,7 +91,7 @@ def main():
               "the stored row; kept the newer stored one.")
     combined = [r for rows in per_market.values() for r in rows]
 
-    short_history = (load_data_snapshot() or {}).get("short_history") or {}
+    short_history = {**((load_data_snapshot() or {}).get("short_history") or {}), **fresh_short_history}
     gaps = missing_row_tickers(per_market, short_history=short_history)
     n_gaps = sum(len(v) for v in gaps.values())
     universe = sum(len(v) for v in load_watchlists().values()) or 1

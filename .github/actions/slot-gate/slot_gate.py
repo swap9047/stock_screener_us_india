@@ -28,6 +28,8 @@ from zoneinfo import ZoneInfo
 ET = ZoneInfo("America/New_York")
 DAY_CODES = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
 API = "https://api.github.com"
+PER_PAGE = 50
+MAX_PAGES = 6
 
 
 def latest_slot(now_et, slot_hours):
@@ -73,13 +75,26 @@ def worked_runs(repo, workflow, work_job, token, since, exclude_run_id=None):
     Never raises: on an API failure it returns [] with a note, so the gate errs
     toward running. A duplicate run is cheap; a silently skipped slot is not.
     """
+    # Page until the runs are older than `since`, rather than trusting one page:
+    # an hourly wake-up makes ~24 runs a day while the window can be 22 h, so the
+    # run that actually did the slot falls off a single 20-run page and the gate
+    # would redo the work (for expert-views, hours of Gemini spend). MAX_PAGES
+    # bounds it at ~300 runs, far beyond any window this gate uses.
+    candidates = []
     try:
-        runs = _api(f"/repos/{repo}/actions/workflows/{workflow}/runs?per_page=20&status=completed", token)
+        for page in range(1, MAX_PAGES + 1):
+            batch = (_api(f"/repos/{repo}/actions/workflows/{workflow}/runs"
+                          f"?per_page={PER_PAGE}&status=completed&page={page}", token)
+                     .get("workflow_runs") or [])
+            candidates.extend(batch)
+            oldest = batch[-1].get("run_started_at") or batch[-1].get("created_at") if batch else None
+            if len(batch) < PER_PAGE or (oldest and datetime.fromisoformat(oldest.replace("Z", "+00:00")) < since):
+                break
     except (urllib.error.URLError, ValueError, KeyError) as e:
         print(f"could not list runs ({e}) -- assuming the slot is not done", file=sys.stderr)
         return []
     out = []
-    for run in runs.get("workflow_runs") or []:
+    for run in candidates:
         if str(run.get("id")) == str(exclude_run_id):
             continue
         started = run.get("run_started_at") or run.get("created_at")
