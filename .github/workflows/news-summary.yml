@@ -57,11 +57,17 @@ jobs:
     needs: gate
     if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
-    # ~105 tickers x up to 5 LLM calls at a 120s timeout, plus the retry
-    # queue's 30s-per-ticker pacing. Without a bound the worst case creeps
-    # toward the 6-hour hard cap and gets killed AFTER the API spend but
-    # BEFORE the commit step, losing the whole run's work.
-    timeout-minutes: 180
+    # GitHub's full 6h for a hosted runner, matching fundamentals and
+    # expert-views. This was 180 on the basis that the job runs ~54 minutes --
+    # and on 2026-09-17 it was killed at exactly 180. Its tickers were done at
+    # 61 minutes; the other two hours were the process unable to EXIT, because
+    # a timed-out Gemini call left a non-daemon worker that atexit joined (see
+    # llm_util.generate_with_timeout). That cause is fixed at the root now; the
+    # ceiling goes up because it is the backstop, and 180 had no headroom the
+    # moment anything went slowly.
+    #
+    # A ceiling is not a reservation: a 60-minute run still takes and bills 60.
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
 

@@ -8,7 +8,6 @@ single transient 429 permanently demoted a ticker to the Gemma fallback in the
 other two. This module is the one implementation they now share.
 """
 
-import concurrent.futures
 import os
 import random
 import re
@@ -16,6 +15,15 @@ import threading
 import time
 
 CALL_TIMEOUT_SECONDS = 120
+
+# Request timeout handed to the Gemini SDK itself (HttpOptions, milliseconds).
+# Without one the SDK waits forever, which is what let a hung grounded search
+# outlive the run that made it -- see generate_with_timeout.
+#
+# Deliberately ABOVE CALL_TIMEOUT_SECONDS so generate_with_timeout stays the
+# primary control and its message is what callers see; this only guarantees the
+# abandoned call dies soon after, instead of never. Every call site passes 120.
+HTTP_TIMEOUT_SECONDS = CALL_TIMEOUT_SECONDS + 60
 
 # Short pause before re-trying the SAME model. Buys a transient 429/503 a second
 # chance on the good model before quality degrades to a fallback.
@@ -71,17 +79,41 @@ def is_auth_error(exc):
 def generate_with_timeout(client, model, contents, config, timeout=CALL_TIMEOUT_SECONDS):
     """One generate_content call, bounded by `timeout`.
 
-    The worker thread is abandoned rather than joined on timeout (see commit
-    33cac85) -- waiting here is what used to hang the whole GitHub Actions job.
+    A DAEMON thread, not a ThreadPoolExecutor. The executor version abandoned
+    its worker on timeout (`shutdown(wait=False)`) and its docstring claimed
+    that stopped the job hanging -- it only moved the hang. Executor workers are
+    non-daemon and `concurrent.futures` registers an atexit hook that JOINS
+    them, so the process could not exit while an abandoned Gemini call was still
+    blocked. Measured: the wrapper returned after its 2s timeout, main() ended,
+    and the interpreter then sat for the full 25s the worker was sleeping.
+
+    That is not theoretical. news-summary on 2026-09-17 finished its tickers at
+    01:10, saved, posted to Discord -- and was killed at its 180-minute cap at
+    03:09. It had 5 timed-out calls; the threads ran concurrently, so the tail
+    is the LONGEST hung call, and at least one held on for about two hours.
+
+    A daemon thread is not joined at exit, so an abandoned call can never hold
+    the process open again. The real defence is the SDK-level HTTP timeout on
+    the client (see HTTP_TIMEOUT_SECONDS) -- this is the backstop for anything
+    that slips past it.
     """
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    future = executor.submit(client.models.generate_content, model=model, contents=contents, config=config)
-    try:
-        return future.result(timeout=timeout)
-    except concurrent.futures.TimeoutError:
+    box = {}
+
+    def _call():
+        try:
+            box["result"] = client.models.generate_content(
+                model=model, contents=contents, config=config)
+        except BaseException as e:      # noqa: BLE001 -- re-raised on the caller's thread
+            box["error"] = e
+
+    worker = threading.Thread(target=_call, name=f"genai-{model}", daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
         raise TimeoutError(f"API call to {model} timed out after {timeout}s")
-    finally:
-        executor.shutdown(wait=False)
+    if "error" in box:
+        raise box["error"]
+    return box.get("result")
 
 
 # Errors that are about THIS MODEL rather than the account: a wrong or retired
@@ -326,7 +358,13 @@ class RotatingGeminiClient:
         client = self._clients.get(key)
         if client is None:
             from google import genai
-            client = genai.Client(api_key=key)
+            from google.genai import types
+            # Imported lazily, like `genai` above: llm_util must stay importable
+            # without the SDK (checks/test_gate_imports.py blocks it).
+            client = genai.Client(
+                api_key=key,
+                http_options=types.HttpOptions(timeout=HTTP_TIMEOUT_SECONDS * 1000),
+            )
             self._clients[key] = client
         return client
 
