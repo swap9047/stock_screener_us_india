@@ -57,10 +57,23 @@ jobs:
     needs: gate
     if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
-    # ~110 tickers x up to 5 LLM calls at a 120s timeout, plus retry
-    # pacing. Unbounded, the worst case creeps toward GitHub's 6h cap and
-    # is killed AFTER the API spend but BEFORE the commit step.
-    timeout-minutes: 240
+    # GitHub's full 6h cap for a hosted runner -- written out rather than left
+    # implicit so it is visibly a decision, not an oversight.
+    #
+    # This was 240, and a normal run uses 186-201 min of it (~110 tickers x up to
+    # 5 LLM calls at a 120s timeout, plus retry pacing). At 78-84% of budget an
+    # ordinary bad day crosses the line: on 2026-09-16 two runs were killed at
+    # 240 and 241 min, the second having already finished all 121 tickers. The
+    # slot took three attempts instead of one.
+    #
+    # A ceiling is not a reservation -- a run that takes 200 min still takes 200
+    # min and bills 200. Raising it only changes what happens on a bad day.
+    #
+    # (An earlier note here said such a kill lands BEFORE the commit step. It
+    # doesn't: that step is `if: always()`, so a killed run still commits its
+    # partial results -- which is why those two cancellations cost time and API
+    # spend but no data.)
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
 
