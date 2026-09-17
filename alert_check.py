@@ -23,6 +23,7 @@ import sys
 from stock_data import (fetch_all_markets, load_settings, get_filterable_metrics,
                         load_data_snapshot, missing_row_tickers,
                         reject_stale_rows, load_watchlists)
+from json_store import DataFileError
 from alerts import (load_rules, load_state_status, save_state, load_discord_webhook, evaluate_and_fire,
                     send_discord_batch, is_rule_due, notify_mode, STATE_FILE)
 
@@ -211,4 +212,17 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # Any unreadable data file -- alerts_config.json via load_rules, or either AI
+    # store reached through fetch_all_markets' enrichment -- exits 1 with the
+    # filename instead of a raw traceback, and the slot gate retries the slot.
+    #
+    # Failing rather than carrying on is deliberate: this job JUDGES the data, and
+    # a rule on Sentiment or Expert Take would silently never match if those
+    # fields were quietly missing -- the same reasoning as MAX_MISSING_FRACTION
+    # above. alerts_config.json already behaved this way (minus the clean
+    # message); the AI stores now match it.
+    try:
+        main()
+    except DataFileError as e:
+        print(f"::error::{e}")
+        sys.exit(1)
