@@ -2520,6 +2520,13 @@ def _sort_label_to_field(sort_label, key_by_label):
         # <details> HTML block, not a sortable value -- the sortable form is
         # the plain verdict string attached to the row as "sentiment".
         "Sentiment": "sentiment",
+        # Same shape again: the COLUMN is vstop_change, a display string built
+        # after filtering (hence its exclusion from the sort options), while the
+        # sortable value is the raw week count already on the row. Without this
+        # bridge the label resolved to the display key, so the only sort option
+        # for it had to be dropped -- leaving a metric that is filterable but
+        # could not be sorted at all.
+        "VStop Weeks Ago": "vstop_weekly_weeks_since_change",
     }.get(sort_label) or key_by_label.get(sort_label)
 
 
@@ -2608,7 +2615,9 @@ def render_sort_control(market, market_label, label_by_key, key_by_label, sample
     # their display cells are built late, not their sortable values.
     sort_labels = ["Ticker", "Company Name", "Index", "Last"] + [
         lbl for key, lbl in label_by_key.items()
-        if key not in ("matched_alerts", "vstop_change", "company_name", "index_name")
+        # vstop_change is no longer excluded: _sort_label_to_field maps its label
+        # to the raw row field, the way Sentiment and Tech Uptrend already work.
+        if key not in ("matched_alerts", "company_name", "index_name")
     ]
 
     prefs = load_column_prefs_full()

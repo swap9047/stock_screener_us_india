@@ -615,7 +615,10 @@ def trigger_github_workflow(token, repo, workflow_file="news-summary.yml", ref="
     payload = {"ref": ref}
     if inputs:
         payload["inputs"] = {k: str(v) for k, v in inputs.items()}
-    resp = requests.post(url, headers=headers, json=payload)
+    # Every other call in this module passes a timeout; this one didn't, and it
+    # runs inside a Streamlit interaction (the per-tab "Re-analyze All" buttons),
+    # so a hung connection blocked that session with no ceiling.
+    resp = requests.post(url, headers=headers, json=payload, timeout=15)
     if resp.status_code == 204:
         return True, "Workflow triggered successfully."
     return False, f"Failed to trigger workflow ({resp.status_code}): {resp.text}"

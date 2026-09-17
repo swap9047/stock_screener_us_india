@@ -82,8 +82,12 @@ def load_wrapup_state():
 
 
 def save_wrapup_state(state):
-    with open(WRAPUP_STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2, sort_keys=True)
+    # atomic_write_json, not a bare open(): a cancelled workflow landing mid-dump
+    # leaves a torn file, and commit-data (if: always()) then pushes it to the
+    # data repo. load_wrapup_state falls back to empty, so the damage is "every
+    # Wk counter resets", not a crash -- still worth not doing.
+    from json_store import atomic_write_json
+    atomic_write_json(WRAPUP_STATE_FILE, state, sort_keys=True)
 
 
 def _parse_date(s):

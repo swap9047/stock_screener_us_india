@@ -81,12 +81,42 @@ def _download_series(tickers):
     return series
 
 
+# Below this share of a market's requested series actually captured, the run is
+# treated as a failed fetch rather than a reading -- the same floor, and the same
+# reasoning, as refresh_market_breadth.MIN_COVERAGE_FRACTION.
+MIN_COVERAGE_FRACTION = 0.5
+
+
+def load_previous():
+    """The last good dashboard_perf.json, or {} -- never raises.
+
+    Regenerable data, so a torn or missing file must not stop the run; it just
+    means there is nothing to fall back on this time.
+    """
+    try:
+        with open(OUT_FILE) as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
 def main():
     settings = load_settings()
     watchlists = load_watchlists()
     benchmarks = get_benchmarks(settings)
 
-    markets_out = {}
+    # This file used to be rebuilt from scratch and written unconditionally, so a
+    # throttled leg wrote an EMPTY market and the commit step pushed it --
+    # blanking that market's 5-year performance chart until the next successful
+    # run (slots are 12h apart). refresh_market_breadth.py learned this on
+    # 2026-08-29, when one failing leg destroyed 1055 days of US breadth, and
+    # gained a coverage floor plus per-market preservation. This is the same
+    # guard: it is the same kind of file, written by the same workflow, in the
+    # same job.
+    previous = load_previous()
+    prev_markets = previous.get("markets") or {}
+    markets_out, status = {}, {}
     for market, tickers in watchlists.items():
         bench = benchmarks.get(market, "SPY")
         all_tickers = [t for t in tickers if t] + [bench]
@@ -98,17 +128,38 @@ def main():
             col: {d.strftime("%Y-%m-%d"): round(float(v), 4) for d, v in s.items()}
             for col, s in series.items()
         }
+        if len(outer) < MIN_COVERAGE_FRACTION * len(all_tickers):
+            # Not a reading. Keep the previous block if there is one; a market
+            # with no previous block stays absent, which is honest -- an empty
+            # one would render as "this market has no history".
+            kept = prev_markets.get(market)
+            status[market] = "failed"
+            print(f"::warning::[{market}] only {len(outer)} of {len(all_tickers)} series captured "
+                  f"(< {MIN_COVERAGE_FRACTION:.0%}) -- treating as a failed fetch, not a reading")
+            if kept:
+                markets_out[market] = kept
+                print(f"  -> kept the previous {market} block ({len(kept)} series)")
+            else:
+                print(f"  -> no previous {market} block to fall back on; it stays absent")
+            continue
         markets_out[market] = outer
+        status[market] = "ok"
         print(f"[{market}] stored {len(outer)} series")
 
+    # A market that has dropped out of watchlist.json is intentionally NOT
+    # carried over from `previous` -- only markets we still track are written.
     payload = {
         "as_of": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         "period": "5y",
         "markets": markets_out,
+        "status": status,
     }
-    with open(OUT_FILE, "w") as fh:
-        json.dump(payload, fh)
+    # Atomic, and 3.6 MB: the longest window in this repo for a cancelled job to
+    # land mid-write, after which commit-data (if: always()) pushes the torn file.
+    from json_store import atomic_write_json
+    atomic_write_json(OUT_FILE, payload)
     print(f"Saved {OUT_FILE}")
+    print(f"Status: {status}")
 
 
 if __name__ == "__main__":

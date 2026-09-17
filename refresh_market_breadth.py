@@ -294,8 +294,10 @@ def main():
         results["markets"][key] = block
         results["status"][key] = "ok"
 
-    with open(BREADTH_FILE, "w") as f:
-        json.dump(results, f, indent=2)
+    # Atomic: this file is committed to the data repo, and a run cancelled
+    # mid-dump would push a truncated one.
+    from json_store import atomic_write_json
+    atomic_write_json(BREADTH_FILE, results)
 
     print(f"Saved to {BREADTH_FILE}")
     print(f"Status: {results['status']}")

@@ -52,7 +52,7 @@ def read_json_strict(path, default=None):
         ) from e
 
 
-def atomic_write_json(path, data, default=None):
+def atomic_write_json(path, data, default=None, sort_keys=False):
     """Write JSON via temp file + os.replace.
 
     The plain truncate-and-write this replaces was called once PER TICKER by
@@ -67,8 +67,12 @@ def atomic_write_json(path, data, default=None):
     load_news_summary's bare except then reported to the UI as "no digest yet".
     A crash or a cancelled workflow landing mid-dump is not hypothetical -- a
     fundamentals run was cancelled on 2026-09-03.
+
+    `sort_keys` is for the files that are committed to the data repo and want a
+    stable diff (weekly_wrapup_state.json); it defaults off so every existing
+    caller's output is byte-identical to before.
     """
     tmp = f"{path}.tmp"
     with open(tmp, "w") as f:
-        json.dump(data, f, indent=2, default=default)
+        json.dump(data, f, indent=2, default=default, sort_keys=sort_keys)
     os.replace(tmp, path)
