@@ -33,6 +33,11 @@ runs:
           echo "Nothing to commit"
           exit 0
         fi
+        # data/ sits inside the workspace, so ".." is the same directory
+        # GITHUB_WORKSPACE points at. Resolved once, with a fallback, so the
+        # copy below cannot silently miss if that variable is ever unset -- this
+        # is the step that persists every run's output.
+        SRC="${GITHUB_WORKSPACE:-$(pwd)}"
         cd data
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -56,11 +61,11 @@ runs:
           for f in "${present[@]}"; do
             # Never move a timestamped file backwards -- same rule the running
             # app applies when it pulls these (github_sync._FRESHNESS_KEYS).
-            if python3 "$ACTION_PATH/newer_on_branch.py" "$f" "$GITHUB_WORKSPACE/$f"; then
+            if python3 "$ACTION_PATH/newer_on_branch.py" "$f" "$SRC/$f"; then
               echo "$f on main is newer than this run's copy -- keeping main's"
               continue
             fi
-            cp "$GITHUB_WORKSPACE/$f" "$f"
+            cp "$SRC/$f" "$f"
             staged+=("$f")
           done
           if [ ${#staged[@]} -eq 0 ]; then

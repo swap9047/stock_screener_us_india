@@ -134,6 +134,8 @@ check("::error::" in code and "exit 1" in code, "a push that never lands still f
 check(action["runs"]["steps"][0].get("shell") == "bash", "runs under bash (pipefail keeps exit status)")
 check("ACTION_PATH" in (action["runs"]["steps"][0].get("env") or {}),
       "the step exports ACTION_PATH so it can find the helper")
+check("${GITHUB_WORKSPACE:-$(pwd)}" in body,
+      "the source directory has a fallback -- this step persists every run's output")
 
 # the embedded bash must at least parse
 sh = os.path.join(work, "step.sh")
