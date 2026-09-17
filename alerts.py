@@ -23,10 +23,18 @@ left-to-right with a per-condition AND/OR (e.g. cond1 AND cond2 AND cond3 OR
 cond4). This module reuses filters.passes_filter_chain, so alert conditions
 and watchlist filters always evaluate identically.
 
-Rules are edge-triggered via alert_state.json: an alert fires once when the
-combined condition transitions from false to true, then stays silent until
-it exits and re-enters (one Discord ping per new occurrence, not one every
-single day the condition remains true).
+Each rule carries a "notify_mode" (see NOTIFY_MODES) deciding what it reports:
+
+  "incremental" (the default, and what every rule did before this key existed)
+    is edge-triggered via alert_state.json -- an alert fires once when the
+    combined condition transitions from false to true, then stays silent until
+    it exits and re-enters (one Discord ping per new occurrence, not one every
+    single day the condition remains true).
+  "full" reports every ticker matching right now, so it pings on every due run
+    while anything matches -- a daily status report rather than a change feed.
+
+Both modes keep alert_state.json up to date; only incremental reads it to
+decide what to send. See evaluate_and_fire.
 """
 
 import json
@@ -122,6 +130,34 @@ def normalize_schedule(sched):
     time_et = f"{hour:02d}:00"
 
     return {"type": stype, "days": days, "time_et": time_et}
+
+
+# --- Notify mode ---------------------------------------------------------
+# Whether a rule reports only what is NEW (edge-triggered) or everything that
+# currently matches. See evaluate_and_fire for the semantics.
+#
+# "incremental" is the default and is what every rule did before this existed,
+# so a rule saved without the key keeps its old behaviour -- normalize_rule
+# setdefaults it rather than requiring a migration pass over alerts_config.json.
+NOTIFY_MODES = ("incremental", "full")
+NOTIFY_MODE_LABELS = {
+    "incremental": "Incremental (only what's new)",
+    "full": "Full (everything matching, every run)",
+}
+
+
+def notify_mode(rule):
+    """A rule's notify mode, normalized. Anything unrecognised -- a missing key,
+    a hand-edited typo -- reads as "incremental", the quieter of the two: a
+    garbled value must not silently turn a rule into a daily ping."""
+    mode = (rule or {}).get("notify_mode")
+    return mode if mode in NOTIFY_MODES else "incremental"
+
+
+def describe_notify_mode(rule):
+    """Short marker for the rule list. Only "full" gets one -- incremental is
+    the default and marking every rule would be noise."""
+    return "🔁 Full" if notify_mode(rule) == "full" else ""
 
 
 def describe_schedule(rule):
@@ -232,6 +268,10 @@ def normalize_rule(rule):
         # not "not yet migrated" -- so this is a plain setdefault, same as
         # the fields above, not a value that needs further normalizing.
         rule.setdefault("color", None)
+        # Only what's new (the behaviour every rule had before this key
+        # existed), or everything currently matching -- see NOTIFY_MODES.
+        # setdefault, so an existing alerts_config.json needs no migration.
+        rule["notify_mode"] = notify_mode(rule)
         rule["schedule"] = normalize_schedule(rule.get("schedule"))
         return rule
     return {
@@ -241,47 +281,75 @@ def normalize_rule(rule):
         "conditions": [],
         "enabled": False,
         "weekly_wrapup": False,
+        "notify_mode": "incremental",
         "schedule": normalize_schedule(None),
     }
 
 
 def load_rules():
     """Every rule, upgraded to the current schema. Raises
-    stock_data.DataFileError if alerts_config.json exists but will not parse --
+    json_store.DataFileError if alerts_config.json exists but will not parse --
     rules are user data, and returning [] would render an empty Alert Rules tab
     whose next save would overwrite the real file (see read_json_strict)."""
-    from stock_data import read_json_strict
+    # json_store, not stock_data: importing stock_data pulls in numpy/pandas/
+    # yfinance, and daily-alerts.yml's gate job installs only `requests`. That
+    # import chain is what broke the gate -- and with it every alert -- see
+    # json_store's module docstring. The other stock_data imports in this file
+    # are inside functions the gate never calls.
+    from json_store import read_json_strict
     raw = read_json_strict(RULES_FILE, [])
     return [normalize_rule(r) for r in (raw or [])]
 
 
 def save_rules(rules):
-    from stock_data import atomic_write_json
+    from json_store import atomic_write_json
     atomic_write_json(RULES_FILE, rules)
 
 
-def load_state():
-    """The edge-trigger dedup state, or {} when it is missing or unreadable.
+def load_state_status():
+    """(state, trusted) for the edge-trigger dedup state.
 
-    Guarded rather than loud, unlike load_rules: this file is regenerable, and
-    alert_check.py already treats a missing state as "seed it and send nothing"
-    (see its `seeding` branch). Blocking the whole alert run over a torn dedup
-    file would be the worse failure. Same reasoning as
-    weekly_wrapup.load_wrapup_state."""
+    `trusted` is False whenever we have NO reliable record of what has already
+    fired -- the file is missing, unreadable, or not a JSON object. All three
+    mean the same thing to an edge-triggered check, and the caller must seed
+    rather than send: evaluating against {} treats every currently-true
+    rule x ticker as a fresh false->true transition and posts the lot.
+
+    That distinction used to live only in alert_check.py, as
+    `seeding = not os.path.exists(STATE_FILE)` -- so a TORN file (which exists)
+    sailed past the guard with an empty state and flooded Discord, while this
+    function printed "this run seeds state and sends nothing". The file is
+    committed to the data repo now, so a truncated blob reaches every later run.
+    Returning the reason here is what keeps the two in step.
+
+    Still guarded rather than loud, unlike load_rules: this file is
+    regenerable, and blocking the whole alert run over a torn dedup file would
+    be the worse failure. Same reasoning as weekly_wrapup.load_wrapup_state."""
     if not os.path.exists(STATE_FILE):
-        return {}
+        return {}, False
     try:
         with open(STATE_FILE) as f:
             state = json.load(f)
     except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
         print(f"WARNING: {os.path.basename(STATE_FILE)} is unreadable ({e}) -- "
-              "treating it as empty; this run seeds state and sends nothing.")
-        return {}
-    return state if isinstance(state, dict) else {}
+              "treating it as absent; this run seeds state and sends nothing.")
+        return {}, False
+    if not isinstance(state, dict):
+        print(f"WARNING: {os.path.basename(STATE_FILE)} is not a JSON object -- "
+              "treating it as absent; this run seeds state and sends nothing.")
+        return {}, False
+    return state, True
+
+
+def load_state():
+    """The edge-trigger dedup state, or {} when it is missing or unreadable.
+    Callers that decide whether to SEND must use load_state_status() instead --
+    {} on its own cannot tell "nothing has fired yet" from "we lost the record"."""
+    return load_state_status()[0]
 
 
 def save_state(state):
-    from stock_data import atomic_write_json
+    from json_store import atomic_write_json
     atomic_write_json(STATE_FILE, state)
 
 
@@ -503,15 +571,26 @@ def alerts_text_for(alerts_by_ticker, ticker):
 
 
 def evaluate_and_fire(all_rules, snapshot_results, state, metric_labels=None, due_rules=None):
-    """Edge-triggered evaluation used by the scheduled alert_check.py run.
+    """Evaluation used by the scheduled alert_check.py run.
     Returns (messages list, updated_state dict). `all_rules` is the COMPLETE
     ruleset -- needed so rule->rule references resolve even when the
     referenced rule isn't due today. `due_rules` (default: all_rules) is the
     subset that actually fires. `messages` is one Discord-ready table PER RULE
-    that has at least one ticker newly triggering today (false -> true
-    transition) -- tickers that were already active stay silent, matching the
-    existing edge-triggered behavior exactly; only the formatting (a table
-    instead of one line per ticker) changed."""
+    that has at least one ticker to report.
+
+    WHICH tickers a rule reports is its notify_mode (see NOTIFY_MODES):
+
+      "incremental" (default) -- only tickers that newly went true this run
+        (false -> true). A ticker that was already active stays silent, and a
+        rule with no new tickers sends nothing at all.
+      "full" -- every ticker matching right now, whether or not it is new. The
+        rule therefore pings on every due run while anything matches, which is
+        what makes it a daily status report rather than a change feed.
+
+    Both modes keep alert_state.json equally up to date. A full rule does not
+    READ the state to decide what to send, but it still writes it, so flipping
+    a rule back to incremental doesn't re-announce everything that was already
+    active."""
     if due_rules is None:
         due_rules = all_rules
     metric_labels = metric_labels or {}
@@ -519,11 +598,12 @@ def evaluate_and_fire(all_rules, snapshot_results, state, metric_labels=None, du
     by_ticker = {r["ticker"]: r for r in snapshot_results}
     today = date.today().isoformat()
     new_state = dict(state)
-    newly_triggered_by_rule = {}  # rule_id -> [ticker, ...]
+    reported_by_rule = {}  # rule_id -> [ticker, ...] this run will announce
 
     for rule in due_rules:
         if not rule.get("enabled", True) or not rule.get("conditions"):
             continue
+        send_all = notify_mode(rule) == "full"
         for ticker in _applicable_tickers(rule, snapshot_results):
             row = by_ticker.get(ticker)
             if not row:
@@ -532,18 +612,25 @@ def evaluate_and_fire(all_rules, snapshot_results, state, metric_labels=None, du
             key = f"{rule['id']}:{ticker}"
             prev = new_state.get(key, {"was_active": False, "last_triggered_date": None})
 
-            if is_true and not prev.get("was_active"):
-                newly_triggered_by_rule.setdefault(rule["id"], []).append(ticker)
-                new_state[key] = {"was_active": True, "last_triggered_date": today}
-            else:
-                new_state[key] = {"was_active": is_true, "last_triggered_date": prev.get("last_triggered_date")}
+            newly_true = is_true and not prev.get("was_active")
+            reporting = is_true and (send_all or newly_true)
+            if reporting:
+                reported_by_rule.setdefault(rule["id"], []).append(ticker)
+            # last_triggered_date tracks when this pair was last ANNOUNCED, so a
+            # full rule stamps it every run it reports, an incremental one only
+            # on the edge. was_active is the edge state and is written the same
+            # way in both modes -- see the docstring.
+            new_state[key] = {
+                "was_active": is_true,
+                "last_triggered_date": today if reporting else prev.get("last_triggered_date"),
+            }
 
     if cycle_ids:
         print(f"WARNING: circular alert references detected among rule(s): {sorted(cycle_ids)} -- those rule references are treated as not matching.")
 
     rules_by_id = {r["id"]: r for r in all_rules}
     messages = []
-    for rule_id, tickers in newly_triggered_by_rule.items():
+    for rule_id, tickers in reported_by_rule.items():
         rule = rules_by_id.get(rule_id)
         if rule:
             messages.extend(build_discord_messages_for_rule(rule, tickers, by_ticker, metric_labels))

@@ -78,7 +78,8 @@ def main():
     # A row Yahoo served OLDER than the one already stored is stale data, not
     # news, so keep the stored one (same call refresh_data.py makes).
     previous = (load_data_snapshot() or {}).get("per_market") or {}
-    per_market, stale = reject_stale_rows(per_market, previous)
+    # completed_sessions_only must match the fetch above -- see reject_stale_rows.
+    per_market, stale = reject_stale_rows(per_market, previous, completed_sessions_only=True)
     if stale:
         print(f"WARNING: {sum(len(v) for v in stale.values())} ticker(s) came back older than "
               "the stored row; kept the newer stored one.")

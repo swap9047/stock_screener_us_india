@@ -46,7 +46,7 @@ import hashlib
 import json
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -269,57 +269,15 @@ def save_markets_registry(registry):
     atomic_write_json(MARKETS_FILE, registry)
 
 
-class DataFileError(RuntimeError):
-    """A user-data JSON file on disk is unreadable.
-
-    Raised instead of returning an empty default, because these files ARE the
-    database and an empty default is indistinguishable from real emptiness: the
-    app would render no watchlists / no rules / no notes, and the next save
-    (or "Push to GitHub") would write that emptiness over the real data in the
-    data repo. Regenerable state (alert_state.json, weekly_wrapup_state.json)
-    is the opposite case and still falls back to a default -- losing it costs
-    one run's dedup, not the data.
-    """
-
-
-def read_json_strict(path, default=None):
-    """Parse a user-data file; return `default` if it does not exist yet, and
-    raise DataFileError -- naming the file -- if it exists but will not parse.
-    A torn file is what a crash mid-write used to leave behind; every writer
-    now goes through atomic_write_json, so this should only ever fire on a file
-    damaged from outside the app."""
-    if not os.path.exists(path):
-        return default
-    try:
-        with open(path) as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
-        raise DataFileError(
-            f"{os.path.basename(path)} is unreadable ({e}). Nothing was loaded or changed -- "
-            "restore it from the data repo, or delete it to start that file from defaults."
-        ) from e
-
-
-def atomic_write_json(path, data, default=None):
-    """Write JSON via temp file + os.replace.
-
-    The plain truncate-and-write this replaces was called once PER TICKER by
-    the refresh loops -- ~110 rewrites of a 150 KB file per run. A crash or a
-    job timeout landing mid-dump left truncated JSON, and the loader's bare
-    except then returned {} on the next run, so the whole store was silently
-    rebuilt from empty with every prior view lost.
-
-    Lives here because all three stores need it: it was copy-pasted privately
-    into fundamentals_eval and expert_views, and missing entirely from
-    news_summary, whose plain write could leave a torn file that
-    load_news_summary's bare except then reported to the UI as "no digest yet".
-    A crash or a cancelled workflow landing mid-dump is not hypothetical -- a
-    fundamentals run was cancelled on 2026-09-03.
-    """
-    tmp = f"{path}.tmp"
-    with open(tmp, "w") as f:
-        json.dump(data, f, indent=2, default=default)
-    os.replace(tmp, path)
+# The JSON file primitives live in json_store, which imports nothing but the
+# standard library. They used to be defined here -- but stock_data imports
+# numpy/pandas/yfinance at module scope, so alerts.load_rules() calling
+# read_json_strict silently made `import alerts` require the whole analysis
+# stack. daily-alerts.yml's gate installs only `requests`, so it started dying
+# with "ModuleNotFoundError: No module named 'numpy'" and no alert could fire.
+# Re-exported here so every existing `from stock_data import read_json_strict`
+# (and atomic_write_json, and DataFileError) keeps working untouched.
+from json_store import DataFileError, read_json_strict, atomic_write_json  # noqa: F401
 
 
 def load_watchlist_groups():
@@ -1283,6 +1241,23 @@ def exchange_session(ticker):
     return "US"
 
 
+def forming_session_date(ticker, now=None):
+    """The local date of this ticker's still-forming session, or None when its
+    exchange has settled.
+
+    One definition, shared by the two places that need it: drop_forming_daily_bars
+    (which blanks such a bar out of a fetch) and reject_stale_rows (which must not
+    prefer a STORED row that contains one). They used to disagree, because only
+    the first existed -- see reject_stale_rows' completed_sessions_only note.
+    """
+    now = now or datetime.now(ZoneInfo("UTC"))
+    tz, close_h, close_m = EXCHANGE_SESSIONS[exchange_session(ticker)]
+    local_now = now.astimezone(ZoneInfo(tz))
+    settled = local_now.replace(hour=close_h, minute=close_m, second=0, microsecond=0) \
+        + timedelta(minutes=SESSION_SETTLE_MINUTES)
+    return local_now.date() if local_now < settled else None
+
+
 def drop_forming_daily_bars(raw, tickers, now=None):
     """Blank out each ticker's trailing daily bar when its exchange session is
     still open (or closed less than SESSION_SETTLE_MINUTES ago). Returns
@@ -1310,15 +1285,11 @@ def drop_forming_daily_bars(raw, tickers, now=None):
     for t in tickers:
         if t not in raw.columns.get_level_values(0):
             continue
-        tz, close_h, close_m = EXCHANGE_SESSIONS[exchange_session(t)]
-        local_now = now.astimezone(ZoneInfo(tz))
         last_idx = raw[t].dropna(how="all").index
         if len(last_idx) == 0:
             continue
         last = last_idx[-1]
-        settled = local_now.replace(hour=close_h, minute=close_m, second=0, microsecond=0) \
-            + pd.Timedelta(minutes=SESSION_SETTLE_MINUTES)
-        if last.date() == local_now.date() and local_now < settled:
+        if last.date() == forming_session_date(t, now):
             raw.loc[last, t] = np.nan
             trimmed.append(t)
     return raw, trimmed
@@ -2488,7 +2459,8 @@ def _parse_data_end(value):
         return None
 
 
-def reject_stale_rows(fresh_per_market, previous_per_market, max_hold_days=5, today=None):
+def reject_stale_rows(fresh_per_market, previous_per_market, max_hold_days=5, today=None,
+                      completed_sessions_only=False, now=None):
     """Keep the previous row when a freshly fetched one is OLDER than it.
     Returns (per_market, {market: [tickers]}), the same shape as
     fill_snapshot_gaps.
@@ -2520,6 +2492,19 @@ def reject_stale_rows(fresh_per_market, previous_per_market, max_hold_days=5, to
     invisible one. So the previous row is only held while it is itself recent;
     past that, the fresh row wins even though it is older, and the row's own
     data_end/"Data Thru" column carries the staleness to the UI.
+
+    completed_sessions_only MUST match the flag the caller passed to
+    fetch_all_markets. Without it this guard quietly undid that flag. The stored
+    snapshot is written by refresh_data.py, which keeps forming bars on purpose
+    (data-refresh.yml wakes hourly around the clock precisely to sample the live
+    NSE session), while a job that judges CLOSES fetches with the forming bar
+    dropped. Mid-session the stored India row is therefore stamped today and the
+    correct fresh row yesterday -- so this function read the correct row as
+    "Yahoo served a stale series" and substituted the forming-bar one. Alerts
+    then fired on an intraday cross that could reverse by the close, and being
+    edge-triggered, never fired again. With the flag set, a previous row whose
+    data_end IS the still-forming session (forming_session_date) can never win:
+    it is the row that is wrong, not the fresh one.
     """
     prev_by_market = {
         m: {r.get("ticker"): r for r in rows}
@@ -2528,6 +2513,7 @@ def reject_stale_rows(fresh_per_market, previous_per_market, max_hold_days=5, to
     today = today or datetime.now(ZoneInfo("America/New_York")).date()
 
     out, rejected = {}, {}
+    forming_overrides = []
     for market, rows in (fresh_per_market or {}).items():
         prev = prev_by_market.get(market, {})
         kept, stale = [], []
@@ -2540,6 +2526,16 @@ def reject_stale_rows(fresh_per_market, previous_per_market, max_hold_days=5, to
             if old is None or new_end is None or old_end is None or new_end >= old_end:
                 kept.append(row)
                 continue
+            if completed_sessions_only and old_end == forming_session_date(row.get("ticker", ""), now):
+                # The stored row holds a forming bar -- see the docstring. Taking
+                # the fresh row is right even when it is genuinely old: an honest
+                # older CLOSE is something a rule can be judged on and "Data Thru"
+                # can show, while an incomplete bar is neither. Counted rather
+                # than waved through, so a ticker Yahoo is actually serving stale
+                # doesn't hide inside this branch.
+                forming_overrides.append(row.get("ticker"))
+                kept.append(row)
+                continue
             if (today - old_end).days > max_hold_days:
                 kept.append(row)          # the valve -- see the docstring
                 continue
@@ -2548,6 +2544,11 @@ def reject_stale_rows(fresh_per_market, previous_per_market, max_hold_days=5, to
         out[market] = kept
         if stale:
             rejected[market] = stale
+    if forming_overrides:
+        print(f"  [reject_stale_rows] kept the freshly fetched (completed-session) row for "
+              f"{len(forming_overrides)} ticker(s) whose stored row is a still-forming bar: "
+              + ", ".join(forming_overrides[:10])
+              + (" ..." if len(forming_overrides) > 10 else ""))
     return out, rejected
 
 

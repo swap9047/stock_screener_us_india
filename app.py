@@ -67,6 +67,7 @@ from stock_data import (
 import llm_util
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE,
                      send_discord_batch, build_discord_messages_for_rule, describe_schedule,
+                     NOTIFY_MODES, NOTIFY_MODE_LABELS, notify_mode, describe_notify_mode,
                      DAY_CODES, DAY_LABELS, DEFAULT_DAYS, ALLOWED_HOURS, HOUR_LABELS,
                      compute_rule_truth, RULE_COLOR_HEX, _metrics_used_in_conditions,
                      active_alerts_for_prompt, alerts_text_for)
@@ -5525,6 +5526,21 @@ with tab_alerts:
     else:
         dr_days_labels, dr_hour = [], "21"
 
+    # Only meaningful for a rule that actually pings Discord -- a scan-only rule
+    # never sends, so the choice would be inert. Hidden rather than disabled,
+    # matching how the schedule controls above already behave.
+    if dr_alert_mode == "Scheduled Discord alert":
+        dr_notify_mode = st.radio(
+            "What to send", list(NOTIFY_MODES), key="rule_notify_mode", horizontal=True,
+            format_func=lambda m: NOTIFY_MODE_LABELS[m],
+            help="Incremental pings only tickers that NEWLY started matching, and stays "
+                 "silent when nothing changed. Full pings every ticker matching right now, "
+                 "on every run the rule is due -- a daily status report rather than a "
+                 "change feed. Incremental is the default and is how every existing rule behaves.",
+        )
+    else:
+        dr_notify_mode = "incremental"
+
     save_col, clear_col = st.columns([1, 1])
     if save_col.button("Save rule", type="primary"):
         if not st.session_state.draft_rule_conditions:
@@ -5549,6 +5565,7 @@ with tab_alerts:
                 "enabled": True,
                 "schedule": new_schedule,
                 "color": RULE_COLOR_UI_TO_VALUE[rule_color_ui],
+                "notify_mode": dr_notify_mode,
             }
             rules.append(new_rule)
             save_rules(rules)
@@ -5611,7 +5628,11 @@ with tab_alerts:
             name_label = rule.get("name") or "(unnamed)"
             n_conds = len(rule.get("conditions", []))
             sched_summary = describe_schedule(rule)
-            expander_title = f"{name_label} — {scope_label} ({n_conds} condition{'s' if n_conds != 1 else ''}) | {sched_summary}"
+            # Only "full" renders a marker -- incremental is the default and
+            # tagging every rule would be noise (see describe_notify_mode).
+            nm_summary = describe_notify_mode(rule)
+            expander_title = (f"{name_label} — {scope_label} ({n_conds} condition{'s' if n_conds != 1 else ''})"
+                              f" | {sched_summary}" + (f" | {nm_summary}" if nm_summary else ""))
             # Status the title never carried: a disabled rule and a scan-only
             # rule used to look identical when collapsed.
             if not rule.get("enabled", True):
@@ -5799,6 +5820,21 @@ with tab_alerts:
                 else:
                     es_days_labels, es_hour = curr_days_labels, h_norm
 
+                # Same reasoning as the new-rule form: only shown for a rule that
+                # actually pings Discord. A scan-only rule keeps whatever it had,
+                # so flipping it back to scheduled doesn't silently reset it.
+                if es_mode == "Scheduled Discord alert":
+                    es_notify_mode = st.radio(
+                        "What to send", list(NOTIFY_MODES),
+                        index=list(NOTIFY_MODES).index(notify_mode(rule)),
+                        key=f"es_nm_{rule['id']}", horizontal=True,
+                        format_func=lambda m: NOTIFY_MODE_LABELS[m],
+                        help="Incremental pings only tickers that NEWLY started matching. "
+                             "Full pings every ticker matching right now, on every due run.",
+                    )
+                else:
+                    es_notify_mode = notify_mode(rule)
+
                 # ONE save for every field that isn't already immediate.
                 # Enabled and the conditions save on click; name, scope and
                 # schedule used to need two SEPARATE buttons, so it was easy
@@ -5813,6 +5849,7 @@ with tab_alerts:
                     rule["name"] = edit_name.strip()
                     rule["scope"] = edit_scope_val
                     rule["color"] = RULE_COLOR_UI_TO_VALUE[edit_color_ui]
+                    rule["notify_mode"] = es_notify_mode
                     if es_mode == "Scheduled Discord alert":
                         new_sched_days = [day_code_map[d] for d in es_days_labels] if es_days_labels else list(DEFAULT_DAYS)
                         rule["schedule"] = {
@@ -5824,7 +5861,7 @@ with tab_alerts:
                         rule["schedule"] = {"type": "none", "days": curr_days_codes, "time_et": curr_time}
                     save_rules(rules)
                     keep_open()
-                    st.success("Saved name, scope and schedule.")
+                    st.success("Saved name, scope, color, schedule and send mode.")
                     st.rerun()
 
     # ── Preview ─────────────────────────────────────────────────────────────

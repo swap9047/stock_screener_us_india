@@ -175,6 +175,35 @@ def compute_auto_flag(row, expert_verdict=None, sentiment=None):
     return "", ""
 
 
+def _guarded_verdict(view, row):
+    """The Expert Take verdict compute_auto_flag is allowed to vote on, or None.
+
+    The SAME guards stock_data.apply_view_fields_to_rows applies before putting
+    `expert_take` on the row: is_pending_view first (a failed-generation
+    placeholder stores verdict "HOLD", so keying off the verdict alone counts a
+    broken analysis as a genuine Hold), then validate_verdict, which ages out a
+    view past EXPERT_STALE_DAYS and demotes an ACCUMULATE the row's own
+    technicals don't support.
+
+    This used to read view["verdict"] raw -- note the sentiment on the very next
+    line was already guarded, so only this half was unprotected. A stale or
+    failed view therefore displayed as "Pending" in the table while its auto-flag
+    tooltip asserted "Expert Take=Accumulate" and painted the row Green. Latent
+    while the nightly workflow runs; it fires exactly when that workflow stops,
+    which is the case validate_verdict's staleness check exists for. `flag` is a
+    CATEGORICAL_METRIC, so this reached saved filters and Discord rules too.
+
+    None means "abstain" -- compute_auto_flag casts no Expert Take vote for it,
+    which is what an unknown verdict should do.
+    """
+    from expert_views import is_pending_view, validate_verdict
+    view = view or {}
+    if not view or is_pending_view(view):
+        return None
+    verdict, _flag = validate_verdict(view, row)
+    return verdict if verdict in ("ACCUMULATE", "HOLD", "CAUTION") else None
+
+
 def apply_notes_to_rows(rows, notes=None, min_vstop_weeks=3, expert_views=None, fundamentals=None):
     """Attaches `note`, `flag`, and `flag_reason` fields onto every row dict
     in place, from the shared ticker_notes.json (or an already-loaded `notes`
@@ -220,7 +249,7 @@ def apply_notes_to_rows(rows, notes=None, min_vstop_weeks=3, expert_views=None, 
             row["flag"] = manual_flag
             row["flag_reason"] = "Manually assigned"
         else:
-            verdict = expert_views.get(ticker, {}).get("verdict")
+            verdict = _guarded_verdict(expert_views.get(ticker), row)
             fund_view = fundamentals.get(ticker)
             sentiment = _validate_sentiment(fund_view)[0] if fund_view else "Unknown"
             auto_flag, auto_reason = compute_auto_flag(row, expert_verdict=verdict, sentiment=sentiment)

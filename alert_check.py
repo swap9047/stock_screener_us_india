@@ -23,8 +23,8 @@ import sys
 from stock_data import (fetch_all_markets, load_settings, get_filterable_metrics,
                         load_data_snapshot, missing_row_tickers,
                         reject_stale_rows, load_watchlists)
-from alerts import (load_rules, load_state, save_state, load_discord_webhook, evaluate_and_fire,
-                    send_discord_batch, is_rule_due, STATE_FILE)
+from alerts import (load_rules, load_state_status, save_state, load_discord_webhook, evaluate_and_fire,
+                    send_discord_batch, is_rule_due, notify_mode, STATE_FILE)
 
 
 # Above this share of the universe missing, the run is treated as a throttled
@@ -85,7 +85,10 @@ def main():
     # A row Yahoo served OLDER than the one already stored is stale data, not
     # news, so keep the stored one (same call refresh_data.py makes).
     previous = (load_data_snapshot() or {}).get("per_market") or {}
-    per_market, stale = reject_stale_rows(per_market, previous)
+    # completed_sessions_only must match the fetch above: the stored snapshot
+    # keeps forming bars on purpose, so without it this call would hand the
+    # forming India bar straight back and undo the whole point of the flag.
+    per_market, stale = reject_stale_rows(per_market, previous, completed_sessions_only=True)
     if stale:
         print(f"WARNING: {sum(len(v) for v in stale.values())} ticker(s) came back older than "
               "the stored row; kept the newer stored one.")
@@ -113,21 +116,26 @@ def main():
 
 
     metric_labels = {v: k for k, v in get_filterable_metrics(settings).items()}
-    # No state file at all means we have no record of what already fired --
-    # a fresh install, or state lost. Evaluating against {} would treat every
-    # currently-true rule x ticker as newly triggered and flood Discord with
-    # them in one run (what an actions/cache eviction used to do). Record the
-    # current truth instead and send nothing; from the next run on, only real
-    # false->true transitions fire.
-    seeding = not os.path.exists(STATE_FILE)
-    state = load_state()
+    # No TRUSTWORTHY state means we have no record of what already fired -- a
+    # fresh install, state lost, or a torn/garbled file. Evaluating against {}
+    # would treat every currently-true rule x ticker as newly triggered and
+    # flood Discord with them in one run (what an actions/cache eviction used to
+    # do). Record the current truth instead and send nothing; from the next run
+    # on, only real false->true transitions fire.
+    #
+    # This asks load_state_status WHY the state is empty rather than testing
+    # os.path.exists: a torn file exists, so the old test let exactly the case
+    # this branch defends against straight through.
+    state, state_trusted = load_state_status()
+    seeding = not state_trusted
     # Pass the FULL ruleset so any rule-references inside due_rules can resolve
     # against rules that aren't due today; only due_rules actually fires.
     messages, new_state = evaluate_and_fire(all_rules, combined, state, due_rules=due_rules, metric_labels=metric_labels)
     if seeding:
         save_state(new_state)
         active = sum(1 for v in new_state.values() if v.get("was_active"))
-        print(f"No {os.path.basename(STATE_FILE)} found -- seeded it with {active} currently-active "
+        why = "not found" if not os.path.exists(STATE_FILE) else "unusable (see the warning above)"
+        print(f"{os.path.basename(STATE_FILE)} {why} -- seeded it with {active} currently-active "
               f"rule/ticker pair(s) and sent NOTHING ({len(messages)} message(s) suppressed). "
               "Alerts fire on new transitions from the next run.")
         return
@@ -141,9 +149,17 @@ def main():
     # the occurrence as delivered when it never reached Discord, silently
     # losing it forever (edge-triggered logic never re-fires a state that's
     # already "active").
+    #
+    # Full-mode rules are excluded: they re-send every currently-matching ticker
+    # on the next due run regardless of state, so rolling their keys back would
+    # buy no retry -- it would only leave was_active=False on a ticker that IS
+    # active, which would then re-announce if the rule were switched back to
+    # incremental. Rule ids are hex and carry no colon, so the key splits cleanly.
+    full_rule_ids = {r["id"] for r in all_rules if notify_mode(r) == "full"}
     newly_triggered_keys = [
         k for k, v in new_state.items()
         if v.get("was_active") and not state.get(k, {}).get("was_active")
+        and k.split(":", 1)[0] not in full_rule_ids
     ]
 
     if not messages:

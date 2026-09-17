@@ -177,7 +177,7 @@ RULE = {"id": "r1", "name": "check rule", "enabled": True, "scope": "ALL",
         "weekly_wrapup": True}
 
 STUBBED = ("fetch_all_markets", "send_discord_batch", "load_watchlists", "load_rules",
-           "load_state", "save_state", "load_data_snapshot", "is_rule_due",
+           "load_state_status", "save_state", "load_data_snapshot", "is_rule_due",
            "load_wrapup_state", "save_wrapup_state")
 
 
@@ -196,8 +196,13 @@ def run_job(mod, fetch_fn):
         if hasattr(mod, "load_wrapup_state"):
             mod.load_wrapup_state = lambda: {"last_run": None, "entries": {}}
             mod.save_wrapup_state = lambda s: None
-        if hasattr(mod, "load_state"):
-            mod.load_state = lambda: {"x": {"was_active": True, "last_triggered_date": "2026-09-01"}}
+        # load_state_status, not load_state: alert_check asks WHY the state is
+        # empty (missing/torn both mean "seed, send nothing"). Stubbing the old
+        # name silently stopped applying when that changed, and the real
+        # save_state then wrote alert_state.json into the repo -- clobbering the
+        # live dedup state on a developer's machine. Stub what is actually called.
+        if hasattr(mod, "load_state_status"):
+            mod.load_state_status = lambda: ({"x": {"was_active": True, "last_triggered_date": "2026-09-01"}}, True)
             mod.save_state = lambda s: None
         try:
             mod.main()
@@ -207,6 +212,21 @@ def run_job(mod, fetch_fn):
     finally:
         for k, v in saved.items():
             setattr(mod, k, v)
+
+def _data_fingerprint():
+    """(exists, mtime, size) for the state files the headless jobs can write."""
+    out = {}
+    for f in ("alert_state.json", "weekly_wrapup_state.json"):
+        path = os.path.join(REPO, f)
+        try:
+            st = os.stat(path)
+            out[f] = (True, st.st_mtime_ns, st.st_size)
+        except OSError:
+            out[f] = (False, None, None)
+    return out
+
+
+_before_fp = _data_fingerprint()
 
 for mod, name in ((alert_check, "alert_check"), (weekly_wrapup_check, "weekly_wrapup_check")):
     outcome, sent = run_job(mod, fetch(rows_for({"us_picks": ["ACME"]}), skip=True))
@@ -220,5 +240,13 @@ for mod, name in ((alert_check, "alert_check"), (weekly_wrapup_check, "weekly_wr
     check(outcome == "exit1", f"{name}: a 20% shortfall -> exit 1 ({outcome})")
     outcome, _ = run_job(mod, fetch(rows_for(partial), too_new={"QQQ.NS": {"bars": 12}}))
     check(outcome == "returned", f"{name}: the same gap, but too new to compute, proceeds ({outcome})")
+    # A stub that stops applying is invisible -- renaming load_state to
+    # load_state_status once left the real save_state wired up, and running the
+    # checks then wrote alert_state.json into the repo, clobbering the live dedup
+    # state on a developer's machine. Compare a fingerprint taken BEFORE the run:
+    # these files legitimately exist on a machine that runs the app, so mere
+    # existence proves nothing -- only that the run left them untouched does.
+    check(_data_fingerprint() == _before_fp,
+          f"{name}: leaves alert_state.json / weekly_wrapup_state.json untouched")
 
 print("FAILURES:", fails); sys.exit(fails)

@@ -387,12 +387,23 @@ def _metric_b_expr(filt, metric_labels):
 
 
 def describe_filter(filt, metric_labels, rule_by_id=None):
+    """Human-readable form of one condition.
+
+    Every key is read with .get(), for the same reason passes_filter fails
+    closed: a hand-edited or cross-machine condition missing metric_a/operator
+    used to raise KeyError here, and nothing above this has a try -- so the
+    Alert Rules tab, the scan-filter captions, the weekly digest and the
+    Discord message builder all died on a condition the ENGINE was already
+    hardened to merely reject. A malformed condition now renders as the
+    placeholder below and still evaluates to False."""
     if filt.get("type") == "rule":
         rule = (rule_by_id or {}).get(filt.get("rule_id"))
         name = (rule or {}).get("name") or filt.get("rule_id")
         return f'Alert "{name}" matches'
-    label_a = metric_labels.get(filt["metric_a"], filt["metric_a"])
-    return f"{label_a} {filt['operator']} {_metric_b_expr(filt, metric_labels)}"
+    metric_a = filt.get("metric_a")
+    label_a = metric_labels.get(metric_a, metric_a) if metric_a else "(no metric)"
+    operator_symbol = filt.get("operator") or "(no operator)"
+    return f"{label_a} {operator_symbol} {_metric_b_expr(filt, metric_labels)}"
 
 
 def describe_chain(conditions, metric_labels, rule_by_id=None):
@@ -415,8 +426,12 @@ def describe_chain_with_values(row, conditions, metric_labels, rule_by_id=None):
         if cond.get("type") == "rule":
             parts.append(f"{prefix}{describe_filter(cond, metric_labels, rule_by_id)}")
             continue
-        label_a = metric_labels.get(cond["metric_a"], cond["metric_a"])
-        val_a = _get_metric_val(row, cond["metric_a"])
+        # .get(), same reason as describe_filter above -- this path is reached
+        # from the alert preview and the AI-review payload, neither of which
+        # has a try above it.
+        metric_a = cond.get("metric_a")
+        label_a = metric_labels.get(metric_a, metric_a) if metric_a else "(no metric)"
+        val_a = _get_metric_val(row, metric_a) if metric_a else None
         val_a_str = f"{val_a:.1f}" if isinstance(val_a, float) else str(val_a)
         expr_b = _metric_b_expr(cond, metric_labels)
         if cond.get("operator") == "in":
@@ -427,6 +442,7 @@ def describe_chain_with_values(row, conditions, metric_labels, rule_by_id=None):
         else:
             resolved_b = _resolve_metric_b(row, cond)
             resolved_b_str = f"{resolved_b:.1f}" if isinstance(resolved_b, float) else str(resolved_b)
-            desc = f"{label_a}[{val_a_str}] {cond['operator']} {expr_b}[{resolved_b_str}]"
+            operator_symbol = cond.get("operator") or "(no operator)"
+            desc = f"{label_a}[{val_a_str}] {operator_symbol} {expr_b}[{resolved_b_str}]"
         parts.append(f"{prefix}{desc}")
     return "".join(parts)
