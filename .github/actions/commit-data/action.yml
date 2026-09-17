@@ -16,6 +16,7 @@ runs:
       env:
         FILES: ${{ inputs.files }}
         MESSAGE: ${{ inputs.message }}
+        ACTION_PATH: ${{ github.action_path }}
       run: |
         present=()
         for f in $FILES; do
@@ -23,7 +24,6 @@ runs:
           # returns early when no rule is due); `git add` of a missing path
           # would fail the step under bash -e and turn a no-op run red.
           if [ -f "$f" ]; then
-            cp "$f" "data/$f"
             present+=("$f")
           else
             echo "$f not written this run -- skipping it"
@@ -36,25 +36,56 @@ runs:
         cd data
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add -- "${present[@]}"
-        if git diff --staged --quiet; then
-          echo "No changes to commit"
-          exit 0
-        fi
-        git commit -m "$MESSAGE"
-        # Fail the step if every attempt fails. The old `... && break || {
-        # sleep 2; }` loop exited with sleep's status (0), so a run whose push
-        # never landed still went green and its output was lost.
+
+        # Each attempt starts from the CURRENT branch tip and re-copies this
+        # run's files onto it. That replaces `git rebase -X theirs origin/main`,
+        # which was subtly wrong: in a rebase "theirs" is the commit being
+        # replayed, so OUR copy won every conflict. Harmless for a file one
+        # workflow owns, but data_snapshot.json is committed by both
+        # data-refresh.yml and expert-views.yml from different concurrency
+        # groups -- so a race silently discarded the other run's snapshot.
+        #
+        # Re-copying from a clean tip each time also means a push rejected by a
+        # concurrent commit is retried against that commit, not rebased over it.
         pushed=false
         for i in {1..5}; do
           git fetch origin main
-          if git rebase -X theirs origin/main && git push origin HEAD:main; then
+          git reset --hard origin/main
+
+          staged=()
+          for f in "${present[@]}"; do
+            # Never move a timestamped file backwards -- same rule the running
+            # app applies when it pulls these (github_sync._FRESHNESS_KEYS).
+            if python3 "$ACTION_PATH/newer_on_branch.py" "$f" "$GITHUB_WORKSPACE/$f"; then
+              echo "$f on main is newer than this run's copy -- keeping main's"
+              continue
+            fi
+            cp "$GITHUB_WORKSPACE/$f" "$f"
+            staged+=("$f")
+          done
+          if [ ${#staged[@]} -eq 0 ]; then
+            echo "Every file this run wrote is already superseded on main -- nothing to commit"
             pushed=true
             break
           fi
-          git rebase --abort 2>/dev/null || true
+
+          git add -- "${staged[@]}"
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            pushed=true
+            break
+          fi
+          git commit -m "$MESSAGE"
+          if git push origin HEAD:main; then
+            pushed=true
+            break
+          fi
+          echo "Push rejected (attempt $i) -- refetching and reapplying"
           sleep 2
         done
+        # Fail the step if every attempt fails. An earlier version exited with
+        # sleep's status (0), so a run whose push never landed still went green
+        # and its output was lost.
         if [ "$pushed" != true ]; then
           echo "::error::Push failed after 5 attempts -- this run's output was NOT committed."
           exit 1

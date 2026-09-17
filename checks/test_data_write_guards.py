@@ -121,6 +121,50 @@ check(open(p).read() == '{\n  "a": 2,\n  "b": 1\n}', "sort_keys=True sorts, for 
 check(not os.path.exists(p + ".tmp"), "the temp file is renamed away, not left behind")
 
 
+# --- N3: new-high/new-low must use the same history bar as breadth ---------
+# calculate_breadth masks recent listings out of the 200DMA line
+# (closes.notna().cumsum() >= 200 plus a matching ma_counts denominator) but the
+# 52-week series had neither guard: a stock with 126 sessions could post a
+# "52-week high" off a 126-day window, while stocks too new to qualify still
+# sat in the denominator. Numerator too generous, denominator too large.
+import numpy as np
+import pandas as pd
+
+_idx = pd.bdate_range("2023-01-02", periods=400)
+# three mature names that peaked long ago and drifted down -> none at a 52w high
+_mature = np.concatenate([np.linspace(100, 200, 200), np.linspace(200, 150, 200)])
+_panel = pd.DataFrame({f"OLD{i}": pd.Series(_mature, index=_idx) for i in (1, 2, 3)})
+# one recent listing: 130 sessions, rising, so it sits at its own 130-day peak
+_newco = pd.Series(np.nan, index=_idx, dtype=float)
+_newco.iloc[-130:] = np.linspace(100, 200, 130)
+_panel["NEWCO"] = _newco
+
+
+def _highs_pct(panel, masked):
+    high = panel.rolling(252, min_periods=126).max()
+    if masked:
+        high = high.where(panel.notna().cumsum() >= 252)
+    denom = (panel.notna() & high.notna()).sum(axis=1) if masked else panel.notna().sum(axis=1)
+    return ((panel >= high).sum(axis=1) / denom.replace(0, pd.NA)) * 100
+
+
+_last = _idx[-1]
+check(round(float(_highs_pct(_panel, True)[_last]), 1) == 0.0,
+      f"a 130-session listing is NOT counted as a 52w high ({_highs_pct(_panel, True)[_last]})")
+check(round(float(_highs_pct(_panel, False)[_last]), 1) == 25.0,
+      "...and the unmasked form this replaces reported 25%, confirming the fixture bites")
+_p2 = _panel.copy()
+_p2["OLD1"] = pd.Series(np.concatenate([np.linspace(100, 200, 200), np.linspace(200, 260, 200)]), index=_idx)
+check(round(float(_highs_pct(_p2, True)[_last]), 1) == 33.3,
+      "a mature name genuinely at a 52w high still registers (1 of 3 qualifying)")
+
+_bsrc = open(f"{REPO}/refresh_market_breadth.py").read()
+check("closes.notna().cumsum() >= 252" in _bsrc, "the 52w mask is applied in refresh_market_breadth")
+check("hl_counts" in _bsrc and "(closes.notna() & high52.notna())" in _bsrc,
+      "new-high/new-low use their own denominator, not valid_counts")
+check("hl_counts.replace(0, pd.NA)" in _bsrc, "a zero denominator yields NA, not inf")
+
+
 # --- R9: every requests call in github_sync has a timeout ------------------
 gs = ast.parse(open(f"{REPO}/github_sync.py").read())
 no_timeout = []

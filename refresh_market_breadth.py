@@ -153,20 +153,36 @@ def calculate_breadth(tickers, label, tz, close_hhmm):
     sma200 = sma200.where(closes.notna().cumsum() >= 200)
     is_above = closes > sma200
 
-    # Calculate 52w High/Low (252 trading days)
-    high52 = closes.rolling(window=252, min_periods=126).max()
-    low52 = closes.rolling(window=252, min_periods=126).min()
+    # Calculate 52w High/Low (252 trading days).
+    #
+    # Same cumulative-history mask the SMA gets above, for the same reason and
+    # it was missing here: without it a stock with 126 sessions of history could
+    # post a "52-week high" off a 126-day window (min_periods tolerates gaps
+    # INSIDE the window, it does not require the window to be full), while
+    # stocks too new to qualify at all still sat in the denominator. The
+    # numerator was too generous and the denominator too large -- a split that
+    # matters most in exactly the stretches this chart is read for, after an
+    # IPO wave or an index reconstitution. Threshold is the window size, as
+    # `>= 200` is for the 200-day SMA.
+    enough_52w = closes.notna().cumsum() >= 252
+    high52 = closes.rolling(window=252, min_periods=126).max().where(enough_52w)
+    low52 = closes.rolling(window=252, min_periods=126).min().where(enough_52w)
 
     is_new_high = closes >= high52
     is_new_low = closes <= low52
 
     valid_counts = closes.notna().sum(axis=1)
-    # Breadth needs its own denominator: only stocks that actually have a 200d SMA.
+    # Each series needs its OWN denominator: only stocks that actually have the
+    # measure in question. ma_counts for the 200d SMA, hl_counts for the 52-week
+    # window -- counting a stock that cannot yet qualify understates the rate.
     ma_counts = (closes.notna() & sma200.notna()).sum(axis=1)
+    hl_counts = (closes.notna() & high52.notna()).sum(axis=1)
 
     breadth_series = (is_above.sum(axis=1) / ma_counts) * 100
-    highs_series = (is_new_high.sum(axis=1) / valid_counts) * 100
-    lows_series = (is_new_low.sum(axis=1) / valid_counts) * 100
+    # Guard the division rather than leaning on valid_mask: a zero denominator
+    # yields inf, and inf survives a later boolean mask if the row is kept.
+    highs_series = (is_new_high.sum(axis=1) / hl_counts.replace(0, pd.NA)) * 100
+    lows_series = (is_new_low.sum(axis=1) / hl_counts.replace(0, pd.NA)) * 100
 
     # Warmup: drop the first 252 rows of the DOWNLOADED panel so the 52w
     # high/low window is full. This used to be `iloc[252:]` applied AFTER
@@ -177,7 +193,7 @@ def calculate_breadth(tickers, label, tz, close_hhmm):
     # A panel too short to warm up keeps every row, as the old code did.
     warm = pd.Series(len(closes) <= 252, index=closes.index)
     warm.iloc[252:] = True
-    valid_mask = (valid_counts > 0) & (ma_counts > 0) & warm
+    valid_mask = (valid_counts > 0) & (ma_counts > 0) & (hl_counts > 0) & warm
     breadth_series = breadth_series[valid_mask]
     highs_series = highs_series[valid_mask]
     lows_series = lows_series[valid_mask]
