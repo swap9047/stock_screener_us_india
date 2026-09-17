@@ -23,6 +23,7 @@ checks/test_gate_imports.py enforces that.
 
 import json
 import os
+import tempfile
 
 
 class DataFileError(RuntimeError):
@@ -72,7 +73,24 @@ def atomic_write_json(path, data, default=None, sort_keys=False):
     stable diff (weekly_wrapup_state.json); it defaults off so every existing
     caller's output is byte-identical to before.
     """
-    tmp = f"{path}.tmp"
-    with open(tmp, "w") as f:
-        json.dump(data, f, indent=2, default=default, sort_keys=sort_keys)
-    os.replace(tmp, path)
+    # A UNIQUE temp file, not a fixed "<path>.tmp": 25 call sites write these
+    # stores, and two writers racing on one path (two browser sessions saving, a
+    # UI save while a workflow writes) interleaved their JSON into the same temp
+    # file before either rename -- so the "atomic" write published a blend of
+    # both. dir= keeps it on the same filesystem, which os.replace requires.
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=2, default=default, sort_keys=sort_keys)
+        # mkstemp creates 0600; these files were 0644 and some are read by other
+        # tooling, so keep the permissions this function has always produced.
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+    except BaseException:
+        # Includes KeyboardInterrupt/SystemExit -- a cancelled workflow must not
+        # leave temp files accumulating next to the data.
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise

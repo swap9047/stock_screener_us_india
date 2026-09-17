@@ -538,8 +538,18 @@ def push_json_entry_changes(token, repo, branch, changes, message, attempts=3, n
                 changed = False
                 for key, value in (change.get("set") or {}).items():
                     if newer_than_field and key in current:
-                        ours = str((value or {}).get(newer_than_field) or "")
-                        theirs = str((current.get(key) or {}).get(newer_than_field) or "")
+                        # `or {}` only rescues None. A branch file that has been
+                        # hand-edited (or written by an older schema) can hold a
+                        # string/number/bool for a key, and "x".get(...) raises
+                        # AttributeError mid-push -- after blobs are created but
+                        # before the ref moves, so the push just fails. Treat a
+                        # non-dict on either side as "no timestamp", which makes
+                        # the freshness test fall through to "ours is newer".
+                        ours_entry = value if isinstance(value, dict) else {}
+                        theirs_entry = current.get(key)
+                        theirs_entry = theirs_entry if isinstance(theirs_entry, dict) else {}
+                        ours = str(ours_entry.get(newer_than_field) or "")
+                        theirs = str(theirs_entry.get(newer_than_field) or "")
                         if not ours or ours <= theirs:
                             continue    # branch already has this entry or a newer one
                     current[key] = value

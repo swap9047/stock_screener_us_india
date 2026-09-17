@@ -112,6 +112,37 @@ off = alerts.normalize_rule({"id": "r_off", "scope": "ALL", "conditions": COND,
                              "enabled": False, "notify_mode": "full"})
 check(run_sequence(off, SEQ)[0] == [[], [], []], "a disabled full rule sends nothing")
 
+# --- a ticker in several watchlists is reported ONCE ----------------------
+# fetch_all_markets gives each watchlist its own copy of a shared ticker's row,
+# and the judging jobs flatten per_market straight back into one list, so the
+# ticker arrives here two or three times (21 of 122 real tickers are in 2+).
+# Edge-triggering hid it -- the second pass sees was_active already True -- but
+# a full rule reports every match every run, so it listed the ticker twice in
+# its Discord table. _applicable_tickers deduplicates.
+shared = [{"ticker": "ZED.NS", "rsi14_daily": 60, "market": "m1"},
+          {"ticker": "ACME", "rsi14_daily": 60, "market": "m1"},
+          {"ticker": "ZED.NS", "rsi14_daily": 60, "market": "m2"}]
+for mode in ("incremental", "full"):
+    got, _ = run_sequence(rule(f"r_dup_{mode}", mode), [shared])
+    check(got == [["ACME", "ZED.NS"]],
+          f"{mode}: a ticker in two watchlists is reported once  (got {got})")
+
+check(alerts._applicable_tickers({"scope": "ALL"}, shared) == ["ZED.NS", "ACME"],
+      "_applicable_tickers dedupes ALL scope, preserving first-seen order")
+# A market scope resolves through the registry, so stub it rather than relying
+# on markets.json (these checks must run on a checkout with no data files).
+import stock_data as _sd
+_real_registry = _sd.load_markets_registry
+_sd.load_markets_registry = lambda: {"m1": {"label": "M1", "benchmark": "SPY"}}
+try:
+    check(alerts._applicable_tickers({"scope": "m1"}, shared) == ["ZED.NS", "ACME"],
+          "a market scope returns its own tickers, deduped")
+finally:
+    _sd.load_markets_registry = _real_registry
+check(alerts._applicable_tickers({"scope": "NOSUCH"}, shared) == [],
+      "an unknown scope that matches no ticker returns nothing")
+
+
 # --- the real message actually carries the full list ----------------------
 real_builder = alerts.__dict__["build_discord_messages_for_rule"]
 import importlib

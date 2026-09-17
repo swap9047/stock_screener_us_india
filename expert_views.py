@@ -96,14 +96,19 @@ def _atomic_write_json(path, data):
 
 
 def load_expert_views():
-    if not os.path.exists(EXPERT_VIEWS_FILE):
-        return {}
-    try:
-        with open(EXPERT_VIEWS_FILE) as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"ERROR: could not read {EXPERT_VIEWS_FILE}: {e} -- treating as empty!")
-        return {}
+    """The stored AI views, keyed by ticker.
+
+    Raises json_store.DataFileError when the file EXISTS but will not parse; a
+    missing file is still {} (nothing has been generated yet, which is normal).
+
+    It used to swallow every exception and return {}. The refresh loops do
+    `store = load_*(); store[tk] = view; save_*(store)`, so one unreadable byte
+    turned into a store containing only the tickers that run happened to reach --
+    and commit-data pushed that to the data repo. Loud beats a silent wipe of
+    work that costs hours of API time to regenerate.
+    """
+    from json_store import read_json_strict
+    return read_json_strict(EXPERT_VIEWS_FILE, {})
 
 
 def save_expert_views(data):

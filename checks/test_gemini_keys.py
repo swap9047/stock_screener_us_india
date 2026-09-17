@@ -84,7 +84,12 @@ raised = 0
 for _ in range(40):
     try: client2.models.generate_content(model="m", contents="c")
     except Quota429: raised += 1
-check(raised >= 1 and client2._cooldown_until.get(hot, 0) > 0, f"quota error puts {hot} on cooldown ({raised} raised)")
+# A quota error now RECOVERS on another key instead of propagating -- it used to
+# abort the call and cost a rung of the model ladder while a key with quota sat
+# unused, which is the opposite of what rotating is for. The cooldown is still
+# what this check is really about; `raised == 0` is the new half.
+check(client2._cooldown_until.get(hot, 0) > 0, f"quota error puts {hot} on cooldown")
+check(raised == 0, f"...and the call falls through to a key with quota ({raised} raised of 40)")
 after = dict(client2.call_counts)
 for _ in range(40):
     try: client2.models.generate_content(model="m", contents="c")

@@ -40,7 +40,8 @@ decide what to send. See evaluate_and_fire.
 import json
 import os
 import time
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -376,11 +377,37 @@ def _applicable_tickers(rule, snapshot_results):
     "<market key>" can be resolved to every ticker in that watchlist."""
     from stock_data import load_markets_registry
 
+    # Deduplicated, in first-seen order. A ticker filed under several watchlists
+    # gets one row PER WATCHLIST (stock_data.fetch_all_markets gives each market
+    # its own copy so one market's tags can't leak into another's), and the
+    # judging jobs flatten per_market straight back into this list -- so an
+    # ALL-scope rule saw the same ticker two or three times. 21 of 122 tickers
+    # are in two or more watchlists, five in three.
+    #
+    # It was invisible while every rule was edge-triggered: the second pass reads
+    # the state the first pass just wrote, sees was_active already True, and
+    # reports nothing. A notify_mode="full" rule reports every match on every
+    # run, so it listed the ticker once per watchlist in its Discord table.
+    #
+    # Deduplicating HERE rather than in fetch_all_markets on purpose: that
+    # function's `combined` is what carries custom columns, notes/flags and the
+    # AI fields onto the row dicts, so dropping copies there would leave the
+    # other watchlists' rows without them -- and it would not even fix this,
+    # since alert_check and weekly_wrapup_check rebuild the flat list from
+    # per_market themselves.
+    def _unique(tickers):
+        seen, out = set(), []
+        for t in tickers:
+            if t not in seen:
+                seen.add(t)
+                out.append(t)
+        return out
+
     scope = rule.get("scope", "ALL")
     if scope == "ALL":
-        return [r["ticker"] for r in snapshot_results]
+        return _unique(r["ticker"] for r in snapshot_results)
     if scope in load_markets_registry():
-        return [r["ticker"] for r in snapshot_results if r.get("market") == scope]
+        return _unique(r["ticker"] for r in snapshot_results if r.get("market") == scope)
     return [scope] if any(r["ticker"] == scope for r in snapshot_results) else []
 
 
@@ -596,7 +623,13 @@ def evaluate_and_fire(all_rules, snapshot_results, state, metric_labels=None, du
     metric_labels = metric_labels or {}
     rule_truth, cycle_ids = compute_rule_truth(all_rules, snapshot_results)
     by_ticker = {r["ticker"]: r for r in snapshot_results}
-    today = date.today().isoformat()
+    # ET, not the runner's local date. GitHub runners are UTC, and this job runs
+    # at 21:00 ET -- 01:00-02:00 UTC the NEXT day -- so date.today() stamped
+    # tomorrow. Only last_triggered_date is affected (edge-triggering runs off
+    # was_active, not this field), so nothing was suppressed; the stamp was
+    # simply a day ahead. ET is the timezone every other schedule decision here
+    # uses (is_rule_due, the slot gate), so this makes the record agree with them.
+    today = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
     new_state = dict(state)
     reported_by_rule = {}  # rule_id -> [ticker, ...] this run will announce
 
@@ -709,6 +742,15 @@ def hard_split_text(text, limit):
             cut = limit
             while cut > 0 and _discord_len(word[:cut]) > limit:
                 cut -= 1
+            # cut == 0 means even ONE character is over the limit -- an astral
+            # character costs 2 UTF-16 units, so any emoji against limit=1 does
+            # it. Slicing [:0] appends "" and leaves `word` untouched, so the
+            # outer loop spins forever; the nightly job hangs until the job
+            # timeout kills it. limit=1 is reachable: both callers clamp with
+            # max(..., 1) when the title/prefix eats the whole budget. Emit one
+            # oversized character instead -- Discord may reject that single
+            # message, which is recoverable; a hang is not.
+            cut = max(cut, 1)
             pieces.append(word[:cut])
             word = word[cut:]
         current = word

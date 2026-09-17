@@ -390,7 +390,18 @@ class _RotatingModels:
                         continue
                     raise
                 if _is_quota_error(e):
+                    # Retry on ANOTHER key, exactly as an auth failure does.
+                    # This used to fall through to the raise below, so a 429
+                    # aborted the call and cost a rung of the model ladder
+                    # (standard_tiers: primary, primary again, fallback) even
+                    # though a key with quota left was sitting right there --
+                    # which is the whole point of rotating. _mark_quota_error
+                    # has already put this key on cooldown, so _pick skips it;
+                    # when every key is cooling _pick falls back to using them
+                    # all rather than hard-failing. Bounded by the enclosing
+                    # `for _ in range(len(keys))`.
                     self._parent._mark_quota_error(name)
+                    continue
                 raise
         if last_exc is not None:
             raise last_exc

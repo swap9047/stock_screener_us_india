@@ -95,4 +95,21 @@ jobs:
                     f"missing from status: {missing or 'none'}")
               sys.exit(1)
           print(f"All markets refreshed: {sorted(status)}")
+
+          # dashboard_perf.json is written by the same job and now carries its
+          # own per-market status (it used to be overwritten unconditionally, so
+          # a throttled leg blanked a market's 5-year chart). A warning, not an
+          # error: breadth is the reading this workflow exists for, and failing
+          # the run would also discard the breadth data that DID refresh --
+          # refresh_market_breadth.py exits 0 on a failed leg for the same reason.
+          try:
+              with open("dashboard_perf.json") as f:
+                  perf_status = (json.load(f).get("status") or {})
+              perf_failed = sorted(k for k, v in perf_status.items() if v != "ok")
+              if perf_failed:
+                  print(f"::warning::Dashboard perf kept previous data for: {perf_failed}")
+              else:
+                  print(f"Dashboard perf refreshed: {sorted(perf_status)}")
+          except (OSError, ValueError) as e:
+              print(f"::warning::Could not verify dashboard_perf.json: {e}")
           EOF

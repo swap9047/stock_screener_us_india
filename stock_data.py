@@ -1295,6 +1295,24 @@ def drop_forming_daily_bars(raw, tickers, now=None):
     return raw, trimmed
 
 
+def _statement_row(frame, row_name):
+    """One statement row as a Series, NaNs dropped.
+
+    yfinance sometimes hands back a frame with the SAME row label twice, and
+    .loc on a duplicated label returns a DataFrame rather than a Series. Every
+    downstream test then evaluates elementwise -- `eps_q.iloc[4] > 0` becomes a
+    Series, and `if` on it raises "truth value of a Series is ambiguous". That
+    raise is caught by fetch_snapshot's statements-block except, so the ticker
+    silently loses ROCE, CFO/OP 5Y and both growth metrics at once, with only a
+    log line to say so. Take the first occurrence, which is what a
+    non-duplicated frame would have given.
+    """
+    row = frame.loc[row_name]
+    if isinstance(row, pd.DataFrame):
+        row = row.iloc[0]
+    return row.dropna()
+
+
 def _roce_from_statements(inc, bs):
     """ROCE % = Operating Income / (Stockholders Equity + Long Term Debt), all
     from ONE fiscal year: the latest year that reports both equity and
@@ -1465,7 +1483,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
             # quarter a year earlier. A non-positive base makes percentage
             # growth meaningless, so leave it blank rather than emit nonsense.
             if qinc is not None and "Diluted EPS" in qinc.index:
-                eps_q = qinc.loc["Diluted EPS"].dropna()
+                eps_q = _statement_row(qinc, "Diluted EPS")
                 if len(eps_q) >= 5 and eps_q.iloc[4] > 0:
                     qtr_eps_growth = round((eps_q.iloc[0] / eps_q.iloc[4] - 1) * 100, 1)
 
@@ -1488,7 +1506,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
             def _ttm_growth(row_name):
                 if qinc is None or row_name not in qinc.index:
                     return None
-                q = qinc.loc[row_name].dropna()
+                q = _statement_row(qinc, row_name)
                 if len(q) < 8:
                     return None
                 recent = float(q.iloc[0:4].sum())

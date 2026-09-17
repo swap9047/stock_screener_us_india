@@ -17,7 +17,8 @@ Run: python3 weekly_wrapup_check.py [--dry-run]
 """
 
 import sys
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from alerts import load_discord_webhook, load_rules, send_discord_batch
 from stock_data import (fetch_all_markets, get_filterable_metrics, load_markets_registry,
@@ -108,7 +109,12 @@ def main():
 
     metric_labels = {v: k for k, v in get_filterable_metrics(settings).items()}
     state = load_wrapup_state()
-    run_date = date.today()
+    # ET, not the runner's local date -- same reasoning as
+    # alerts.evaluate_and_fire. The "Sunday 9 PM ET" slot lands at ~01:00-02:00
+    # UTC Monday, so date.today() recorded Monday. Tenure arithmetic stayed
+    # correct (both ends of the subtraction skewed together), but the stored
+    # `entered` dates were a day ahead of the slot they belong to.
+    run_date = datetime.now(ZoneInfo("America/New_York")).date()
 
     # Pass the FULL ruleset so rule->rule references resolve even when the
     # referenced rule isn't itself in the wrap-up.

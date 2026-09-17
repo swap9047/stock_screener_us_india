@@ -1,7 +1,7 @@
 """
 Background script to automatically generate AI Expert Takes for all
-watchlisted tickers. Run by expert-views.yml at 11:00 PM ET daily (03:00 UTC
-EDT / 04:00 UTC EST), as the step AFTER that workflow's own refresh_data.py --
+watchlisted tickers. Run by expert-views.yml at 1:00 AM ET daily (05:00 UTC
+EDT / 06:00 UTC EST), as the step AFTER that workflow's own refresh_data.py --
 so data_snapshot.json is same-day by construction, not by timing luck.
 
 News is fetched per ticker by expert_views.fetch_gemma_expert_news (a grounded
@@ -9,9 +9,11 @@ search over the last 24 hours), not read from news_summary.json.
 """
 
 import os
+import sys
 import time
 from datetime import datetime, timezone
 import llm_util
+from json_store import DataFileError
 from google import genai
 from stock_data import load_data_snapshot, load_watchlists
 from expert_views import (
@@ -88,7 +90,16 @@ def main():
 
     # Load global watchlist to know exactly what to process
     watchlists = load_watchlists()
-    expert_views = load_expert_views()
+    # A corrupt store stops the run instead of rebuilding it from empty. This
+    # script rewrites the whole file from what it loaded, and commit-data
+    # (if: always()) would push that -- so exiting 1 and letting the slot gate
+    # retry the slot is the only safe answer. Same choice alert_check.py makes
+    # for a partial universe.
+    try:
+        expert_views = load_expert_views()
+    except DataFileError as e:
+        print(f"::error::{e}")
+        sys.exit(1)
     _prune_orphans(expert_views, watchlists, "expert_views")
 
     # REFRESH_MARKETS scopes the run to specific watchlists -- set by the

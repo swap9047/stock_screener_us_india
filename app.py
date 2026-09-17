@@ -4499,7 +4499,12 @@ if not os.environ.get("SKIP_GITHUB_PULL"):
 try:
     for _preflight in (load_settings, load_markets_registry, load_watchlists, load_interested,
                        load_watchlist_groups, load_ticker_index, load_rules, load_custom_filters,
-                       load_custom_columns, load_ticker_notes, load_column_prefs_full):
+                       load_custom_columns, load_ticker_notes, load_column_prefs_full,
+                       # The two AI stores too. They are regenerable, but only by
+                       # hours of API time, and the refresh loops rewrite the whole
+                       # file from what they loaded -- so a corrupt one must stop
+                       # here with its name, not surface as a stack trace mid-tab.
+                       load_expert_views, load_fundamentals):
         _preflight()
 except DataFileError as _e:
     st.error(f"{_e}")

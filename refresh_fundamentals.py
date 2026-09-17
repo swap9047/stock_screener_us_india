@@ -4,9 +4,11 @@ watchlisted tickers. Intended to run via GitHub Actions.
 """
 
 import os
+import sys
 import time
 from datetime import datetime, timezone
 import llm_util
+from json_store import DataFileError
 from google import genai
 from stock_data import load_data_snapshot, load_watchlists
 from fundamentals_eval import (
@@ -118,7 +120,16 @@ def main():
         return
 
     watchlists = load_watchlists()
-    fundamentals = load_fundamentals()
+    # A corrupt store stops the run instead of rebuilding it from empty. This
+    # script rewrites the whole file from what it loaded, and commit-data
+    # (if: always()) would push that -- so exiting 1 and letting the slot gate
+    # retry the slot is the only safe answer. Same choice alert_check.py makes
+    # for a partial universe.
+    try:
+        fundamentals = load_fundamentals()
+    except DataFileError as e:
+        print(f"::error::{e}")
+        sys.exit(1)
     _prune_orphans(fundamentals, watchlists, "fundamentals")
 
     # REFRESH_MARKETS scopes the run to specific watchlists -- set by the
