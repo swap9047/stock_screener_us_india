@@ -552,13 +552,16 @@ def resolve_persisted_view(view, old_view):
     return view
 
 
-def analyze_single_ticker(ticker, row_data, api_key, active_alerts_text=None, is_retry=True):
+def analyze_single_ticker(ticker, row_data, api_key, active_alerts_text=None, is_retry=True, client=None):
     """Regenerate one ticker's Expert Take and persist it.
 
     Returns the stored view, or None when generation failed and the existing
     view was kept (same contract as
-    fundamentals_eval.analyze_single_ticker_sentiment)."""
-    client = llm_util.make_client(api_key)
+    fundamentals_eval.analyze_single_ticker_sentiment).
+
+    `client` lets a caller looping over tickers reuse one RotatingGeminiClient --
+    see analyze_single_ticker_sentiment for why that matters."""
+    client = client or llm_util.make_client(api_key)
     view = generate_expert_view(client, row_data, active_alerts_text=active_alerts_text, is_retry=is_retry)
     all_views = load_expert_views()
     to_store = resolve_persisted_view(view, all_views.get(ticker))

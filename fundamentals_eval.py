@@ -633,7 +633,7 @@ def _prior_worth_keeping(old_view):
     return age is None or age <= SENTIMENT_STALE_DAYS
 
 
-def analyze_single_ticker_sentiment(ticker, row_data, api_key, is_retry=True):
+def analyze_single_ticker_sentiment(ticker, row_data, api_key, is_retry=True, client=None):
     """Regenerate one ticker's Sentiment view and persist it.
 
     The single-ticker counterpart to refresh_fundamentals.py's batch loop, so
@@ -641,12 +641,20 @@ def analyze_single_ticker_sentiment(ticker, row_data, api_key, is_retry=True):
     instead of leaving it to the nightly job. Mirrors
     expert_views.analyze_single_ticker.
 
+    `client` lets a CALLER that loops over tickers build one RotatingGeminiClient
+    and reuse it. Without it every ticker got a fresh client, which resets the
+    retired-key set and the 429 cooldown per ticker -- so a revoked key cost one
+    wasted call PER TICKER instead of one per run, a rate-limited key was
+    eligible again immediately, and the cached underlying genai.Client (which
+    exists because construction is not free) was rebuilt each time. The batch
+    scripts never had this; only the dashboard's bulk loop did.
+
     A failed generation is discarded rather than written: generate_fundamental_view
     falls back to a "pending" stub on error, and persisting that would throw away
     a perfectly good existing view. Returns the stored view, or None if the call
     failed and the previous view was kept.
     """
-    client = llm_util.make_client(api_key)
+    client = client or llm_util.make_client(api_key)
     old_view = load_fundamentals().get(ticker)
     view = generate_fundamental_view(client, row_data, is_retry=is_retry)
     if not _is_valid_view(view):

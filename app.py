@@ -3276,7 +3276,14 @@ def _reanalyze_tickers_in_dashboard(tickers, results, api_key, sync_message,
     """
     label = "Expert Take" if scope == "expert" else "Sentiment"
     progress_bar = st.progress(0, text=f"Starting selective {label} re-analysis...")
-    client = llm_util.make_client(api_key) if scope == "expert" else None
+    # ONE client for the whole batch, both scopes. The sentiment branch used to
+    # pass None and let analyze_single_ticker_sentiment build its own per
+    # ticker, which reset the retired-key set and the 429 cooldown every time --
+    # a revoked key then cost a wasted call per ticker instead of one per run,
+    # and the cached genai.Client was rebuilt each pass. st.secrets is passed so
+    # the rotation log shows real key names: on Streamlit Cloud the keys live in
+    # secrets, not os.environ, so without it every key logs as "caller[N]".
+    client = llm_util.make_client(api_key, st_secrets=st.secrets)
     updated_views = load_expert_views() if scope == "expert" else None
     # Section 2 of the Expert Take prompt. Evaluated once for the whole market,
     # not per ticker -- see alerts.active_alerts_by_ticker. `results` is the
@@ -3319,7 +3326,7 @@ def _reanalyze_tickers_in_dashboard(tickers, results, api_key, sync_message,
             # A failure here keeps the prior view (see
             # analyze_single_ticker_sentiment) and must not abort the loop.
             try:
-                analyze_single_ticker_sentiment(tk, row, api_key, is_retry=True)
+                analyze_single_ticker_sentiment(tk, row, api_key, is_retry=True, client=client)
             except Exception as e:
                 print(f"[re-analyze] sentiment failed for {tk}: {e}")
                 progress_bar.progress(
@@ -3553,18 +3560,24 @@ def render_expert_view_expander(market, filtered_rows, settings, results=None):
                 return
             with st.spinner(f"Re-analyzing {ticker} (Expert Take + Sentiment)..."):
                 ev_ok = True
+                # One client for both halves of this click: the two calls used to
+                # build one each, so a key retired by the first was rediscovered
+                # and retried by the second. st_secrets keeps real key names in
+                # the rotation log -- see _reanalyze_tickers_in_dashboard.
+                single_client = llm_util.make_client(api_key, st_secrets=st.secrets)
                 try:
                     alerts_by_ticker = active_alerts_for_prompt(results or filtered_rows)
                     analyze_single_ticker(
                         ticker, row, api_key,
                         active_alerts_text=alerts_text_for(alerts_by_ticker, ticker),
-                        is_retry=True,
+                        is_retry=True, client=single_client,
                     )
                 except Exception as e:
                     ev_ok = False
                     st.error(f"Expert Take refresh failed: {e}")
                 try:
-                    analyze_single_ticker_sentiment(ticker, row, api_key, is_retry=True)
+                    analyze_single_ticker_sentiment(ticker, row, api_key, is_retry=True,
+                                                    client=single_client)
                 except Exception as e:
                     if ev_ok:
                         st.warning(f"Expert Take updated; Sentiment refresh failed: {e}")
