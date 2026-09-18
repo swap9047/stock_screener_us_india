@@ -3,8 +3,10 @@ Background script to automatically generate AI Fundamentals for all
 watchlisted tickers. Intended to run via GitHub Actions.
 """
 
+import concurrent.futures
 import os
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 import llm_util
@@ -106,6 +108,22 @@ def _prune_orphans(store, watchlists, label):
     return len(orphans)
 
 
+# How many tickers are analysed at once. Each ticker is a blocking chain of
+# grounded search + reasoning calls, so this job is IO-bound, not CPU-bound: the
+# 2026-09-18 run took 353 of its 360-minute cap and 136 of those minutes were
+# spent waiting on calls that never answered. Two workers roughly halve the wall
+# clock. Two and not more because each one holds a Gemini call open and the
+# grounded-search models were already returning 500s and timing out under
+# ordinary load -- adding request pressure is the way to turn slowness into
+# failure. Raise it only with a run's [key rotation] line to show there is room.
+MAX_CONCURRENT_TICKERS = 2
+
+# Pause after each ticker, per worker. Named because the two used to be bare
+# literals and were easy to misread: the main loop has always been the small one.
+TICKER_PAUSE_SECONDS = 2
+RETRY_PAUSE_SECONDS = 5
+
+
 def main():
     api_key = get_gemini_api_key()
     if not api_key:
@@ -140,19 +158,20 @@ def main():
     limit = llm_util.refresh_limit()
     print(f"[{_ts()}] Scope: {', '.join(sorted(only_markets)) if only_markets else 'all watchlists'}"
           + (f", first {limit} ticker(s) only" if limit else ""))
-    analysed = 0
 
-    total_processed = 0
-    total_failed = 0
-    retry_queue = []
     # A ticker in several watchlists is one analysis, not several. The store is
     # keyed by bare ticker, so the extra runs were pure waste that overwrote
     # each other -- 110 slots for 105 unique tickers today (one x3,
     # three x2), i.e. 5 redundant search+reasoning pairs a night.
     seen = set()
 
+    # The plan is built BEFORE any worker starts, serially and in registry order,
+    # so REFRESH_LIMIT picks the same first N tickers it always did and the
+    # already-analysed/no-row skips stay deterministic. Only the analysis itself
+    # is concurrent.
+    plan = []
     for market, mkt_tickers in watchlists.items():
-        if limit and analysed >= limit:
+        if limit and len(plan) >= limit:
             break
         if only_markets and market not in only_markets:
             continue
@@ -163,42 +182,59 @@ def main():
         results = snapshot["per_market"][market]
 
         for idx, tk in enumerate(mkt_tickers):
-            if limit and analysed >= limit:
+            if limit and len(plan) >= limit:
                 break
             if tk in seen:
                 print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - SKIP (already analyzed this run)")
                 continue
             seen.add(tk)
             row = next((r for r in results if r["ticker"] == tk), None)
-
             if not row:
                 print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - SKIP (no data in snapshot)")
                 continue
+            plan.append((market, idx, len(mkt_tickers), tk, row))
 
-            company_name = row.get("company_name", tk)
-            analysed += 1
-            print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} ({company_name}) - starting...")
+    store_lock = threading.Lock()
+    counters = {"processed": 0, "failed": 0}
 
-            old_view = fundamentals.get(tk)
+    def _analyse(entry, is_retry=False):
+        """One ticker, start to stored result. Runs on a worker thread.
 
-            try:
-                t0 = time.time()
-                view = generate_fundamental_view(
-                    client,
-                    row,
-                    is_retry=False
-                )
-                elapsed = time.time() - t0
+        Every mutation of `fundamentals` and every save happens under
+        store_lock: save_fundamentals rewrites the whole file, so two threads
+        saving at once could interleave into a torn write, and the store is also
+        the thing commit-data pushes. The Gemini calls -- the slow part -- are
+        outside the lock, which is the entire point.
+        """
+        market, idx, total, tk, row = entry
+        tag = f"[RETRY]" if is_retry else f"[{market}] [{idx+1}/{total}]"
+        company_name = row.get("company_name", tk)
+        old_view = fundamentals.get(tk)
+        if not is_retry:
+            print(f"[{_ts()}] {tag} {tk} ({company_name}) - starting...")
+        else:
+            print(f"[{_ts()}] {tag} {tk} - starting...")
 
+        requeue = None
+        try:
+            t0 = time.time()
+            view = generate_fundamental_view(client, row, is_retry=is_retry)
+            elapsed = time.time() - t0
+            with store_lock:
                 failed_inc, detail = _apply_result(fundamentals, tk, view, old_view, elapsed)
-                total_failed += failed_inc
-                print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - {detail}")
-            except TimeoutError as e:
-                print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - TIMEOUT: {e}. Added to retry queue.")
-                retry_queue.append((market, tk, row, old_view))
-            except Exception as e:
-                print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - ERROR: {e}")
-                age = _view_age_days(old_view)
+                counters["failed"] += failed_inc
+                save_fundamentals(fundamentals)
+            print(f"[{_ts()}] {tag} {tk} - {detail}")
+        except TimeoutError as e:
+            # First pass only: fetch_fundamental_news raises this so the ticker
+            # can be tried again later. On the retry pass is_retry=True makes an
+            # exhausted search settle for "no news" instead of raising.
+            print(f"[{_ts()}] {tag} {tk} - TIMEOUT: {e}. Added to retry queue.")
+            requeue = entry
+        except Exception as e:
+            print(f"[{_ts()}] {tag} {tk} - ERROR: {e}")
+            age = _view_age_days(old_view)
+            with store_lock:
                 if _is_valid_view(old_view) and (age is None or age <= SENTIMENT_STALE_DAYS):
                     pass  # keep prior fresh result
                 else:
@@ -206,43 +242,34 @@ def main():
                     if _is_valid_view(old_view):
                         reason = f"previous view is {age:.1f} days old; {reason}"
                     fundamentals[tk] = _unknown_fallback(reason)
-                total_failed += 1
-            
-            total_processed += 1
-            save_fundamentals(fundamentals)
-            time.sleep(2)
+                counters["failed"] += 1
+                save_fundamentals(fundamentals)
+        with store_lock:
+            counters["processed"] += 1
+        time.sleep(RETRY_PAUSE_SECONDS if is_retry else TICKER_PAUSE_SECONDS)
+        return requeue
 
-    # Retry Phase
+    def _run_all(entries, is_retry=False):
+        """`entries` through the pool, returning whatever asked to be requeued.
+
+        A ThreadPoolExecutor is safe here even though llm_util avoids one: the
+        hang it warns about came from shutdown(wait=False) abandoning a worker.
+        These workers always finish, because every Gemini call inside them is
+        bounded by llm_util.call_with_timeout, and `with` joins them all.
+        """
+        if not entries:
+            return []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_CONCURRENT_TICKERS) as pool:
+            return [r for r in pool.map(lambda e: _analyse(e, is_retry), entries) if r]
+
+    retry_queue = _run_all(plan)
+
     if retry_queue:
         print(f"\n[{_ts()}] === Retrying {len(retry_queue)} timed-out stocks ===")
-        for idx, (market, tk, row, old_view) in enumerate(retry_queue):
-            print(f"[{_ts()}] [RETRY] [{idx+1}/{len(retry_queue)}] {tk} - starting...")
-            try:
-                t0 = time.time()
-                view = generate_fundamental_view(
-                    client,
-                    row,
-                    is_retry=True
-                )
-                elapsed = time.time() - t0
+        _run_all(retry_queue, is_retry=True)
 
-                failed_inc, detail = _apply_result(fundamentals, tk, view, old_view, elapsed)
-                total_failed += failed_inc
-                print(f"[{_ts()}] [RETRY] [{idx+1}/{len(retry_queue)}] {tk} - {detail}")
-            except Exception as e:
-                print(f"[{_ts()}] [RETRY] [{idx+1}/{len(retry_queue)}] {tk} - ERROR: {e}")
-                age = _view_age_days(old_view)
-                if _is_valid_view(old_view) and (age is None or age <= SENTIMENT_STALE_DAYS):
-                    pass  # keep prior fresh result
-                else:
-                    reason = str(e)
-                    if _is_valid_view(old_view):
-                        reason = f"previous view is {age:.1f} days old; {reason}"
-                    fundamentals[tk] = _unknown_fallback(reason)
-                total_failed += 1
-            
-            save_fundamentals(fundamentals)
-            time.sleep(30)
+    total_processed = counters["processed"]
+    total_failed = counters["failed"]
 
     print(f"\n[{_ts()}] Fundamentals refresh complete.")
     print(f"Processed: {total_processed}")

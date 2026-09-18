@@ -80,6 +80,14 @@ SEARCH_SOURCE_LABELS = {
     SEARCH_FALLBACK_MODEL: "🔍 Gemma-4-31B (Google Search)",
 }
 
+# Last resort for the REASONING stage, after the configured model and its retry.
+# 26b, matching news_summary.REASONING_FALLBACK_MODEL -- both reasoning ladders
+# here used to end on gemma-4-31b-it with nothing behind them, so a double
+# failure of gemini-3.5-flash-lite landed on the model that answered 0 of 40
+# calls on 2026-09-17 while 26b answered ~83%. A last rung that does not answer
+# is the same as having no last rung.
+REASONING_FALLBACK_MODEL = "models/gemma-4-26b-a4b-it"
+
 
 def fetch_fundamental_news(client, ticker, market, company_name, is_retry=False):
     """Grounded search for the current quarter's numbers: SEARCH_MODEL, the
@@ -116,7 +124,7 @@ def fetch_fundamental_news(client, ticker, market, company_name, is_retry=False)
 
     resp, used = llm_util.run_model_ladder(
         client, prompt, llm_util.standard_tiers(SEARCH_MODEL, SEARCH_FALLBACK_MODEL),
-        lambda m: config, label="fundamental-search", subject=ticker, timeout=120,
+        lambda m: config, label="fundamental-search", subject=ticker, timeout=llm_util.SEARCH_TIMEOUT_SECONDS,
     )
     if used is not None:
         text = (resp.text or "").strip()
@@ -604,7 +612,7 @@ def generate_fundamental_view(client, row_data, news_text=None, news_source=None
     # quota) instead of burning every tier on something a retry cannot fix.
     data, used = llm_util.run_model_ladder(
         client, prompt,
-        llm_util.standard_tiers(model, "models/gemma-4-31b-it"),
+        llm_util.standard_tiers(model, REASONING_FALLBACK_MODEL),
         _config_for, label="sentiment", subject=ticker,
         on_success=lambda resp: json.loads(_clean_json_text(resp.text)),
     )
@@ -628,7 +636,7 @@ def generate_fundamental_view(client, row_data, news_text=None, news_source=None
             combined = f"{news_text}\n\n--- TARGETED FOLLOW-UP SEARCH ({anchor} results) ---\n{extra}"
             data2, used2 = llm_util.run_model_ladder(
                 client, build_sentiment_prompt(company_name, ticker, combined),
-                llm_util.standard_tiers(model, "models/gemma-4-31b-it"),
+                llm_util.standard_tiers(model, REASONING_FALLBACK_MODEL),
                 _config_for, label="sentiment-retry", subject=ticker,
                 on_success=lambda resp: json.loads(_clean_json_text(resp.text)),
             )

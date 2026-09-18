@@ -41,12 +41,22 @@ def run_script(mod, env, gen_name, apply_ret):
     mod.main()
     return calls
 
+# refresh_fundamentals analyses MAX_CONCURRENT_TICKERS at a time, so the order
+# tickers finish in is not deterministic -- comparing the call list as recorded
+# made this suite flaky (0, 0, 2, 1, 0 failures over five runs). WHICH tickers a
+# limit selects is still deterministic, because the plan is built serially in
+# registry order before any worker starts, so that is what these compare.
+# refresh_expert_views is still serial and keeps the stricter ordered check.
+def _cmp(mod, got, want):
+    return sorted(got) == sorted(want) if mod is rf else got == want
+
+
 for mod, gen, ret in ((rf, "generate_fundamental_view", (0, "ok")), (rev, "generate_expert_view", (0, 0, "ok"))):
     n = mod.__name__
-    check(run_script(mod, {}, gen, ret) == ["A2", "A3", "B1", "B2", "C1.NS"], f"{n}: no limit -> every ticker with a row, duplicates once")
-    check(run_script(mod, {"REFRESH_LIMIT": "2"}, gen, ret) == ["A2", "A3"], f"{n}: limit 2 -> first 2 analysed (a no-row ticker doesn't use a slot)")
-    check(run_script(mod, {"REFRESH_MARKETS": "us_watchlist", "REFRESH_LIMIT": "2"}, gen, ret) == ["A2", "B1"], f"{n}: markets + limit 2")
-    check(run_script(mod, {"REFRESH_LIMIT": "abc"}, gen, ret) == ["A2", "A3", "B1", "B2", "C1.NS"], f"{n}: non-numeric limit ignored")
+    check(_cmp(mod, run_script(mod, {}, gen, ret), ["A2", "A3", "B1", "B2", "C1.NS"]), f"{n}: no limit -> every ticker with a row, duplicates once")
+    check(_cmp(mod, run_script(mod, {"REFRESH_LIMIT": "2"}, gen, ret), ["A2", "A3"]), f"{n}: limit 2 -> first 2 analysed (a no-row ticker doesn't use a slot)")
+    check(_cmp(mod, run_script(mod, {"REFRESH_MARKETS": "us_watchlist", "REFRESH_LIMIT": "2"}, gen, ret), ["A2", "B1"]), f"{n}: markets + limit 2")
+    check(_cmp(mod, run_script(mod, {"REFRESH_LIMIT": "abc"}, gen, ret), ["A2", "A3", "B1", "B2", "C1.NS"]), f"{n}: non-numeric limit ignored")
 
 # news_check
 def run_news(env):

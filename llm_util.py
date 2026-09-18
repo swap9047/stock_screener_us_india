@@ -25,6 +25,15 @@ CALL_TIMEOUT_SECONDS = 120
 # abandoned call dies soon after, instead of never. Every call site passes 120.
 HTTP_TIMEOUT_SECONDS = CALL_TIMEOUT_SECONDS + 60
 
+# Ceiling for ONE grounded-search call, below the general CALL_TIMEOUT_SECONDS.
+# Measured on the 2026-09-18 fundamentals run: a successful search + reasoning
+# PAIR took 36-145s (median 86), so a single search sits well under 90s, while 68
+# calls that never answered each held the full 120s -- 136 of that run's 353
+# minutes. Failing those 30s sooner costs a retry that behaves like a fresh call
+# (median 92s for the pair) and is worth ~34 minutes a run. The reasoning stages
+# keep CALL_TIMEOUT_SECONDS: they are not grounded and never come close to it.
+SEARCH_TIMEOUT_SECONDS = 90
+
 # Short pause before re-trying the SAME model. Buys a transient 429/503 a second
 # chance on the good model before quality degrades to a fallback.
 RETRY_BACKOFF_SECONDS = 5

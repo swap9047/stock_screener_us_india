@@ -121,5 +121,48 @@ try:
 finally:
     llm_util.run_model_ladder = _real2
 
+# --- the reasoning ladder's last resort must answer too ----------------------
+# Both Sentiment reasoning ladders ended on gemma-4-31b-it with nothing behind
+# it, so a double failure of the reasoning model landed on the model that
+# answered 0 of 40 calls on 2026-09-17. news_summary already uses 26b as its
+# REASONING_FALLBACK_MODEL; this matches it.
+_reason_fb = getattr(fe, "REASONING_FALLBACK_MODEL", None)
+check(_reason_fb == "models/gemma-4-26b-a4b-it",
+      f"the reasoning fallback is 26b (got {_reason_fb})")
+
+captured3 = {}
+
+
+def _fake_ladder3(client, prompt, tiers, config_for, label="llm", subject="", timeout=None, on_success=None):
+    captured3[label] = [m for m, _ in tiers]
+    return None, None
+
+
+_real3 = llm_util.run_model_ladder
+llm_util.run_model_ladder = _fake_ladder3
+try:
+    # news_text supplied, so the search stage is skipped and only the reasoning
+    # ladder runs. An exhausted ladder yields the pending placeholder, not a raise.
+    view = fe.generate_fundamental_view(
+        object(), {"ticker": "ACME", "market": "us_invested", "company_name": "Acme Corp"},
+        news_text="Q2 EPS $1.10 vs $1.00 est, reported 2026-09-10.", news_source="test")
+    check(view.get("sentiment") == "Unknown",
+          "an exhausted reasoning ladder returns the pending placeholder")
+    rungs = captured3.get("sentiment", [])
+    check(rungs[-1:] == [_reason_fb] and _reason_fb is not None,
+          f"the sentiment ladder's last rung is the reasoning fallback (got {rungs[-1:]})")
+    check("models/gemma-4-31b-it" not in rungs,
+          f"...and 31b is not in the reasoning ladder at all: {rungs}")
+finally:
+    llm_util.run_model_ladder = _real3
+
+# Catches the sentiment-retry ladder too, which needs a targeted follow-up to
+# reach and so is not exercised above.
+_fe_src = (Path(REPO) / "fundamentals_eval.py").read_text()
+check('standard_tiers(model, "models/gemma-4-31b-it")' not in _fe_src,
+      "no reasoning ladder in fundamentals_eval still hardcodes 31b as its fallback")
+check(_fe_src.count("standard_tiers(model, REASONING_FALLBACK_MODEL)") == 2,
+      "both reasoning ladders (sentiment, sentiment-retry) use the constant")
+
 print(f"FAILURES: {fails}")
 sys.exit(1 if fails else 0)

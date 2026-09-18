@@ -85,7 +85,7 @@ def fetch_gemma_expert_news(client, ticker, market, company_name, is_retry=False
 
     resp, used = llm_util.run_model_ladder(
         client, prompt, llm_util.standard_tiers(SEARCH_MODEL, SEARCH_FALLBACK_MODEL),
-        lambda m: config, label="expert-search", subject=ticker, timeout=120,
+        lambda m: config, label="expert-search", subject=ticker, timeout=llm_util.SEARCH_TIMEOUT_SECONDS,
     )
     if used is not None:
         text = (resp.text or "").strip()
