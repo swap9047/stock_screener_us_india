@@ -247,6 +247,8 @@ def main():
     print(f"\n[{_ts()}] Fundamentals refresh complete.")
     print(f"Processed: {total_processed}")
     print(f"Failed: {total_failed}")
+    # Per-key calls and failures, worst key first -- see usage_summary.
+    llm_util.log_key_usage(client)
 
 if __name__ == "__main__":
     main()

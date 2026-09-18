@@ -9,20 +9,35 @@ import yfinance as yf
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 FUNDAMENTALS_FILE = os.path.join(SCRIPT_DIR, "fundamentals.json")
 
-# India reports quarterly results with a longer lag than the US (~30-45 days
-# post quarter-end vs ~2-3 weeks), so a US-calibrated window makes recent
-# Indian earnings look "not found".
+# How far back the grounded news search looks, per market. Equal today, but kept
+# as two knobs resolved off the TICKER SUFFIX rather than one constant: India
+# reports with a longer lag than the US (~30-45 days post quarter-end vs ~2-3
+# weeks), so these have differed before and may again.
 #
-# Resolve this off the TICKER SUFFIX, not the market key. It used to be a dict
-# keyed by markets.json keys with an unrecognized key falling back to the US
-# window -- the same shape as the old get_exchange_label bug (see
-# stock_data.py), and it failed the same way: watchlists are user-creatable
-# from the dashboard, so every new one silently got a US window. That is not
-# hypothetical -- a user-created watchlist was added with 11 .NS/.BO tickers
-# and a ^CRSLDX benchmark, and every one of them was being searched with a
-# 25-day window instead of 45.
-INDIA_SEARCH_WINDOW_DAYS = 45
-US_SEARCH_WINDOW_DAYS = 25
+# The suffix, not the market key. This used to be a dict keyed by markets.json
+# keys with an unrecognized key falling back to the US window -- the same shape
+# as the old get_exchange_label bug (see stock_data.py), and it failed the same
+# way: watchlists are user-creatable from the dashboard, so every new one
+# silently got the US number. That is not hypothetical -- a user-created
+# watchlist was added with 11 .NS/.BO tickers and a ^CRSLDX benchmark, and every
+# one of them was searched with the US window instead of India's.
+#
+# 50 days for both, and deliberately the same number today. US sat at 25 against a
+# ~91-day reporting cycle, so for most of a quarter a US ticker had no earnings
+# news in range at all and Sentiment fell back to whatever analyst or guidance
+# item happened to land: on 2026-09-17, 18 of the 24 Unknown views were tickers
+# whose last report was 35-66 days old -- outside the window, so the search
+# correctly reported nothing and the guard correctly refused a verdict. 50 keeps
+# the last report in range for most of the cycle in both markets.
+#
+# Two knock-on effects, both wanted. _check_quarter_freshness only judges a
+# cited date when the real report is INSIDE the window, so it now actually runs
+# for US reports 25-50 days old instead of failing open. And needs_targeted_retry
+# fires on an anchor inside the window, so a Neutral/Unknown US view whose report
+# is 30 days old now earns the narrow second search for the exact figures --
+# which costs calls, and is the point.
+INDIA_SEARCH_WINDOW_DAYS = 50
+US_SEARCH_WINDOW_DAYS = 50
 
 
 def search_window_days(market=None, ticker=None):
@@ -88,6 +103,11 @@ def fetch_fundamental_news(client, ticker, market, company_name, is_retry=False)
         f"forward guidance, and recent analyst coverage/ratings for {exchange} stock {name} "
         f"between {cutoff_date} and {as_of_date}. "
         "Extract hard numbers (EPS, Revenue, Guidance) and explicit analyst upgrades/downgrades. "
+        # The window is 50 days and can hold a report plus later guidance and
+        # several analyst notes, so say which one wins rather than leaving the
+        # ordering to the model: NEWEST FIRST, each dated, latest wins a conflict.
+        "List what you find NEWEST FIRST, and give the exact date of each item. "
+        "If two items disagree, the more recent one is the answer. "
         "Be extremely concise. If there is no material news, output nothing."
     )
     
@@ -374,6 +394,7 @@ CRITICAL RULES (these override everything else):
 3. A directional verdict ("Positive"/"Negative") REQUIRES at least one of the structured fields below (eps_value, guidance_change, analyst_action) to be a real, specific value — not a vague or partial mention. Do not infer sentiment from company reputation, sector trends, or past performance — only from the specific structured facts found in the news above for the current quarter.
 4. "earnings_report_date" is the date the results were ANNOUNCED (YYYY-MM-DD), not the date the quarter ended. For example, an Indian company reporting Q1 FY27 (quarter ending 2026-06-30) in late July announces on roughly 2026-07-24 — use the announcement date. If the news does not state one, set it to null; do NOT guess, and do NOT substitute the quarter-end date.
 5. Setting "earnings_report_date" to null does not invalidate the rest of your answer. Judge "sentiment" from the facts you actually found, using rules 1-3 above. Report only what the news supports.
+6. The news above is ordered newest first and each item carries its date. Where several items bear on the same thing, judge on the MOST RECENT one: an older item never overrides a newer one. A downgrade last week outranks an upgrade a month ago, and the latest guidance is the guidance. Prefer the newest EPS figure for the current quarter over any earlier restatement of it.
 
 Return ONLY a valid JSON object matching this schema:
 {{

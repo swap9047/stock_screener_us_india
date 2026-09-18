@@ -240,6 +240,8 @@ def main():
     print(f"\nDone. Processed {total_processed} initial tickers and {len(retry_queue)} retries.")
     print(f"No-Source Fallbacks: {total_fallback_used} times.")
     print(f"Final failures: {total_failed}.")
+    # Per-key calls and failures, worst key first -- see usage_summary.
+    llm_util.log_key_usage(client)
 
 if __name__ == "__main__":
     main()

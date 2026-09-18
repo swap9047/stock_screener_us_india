@@ -190,7 +190,12 @@ def run_model_ladder(client, prompt, tiers, config_for, label="llm", subject="",
             resp = generate_with_timeout(client, model, prompt, config_for(model), timeout=timeout)
             return (on_success(resp) if on_success else resp), model
         except Exception as e:
-            print(f"  [{label} {model} failed] {subject}: {e}")
+            # The KEY as well as the model: a 500 says nothing about which key
+            # served it, and without this a run log could not tell a model-wide
+            # outage from one bad key. Absent on a plain genai.Client.
+            key = getattr(client, "last_key_name", None)
+            via = f" via {key}" if key else ""
+            print(f"  [{label} {model} failed{via}] {subject}: {e}")
             if is_model_unavailable(e):
                 # This model is wrong/retired/not enabled -- the next tier may
                 # still be fine, so step past instead of abandoning the ladder.
@@ -365,9 +370,14 @@ class RotatingGeminiClient:
         self._dead = set()
         self._lock = threading.Lock()
         self.last_key_name = None
-        # Call counts per key name, so a run can report how the load actually
-        # split rather than assuming it was even.
+        # Call and failure counts per key name, so a run can report how the load
+        # actually split and whether one key is worse than the others. Counting
+        # is separate from acting: a 500/503 is a MODEL condition and must not
+        # disable or cool down the key it happened to land on -- only auth and
+        # quota do that -- but it is still recorded here, because "is one key
+        # failing more?" was previously unanswerable from a run log.
         self.call_counts = {name: 0 for name, _ in self._keys}
+        self.failure_counts = {name: 0 for name, _ in self._keys}
 
     @property
     def key_names(self):
@@ -412,6 +422,24 @@ class RotatingGeminiClient:
                   f"disabled for this run; {remaining} key(s) left")
         return remaining
 
+    def _mark_failure(self, name):
+        with self._lock:
+            self.failure_counts[name] = self.failure_counts.get(name, 0) + 1
+
+    def usage_summary(self):
+        """One line per key: calls, failures and failure rate, worst first.
+
+        Printed at the end of each AI job. Without it the only key line in a run
+        log was the startup roster, so a run with 48 model failures across 3 keys
+        could not say whether they were spread evenly or concentrated on one."""
+        with self._lock:
+            rows = [(n, self.call_counts.get(n, 0), self.failure_counts.get(n, 0))
+                    for n in self.key_names]
+        rows.sort(key=lambda r: (-(r[2] / r[1]) if r[1] else 0, -r[2]))
+        parts = [f"{n} {c} call(s), {f} failed ({(f / c * 100) if c else 0:.0f}%)"
+                 for n, c, f in rows]
+        return "  [key rotation] " + "; ".join(parts)
+
     def _mark_quota_error(self, name):
         with self._lock:
             self._cooldown_until[name] = time.time() + KEY_COOLDOWN_SECONDS
@@ -442,6 +470,7 @@ class _RotatingModels:
                 return client.models.generate_content(**kwargs)
             except Exception as e:
                 last_exc = e
+                self._parent._mark_failure(name)
                 if is_auth_error(e):
                     if self._parent._mark_dead(name, e):
                         continue
@@ -463,6 +492,21 @@ class _RotatingModels:
         if last_exc is not None:
             raise last_exc
         raise RuntimeError("No usable Gemini API key left (every configured key failed authentication)")
+
+
+def log_key_usage(client):
+    """Print `client`'s per-key call/failure split, if it tracks one.
+
+    Deliberately defensive. This runs at the END of an AI job, after the output
+    is saved and pushed, and a diagnostic must never be the thing that fails a
+    run which otherwise succeeded -- a plain genai.Client has no counters, and
+    nor does a stub in a check. Printing the summary directly cost exactly that:
+    checks/test_refresh_limit.py stubs make_client with a bare object() and the
+    fundamentals job died on its last line, after a clean run.
+    """
+    summary = getattr(client, "usage_summary", None)
+    if callable(summary):
+        print(summary())
 
 
 def make_client(api_key=None, st_secrets=None):

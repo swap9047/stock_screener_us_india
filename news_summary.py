@@ -789,6 +789,10 @@ def build_news_summary(watchlists, api_key):
     totals["cache_hits"] = counters["cache_hits"]
     result["totals"] = totals
     print(f"\n[news] totals: {totals}")
+    # Which key carried the load and which failed. The only key line in a run
+    # log used to be the startup roster, so 48 model failures across 3 keys
+    # could not be attributed to any of them -- see usage_summary.
+    llm_util.log_key_usage(client)
 
     return result
 
