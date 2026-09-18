@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Scheduled alert checker. Meant to be run daily (via Cowork's scheduler,
-cron, or manually) — independent of whether the Streamlit app is open.
+Scheduled alert checker, run by daily-alerts.yml once per 9:00 PM ET slot (or
+by hand) — independent of whether the Streamlit app is open.
 
-Fetches BOTH the US watchlist and the India watchlist, each benchmarked per
-settings.json (default: S&P 500 / Nifty 500), combines them, evaluates alerts_config.json rules
+Fetches every watchlist, each ticker benchmarked against its own index (see
+ticker_index.json), combines them, evaluates alerts_config.json rules
 with edge-triggered logic (alert_state.json), and sends any newly
 triggered alerts to Discord.
 
@@ -22,7 +22,7 @@ import sys
 
 from stock_data import (fetch_all_markets, load_settings, get_filterable_metrics,
                         load_data_snapshot, missing_row_tickers,
-                        reject_stale_rows, load_watchlists)
+                        reject_stale_rows, load_watchlists, enrich_rows)
 from json_store import DataFileError
 from alerts import (load_rules, load_state_status, save_state, load_discord_webhook, evaluate_and_fire,
                     send_discord_batch, is_rule_due, notify_mode, STATE_FILE)
@@ -94,6 +94,9 @@ def main():
         print(f"WARNING: {sum(len(v) for v in stale.values())} ticker(s) came back older than "
               "the stored row; kept the newer stored one.")
     combined = [r for rows in per_market.values() for r in rows]
+    # A substituted row carries flags/notes/AI fields from ITS fetch, not from
+    # the files as they are now -- see stock_data.enrich_rows.
+    enrich_rows(combined, settings)
 
     short_history = {**((load_data_snapshot() or {}).get("short_history") or {}), **fresh_short_history}
     # Pass the watchlists explicitly: the job has already loaded them for the

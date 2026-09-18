@@ -34,9 +34,26 @@ def _clean_json_text(text):
     return t.strip()
 
 
+# The grounded-search ladder for this pipeline's news stage, and the source
+# label written to the view for whichever rung answered.
+SEARCH_MODEL = "models/gemma-4-26b-a4b-it"
+SEARCH_FALLBACK_MODEL = "models/gemma-4-31b-it"
+SEARCH_SOURCE_LABELS = {
+    SEARCH_MODEL: "🔍 Gemma-4-26B (Google Search)",
+    SEARCH_FALLBACK_MODEL: "🔍 Gemma-4-31B (Google Search)",
+}
+
+
 def fetch_gemma_expert_news(client, ticker, market, company_name, is_retry=False):
-    """Fetches news specifically for Expert Views using gemma-4-26b-a4b-it with Google Search.
-    Falls back to 31b."""
+    """Fetches news specifically for Expert Views: a grounded search on
+    SEARCH_MODEL, retried once on the same model, then SEARCH_FALLBACK_MODEL --
+    llm_util.standard_tiers, the ladder the news pipeline's Stage 1 already uses.
+
+    This was a hand-rolled two-rung loop (26b, then 31b) with no same-model
+    retry, so a single transient 429/503 -- the likeliest failure on a ~110-call
+    serial run -- demoted the search to the weaker model. On exhaustion it raises
+    TimeoutError so the caller's retry queue picks the ticker up later; on the
+    retry pass (is_retry) it settles for "no news" instead."""
     from stock_data import get_exchange_label
 
     # Exchange-local, not UTC. This workflow fires at 03:00/04:00 UTC, which is
@@ -65,27 +82,18 @@ def fetch_gemma_expert_news(client, ticker, market, company_name, is_retry=False
     
     grounding_tool = types.Tool(google_search=types.GoogleSearch())
     config = types.GenerateContentConfig(tools=[grounding_tool])
-    
-    try:
-        resp = _generate_with_timeout(client, "models/gemma-4-26b-a4b-it", prompt, config, timeout=120)
-        text = resp.text or ""
-        if not text.strip():
-            return "No recent news found.", "🔍 Gemma-4-26B (Google Search)"
-        return text, "🔍 Gemma-4-26B (Google Search)"
-    except Exception as e:
-        print(f"  [expert gemma 26b search failed/timeout] {ticker}: {e} -> Falling back to 31b")
-        try:
-            resp = _generate_with_timeout(client, "models/gemma-4-31b-it", prompt, config, timeout=120)
-            text = resp.text or ""
-            if not text.strip():
-                return "No recent news found.", "🔍 Gemma-4-31B (Google Search)"
-            return text, "🔍 Gemma-4-31B (Google Search)"
-        except Exception as e2:
-            print(f"  [expert gemma 31b search failed/timeout] {ticker}: {e2}")
-            if not is_retry:
-                raise TimeoutError("Search timed out. Add to retry queue.")
-            print(f"  [expert search final fallback] {ticker} -> No source available")
-            return "No recent news found.", "⚪ No Source"
+
+    resp, used = llm_util.run_model_ladder(
+        client, prompt, llm_util.standard_tiers(SEARCH_MODEL, SEARCH_FALLBACK_MODEL),
+        lambda m: config, label="expert-search", subject=ticker, timeout=120,
+    )
+    if used is not None:
+        text = (resp.text or "").strip()
+        return (text or "No recent news found."), SEARCH_SOURCE_LABELS.get(used, f"🔍 {used} (Google Search)")
+    if not is_retry:
+        raise TimeoutError("Search timed out. Add to retry queue.")
+    print(f"  [expert search final fallback] {ticker} -> No source available")
+    return "No recent news found.", "⚪ No Source"
 
 
 def _atomic_write_json(path, data):
@@ -557,6 +565,23 @@ def resolve_persisted_view(view, old_view):
     return view
 
 
+def apply_regenerated_view(store, ticker, view):
+    """Put a freshly generated `view` into `store` under the persistence rules
+    of resolve_persisted_view. Returns True if the store changed.
+
+    The one place a regenerated view enters a store, so the nightly batch, the
+    per-ticker button and the dashboard's bulk re-analyze cannot disagree. The
+    bulk path used to do `if _is_valid_view(view): store[tk] = view` and
+    otherwise keep the prior unconditionally -- so a prior that had aged past
+    EXPERT_STALE_DAYS was never replaced by the honest pending placeholder the
+    other two paths write."""
+    to_store = resolve_persisted_view(view, store.get(ticker))
+    if to_store is None:
+        return False
+    store[ticker] = to_store
+    return True
+
+
 def analyze_single_ticker(ticker, row_data, api_key, active_alerts_text=None, is_retry=True, client=None):
     """Regenerate one ticker's Expert Take and persist it.
 
@@ -569,11 +594,9 @@ def analyze_single_ticker(ticker, row_data, api_key, active_alerts_text=None, is
     client = client or llm_util.make_client(api_key)
     view = generate_expert_view(client, row_data, active_alerts_text=active_alerts_text, is_retry=is_retry)
     all_views = load_expert_views()
-    to_store = resolve_persisted_view(view, all_views.get(ticker))
-    if to_store is None:
+    if not apply_regenerated_view(all_views, ticker, view):
         return None
-    all_views[ticker] = to_store
     save_expert_views(all_views)
-    return to_store
+    return all_views[ticker]
 
 # Trigger Streamlit Cloud hot-reload

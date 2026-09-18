@@ -90,7 +90,7 @@ The alert trigger cadence is managed by the GitHub Actions YAML, not by Streamli
 
 The app's Alert Rules tab lets you choose which **days** a scheduled rule should run. The hour picker is intentionally limited to the one hour the workflow actually supports: **9:00 PM ET**. If you ever want alerts at more times, update both places together:
 
-1. Add the additional UTC cron trigger(s) in `.github/workflows/daily-alerts.yml`.
+1. Add the ET hour to the slot gate's `slots` input in `.github/workflows/daily-alerts.yml` (every workflow wakes hourly; the gate decides which run does a slot's work).
 2. Add the corresponding ET hour(s) to `ALLOWED_HOURS` / `HOUR_LABELS` in `alerts.py`.
 
 On each scheduled wakeup, a cheap "gate" job installs only `requests` and asks `alerts.is_rule_due()` whether any enabled rule is due at that ET day/hour. The full check job installs all app dependencies, fetches live prices, and runs `alert_check.py` only when the gate says something is due. `alert_state.json` tracks which rule/ticker pairs were already active so you don't get duplicate pings every day a condition remains true; the workflow commits it to the private data repo after each run (it used to live in `actions/cache`, where an eviction reset it and re-fired everything). If the file is ever missing, `alert_check.py` records the current state and sends nothing that run instead of flooding Discord.
@@ -101,7 +101,7 @@ Rough cost: an hourly gate run (a few seconds each) plus one full check per due 
 
 ## 7. News digest (Discord + News tab)
 
-A second, independent GitHub Actions workflow, `.github/workflows/news-summary.yml`, builds a daily news digest for every watchlist in scope (`news_watchlist_scope` in Settings — blank means all watchlists): for each ticker, it uses Gemini (with Google Search grounding, so it's real, cited web search — not the model's training data) to find important announcements, results, and stock moves from the last 24 hours, collates each watchlist into its own summary, saves the result to `news_summary.json`, and sends each summary to Discord. The app's **News** tab just displays that same `news_summary.json`.
+A second, independent GitHub Actions workflow, `.github/workflows/news-summary.yml`, builds a daily news digest for every watchlist in scope (`news_watchlist_scope` in Settings — blank means the *All Invested* group; pick groups or individual watchlists on the News tab): for each ticker, it uses Gemini (with Google Search grounding, so it's real, cited web search — not the model's training data) to find important announcements, results, and stock moves from the last 24 hours, collates each watchlist into its own summary, saves the result to `news_summary.json`, and sends each summary to Discord. The app's **News** tab just displays that same `news_summary.json`.
 
 It does its work once per **8:00 PM ET** slot: the workflow wakes hourly and the shared slot gate lets the first run after the slot through (same pattern as every other scheduled workflow — see AGENTS.md).
 
@@ -136,19 +136,19 @@ A few things worth knowing:
 
 ## 8b. Expert Views generation
 
-A fourth GitHub Actions workflow, `.github/workflows/expert-views.yml`, runs daily at **11:00 PM ET** (03:00 / 04:00 UTC). It refreshes `data_snapshot.json` first to guarantee same-day price data, then generates AI Expert Take verdicts (`ACCUMULATE`, `HOLD`, `CAUTION`) across all tickers and commits `expert_views.json` (and the updated snapshot) to the private data repo.
+A fourth GitHub Actions workflow, `.github/workflows/expert-views.yml`, does its work once per **1:00 AM ET** slot. It refreshes `data_snapshot.json` first to guarantee same-day price data, then generates AI Expert Take verdicts (`ACCUMULATE`, `HOLD`, `CAUTION`) across all tickers and commits `expert_views.json` (and the updated snapshot) to the private data repo.
 
 It uses `GEMINI_API_KEY` and `DATA_REPO_TOKEN` repo secrets. It supports `workflow_dispatch` with optional `markets` and `limit` inputs for scoped runs and smoke tests.
 
 ## 8c. Fundamental Views generation
 
-A fifth GitHub Actions workflow, `.github/workflows/fundamentals.yml`, runs daily at **3:00 AM ET** (07:00 / 08:00 UTC). It reads the latest `data_snapshot.json` and evaluates quarterly earnings, filings, and analyst coverage to produce fundamental sentiment (`fundamentals.json`), committing the results to the private data repo.
+A fifth GitHub Actions workflow, `.github/workflows/fundamentals.yml`, does its work once per **9:00 PM ET** slot. It reads the latest `data_snapshot.json` and evaluates quarterly earnings, filings, and analyst coverage to produce fundamental sentiment (`fundamentals.json`), committing the results to the private data repo.
 
 It uses `GEMINI_API_KEY` and `DATA_REPO_TOKEN` repo secrets. It supports `workflow_dispatch` with optional `markets` and `limit` inputs.
 
 ## 8d. Market breadth & dashboard performance
 
-A sixth GitHub Actions workflow, `.github/workflows/market-breadth.yml`, runs twice daily at **10:00 AM** and **10:00 PM ET** (02,03,14,15 UTC). It runs `refresh_market_breadth.py` and `refresh_dashboard_perf.py` to compute advance/decline breadth metrics (`market_breadth.json`) and portfolio performance metrics (`dashboard_perf.json`), committing both to the private data repo.
+A sixth GitHub Actions workflow, `.github/workflows/market-breadth.yml`, does its work once per **10:00 AM** and **10:00 PM ET** slot, Monday to Saturday. It runs `refresh_market_breadth.py` and `refresh_dashboard_perf.py` to compute advance/decline breadth metrics (`market_breadth.json`) and portfolio performance metrics (`dashboard_perf.json`), committing both to the private data repo.
 
 No new secret needed beyond `DATA_REPO_TOKEN`.
 

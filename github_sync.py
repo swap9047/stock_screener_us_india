@@ -179,7 +179,8 @@ def _remote_tree(token, repo, branch):
 
 
 def pull_generated_files(token, repo, branch="main", files=None,
-                         min_interval=SYNC_MIN_INTERVAL_SECONDS, force=False):
+                         min_interval=SYNC_MIN_INTERVAL_SECONDS, force=False,
+                         stamp_checked=True):
     """Refresh data files from the data repo. Returns (updated, note).
 
     Generated files (PULLABLE_FILES) are refreshed unless the local copy is
@@ -200,6 +201,12 @@ def pull_generated_files(token, repo, branch="main", files=None,
     SHA rather than from raw.githubusercontent.com because the blob is
     content-addressed -- the raw CDN caches for minutes and could hand back an
     older body than the tree we just read.
+
+    `stamp_checked=False` leaves the "checked recently" timestamp alone, for a
+    forced pull of a SUBSET: that clock is shared by every file, so stamping it
+    for a one-file pull made the next regular pull skip all the others for a
+    whole interval. The blob SHAs of the files actually pulled are still
+    recorded either way, so nothing is re-downloaded.
 
     Never raises: a failed sync must leave the app running on its local files.
     """
@@ -269,13 +276,29 @@ def pull_generated_files(token, repo, branch="main", files=None,
         known[name] = remote_sha
         updated.append(name)
 
-    _write_sync_state({"checked_at": now, "blobs": known})
+    checked_at = now if stamp_checked else (state.get("checked_at") or 0)
+    _write_sync_state({"checked_at": checked_at, "blobs": known})
     note = f"updated {len(updated)}" if updated else "up to date"
     if skipped:
         note += f"; kept newer local copy of {', '.join(skipped)}"
     if kept_edits:
         note += f"; kept unpushed local edits to {', '.join(kept_edits)}"
     return updated, note
+
+
+def refresh_snapshot_from_repo(token, repo, branch="main"):
+    """Pull data_snapshot.json from the data repo NOW, ignoring the rate limit,
+    keeping the local copy if it is newer by its own stamp. Returns (updated, note).
+
+    For the two app actions that rebuild the snapshot from the local copy and
+    push the result -- saving a watchlist (which reuses every existing row) and
+    Refresh Data (which keeps local rows wherever Yahoo's copy is older, most of
+    the universe in the evening). Both re-stamp generated_at, so the pushed file
+    always looked newest while its rows could be up to a pull interval behind
+    what a workflow had already committed. Pulling first makes the rows they
+    reuse the freshest known, so the push is legitimately the newest."""
+    return pull_generated_files(token, repo, branch, files=["data_snapshot.json"],
+                                force=True, stamp_checked=False)
 
 
 def _config_value(st_secrets, key, default=None):

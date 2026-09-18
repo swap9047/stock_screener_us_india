@@ -41,7 +41,6 @@ EMA settings (Daily: 10/50/200, Weekly: 10/20/40):
 All displayed numeric values are rounded to 1 decimal place.
 """
 
-import concurrent.futures
 import hashlib
 import json
 import os
@@ -200,8 +199,10 @@ DEFAULT_SETTINGS = {
     "note_dropdown_options": "",
 
     # -- News scope (which watchlist keys to include in news generation) --
-    # Empty list = all registered markets (backward-compatible default).
-    # Set to e.g. ["us_invested"] to restrict the daily digest to one watchlist only.
+    # Empty list = the all_invested group, NOT every market -- see
+    # news_summary.resolve_news_scope / DEFAULT_NEWS_SCOPE_GROUP. May hold market
+    # keys, combined group keys ("all_invested", "all_watchlist"), or a mix; set
+    # to e.g. ["us_invested"] to restrict the daily digest to one watchlist.
     "news_watchlist_scope": [],
 
     # -- Fundamental columns (Sentiment, Qtr Profit/Revenue Growth %, etc.) --
@@ -220,7 +221,17 @@ def load_settings():
 
 
 def save_settings(settings):
-    clean = {k: settings.get(k, DEFAULT_SETTINGS[k]) for k in DEFAULT_SETTINGS}
+    """Write `settings`, keeping the CURRENT value of every key it does not name.
+
+    This used to fill the gaps from DEFAULT_SETTINGS. The Settings dialog saves
+    only the 18 calculation keys it shows, so one click on its Save silently
+    reset the other 15 -- the AI reasoning models and thinking budgets, the news
+    scope and models, the fundamental-columns toggle -- to their defaults, and
+    the nightly jobs then quietly ran on the default model. Merge over the file
+    instead; a caller that really wants defaults passes them explicitly (the
+    dialog's "Reset to defaults" does)."""
+    current = load_settings()
+    clean = {k: settings[k] if k in settings else current[k] for k in DEFAULT_SETTINGS}
     atomic_write_json(SETTINGS_FILE, clean)
 
 
@@ -324,8 +335,14 @@ def add_watchlist(label, benchmark):
 
     registry = load_markets_registry()
     base_key = _slugify_market_key(label)
-    if base_key.upper() == "ALL":
-        base_key = f"{base_key}_market"  # "ALL" is reserved for the alert-scope "every watchlist" option
+    # "all" is the alert-scope "every watchlist" word, and the combined tabs use
+    # the DEFAULT_WATCHLIST_GROUPS keys as synthetic market keys for their own
+    # widgets. Only "all" used to be reserved, so a watchlist labelled "All
+    # Invested" slugged to "all_invested", both tabs then instantiated the same
+    # per-market widget keys, and Streamlit's duplicate-key error took every tab
+    # down -- with no way back from the UI, since deletion isn't offered.
+    if base_key in {"all"} | set(DEFAULT_WATCHLIST_GROUPS):
+        base_key = f"{base_key}_market"
     key = base_key
     suffix = 2
     while key in registry:
@@ -1136,25 +1153,32 @@ def backfill_ticker_indices(tickers):
 def _download_with_retries(all_tickers, period, attempts=3, timeout=90, wait=30):
     """Bulk yf.download() with a hard per-attempt timeout (yfinance/Yahoo can
     hang or stall with no native timeout of its own) and a retry-with-backoff
-    loop, mirroring the _generate_with_timeout pattern used for LLM calls
-    elsewhere in this app. Raises the last error if all attempts fail, so a
-    persistent outage fails the job clearly instead of hanging indefinitely
-    or silently proceeding with partial/no data."""
+    loop, the same llm_util.call_with_timeout the LLM calls use. Raises the
+    last error if all attempts fail, so a persistent outage fails the job
+    clearly instead of hanging indefinitely or silently proceeding with
+    partial/no data.
+
+    call_with_timeout, not a ThreadPoolExecutor: the executor form abandoned a
+    NON-daemon worker on timeout, which the interpreter joins at exit -- the
+    exact hang llm_util.generate_with_timeout was fixed for on 2026-09-17."""
+    from llm_util import call_with_timeout
     last_exc = None
     for attempt in range(1, attempts + 1):
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        future = executor.submit(
-            yf.download, all_tickers, period=period, interval="1d",
-            group_by="ticker", auto_adjust=True, progress=False, threads=True,
-        )
         try:
-            return future.result(timeout=timeout)
-        except concurrent.futures.TimeoutError:
-            last_exc = TimeoutError(f"yf.download timed out after {timeout}s (attempt {attempt}/{attempts})")
+            return call_with_timeout(
+                lambda: yf.download(all_tickers, period=period, interval="1d",
+                                    group_by="ticker", auto_adjust=True, progress=False, threads=True),
+                timeout, name="yf.download",
+            )
+        except TimeoutError as e:
+            # `e`'s own message, not a rebuilt one: call_with_timeout already
+            # says "yf.download timed out after {timeout}s", and a timeout
+            # raised by yfinance ITSELF (socket.timeout is TimeoutError since
+            # 3.10) would otherwise be relabelled as having taken the full
+            # budget it never used.
+            last_exc = TimeoutError(f"{e} (attempt {attempt}/{attempts})")
         except Exception as e:
             last_exc = e
-        finally:
-            executor.shutdown(wait=False)
         print(f"  [yf.download attempt {attempt}/{attempts} failed] {last_exc}")
         if attempt < attempts:
             time.sleep(wait)
@@ -2234,29 +2258,59 @@ def fetch_all_markets(watchlists=None, period="5y", settings=None, completed_ses
             rows.append(r)
         per_market[market] = rows
 
-    # Apply user-defined custom columns (custom_columns.py) here -- NOT in
-    # app.py -- so every consumer of fetch_all_markets gets them
-    # automatically: the Streamlit app, but also alert_check.py and
-    # refresh_data.py, which run headless (GitHub Actions) and never touch
-    # app.py at all. A custom column needs to be available to alert
-    # conditions, not just the table, so it has to be computed here, at the
-    # source, rather than bolted on downstream in just one consumer.
-    from custom_columns import apply_custom_columns_to_rows
+    # Custom columns, notes/flags and the AI/interested fields are attached
+    # HERE -- not in app.py -- so every consumer of fetch_all_markets gets them:
+    # the Streamlit app, but also the headless alert_check.py / refresh_data.py
+    # runs that never touch app.py. An alert on a custom column, a flag or
+    # Sentiment could otherwise never fire headless.
     combined = [r for market in per_market for r in per_market[market]]
-    apply_custom_columns_to_rows(combined)
-
-    # Same reasoning as custom columns above -- per-ticker notes/flags
-    # (ticker_notes.py) need to be available to alert conditions and the
-    # headless scripts too, not just the table, so attach them here at the
-    # source rather than only in app.py.
-    from ticker_notes import apply_notes_to_rows
-    apply_notes_to_rows(combined, min_vstop_weeks=settings.get("tech_uptrend_min_vstop_weeks", 3))
-
-    # And the AI/interested fields, for the same reason: without them an alert
-    # on Sentiment / Interested / Expert News? could never fire headless.
-    apply_view_fields_to_rows(combined)
+    enrich_rows(combined, settings)
 
     return combined, as_of, per_market
+
+
+def enrich_rows(rows, settings=None):
+    """Attach every non-price field to `rows` in place, from the files as they
+    are NOW: custom columns, notes/flags (with the auto-flag vote), and
+    interested / sentiment / expert_take / expert_news_backed.
+
+    One entry point because two callers need it and one of them forgot: the
+    judging jobs fetch (enriched) rows, then let reject_stale_rows /
+    fill_snapshot_gaps substitute the STORED snapshot row wherever Yahoo's copy
+    is older -- and the stored row carries these fields as they were when that
+    snapshot was built. In the evening that is most of the universe (95 of 147
+    rows on 2026-09-16), so a rule on Flag or Interested was judging a flag from
+    the last hourly refresh for one half of the table and a live one for the
+    other. The app's own load path re-applies these on every run; the jobs now
+    do the same after every substitution."""
+    settings = settings or load_settings()
+    from custom_columns import apply_custom_columns_to_rows
+    from ticker_notes import apply_notes_to_rows
+    apply_custom_columns_to_rows(rows)
+    apply_notes_to_rows(rows, min_vstop_weeks=settings.get("tech_uptrend_min_vstop_weeks", 3))
+    apply_view_fields_to_rows(rows)
+    return rows
+
+
+def refresh_data_end_age(rows, today=None):
+    """Recompute each row's `data_end_age_days` from its `data_end`, in place.
+
+    fetch_snapshot stores the age at FETCH time and nothing recomputed it, so
+    the dashboard's "N tickers haven't updated in 3+ days" caption -- a
+    pipeline-stall detector -- reported the age the rows had when the snapshot
+    was built, i.e. it stalled with the pipeline.
+
+    A row whose data_end is missing or unparseable is left exactly as it was:
+    there is nothing to recompute from, and the field must stay an int. The
+    caption tests `row.get("data_end_age_days", 0) >= 3`, and .get's default
+    does NOT cover a key that is present and None -- writing None here raised
+    TypeError out of the render path, taking every tab down at once."""
+    today = today or datetime.now(ZoneInfo("America/New_York")).date()
+    for row in rows:
+        end = _parse_data_end(row.get("data_end"))
+        if end:
+            row["data_end_age_days"] = (today - end).days
+    return rows
 
 
 def apply_view_fields_to_rows(rows, fundamentals=None, expert_views=None, interested=None):
@@ -2331,8 +2385,8 @@ def save_data_snapshot(as_of, per_market, settings=None, merge=False, short_hist
                        provenance=None):
     """Persists a fetch_all_markets() result to disk so the Streamlit app
     can load it directly instead of hitting yfinance live on every session
-    -- meant to be called once/day by the scheduled data-refresh workflow
-    (see refresh_data.py), not by the app itself. Stores the settings used
+    -- meant to be called by the scheduled data-refresh workflow (see
+    refresh_data.py, hourly cron) rather than on every app load. Stores the settings used
     to compute it too, so the app can detect a settings change (SMA
     lengths, thresholds, etc.) since the snapshot ran and fall back to a
     live fetch instead of showing data computed with stale parameters.

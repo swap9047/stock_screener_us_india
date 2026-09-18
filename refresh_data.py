@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Scheduled data refresh. Meant to run once daily (GitHub Actions, ~7:00 AM
-ET, before market open) -- fetches BOTH watchlists (prices + all computed
-indicators) via yfinance and saves the result to data_snapshot.json.
+Scheduled data refresh, run by data-refresh.yml on an hourly cron (which GitHub
+throttles to a few runs a day, around the clock on purpose so the NSE session
+is sampled too) -- fetches every watchlist (prices + all computed indicators)
+via yfinance and saves the result to data_snapshot.json.
 
 This exists so the Streamlit app can load a ready-made snapshot instantly
 instead of hitting yfinance live every time someone opens it (yfinance
@@ -23,6 +24,7 @@ import os
 from stock_data import (
     load_watchlists, load_settings, fetch_all_markets, save_data_snapshot,
     load_data_snapshot, fill_snapshot_gaps, reject_stale_rows, MIN_DAILY_BARS,
+    enrich_rows,
 )
 
 
@@ -79,6 +81,10 @@ def main():
 
     per_market, recovered = fill_snapshot_gaps(per_market, previous, watchlists)
     combined = [r for rows in per_market.values() for r in rows]
+    # Rows kept from the previous snapshot carry flags/notes/AI fields from THAT
+    # fetch; refresh them so the saved file is uniformly current -- see
+    # stock_data.enrich_rows.
+    enrich_rows(combined, settings)
     if recovered:
         n = sum(len(v) for v in recovered.values())
         print(f"WARNING: {n} ticker(s) returned no data; kept last-known rows:")

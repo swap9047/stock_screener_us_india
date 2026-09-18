@@ -89,11 +89,13 @@ scan_only = {"schedule": {"type": "none"}}
 check(alerts.is_rule_due(weekday, et(2026, 9, 14, 21, 30)), "weekday rule due on Monday 21:30 ET")
 check(alerts.is_rule_due(weekday, et(2026, 9, 15, 3, 0)), "weekday rule still due when the run lands 03:00 ET Tuesday (counts as Monday)")
 check(alerts.is_rule_due(weekday, et(2026, 9, 19, 2, 0)), "Friday rule still due when the run lands Saturday 02:00 ET")
-# Saturday EVENING counts as Friday's slot by design (rule_hour >= 18 rolls back),
-# so a weekday rule fires there too; alert_state dedups it since those pairs are
-# already active. Unchanged by the gate.
-check(alerts.is_rule_due(weekday, et(2026, 9, 19, 21, 0)), "Saturday evening counts as Friday's slot for a weekday rule")
-check(alerts.is_rule_due(weekday, et(2026, 9, 19, 12, 0)), "the rollback covers all of Saturday, not just the evening")
+# Saturday 21:00 is SATURDAY's slot, so a weekday rule is not due there. This
+# used to assert the opposite -- a "Saturday counts as Friday" rollback from the
+# weekday-only days -- which double-evaluated every weekday rule on Saturdays
+# (and made a Saturday-only rule unreachable). Saturday NOON still belongs to
+# Friday's 21:00 slot, and that one is due.
+check(not alerts.is_rule_due(weekday, et(2026, 9, 19, 21, 0)), "Saturday evening is Saturday's slot: weekday rule not due")
+check(alerts.is_rule_due(weekday, et(2026, 9, 19, 12, 0)), "Saturday noon still belongs to Friday's slot: weekday rule due")
 check(not alerts.is_rule_due(weekday, et(2026, 9, 13, 21, 0)), "weekday rule not due on Sunday evening")
 check(alerts.is_rule_due(daily, et(2026, 9, 13, 21, 0)), "every-day rule due on Sunday evening")
 check(not alerts.is_rule_due(scan_only, et(2026, 9, 14, 21, 30)), "scan-only rule never due")

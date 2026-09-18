@@ -18,8 +18,9 @@ Perplexity-Finance-style digest built with a 3-stage per-ticker architecture:
      recency and materiality were already decided in Stage 2 where the raw
      dates still exist.
 
-Roughly 105 search + 105 reasoning + 5 collation calls per run at today's
-watchlist sizes. Stages 1 and 2 are memoised per (ticker, window date), so a
+Roughly one search + one reasoning call per ticker in scope plus one
+collation call per watchlist -- about 50 + 50 + 2 with the default scope (the
+two invested lists), or ~105 + 105 + 7 across every watchlist. Stages 1 and 2 are memoised per (ticker, window date), so a
 ticker in three watchlists costs one search, not three, while still
 appearing in all three digests -- only Stage 3 is genuinely per-market.
 
@@ -509,7 +510,7 @@ def collation_dropped_tickers(summary, material_tickers):
 
 def build_news_summary(watchlists, api_key):
     """Runs the 3-stage pipeline for every market in `watchlists`, respecting
-    the ``news_watchlist_scope`` setting (empty = all markets).
+    the ``news_watchlist_scope`` setting (empty = the all_invested group).
 
     Returns a dict shaped:
         {"as_of", "generated_at", "totals": {...},

@@ -187,13 +187,15 @@ def describe_schedule(rule):
 
 
 def is_rule_due(rule, et_now=None):
-    """Is this rule due to be checked right now? Compares the rule's
+    """Is this rule due for the slot this run belongs to? Compares the rule's
     schedule against `et_now` (a tz-aware America/New_York datetime;
-    defaults to the current time). Matches on day-of-week only -- an evening
-    rule that lands after midnight or on Saturday counts for the previous day.
-    No hour-of-day window, and no cron-season test: the workflow's slot gate
-    owns "once per slot" (see the note above). ALLOWED_HOURS keeps the app's
-    schedule picker aligned with the slots the gate acts on."""
+    defaults to the current time). Matches on day-of-week only, and the day is
+    the SLOT's, not the run's: the most recent occurrence of the rule's hour at
+    or before now. The slot gate lets a run do a slot's work up to 22 h after
+    it, so the two must agree on which day is being judged. No hour-of-day
+    window, and no cron-season test: the gate owns "once per slot" (see the
+    note above). ALLOWED_HOURS keeps the app's schedule picker aligned with the
+    slots the gate acts on."""
     sched = rule.get("schedule", {})
     if sched.get("type") == "none":
         return False
@@ -218,18 +220,18 @@ def is_rule_due(rule, et_now=None):
     except Exception:
         rule_hour = 21
 
-    # If an evening rule (e.g. 21:00 ET) runs on Saturday or past midnight
-    # due to GitHub Actions runner delays (even 6-23 hrs late), the nominal
-    # scheduled day was Friday (yesterday).
+    # The slot this run belongs to: today's occurrence of the rule's hour if it
+    # has passed, else yesterday's -- the same choice slot_gate.latest_slot
+    # makes. This replaces two rollbacks written for a weekday-only schedule (a
+    # Saturday run counted as Friday; a run before 06:00 as the previous day).
+    # Those disagreed with the gate whenever a run started more than ~9 h late,
+    # and always on Saturday: a Saturday-only rule could fire only when its run
+    # landed after midnight, and every Monday-morning wakeup judged Sunday's
+    # slot as Monday, so Mon-Fri rules were evaluated twice on Mondays.
     from datetime import timedelta
-    effective_dt = et_now
-    if rule_hour >= 18:
-        if et_now.weekday() == 5:  # Saturday (delayed Friday run)
-            effective_dt = et_now - timedelta(days=1)
-        elif et_now.hour < 6:
-            effective_dt = et_now - timedelta(days=1)
+    slot_day = et_now.date() if et_now.hour >= rule_hour else (et_now - timedelta(days=1)).date()
 
-    day_code = DAY_CODES[effective_dt.weekday()]
+    day_code = DAY_CODES[slot_day.weekday()]
     allowed_days = sched.get("days", DEFAULT_DAYS)
     if day_code not in allowed_days:
         return False

@@ -1,4 +1,3 @@
-import concurrent.futures
 import json
 import os
 from datetime import datetime, timedelta, timezone
@@ -57,7 +56,23 @@ def _clean_json_text(text):
         t = t[:-3]
     return t.strip()
 
+# The grounded-search ladder for this pipeline's news stage, and the source
+# label written to the view for whichever rung answered.
+SEARCH_MODEL = "models/gemma-4-26b-a4b-it"
+SEARCH_FALLBACK_MODEL = "models/gemma-4-31b-it"
+SEARCH_SOURCE_LABELS = {
+    SEARCH_MODEL: "🔍 Gemma-4-26B (Google Search)",
+    SEARCH_FALLBACK_MODEL: "🔍 Gemma-4-31B (Google Search)",
+}
+
+
 def fetch_fundamental_news(client, ticker, market, company_name, is_retry=False):
+    """Grounded search for the current quarter's numbers: SEARCH_MODEL, the
+    same model again after a backoff, then SEARCH_FALLBACK_MODEL
+    (llm_util.standard_tiers). Was a hand-rolled 26b-then-31b loop with no
+    same-model retry, so one transient 429/503 demoted the search. On
+    exhaustion it raises TimeoutError for the caller's retry queue; on the
+    retry pass it settles for "no news" instead."""
     from stock_data import get_exchange_label
 
     as_of_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -78,26 +93,17 @@ def fetch_fundamental_news(client, ticker, market, company_name, is_retry=False)
     
     grounding_tool = types.Tool(google_search=types.GoogleSearch())
     config = types.GenerateContentConfig(tools=[grounding_tool])
-    
-    try:
-        resp = _generate_with_timeout(client, "models/gemma-4-26b-a4b-it", prompt, config, timeout=120)
-        text = resp.text or ""
-        if not text.strip():
-            return "No recent fundamental news found.", "🔍 Gemma-4-26B (Google Search)"
-        return text, "🔍 Gemma-4-26B (Google Search)"
-    except Exception as e:
-        print(f"  [fundamental gemma 26b search failed/timeout] {ticker}: {e} -> Falling back to 31b")
-        try:
-            resp = _generate_with_timeout(client, "models/gemma-4-31b-it", prompt, config, timeout=120)
-            text = resp.text or ""
-            if not text.strip():
-                return "No recent fundamental news found.", "🔍 Gemma-4-31B (Google Search)"
-            return text, "🔍 Gemma-4-31B (Google Search)"
-        except Exception as e2:
-            print(f"  [fundamental gemma 31b search failed/timeout] {ticker}: {e2}")
-            if not is_retry:
-                raise TimeoutError("Search timed out. Add to retry queue.")
-            return "No recent fundamental news found.", "⚪ No Source"
+
+    resp, used = llm_util.run_model_ladder(
+        client, prompt, llm_util.standard_tiers(SEARCH_MODEL, SEARCH_FALLBACK_MODEL),
+        lambda m: config, label="fundamental-search", subject=ticker, timeout=120,
+    )
+    if used is not None:
+        text = (resp.text or "").strip()
+        return (text or "No recent fundamental news found."), SEARCH_SOURCE_LABELS.get(used, f"🔍 {used} (Google Search)")
+    if not is_retry:
+        raise TimeoutError("Search timed out. Add to retry queue.")
+    return "No recent fundamental news found.", "⚪ No Source"
 
 def _atomic_write_json(path, data):
     """Delegates to stock_data.atomic_write_json -- this used to be a private
@@ -214,7 +220,7 @@ def _has_hard_evidence(view):
         return True
     return False
 
-def _fetch_last_reported_earnings_date(ticker):
+def _fetch_last_reported_earnings_date(ticker, timeout=15):
     """Best-effort, no-guessing lookup of the most recent CONFIRMED (already
     reported, not estimated) earnings date via yfinance.
 
@@ -226,24 +232,20 @@ def _fetch_last_reported_earnings_date(ticker):
     Timeout-guarded (unlike a bare call) because this runs once per ticker in
     the sequential GitHub Actions refresh loop, and GitHub-hosted runners
     share IP ranges Yahoo Finance sometimes rate-limits/slows -- a hang here
-    with no timeout would stall the whole batch job.
-
-    The `concurrent.futures` import this needs was missing from the module for
-    the life of the function, so every call raised NameError, the fail-open
-    `except Exception` below turned that into None, and _check_quarter_freshness
-    therefore never had a real date to compare against: quarter_verified was
-    True and real_earnings_date null for all 118 stored views, i.e. the
-    STALE_QUARTER guard had never once fired. Keep the import.
+    with no timeout would stall the whole batch job. The guard is
+    llm_util.call_with_timeout (a daemon thread): the ThreadPoolExecutor it
+    replaces abandoned a non-daemon worker that the interpreter then joined at
+    exit, the same hang the Gemini wrapper was fixed for. An earlier version
+    referenced concurrent.futures without importing it, so every call raised
+    NameError, failed open to None, and the STALE_QUARTER guard never fired --
+    which is why the lookup below is exercised by a check, not trusted.
     """
     try:
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        future = executor.submit(lambda: yf.Ticker(ticker).get_earnings_dates(limit=8))
         try:
-            df = future.result(timeout=15)
-        except concurrent.futures.TimeoutError:
+            df = llm_util.call_with_timeout(
+                lambda: yf.Ticker(ticker).get_earnings_dates(limit=8), timeout, name="yf.earnings_dates")
+        except TimeoutError:
             df = None
-        finally:
-            executor.shutdown(wait=False)
         if df is None or df.empty:
             return None
         today = datetime.now(timezone.utc).date()

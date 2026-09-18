@@ -34,7 +34,7 @@ permissions:
   actions: read    # the slot gate reads this workflow's own run history
 
 jobs:
-  # Two questions, cheapest first: does this run own the 9:15 PM ET slot (see
+  # Two questions, cheapest first: does this run own the 9:00 PM ET slot (see
   # .github/actions/slot-gate), and is any enabled rule actually due for that
   # slot's day? The heavy check job (streamlit/yfinance/pandas + live prices)
   # only starts when both say yes.

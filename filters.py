@@ -249,7 +249,15 @@ def _resolve_metric_b(row, filt):
         # No saved condition omits compare_type -- checked across all 60 in
         # alerts_config.json and custom_filters.json.
         return None
-    return _coerce_fixed_value(row.get(filt.get("metric_a")), filt["value"])
+    value = filt["value"]
+    if isinstance(value, (list, dict)):
+        # A list only means something to "in" (handled above). With any other
+        # operator it reached the comparison and `55.0 > ["Yes"]` raised
+        # TypeError -- uncaught, so one hand-edited condition took down every
+        # tab and the nightly job, the exact failure this function's docstring
+        # promises cannot happen. The builder cannot produce this shape.
+        return None
+    return _coerce_fixed_value(row.get(filt.get("metric_a")), value)
 
 
 def _get_metric_val(row, metric_key):

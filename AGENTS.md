@@ -35,8 +35,8 @@ step names, so each key needs a line in the AI steps' `env:` blocks. Every run l
 `[key rotation] N key(s): ...`; if that number is lower than expected, that line is
 missing.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 190
-offline regression checks in ~30 s (no secrets, no network, no data files), and
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 380
+offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
 verified by rendering the app headlessly; recipe at the bottom.
@@ -45,22 +45,22 @@ verified by rendering the app headlessly; recipe at the bottom.
 
 ## Module map
 
-~15.4k lines total. The weighting matters: `app.py` is nearly 40% of it.
+~16.4k lines total (the app itself; checks/ adds ~2.1k). The weighting matters: `app.py` is nearly 40% of it.
 
 | File | Lines | What it owns |
 |---|---:|---|
-| `app.py` | 6099 | The entire UI: tabs, tables, sidebar, filters, sort, editors, AI control bars, News + Alert Rules tabs |
-| `stock_data.py` | 2642 | yfinance fetching, all indicator maths, watchlist/markets registry IO, `get_filterable_metrics` |
-| `alerts.py` | 855 | Alert rule evaluation + Discord message building |
-| `news_summary.py` | 839 | News gathering + LLM summarisation |
-| `fundamentals_eval.py` | 672 | Sentiment ("fundamental view") generation + validation |
-| `github_sync.py` | 621 | Atomic config push + `workflow_dispatch` trigger |
-| `expert_views.py` | 571 | Expert Take verdict generation |
-| `filters.py` | 402 | The boolean condition engine — shared by UI filters **and** background alerts |
-| `llm_util.py` | 380 | Shared Gemini-call plumbing (timeout wrapper, retry/model-ladder logic) for the three AI pipelines |
-| `weekly_wrapup.py` | 355 | Weekly Discord digest |
-| `custom_columns.py` | 289 | User-defined formula columns |
-| `ticker_notes.py` | 233 | Per-ticker notes/flags + auto-flag voting |
+| `app.py` | 6222 | The entire UI: tabs, tables, sidebar, filters, sort, editors, AI control bars, News + Alert Rules tabs |
+| `stock_data.py` | 2741 | yfinance fetching, all indicator maths, watchlist/markets registry IO, `get_filterable_metrics` |
+| `alerts.py` | 989 | Alert rule evaluation + Discord message building |
+| `news_summary.py` | 840 | News gathering + LLM summarisation |
+| `fundamentals_eval.py` | 685 | Sentiment ("fundamental view") generation + validation |
+| `github_sync.py` | 657 | Atomic config push + `workflow_dispatch` trigger |
+| `expert_views.py` | 602 | Expert Take verdict generation |
+| `filters.py` | 456 | The boolean condition engine — shared by UI filters **and** background alerts |
+| `llm_util.py` | 496 | Shared Gemini-call plumbing (timeout wrapper, retry/model-ladder logic) for the three AI pipelines |
+| `weekly_wrapup.py` | 365 | Weekly Discord digest |
+| `custom_columns.py` | 285 | User-defined formula columns |
+| `ticker_notes.py` | 259 | Per-ticker notes/flags + auto-flag voting |
 
 `refresh_*.py` and `*_check.py` are thin entry points that exist only to be run by GitHub
 Actions. They contain no logic worth duplicating — they call into the modules above.
@@ -303,7 +303,7 @@ Each of these has actually bitten this codebase.
 | `data-refresh.yml` | `refresh_data.py` | `data_snapshot.json` | every hour, no gate | n/a |
 | `news-summary.yml` | `news_check.py` | `news_summary.json` | 8:00 PM | 22 h |
 | `fundamentals.yml` | `refresh_fundamentals.py` | `fundamentals.json` | 9:00 PM | 22 h |
-| `daily-alerts.yml` | `alert_check.py` | `alert_state.json` | 9:15 PM | 22 h |
+| `daily-alerts.yml` | `alert_check.py` | `alert_state.json` | 9:00 PM | 22 h |
 | `expert-views.yml` | `refresh_data.py`, `refresh_expert_views.py` | `data_snapshot.json`, `expert_views.json` | 1:00 AM | 22 h |
 | `market-breadth.yml` | `refresh_market_breadth.py`, `refresh_dashboard_perf.py` | `market_breadth.json`, `dashboard_perf.json` | 10:00 AM + 10:00 PM | 10 h |
 | `weekly-wrapup.yml` | `weekly_wrapup_check.py` | `weekly_wrapup_state.json` | Sunday 9:00 PM | 22 h |

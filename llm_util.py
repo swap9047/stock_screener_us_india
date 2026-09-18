@@ -76,14 +76,15 @@ def is_auth_error(exc):
     return any(marker in text for marker in AUTH_ERROR_MARKERS)
 
 
-def generate_with_timeout(client, model, contents, config, timeout=CALL_TIMEOUT_SECONDS):
-    """One generate_content call, bounded by `timeout`.
+def call_with_timeout(fn, timeout, name="call"):
+    """Run `fn()` on a DAEMON thread and return its result, or raise
+    TimeoutError after `timeout` seconds.
 
-    A DAEMON thread, not a ThreadPoolExecutor. The executor version abandoned
+    A daemon thread, not a ThreadPoolExecutor. The executor version abandoned
     its worker on timeout (`shutdown(wait=False)`) and its docstring claimed
     that stopped the job hanging -- it only moved the hang. Executor workers are
     non-daemon and `concurrent.futures` registers an atexit hook that JOINS
-    them, so the process could not exit while an abandoned Gemini call was still
+    them, so the process could not exit while an abandoned call was still
     blocked. Measured: the wrapper returned after its 2s timeout, main() ended,
     and the interpreter then sat for the full 25s the worker was sleeping.
 
@@ -92,28 +93,46 @@ def generate_with_timeout(client, model, contents, config, timeout=CALL_TIMEOUT_
     03:09. It had 5 timed-out calls; the threads ran concurrently, so the tail
     is the LONGEST hung call, and at least one held on for about two hours.
 
-    A daemon thread is not joined at exit, so an abandoned call can never hold
-    the process open again. The real defence is the SDK-level HTTP timeout on
-    the client (see HTTP_TIMEOUT_SECONDS) -- this is the backstop for anything
-    that slips past it.
+    Shared by the Gemini wrapper below and the two yfinance call sites
+    (stock_data._download_with_retries, fundamentals_eval's earnings-date
+    lookup), which carried their own copies of the executor form. Stdlib only,
+    like everything in this module.
     """
     box = {}
 
-    def _call():
+    def _run():
         try:
-            box["result"] = client.models.generate_content(
-                model=model, contents=contents, config=config)
+            box["result"] = fn()
         except BaseException as e:      # noqa: BLE001 -- re-raised on the caller's thread
             box["error"] = e
 
-    worker = threading.Thread(target=_call, name=f"genai-{model}", daemon=True)
+    worker = threading.Thread(target=_run, name=name, daemon=True)
     worker.start()
     worker.join(timeout)
     if worker.is_alive():
-        raise TimeoutError(f"API call to {model} timed out after {timeout}s")
+        raise TimeoutError(f"{name} timed out after {timeout}s")
     if "error" in box:
         raise box["error"]
     return box.get("result")
+
+
+def generate_with_timeout(client, model, contents, config, timeout=CALL_TIMEOUT_SECONDS):
+    """One generate_content call, bounded by `timeout` -- see call_with_timeout
+    for why it is a daemon thread. The real defence is the SDK-level HTTP
+    timeout on the client (see HTTP_TIMEOUT_SECONDS); this is the backstop for
+    anything that slips past it.
+
+    Nothing is re-wrapped here. A `except TimeoutError: raise TimeoutError(f"API
+    call to {model} timed out after {timeout}s")` around this used to catch a
+    timeout raised by the CALL as well as by the wrapper -- socket.timeout has
+    been an alias of TimeoutError since Python 3.10 -- so an HTTP read timeout
+    that failed in 2s was logged by run_model_ladder as having taken the full
+    120s budget, with its own message discarded. The ladder's log line is how a
+    nightly run gets diagnosed; it has to say what actually happened."""
+    return call_with_timeout(
+        lambda: client.models.generate_content(model=model, contents=contents, config=config),
+        timeout, name=f"genai-{model}",
+    )
 
 
 # Errors that are about THIS MODEL rather than the account: a wrong or retired

@@ -6,17 +6,15 @@ Deploy free:   push this repo to GitHub, then deploy on
                https://share.streamlit.io (Streamlit Community Cloud).
 
 Tabs:
-  1. US Watchlist     - NYSE/Nasdaq tickers, benchmarked vs SPY (or your configured benchmark).
-  2. India Watchlist  - NSE (.NS) / BSE (.BO) tickers, benchmarked vs Nifty 500 (or your configured benchmark).
-  3. Alert Rules      - build watchlist-wide or per-ticker rules across BOTH
-                        markets combined. Rules are saved to alerts_config.json.
-                        NOTE: this app does not send alerts on a schedule by
-                        itself (Streamlit Community Cloud has no background
-                        cron) -- the actual daily check is alert_check.py,
-                        run on a schedule elsewhere (e.g. via Cowork's
-                        scheduler, or GitHub Actions / any cron host). This
-                        tab is for building rules + previewing what would
-                        fire right now, and sending a test Discord message.
+  One per watchlist in markets.json (in that file's order), each benchmarked
+  against its registered index; then two combined roll-ups (All Invested, All
+  Watchlist, membership in watchlist_groups.json); then News and Alert Rules.
+  Alert Rules builds watchlist-wide or per-ticker rules across every watchlist
+  (saved to alerts_config.json). NOTE: this app does not send alerts on a
+  schedule by itself (Streamlit Community Cloud has no background cron) -- the
+  actual check is alert_check.py, run by GitHub Actions (daily-alerts.yml). The
+  tab is for building rules, previewing what would fire right now, and sending
+  a test Discord message.
 
 Each market tab also has a custom filter builder: compare any metric against
 another metric or a fixed value (e.g. "10 WEMA > 40 WEMA", "200 DSMA >= 200"),
@@ -63,6 +61,7 @@ from stock_data import (
     load_watchlist_groups, save_watchlist_groups, MIN_DAILY_BARS, snapshot_calc_matches,
     apply_view_fields_to_rows, calc_settings, calc_settings_diff,
     load_interested, load_ticker_index, DataFileError, read_json_strict, atomic_write_json,
+    refresh_data_end_age, enrich_rows,
 )
 import llm_util
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE,
@@ -87,11 +86,11 @@ from filters import (load_custom_filters, get_market_filters, save_market_filter
                      TEXT_METRICS)
 from github_sync import (get_github_config, get_data_repo_config, bootstrap_data_files,
                          push_all_config, trigger_github_workflow, pull_generated_files, SYNCABLE_FILES, WORKFLOW_GENERATED_FILES,
-                         push_json_entry_changes, read_remote_json)
+                         push_json_entry_changes, read_remote_json, refresh_snapshot_from_repo)
 from news_summary import (load_news_summary, MARKET_LABELS, get_gemini_api_key,
                           get_gemini_api_keys, resolve_news_scope, DEFAULT_NEWS_SCOPE_GROUP)
 from expert_views import (load_expert_views, save_expert_views, analyze_single_ticker,
-                          generate_expert_view, _is_valid_view, is_pending_view,
+                          generate_expert_view, _is_valid_view, is_pending_view, apply_regenerated_view,
                           VERDICT_RULES, VERDICT_GUARD_RULES,
                           validate_verdict, verdict_flag_note,
                           expert_view_has_news as _expert_view_has_news)
@@ -1651,6 +1650,14 @@ def _apply_watchlist_tickers(market, market_label, existing_tickers, candidate_t
     from stock_data import load_settings as _load_settings_now
     _curr_settings = _load_settings_now()
 
+    # The rows reused below come from the LOCAL snapshot, which is up to a pull
+    # interval behind the data repo, and the result is pushed with a fresh
+    # generated_at -- so it would win over a newer workflow commit. Pull first;
+    # a newer local copy is kept (pull_generated_files never goes backwards).
+    _sync_token, _sync_repo, _sync_branch = get_data_repo_config(st.secrets)
+    if _sync_token and _sync_repo and not os.environ.get("SKIP_GITHUB_PULL"):
+        refresh_snapshot_from_repo(_sync_token, _sync_repo, _sync_branch)
+
     _snapshot = load_data_snapshot() or {}
     _as_of_box = [_snapshot.get("as_of")]
     _short_history = {}
@@ -1668,6 +1675,13 @@ def _apply_watchlist_tickers(market, market_label, existing_tickers, candidate_t
         _snapshot.get("per_market") or {}, market, valid_tickers, _fetch_new
     )
     _as_of = _as_of_box[0] or datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    # Every reused row carries the flags/notes/AI fields of the snapshot it came
+    # from, and this result is written to disk AND pushed. The dashboard hides
+    # that (it re-enriches on every render) but refresh_expert_views.py reads the
+    # pushed rows' `flag` and `note` straight into its prompt. Same call the
+    # judging jobs make after their own substitutions -- stock_data.enrich_rows.
+    enrich_rows([r for _rows in _merged.values() for r in _rows], _curr_settings)
 
     # Rows reused from the snapshot keep the stamps they were computed under.
     # Stamping current settings/code over them flipped snapshot_is_usable from
@@ -3317,10 +3331,13 @@ def _reanalyze_tickers_in_dashboard(tickers, results, api_key, sync_message,
                     active_alerts_text=alerts_text_for(alerts_by_ticker, tk),
                     is_retry=True,
                 )
-                if _is_valid_view(view):
-                    updated_views[tk] = view
+                # Same persistence rules as the nightly batch and the per-ticker
+                # button (expert_views.apply_regenerated_view): a failure keeps a
+                # fresh prior, ages out a stale one, and is written when there is
+                # no prior so the table can show "Failed (Retry)".
+                if apply_regenerated_view(updated_views, tk, view):
                     save_expert_views(updated_views)
-                else:
+                if not _is_valid_view(view):
                     progress_bar.progress(
                         (idx + 1) / len(tickers),
                         text=f"⚠️ {tk} expert analysis pending/fallback.",
@@ -3840,6 +3857,9 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         key=f"f_scan_mode_{market}",
         help="OR: keep tickers matching any selected alert. AND: keep tickers matching every selected alert.",
     )
+    # Single-select controls return None once the chosen option is clicked
+    # again; the `== "OR"` test below then silently meant AND.
+    scan_mode = scan_mode or "OR"
     selected_scan_labels = st.multiselect(
         "Filter by Saved Scans / Alerts",
         options=scan_rule_labels,
@@ -4526,6 +4546,15 @@ if sb1.button("Refresh Data", type="primary", width="stretch"):
         # Keep last-known rows for anything Yahoo would not return, rather than
         # persisting the gap as though those tickers no longer exist. A single
         # throttled click once cut India from 30 rows to 4 and pushed it.
+        #
+        # From the data repo's copy, not just the container's: in the evening
+        # Yahoo serves most tickers older than the stored row (95 of 147 on
+        # 2026-09-16), so the "last-known" rows are most of what gets pushed
+        # below, under a fresh generated_at that beats any workflow commit this
+        # container had not pulled yet. See github_sync.refresh_snapshot_from_repo.
+        _sync_token, _sync_repo, _sync_branch = get_data_repo_config(st.secrets)
+        if _sync_token and _sync_repo and not os.environ.get("SKIP_GITHUB_PULL"):
+            refresh_snapshot_from_repo(_sync_token, _sync_repo, _sync_branch)
         _prev_rows = (load_data_snapshot() or {}).get("per_market") or {}
         # Same two guards the scheduled refresh applies, in the same order --
         # the Refresh Data button hits the identical Yahoo behaviour, and the
@@ -4533,6 +4562,10 @@ if sb1.button("Refresh Data", type="primary", width="stretch"):
         per_market, _stale_rows = reject_stale_rows(per_market, _prev_rows)
         per_market, _recovered = fill_snapshot_gaps(per_market, _prev_rows, watchlists_now)
         combined = [r for mkt_rows in per_market.values() for r in mkt_rows]
+        # Both guards above substitute STORED rows, whose flags/notes/AI fields
+        # are frozen at that snapshot's fetch -- and this result is pushed. See
+        # the same call in _apply_watchlist_tickers and in refresh_data.py.
+        enrich_rows(combined, settings_now)
         if _recovered:
             _n = sum(len(v) for v in _recovered.values())
             st.sidebar.warning(
@@ -4696,7 +4729,7 @@ if snapshot_warning:
 # fetch_all_markets() already applies custom columns on the live-fetch path,
 # but the snapshot path loads raw JSON straight off disk and never touches
 # them -- if a custom column was added/edited any time after that morning's
-# snapshot was generated (data-refresh.yml only runs once/day), its key is
+# snapshot was generated (data-refresh.yml runs a few times a day), its key is
 # simply missing from snapshot rows. That caused a real KeyError (column
 # picker/visible_keys referenced a key that didn't exist in the dataframe).
 # Re-applying here, unconditionally, is cheap (plain arithmetic) and makes
@@ -4724,6 +4757,9 @@ for _market_rows in per_market.values():
     # function fetch_all_markets uses, so the nightly alert job evaluates them
     # identically -- see stock_data.apply_view_fields_to_rows.
     apply_view_fields_to_rows(_market_rows, fundamentals_now_global, expert_views_now_global, interested_now)
+    # The age behind the "haven't updated in 3+ days" caption is stored at
+    # fetch time; recomputed here so it keeps counting when the refresh stops.
+    refresh_data_end_age(_market_rows)
 
 # Read from the snapshot already parsed above when there is one; the served
 # and live-fetch paths fall back to the file. Only used for the per-tab
@@ -4764,8 +4800,9 @@ market_tab_labels = [markets_registry_now[mkt]["label"] for mkt in market_keys_n
 # and "All Watchlist" -- roll-ups read as a summary of the tabs before them.
 # Synthetic keys ("all_invested"/"all_watchlist") namespace their own widget
 # state -- see render_market_tab's combined_markets docstring -- and are
-# reserved names (not real market keys), so they can never collide with a
-# registry key. The KEY and LABEL of each group are fixed here (no UI to
+# reserved in stock_data.add_watchlist (via DEFAULT_WATCHLIST_GROUPS), so a
+# watchlist labelled "All Invested" cannot mint the same key and collide on
+# every per-market widget. The KEY and LABEL of each group are fixed here (no UI to
 # create a 3rd/4th group, by design) -- only MEMBERSHIP is user-editable,
 # via the "Configure this view" expander rendered on each combined tab,
 # which reads/writes watchlist_groups.json through load_watchlist_groups().
@@ -5331,7 +5368,7 @@ with tab_news:
             if token and repo:
                 ok, msg = trigger_github_workflow(token, repo, "news-summary.yml")
                 if ok:
-                    st.success(f"News refresh started in background! [View live logs on GitHub](https://github.com/{repo}/actions/workflows/news-summary.yml) (takes ~15 mins)")
+                    st.success(f"News refresh started in background! [View live logs on GitHub](https://github.com/{repo}/actions/workflows/news-summary.yml) (about an hour)")
                 else:
                     st.error(f"Failed to start refresh: {msg}")
             else:
@@ -6023,87 +6060,92 @@ with tab_alerts:
             # Remember which markets were used so we can warn on stale results
             st.session_state.wrapup_market_keys = list(_wrapup_mkt_keys)
 
-            report = st.session_state.get("wrapup_report")
-            if report is not None:
-                # Warn if the market filter changed since the last build
-                _prev_wrapup_mkt_keys = st.session_state.get("wrapup_market_keys")
-                if (_prev_wrapup_mkt_keys is not None
-                        and sorted(_prev_wrapup_mkt_keys) != sorted(_wrapup_mkt_keys)):
-                    _prev_wrapup_labels = ", ".join(
-                        markets_registry_now.get(k, {}).get("label", k)
-                        for k in _prev_wrapup_mkt_keys
-                    )
-                    st.info(
-                        f"ℹ Wrap-up below was built with: **{_prev_wrapup_labels}**. "
-                        "Click **Build wrap-up now** to refresh with the current selection."
-                    )
-                anchor = report.get("state_last_run")
-                st.caption(
-                    f"**{_pretty_date(report['run_date'])}** · {len(report['alerts'])} alert(s) · "
-                    f"{report['total_stocks']} stock(s) · data as of {report.get('as_of') or as_of} · "
-                    + (f"Wk measured from the {_pretty_date(anchor)} run."
-                       if anchor else
-                       "no previous run recorded yet, so every stock reads Wk 0.")
+        # Outside the button branch on purpose: the report, its stale-filter notice
+        # and the Send button used to sit INSIDE it, so the Send click started a rerun
+        # in which "Build wrap-up now" was false, the block was skipped, and the click
+        # had nothing to land on -- the button could never work. Reads the report
+        # back from session_state like the Preview section does.
+        report = st.session_state.get("wrapup_report")
+        if report is not None:
+            # Warn if the market filter changed since the last build
+            _prev_wrapup_mkt_keys = st.session_state.get("wrapup_market_keys")
+            if (_prev_wrapup_mkt_keys is not None
+                    and sorted(_prev_wrapup_mkt_keys) != sorted(_wrapup_mkt_keys)):
+                _prev_wrapup_labels = ", ".join(
+                    markets_registry_now.get(k, {}).get("label", k)
+                    for k in _prev_wrapup_mkt_keys
                 )
-                if report["cycle_ids"]:
-                    cyc = [f"{rule_by_id_alert.get(rid, {}).get('name') or 'alert'} [{rid}]"
-                           for rid in sorted(report["cycle_ids"])]
-                    st.warning(
-                        f"⚠ Circular alert references detected: {', '.join(cyc)}. "
-                        "Those rule references are treated as not matching."
-                    )
+                st.info(
+                    f"ℹ Wrap-up below was built with: **{_prev_wrapup_labels}**. "
+                    "Click **Build wrap-up now** to refresh with the current selection."
+                )
+            anchor = report.get("state_last_run")
+            st.caption(
+                f"**{_pretty_date(report['run_date'])}** · {len(report['alerts'])} alert(s) · "
+                f"{report['total_stocks']} stock(s) · data as of {report.get('as_of') or as_of} · "
+                + (f"Wk measured from the {_pretty_date(anchor)} run."
+                   if anchor else
+                   "no previous run recorded yet, so every stock reads Wk 0.")
+            )
+            if report["cycle_ids"]:
+                cyc = [f"{rule_by_id_alert.get(rid, {}).get('name') or 'alert'} [{rid}]"
+                       for rid in sorted(report["cycle_ids"])]
+                st.warning(
+                    f"⚠ Circular alert references detected: {', '.join(cyc)}. "
+                    "Those rule references are treated as not matching."
+                )
 
-                st.markdown("  ·  ".join(
-                    f"**{a['num']}.** {a['name']} ({len(a['rows'])})" for a in report["alerts"]
-                ))
+            st.markdown("  ·  ".join(
+                f"**{a['num']}.** {a['name']} ({len(a['rows'])})" for a in report["alerts"]
+            ))
 
-                for a in report["alerts"]:
-                    st.markdown(
-                        f"**{a['num']}. {a['name']}** — {a['scope_label']} · "
-                        f"{len(a['rows'])} stock{'s' if len(a['rows']) != 1 else ''}"
-                        + ("  🔍 scan only" if a["scan_only"] else "")
-                    )
-                    if not a["rows"]:
-                        st.caption("No matches right now.")
-                        continue
-                    # Ticker column carries a TradingView link, so the rendered
-                    # cell differs from the raw symbol used in the Discord table.
-                    adf = pd.DataFrame(
-                        [[tradingview_url(r[0])] + r[1:] for r in a["rows"]],
-                        columns=a["headers"],
-                    )
-                    st.dataframe(adf, width="stretch", hide_index=True,
-                                 column_config=LINK_COLUMN_CONFIG)
+            for a in report["alerts"]:
+                st.markdown(
+                    f"**{a['num']}. {a['name']}** — {a['scope_label']} · "
+                    f"{len(a['rows'])} stock{'s' if len(a['rows']) != 1 else ''}"
+                    + ("  🔍 scan only" if a["scan_only"] else "")
+                )
+                if not a["rows"]:
+                    st.caption("No matches right now.")
+                    continue
+                # Ticker column carries a TradingView link, so the rendered
+                # cell differs from the raw symbol used in the Discord table.
+                adf = pd.DataFrame(
+                    [[tradingview_url(r[0])] + r[1:] for r in a["rows"]],
+                    columns=a["headers"],
+                )
+                st.dataframe(adf, width="stretch", hide_index=True,
+                             column_config=LINK_COLUMN_CONFIG)
 
-                st.markdown("**🔥 Most active stocks** — across the alerts above")
-                if not report["rollup"]:
-                    st.caption("No stock matched any of the selected alerts.")
+            st.markdown("**🔥 Most active stocks** — across the alerts above")
+            if not report["rollup"]:
+                st.caption("No stock matched any of the selected alerts.")
+            else:
+                rdf = pd.DataFrame([
+                    {
+                        "Ticker": tradingview_url(r["ticker"]),
+                        "Watchlist": r["market"],
+                        "# Alerts": r["count"],
+                        "Alerts#": ", ".join(str(n) for n in r["alert_nums"]),
+                        "Oldest Wk": r["oldest_weeks"],
+                    }
+                    for r in report["rollup"]
+                ])
+                st.dataframe(rdf, width="stretch", hide_index=True,
+                             column_config=LINK_COLUMN_CONFIG)
+
+            if st.button("📤 Send this wrap-up to Discord"):
+                webhook = get_discord_webhook()
+                if not webhook:
+                    st.error("No Discord webhook configured yet — set one in the Discord section below.")
                 else:
-                    rdf = pd.DataFrame([
-                        {
-                            "Ticker": tradingview_url(r["ticker"]),
-                            "Watchlist": r["market"],
-                            "# Alerts": r["count"],
-                            "Alerts#": ", ".join(str(n) for n in r["alert_nums"]),
-                            "Oldest Wk": r["oldest_weeks"],
-                        }
-                        for r in report["rollup"]
-                    ])
-                    st.dataframe(rdf, width="stretch", hide_index=True,
-                                 column_config=LINK_COLUMN_CONFIG)
-
-                if st.button("📤 Send this wrap-up to Discord"):
-                    webhook = get_discord_webhook()
-                    if not webhook:
-                        st.error("No Discord webhook configured yet — set one in the Discord section below.")
+                    msgs = build_wrapup_messages(report)
+                    ok, detail = send_discord_batch(webhook, msgs)
+                    if ok:
+                        st.success(f"Sent {len(msgs)} message(s) to Discord. "
+                                   "Wk counters were not advanced — only the Sunday run does that.")
                     else:
-                        msgs = build_wrapup_messages(report)
-                        ok, detail = send_discord_batch(webhook, msgs)
-                        if ok:
-                            st.success(f"Sent {len(msgs)} message(s) to Discord. "
-                                       "Wk counters were not advanced — only the Sunday run does that.")
-                        else:
-                            st.error(f"Failed to send — {detail}")
+                        st.error(f"Failed to send — {detail}")
 
     # ── Discord ───────────────────────────────────────────────────────────────
     st.divider()

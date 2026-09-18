@@ -24,7 +24,7 @@ from json_store import DataFileError
 from alerts import load_discord_webhook, load_rules, send_discord_batch
 from stock_data import (fetch_all_markets, get_filterable_metrics, load_markets_registry,
                         load_settings, load_data_snapshot, missing_row_tickers,
-                        reject_stale_rows, load_watchlists)
+                        reject_stale_rows, load_watchlists, enrich_rows)
 from weekly_wrapup import (
     advance_state,
     build_discord_messages,
@@ -86,6 +86,9 @@ def main():
         print(f"WARNING: {sum(len(v) for v in stale.values())} ticker(s) came back older than "
               "the stored row; kept the newer stored one.")
     combined = [r for rows in per_market.values() for r in rows]
+    # A substituted row carries flags/notes/AI fields from ITS fetch, not from
+    # the files as they are now -- see stock_data.enrich_rows.
+    enrich_rows(combined, settings)
 
     short_history = {**((load_data_snapshot() or {}).get("short_history") or {}), **fresh_short_history}
     # Pass the watchlists explicitly: the job has already loaded them for the

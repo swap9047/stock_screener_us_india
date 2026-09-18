@@ -22,6 +22,7 @@ It needs no secrets, so it works from a fork.
 | `test_log_redact.py` | Tickers, company names and watchlist names are masked in log output; exit status survives the pipe |
 | `test_gemini_keys.py` | Every `GEMINI_API_KEY*` name joins the rotation, load spreads across all keys, a key that hits its quota is skipped |
 | `test_refresh_limit.py` | The `limit` input analyses only the first N tickers; a partial news run replaces only its own digest and posts nothing |
+| `test_fable_review.py` | The 2026-09-17 evening review's fixes: a subset settings save keeps the rest; `is_rule_due` judges the slot's day; substituted snapshot rows are re-enriched before the jobs judge them; the search ladders retry the primary model; a hung yfinance call leaves no non-daemon worker; the combined-tab keys cannot be minted as a watchlist; and the follow-ups a review of those fixes found -- the app's own snapshot-writing paths re-enrich too, a one-file force pull leaves the shared pull clock alone, a timeout raised by the call keeps its own message |
 
 Fixtures are invented (`ACME`, `ZED.NS`, "Newsletter Picks"). Nothing here reads
 or writes the real JSON: every path is redirected to a temp directory. Keep it

@@ -17,14 +17,16 @@ MIN_COVERAGE_FRACTION = 0.5
 def get_sp500_tickers():
     url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
     headers = {'User-Agent': 'Mozilla/5.0'}
-    r = requests.get(url, headers=headers)
+    # timeout, like every other requests call here: a hung scrape held the job
+    # to GitHub's 6 h cap and, via the concurrency group, the next slot too.
+    r = requests.get(url, headers=headers, timeout=30)
     table = pd.read_html(io.StringIO(r.text))[0]
     return table['Symbol'].str.replace('.', '-').tolist()
 
 def get_nifty500_tickers():
     url = 'https://nsearchives.nseindia.com/content/indices/ind_nifty500list.csv'
     headers = {'User-Agent': 'Mozilla/5.0'}
-    r = requests.get(url, headers=headers)
+    r = requests.get(url, headers=headers, timeout=30)
     df = pd.read_csv(io.StringIO(r.text))
     return [f"{sym}.NS" for sym in df['Symbol'].tolist()]
 

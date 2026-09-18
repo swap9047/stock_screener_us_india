@@ -22,6 +22,10 @@ Screenshot*.png
 # Local-only code reviews (they describe security/privacy details of this
 # PUBLIC repo). Kept on disk under docs/, never committed.
 docs/CODEBASE_REVIEW_*.md
+# Same reason, any naming: the reviews are written under whatever name was
+# asked for, and one of them sitting outside this pattern is one `git add -A`
+# away from being published.
+docs/*review*.md
 
 # Re-runnable verification scripts that accompany the local-only reviews.
 docs/review-checks-*/

@@ -6,7 +6,7 @@ Scheduled news digest checker. Meant to run once daily (GitHub Actions,
 Uses Gemini (Google Search grounding) to build a single collated summary
 of important news/announcements/major stock moves in the last 24 hours for
 each watchlist in scope (controlled by news_watchlist_scope in settings.json;
-empty = all markets), then sends to Discord and saves to news_summary.json
+empty = the all_invested group, see news_summary.resolve_news_scope), then sends to Discord and saves to news_summary.json
 (which the Streamlit app's News tab reads).
 
 Config/env (same folder):

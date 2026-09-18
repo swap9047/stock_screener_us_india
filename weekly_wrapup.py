@@ -16,10 +16,10 @@ rather than replaying what fired during the week. The only historical
 element is Wk, and that comes from weekly_wrapup_state.json.
 
 Why a dedicated state file rather than reusing alert_state.json: that file
-is gitignored, lives only in the GitHub Actions cache, is never written for
-"Scan only" rules, and is only updated for rules that were due that day --
-so its last_triggered_date would be blank or wrong for a large share of
-rows here.
+is never written for "Scan only" rules and is only updated for rules that
+were due that day -- so its last_triggered_date would be blank or wrong for
+a large share of rows here. (Both files are committed to the data repo now;
+alert_state.json used to live only in the Actions cache.)
 
 Pure logic only -- no Streamlit, no network -- so app.py (on-demand,
 read-only) and weekly_wrapup_check.py (scheduled, authoritative) share one
@@ -98,13 +98,19 @@ def _parse_date(s):
 
 
 def _weeks_since(entered, run_date):
-    """Whole weeks between two dates, floored. Integer-days // 7 rather than
-    ISO-week arithmetic so a GitHub Actions scheduler delay of a few hours
-    (or a run that lands after midnight) can never jump the counter."""
+    """Weeks between two dates, rounded to the nearest whole week.
+
+    Integer-days arithmetic rather than ISO weeks so a scheduler delay of a few
+    hours can never jump the counter -- but ROUNDED, not floored. The run date
+    is the run's ET date, which is Sunday when the job lands on time and Monday
+    when GitHub starts it late (the usual case), so consecutive runs can be 6
+    or 8 days apart. Floored, a ticker stamped by a Monday run and read by the
+    next Sunday's read 0 after a full week in the list. (days + 3) // 7 puts 6,
+    7 and 8 days all at 1."""
     entered_d = _parse_date(entered)
     if entered_d is None:
         return 0
-    return max(0, (run_date - entered_d).days // 7)
+    return max(0, ((run_date - entered_d).days + 3) // 7)
 
 
 # --- Rule selection ------------------------------------------------------
