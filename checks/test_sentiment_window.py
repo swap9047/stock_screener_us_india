@@ -85,5 +85,41 @@ _recency = reasoning_prompt.find("never overrides a newer one")
 check(0 <= _rule2 < _recency,
       "...added after the existing numbered rules, which _validate_sentiment cites by number")
 
+# --- both grounded searches lead with the same model -------------------------
+# The targeted pass used to LEAD with 31b on the theory that a second attempt
+# wants "a different reader of the same web". The 2026-09-17 runs measured that
+# reader: models/gemma-4-31b-it answered 0 of 40 calls across two independent
+# runs (overwhelmingly 500 INTERNAL) while 26b failed ~17%. Leading with it
+# burned two rungs of every targeted search -- up to 120s each plus the backoff
+# -- before reaching the model that answers.
+captured2 = {}
+
+
+def _fake_ladder2(client, prompt, tiers, config_for, label="llm", subject="", timeout=None, on_success=None):
+    captured2[label] = list(tiers)
+    return None, None
+
+
+_real2 = llm_util.run_model_ladder
+llm_util.run_model_ladder = _fake_ladder2
+try:
+    out = fe.fetch_targeted_earnings_numbers(object(), "ZED.NS", "Zed Ltd", "india_invested", "2026-07-24")
+    check(out == "", "an exhausted targeted ladder returns '' and never raises")
+    tiers = captured2.get("targeted-earnings", [])
+    models = [m for m, _ in tiers]
+    check(models[:1] == [fe.SEARCH_MODEL],
+          f"targeted search LEADS with SEARCH_MODEL (got {models[:1]})")
+    check(models[-1:] == [fe.SEARCH_FALLBACK_MODEL],
+          f"...and falls back to SEARCH_FALLBACK_MODEL last (got {models[-1:]})")
+    check(models == [m for m, _ in llm_util.standard_tiers(fe.SEARCH_MODEL, fe.SEARCH_FALLBACK_MODEL)],
+          f"...via standard_tiers, so the same-model retry is kept: {models}")
+
+    fe.fetch_fundamental_news(object(), "ACME", "us_invested", "Acme Corp", is_retry=True)
+    broad = [m for m, _ in captured2.get("fundamental-search", [])]
+    check(broad == models,
+          f"both passes agree on the order, so neither can drift: broad={broad} targeted={models}")
+finally:
+    llm_util.run_model_ladder = _real2
+
 print(f"FAILURES: {fails}")
 sys.exit(1 if fails else 0)

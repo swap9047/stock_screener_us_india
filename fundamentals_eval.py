@@ -463,18 +463,27 @@ def fetch_targeted_earnings_numbers(client, ticker, company_name, market, announ
     """One narrow grounded search for exactly the figures the broad search
     missed, anchored to the announcement date.
 
-    Leads with gemma-4-31b-it rather than the 26b the broad pass leads with:
-    the point of a second attempt is a different reader of the same web, not a
-    re-roll of the one that already came back empty. It then falls back through
-    the standard ladder (31b again after a backoff, then 26b).
+    Same ladder as the broad pass -- SEARCH_MODEL, itself again after a backoff,
+    then SEARCH_FALLBACK_MODEL -- and deliberately built from the same two
+    constants so the two searches cannot drift apart.
 
-    The ladder is not optional here. Measured live on one India ticker: a first 31b
-    call timed out at 120s, a second identical call answered in 85s with the
-    exact figures, and 26b timed out at 110s. These grounded searches are
-    simply slow, so a single-shot attempt -- which is what this function did
-    when first written -- loses the numbers roughly as often as it finds them.
-    Worst case is ~6 minutes per triggered ticker (3 tiers x 120s), which on a
-    3-4 hour nightly job across ~3 triggered tickers is noise.
+    This used to LEAD with 31b, on the theory that a second attempt wants a
+    different reader of the same web rather than a re-roll of the one that came
+    back empty. The 2026-09-17 runs measured that reader: models/gemma-4-31b-it
+    answered 0 of 40 calls across two independent runs (overwhelmingly 500
+    INTERNAL) while 26b failed about 17% of ~139. A different reader is worth
+    nothing when it is not reading, and leading with it spent two rungs -- up to
+    120s each, plus the backoff -- before every targeted search reached the model
+    that answers.
+
+    The ladder itself is not optional. Measured live on one India ticker: a first
+    call timed out at 120s and a second identical call answered in 85s with the
+    exact figures. These grounded searches are simply slow, so a single-shot
+    attempt -- what this function did when first written -- loses the numbers
+    roughly as often as it finds them. Worst case is ~6 minutes per triggered
+    ticker (3 tiers x 120s); since the search window went to 50 days that fires
+    for ~25 tickers a run rather than ~7, so it is a real share of the job's
+    3-4 hours now, not noise.
 
     Never raises -- this is an enhancement pass on a view that already exists,
     so a failure must leave that view exactly as it was.
@@ -499,7 +508,7 @@ def fetch_targeted_earnings_numbers(client, ticker, company_name, market, announ
     config = types.GenerateContentConfig(tools=[grounding_tool])
     resp, used = llm_util.run_model_ladder(
         client, prompt,
-        llm_util.standard_tiers("models/gemma-4-31b-it", "models/gemma-4-26b-a4b-it"),
+        llm_util.standard_tiers(SEARCH_MODEL, SEARCH_FALLBACK_MODEL),
         lambda m: config, label="targeted-earnings", subject=ticker,
     )
     if used is None:
