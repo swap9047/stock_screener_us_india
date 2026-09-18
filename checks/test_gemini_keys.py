@@ -9,7 +9,7 @@ sys.path.insert(0, REPO)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, GATE)
 
-import os, subprocess, sys, tempfile, types
+import os, subprocess, sys, tempfile, threading, time, types
 
 sys.path.insert(0, REPO)
 import llm_util
@@ -203,5 +203,74 @@ buf3 = io.StringIO()
 with contextlib.redirect_stdout(buf3):
     llm_util.log_key_usage(client3)
 check("[key rotation]" in buf3.getvalue(), "a rotating client reports its split")
+
+# --- the key on a failure line must be the key that actually served it -------
+# last_key_name is ONE shared attribute, and the call runs on call_with_timeout's
+# daemon thread while run_model_ladder reads it back on the worker thread. With
+# refresh_fundamentals.MAX_CONCURRENT_TICKERS=2 that misattributed 41% of
+# failures in a 24-call reproduction -- so the key has to travel WITH the call.
+class Tagged(Exception):
+    def __init__(self, key):
+        super().__init__("500 INTERNAL. Internal error encountered.")
+        self.key = key
+
+
+client6 = llm_util.make_client()
+map6 = {k: n for n, k in client6._keys}
+
+
+def _slow_tagged(key):
+    name = map6[key]
+    def gen(**kw):
+        time.sleep(0.2)          # a real search is slow; that is the race window
+        raise Tagged(name)
+    return types.SimpleNamespace(models=types.SimpleNamespace(generate_content=gen))
+
+
+client6._client_for = _slow_tagged
+mismatch = [0]
+seen_total = [0]
+_m_lock = threading.Lock()
+
+
+def _hammer():
+    for _ in range(10):
+        try:
+            llm_util.generate_with_timeout(client6, "models/x", "p", None, timeout=5)
+        except Tagged as e:
+            reported = getattr(e, "_gemini_key", None)
+            with _m_lock:
+                seen_total[0] += 1
+                if reported != e.key:
+                    mismatch[0] += 1
+
+
+_threads = [threading.Thread(target=_hammer) for _ in range(2)]
+[t.start() for t in _threads]
+[t.join() for t in _threads]
+check(seen_total[0] == 20, f"all 20 concurrent calls failed as set up ({seen_total[0]})")
+check(mismatch[0] == 0,
+      f"every failure names the key that served it, with 2 workers ({mismatch[0]} of {seen_total[0]} wrong)")
+
+# A TIMEOUT never returns from the call, so the key has to be recorded before it
+# starts -- this is the majority failure mode (68 of 86 on 2026-09-18).
+client7 = llm_util.make_client()
+client7._client_for = lambda key: types.SimpleNamespace(
+    models=types.SimpleNamespace(generate_content=lambda **kw: time.sleep(3)))
+try:
+    llm_util.generate_with_timeout(client7, "models/x", "p", None, timeout=0.3)
+    check(False, "a hung call raises TimeoutError")
+except TimeoutError as e:
+    check(getattr(e, "_gemini_key", None) in client7.key_names,
+          f"a TIMEOUT also names its key (got {getattr(e, '_gemini_key', None)})")
+
+# A plain client has no rotation: claim nothing rather than guess.
+buf7 = io.StringIO()
+plain = types.SimpleNamespace(models=types.SimpleNamespace(
+    generate_content=lambda **kw: (_ for _ in ()).throw(RuntimeError("nope"))))
+with contextlib.redirect_stdout(buf7):
+    llm_util.run_model_ladder(plain, "p", [("models/x", 0)], lambda m: None, label="plain", subject="ACME")
+check("via" not in buf7.getvalue(),
+      f"a non-rotating client logs no key rather than a wrong one: {buf7.getvalue().strip()[:90]}")
 
 print("FAILURES:", fails); sys.exit(fails)

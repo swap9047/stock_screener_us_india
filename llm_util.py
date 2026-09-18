@@ -138,10 +138,20 @@ def generate_with_timeout(client, model, contents, config, timeout=CALL_TIMEOUT_
     that failed in 2s was logged by run_model_ladder as having taken the full
     120s budget, with its own message discarded. The ladder's log line is how a
     nightly run gets diagnosed; it has to say what actually happened."""
-    return call_with_timeout(
-        lambda: client.models.generate_content(model=model, contents=contents, config=config),
-        timeout, name=f"genai-{model}",
-    )
+    key_out = {} if hasattr(client, "key_names") else None
+    extra = {"_key_out": key_out} if key_out is not None else {}
+    try:
+        return call_with_timeout(
+            lambda: client.models.generate_content(model=model, contents=contents, config=config, **extra),
+            timeout, name=f"genai-{model}",
+        )
+    except BaseException as e:
+        if key_out and key_out.get("key"):
+            try:
+                e._gemini_key = key_out["key"]
+            except Exception:
+                pass          # some exceptions refuse attributes; attribution is a nicety
+        raise
 
 
 # Errors that are about THIS MODEL rather than the account: a wrong or retired
@@ -201,8 +211,11 @@ def run_model_ladder(client, prompt, tiers, config_for, label="llm", subject="",
         except Exception as e:
             # The KEY as well as the model: a 500 says nothing about which key
             # served it, and without this a run log could not tell a model-wide
-            # outage from one bad key. Absent on a plain genai.Client.
-            key = getattr(client, "last_key_name", None)
+            # outage from one bad key. Read off the EXCEPTION, which
+            # generate_with_timeout tags with the key that made the call -- never
+            # off client.last_key_name, which another worker may have moved on.
+            # Absent on a plain genai.Client, and then nothing is claimed.
+            key = getattr(e, "_gemini_key", None)
             via = f" via {key}" if key else ""
             print(f"  [{label} {model} failed{via}] {subject}: {e}")
             if is_model_unavailable(e):
@@ -378,6 +391,9 @@ class RotatingGeminiClient:
         # Keys that returned an auth error this run -- see AUTH_ERROR_MARKERS.
         self._dead = set()
         self._lock = threading.Lock()
+        # Diagnostic only. NOT safe for per-call attribution: it is shared by
+        # every thread, and generate_with_timeout's `_key_out` is what callers
+        # must use -- see _RotatingModels.generate_content.
         self.last_key_name = None
         # Call and failure counts per key name, so a run can report how the load
         # actually split and whether one key is worse than the others. Counting
@@ -465,7 +481,14 @@ class _RotatingModels:
     def __init__(self, parent):
         self._parent = parent
 
-    def generate_content(self, **kwargs):
+    def generate_content(self, _key_out=None, **kwargs):
+        # `_key_out`, if given, receives the key name this call actually used, so
+        # the caller can attribute a failure to it. It has to travel WITH the
+        # call: last_key_name is one shared attribute and the call runs on
+        # call_with_timeout's daemon thread, so with two tickers analysed at once
+        # (refresh_fundamentals.MAX_CONCURRENT_TICKERS) reading it back named the
+        # wrong key 41% of the time in a 24-call reproduction.
+        #
         # A key-specific auth failure retries the SAME call on another key.
         # Previously it propagated, run_model_ladder treated it as terminal, and
         # with keys picked at random one bad key abandoned ~half of all
@@ -475,6 +498,10 @@ class _RotatingModels:
             name, client = self._parent._pick()
             if client is None:
                 break
+            if _key_out is not None:
+                # Before the call, not after: a call that TIMES OUT never returns,
+                # and timeouts were 68 of 86 failures on 2026-09-18.
+                _key_out["key"] = name
             try:
                 return client.models.generate_content(**kwargs)
             except Exception as e:
