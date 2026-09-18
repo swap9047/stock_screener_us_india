@@ -9,7 +9,7 @@ sys.path.insert(0, REPO)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, GATE)
 
-import os, subprocess, sys, tempfile, threading, time, types
+import os, re, subprocess, sys, tempfile, threading, time, types
 
 sys.path.insert(0, REPO)
 import llm_util
@@ -272,5 +272,62 @@ with contextlib.redirect_stdout(buf7):
     llm_util.run_model_ladder(plain, "p", [("models/x", 0)], lambda m: None, label="plain", subject="ACME")
 check("via" not in buf7.getvalue(),
       f"a non-rotating client logs no key rather than a wrong one: {buf7.getvalue().strip()[:90]}")
+
+# --- a retry goes to a DIFFERENT key ----------------------------------------
+# _pick chose at random with no exclusion, so a same-model retry reused the key
+# that just failed about 1/3 of the time with three keys. The grounded-search
+# ladder is now three attempts on ONE model (gemma-4-31b-it answered 0 of ~63
+# calls across four runs, so a second MODEL bought nothing), which makes the key
+# the only thing that varies between rungs -- it has to actually vary.
+client8 = llm_util.make_client()
+names8 = client8.key_names
+client8._client_for = lambda key: types.SimpleNamespace(
+    models=types.SimpleNamespace(generate_content=lambda **kw: "ok"))
+picked = [client8._pick(avoid=names8[0])[0] for _ in range(60)]
+check(names8[0] not in picked, f"_pick(avoid=X) never returns X while others are live: {set(picked)}")
+check(len(set(picked)) == len(names8) - 1, f"...and still spreads over the rest: {sorted(set(picked))}")
+
+single = llm_util.RotatingGeminiClient([("ONLY", "k")])
+single._client_for = lambda key: object()
+check(single._pick(avoid="ONLY")[0] == "ONLY",
+      "with one key configured, avoid is ignored rather than failing the call")
+
+# The ladder feeds each rung the key that just failed, so consecutive rungs of
+# the same model land on different keys.
+class Always(Exception):
+    def __init__(self, key):
+        super().__init__("500 INTERNAL")
+        self.key = key
+
+
+client9 = llm_util.make_client()
+map9 = {k: n for n, k in client9._keys}
+client9._client_for = lambda key: types.SimpleNamespace(
+    models=types.SimpleNamespace(
+        generate_content=lambda **kw: (_ for _ in ()).throw(Always(map9[key]))))
+repeats = 0
+for _ in range(25):
+    buf9 = io.StringIO()
+    with contextlib.redirect_stdout(buf9):
+        llm_util.run_model_ladder(client9, "p", llm_util.same_model_tiers("models/m", backoff=0),
+                                  lambda m: None, label="probe", subject="ACME")
+    used = re.findall(r"failed via ([A-Z_]+)\]", buf9.getvalue())
+    repeats += sum(1 for a, b in zip(used, used[1:]) if a == b)
+check(repeats == 0, f"no rung reuses the key the previous rung just failed on ({repeats} repeat(s))")
+
+# --- the grounded-search ladder is three attempts on one model ---------------
+tiers8 = llm_util.same_model_tiers("models/m")
+check([m for m, _ in tiers8] == ["models/m"] * 3, f"same_model_tiers gives 3 rungs on one model: {tiers8}")
+check([b for _, b in tiers8][0] == 0 and all(b > 0 for b in [b for _, b in tiers8][1:]),
+      f"...first immediate, the rest after a backoff: {tiers8}")
+
+for mod in ("fundamentals_eval.py", "expert_views.py"):
+    src = (Path(REPO) / mod).read_text()
+    check("same_model_tiers(SEARCH_MODEL)" in src, f"{mod}'s grounded search uses same_model_tiers")
+    # The search fallback MODEL is gone entirely -- the key is what varies now.
+    # (Both modules still name 31b in their REASONING ladder, which is a
+    # different stage and a different question.)
+    check("SEARCH_FALLBACK_MODEL" not in src,
+          f"{mod} has no search fallback model left to drift")
 
 print("FAILURES:", fails); sys.exit(fails)

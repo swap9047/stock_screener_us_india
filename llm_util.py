@@ -25,14 +25,18 @@ CALL_TIMEOUT_SECONDS = 120
 # abandoned call dies soon after, instead of never. Every call site passes 120.
 HTTP_TIMEOUT_SECONDS = CALL_TIMEOUT_SECONDS + 60
 
-# Ceiling for ONE grounded-search call, below the general CALL_TIMEOUT_SECONDS.
-# Measured on the 2026-09-18 fundamentals run: a successful search + reasoning
-# PAIR took 36-145s (median 86), so a single search sits well under 90s, while 68
-# calls that never answered each held the full 120s -- 136 of that run's 353
-# minutes. Failing those 30s sooner costs a retry that behaves like a fresh call
-# (median 92s for the pair) and is worth ~34 minutes a run. The reasoning stages
-# keep CALL_TIMEOUT_SECONDS: they are not grounded and never come close to it.
-SEARCH_TIMEOUT_SECONDS = 90
+# Ceiling for ONE grounded-search call. Named separately from
+# CALL_TIMEOUT_SECONDS so the grounded searches -- the only stage that gets
+# anywhere near a timeout -- can be tuned without touching the reasoning stages.
+#
+# Tried at 90s and reverted. The 03:55 UTC run (120s, serial) timed out on 0.44
+# calls per ticker; the 15:55 UTC run (90s) on 0.67, and queued 0.25 tickers per
+# dispatch against 0.13. That looks like the tighter ceiling cutting real
+# searches -- but the midday run also drew a 503 "This model is currently
+# experiencing high demand", so load and ceiling moved together and the two
+# cannot be separated from those logs. 120s is the setting with a full, known
+# run behind it; reducing it again wants an overnight A/B at the same hour.
+SEARCH_TIMEOUT_SECONDS = 120
 
 # Short pause before re-trying the SAME model. Buys a transient 429/503 a second
 # chance on the good model before quality degrades to a fallback.
@@ -125,7 +129,8 @@ def call_with_timeout(fn, timeout, name="call"):
     return box.get("result")
 
 
-def generate_with_timeout(client, model, contents, config, timeout=CALL_TIMEOUT_SECONDS):
+def generate_with_timeout(client, model, contents, config, timeout=CALL_TIMEOUT_SECONDS,
+                          avoid_key=None):
     """One generate_content call, bounded by `timeout` -- see call_with_timeout
     for why it is a daemon thread. The real defence is the SDK-level HTTP
     timeout on the client (see HTTP_TIMEOUT_SECONDS); this is the backstop for
@@ -139,7 +144,11 @@ def generate_with_timeout(client, model, contents, config, timeout=CALL_TIMEOUT_
     120s budget, with its own message discarded. The ladder's log line is how a
     nightly run gets diagnosed; it has to say what actually happened."""
     key_out = {} if hasattr(client, "key_names") else None
-    extra = {"_key_out": key_out} if key_out is not None else {}
+    extra = {}
+    if key_out is not None:
+        extra["_key_out"] = key_out
+        if avoid_key:
+            extra["_avoid_key"] = avoid_key
     try:
         return call_with_timeout(
             lambda: client.models.generate_content(model=model, contents=contents, config=config, **extra),
@@ -202,11 +211,16 @@ def run_model_ladder(client, prompt, tiers, config_for, label="llm", subject="",
     exhausted. Stops early on a terminal (non-retryable) error rather than
     burning the remaining tiers.
     """
+    # The key the previous rung failed on, so the next one picks a different one.
+    # With the grounded searches now running every rung on ONE model, the key is
+    # the only thing that varies between attempts.
+    avoid_key = None
     for model, backoff in tiers:
         if backoff:
             time.sleep(backoff)
         try:
-            resp = generate_with_timeout(client, model, prompt, config_for(model), timeout=timeout)
+            resp = generate_with_timeout(client, model, prompt, config_for(model), timeout=timeout,
+                                         avoid_key=avoid_key)
             return (on_success(resp) if on_success else resp), model
         except Exception as e:
             # The KEY as well as the model: a 500 says nothing about which key
@@ -216,6 +230,7 @@ def run_model_ladder(client, prompt, tiers, config_for, label="llm", subject="",
             # off client.last_key_name, which another worker may have moved on.
             # Absent on a plain genai.Client, and then nothing is claimed.
             key = getattr(e, "_gemini_key", None)
+            avoid_key = key
             via = f" via {key}" if key else ""
             print(f"  [{label} {model} failed{via}] {subject}: {e}")
             if is_model_unavailable(e):
@@ -235,6 +250,26 @@ def standard_tiers(primary, fallback):
     if fallback and fallback != primary:
         tiers.append((fallback, 0))
     return tiers
+
+
+def same_model_tiers(model, attempts=3, backoff=None):
+    """Every rung on ONE model, each on a freshly rotated key.
+
+    For the grounded searches. They used to end on gemma-4-31b-it, which looked
+    like a fallback and was not one: it answered 0 of ~63 calls across four runs
+    (2026-09-17/18), overwhelmingly 500 INTERNAL, while the 26b primary answered
+    ~83%. A second Gemma on the same backend was never an independent failure
+    domain. So the MODEL stops varying and the KEY varies instead -- see
+    RotatingGeminiClient._pick's `avoid`.
+
+    The trade this makes: if 26b itself goes down there is no other model to fall
+    to. That is the honest position, because the model that was nominally there
+    had not answered a single call in four runs.
+    """
+    # Read at CALL time, like standard_tiers does. As a default argument it was
+    # bound at import and no caller (or check) could change the pacing.
+    backoff = RETRY_BACKOFF_SECONDS if backoff is None else backoff
+    return [(model, 0)] + [(model, backoff)] * max(0, attempts - 1)
 
 
 def retry_pair_tiers(primary, fallback, backoff=RETRY_BACKOFF_SECONDS):
@@ -422,7 +457,12 @@ class RotatingGeminiClient:
             self._clients[key] = client
         return client
 
-    def _pick(self):
+    def _pick(self, avoid=None):
+        """A key, at random. `avoid` names one to skip if there is an
+        alternative -- the ladder passes the key the previous rung just failed
+        on, so a same-model retry genuinely changes something. Ignored when it
+        is the only key left, because a retry on the same key still beats no
+        retry."""
         now = time.time()
         with self._lock:
             usable = [(n, k) for n, k in self._keys if n not in self._dead]
@@ -432,6 +472,9 @@ class RotatingGeminiClient:
             # Every key cooling down: use them all rather than hard-failing --
             # a stale cooldown must never be the reason a run does nothing.
             choices = live or usable
+            if avoid is not None:
+                others = [(n, k) for n, k in choices if n != avoid]
+                choices = others or choices
             name, key = random.choice(choices)
             self.call_counts[name] = self.call_counts.get(name, 0) + 1
             self.last_key_name = name
@@ -481,7 +524,7 @@ class _RotatingModels:
     def __init__(self, parent):
         self._parent = parent
 
-    def generate_content(self, _key_out=None, **kwargs):
+    def generate_content(self, _key_out=None, _avoid_key=None, **kwargs):
         # `_key_out`, if given, receives the key name this call actually used, so
         # the caller can attribute a failure to it. It has to travel WITH the
         # call: last_key_name is one shared attribute and the call runs on
@@ -495,7 +538,7 @@ class _RotatingModels:
         # tickers (93/200 in a stubbed two-key test) though the other key worked.
         last_exc = None
         for _ in range(len(self._parent._keys)):
-            name, client = self._parent._pick()
+            name, client = self._parent._pick(avoid=_avoid_key)
             if client is None:
                 break
             if _key_out is not None:

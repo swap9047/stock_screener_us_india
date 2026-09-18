@@ -74,11 +74,13 @@ def _clean_json_text(text):
 # The grounded-search ladder for this pipeline's news stage, and the source
 # label written to the view for whichever rung answered.
 SEARCH_MODEL = "models/gemma-4-26b-a4b-it"
-SEARCH_FALLBACK_MODEL = "models/gemma-4-31b-it"
-SEARCH_SOURCE_LABELS = {
-    SEARCH_MODEL: "🔍 Gemma-4-26B (Google Search)",
-    SEARCH_FALLBACK_MODEL: "🔍 Gemma-4-31B (Google Search)",
-}
+SEARCH_SOURCE_LABELS = {SEARCH_MODEL: "🔍 Gemma-4-26B (Google Search)"}
+# There is no fallback MODEL any more, deliberately. This used to end on
+# models/gemma-4-31b-it, which answered 0 of ~63 calls across four runs on
+# 2026-09-17/18 (overwhelmingly 500 INTERNAL) while 26b answered ~83% -- a second
+# Gemma on the same backend was never an independent failure domain. The ladder is
+# three attempts on SEARCH_MODEL instead, each on a different API key
+# (llm_util.same_model_tiers + RotatingGeminiClient._pick's `avoid`).
 
 # Last resort for the REASONING stage, after the configured model and its retry.
 # 26b, matching news_summary.REASONING_FALLBACK_MODEL -- both reasoning ladders
@@ -90,12 +92,14 @@ REASONING_FALLBACK_MODEL = "models/gemma-4-26b-a4b-it"
 
 
 def fetch_fundamental_news(client, ticker, market, company_name, is_retry=False):
-    """Grounded search for the current quarter's numbers: SEARCH_MODEL, the
-    same model again after a backoff, then SEARCH_FALLBACK_MODEL
-    (llm_util.standard_tiers). Was a hand-rolled 26b-then-31b loop with no
-    same-model retry, so one transient 429/503 demoted the search. On
-    exhaustion it raises TimeoutError for the caller's retry queue; on the
-    retry pass it settles for "no news" instead."""
+    """Grounded search for the current quarter's numbers: three attempts on
+    SEARCH_MODEL, each on a different API key (llm_util.same_model_tiers).
+
+    Was a hand-rolled 26b-then-31b loop with no same-model retry, so one
+    transient 429/503 demoted the search to a model that turned out never to
+    answer -- see the note above the constants. On exhaustion it raises
+    TimeoutError for the caller's retry queue; on the retry pass it settles for
+    "no news" instead."""
     from stock_data import get_exchange_label
 
     as_of_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -123,7 +127,7 @@ def fetch_fundamental_news(client, ticker, market, company_name, is_retry=False)
     config = types.GenerateContentConfig(tools=[grounding_tool])
 
     resp, used = llm_util.run_model_ladder(
-        client, prompt, llm_util.standard_tiers(SEARCH_MODEL, SEARCH_FALLBACK_MODEL),
+        client, prompt, llm_util.same_model_tiers(SEARCH_MODEL),
         lambda m: config, label="fundamental-search", subject=ticker, timeout=llm_util.SEARCH_TIMEOUT_SECONDS,
     )
     if used is not None:
@@ -471,9 +475,9 @@ def fetch_targeted_earnings_numbers(client, ticker, company_name, market, announ
     """One narrow grounded search for exactly the figures the broad search
     missed, anchored to the announcement date.
 
-    Same ladder as the broad pass -- SEARCH_MODEL, itself again after a backoff,
-    then SEARCH_FALLBACK_MODEL -- and deliberately built from the same two
-    constants so the two searches cannot drift apart.
+    Same ladder as the broad pass -- three attempts on SEARCH_MODEL, each on a
+    different API key -- and built from the same constant, so the two grounded
+    searches cannot drift apart.
 
     This used to LEAD with 31b, on the theory that a second attempt wants a
     different reader of the same web rather than a re-roll of the one that came
@@ -516,7 +520,7 @@ def fetch_targeted_earnings_numbers(client, ticker, company_name, market, announ
     config = types.GenerateContentConfig(tools=[grounding_tool])
     resp, used = llm_util.run_model_ladder(
         client, prompt,
-        llm_util.standard_tiers(SEARCH_MODEL, SEARCH_FALLBACK_MODEL),
+        llm_util.same_model_tiers(SEARCH_MODEL),
         lambda m: config, label="targeted-earnings", subject=ticker,
     )
     if used is None:

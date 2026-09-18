@@ -165,8 +165,12 @@ try:
         c = _Ladder(fail_first=2)
         try:
             text, source = fn(c, "ACME", "us_picks", "Acme Corp")
-            check(c.calls[-1] == "models/gemma-4-31b-it" and "31B" in source,
-                  f"F6 {label}: two failures -> falls back to 31b and says so ({c.calls})")
+            # Two failures used to demote to 31b on the third rung. That model
+            # answered 0 of ~63 calls across four runs, so the ladder is three
+            # attempts on 26b now, each on a different API key -- the third rung
+            # still has to ANSWER, which is what this check is really about.
+            check(c.calls == ["models/gemma-4-26b-a4b-it"] * 3 and "26B" in source,
+                  f"F6 {label}: two failures -> a third attempt on 26b, still answered ({c.calls})")
         except TimeoutError:
             check(False, f"F6 {label}: two failures exhausted the ladder instead of reaching 31b ({c.calls})")
 finally:

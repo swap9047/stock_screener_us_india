@@ -110,13 +110,18 @@ def _prune_orphans(store, watchlists, label):
 
 # How many tickers are analysed at once. Each ticker is a blocking chain of
 # grounded search + reasoning calls, so this job is IO-bound, not CPU-bound: the
-# 2026-09-18 run took 353 of its 360-minute cap and 136 of those minutes were
-# spent waiting on calls that never answered. Two workers roughly halve the wall
-# clock. Two and not more because each one holds a Gemini call open and the
-# grounded-search models were already returning 500s and timing out under
-# ordinary load -- adding request pressure is the way to turn slowness into
-# failure. Raise it only with a run's [key rotation] line to show there is room.
-MAX_CONCURRENT_TICKERS = 2
+# 2026-09-18 03:55 run took 353 of its 360-minute cap and 136 of those minutes
+# were spent waiting on calls that never answered. Three workers cut the wall
+# clock to roughly a third, ~120-150 minutes.
+#
+# The thing to watch when changing this is request pressure, not CPU: each worker
+# holds a grounded-search call open, and those models already return 500s and
+# 503 "high demand" under ordinary load, so more concurrency is how slowness
+# becomes failure. The evidence is the [key rotation] line at the end of each run
+# (per-key calls, failures and rate) plus any "hit a quota/rate limit" line. If
+# either worsens, come back down -- the failures are model-side, not per-key, so
+# adding a fourth API key would not buy headroom here.
+MAX_CONCURRENT_TICKERS = 3
 
 # Pause after each ticker, per worker. Named because the two used to be bare
 # literals and were easy to misread: the main loop has always been the small one.

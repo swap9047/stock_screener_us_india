@@ -107,12 +107,13 @@ try:
     check(out == "", "an exhausted targeted ladder returns '' and never raises")
     tiers = captured2.get("targeted-earnings", [])
     models = [m for m, _ in tiers]
-    check(models[:1] == [fe.SEARCH_MODEL],
-          f"targeted search LEADS with SEARCH_MODEL (got {models[:1]})")
-    check(models[-1:] == [fe.SEARCH_FALLBACK_MODEL],
-          f"...and falls back to SEARCH_FALLBACK_MODEL last (got {models[-1:]})")
-    check(models == [m for m, _ in llm_util.standard_tiers(fe.SEARCH_MODEL, fe.SEARCH_FALLBACK_MODEL)],
-          f"...via standard_tiers, so the same-model retry is kept: {models}")
+    # Every rung is SEARCH_MODEL now: the 31b fallback answered 0 of ~63 calls
+    # across four runs, so the model stops varying and the KEY varies instead
+    # (llm_util.same_model_tiers + _pick's `avoid`).
+    check(models == [fe.SEARCH_MODEL] * 3,
+          f"targeted search is three attempts on SEARCH_MODEL (got {models})")
+    check(models == [m for m, _ in llm_util.same_model_tiers(fe.SEARCH_MODEL)],
+          f"...via same_model_tiers, so the retries and their pacing are shared: {models}")
 
     fe.fetch_fundamental_news(object(), "ACME", "us_invested", "Acme Corp", is_retry=True)
     broad = [m for m, _ in captured2.get("fundamental-search", [])]

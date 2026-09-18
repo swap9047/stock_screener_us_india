@@ -2,7 +2,7 @@
 
 The 2026-09-18 run took 353 of its 360-minute cap: 136 of those minutes were
 spent waiting on grounded-search calls that never answered, which is blocking IO,
-not work. Two workers roughly halve the wall clock. What must not change: every
+not work. Three workers cut the wall clock to roughly a third. What must not change: every
 ticker is analysed exactly once, the store is never written by two threads at the
 same time, and REFRESH_LIMIT still picks the same first N tickers.
 
@@ -85,15 +85,15 @@ def run(timeout_first=(), limit=None):
     return calls, state["peak"], state["overlaps"], store
 
 
-check(getattr(rf, "MAX_CONCURRENT_TICKERS", None) == 2,
-      f"two tickers at a time (got {getattr(rf, 'MAX_CONCURRENT_TICKERS', None)})")
+check(getattr(rf, "MAX_CONCURRENT_TICKERS", None) == 3,
+      f"three tickers at a time (got {getattr(rf, 'MAX_CONCURRENT_TICKERS', None)})")
 
 calls, peak, overlaps, store = run()
 check(sorted(calls) == sorted(EXPECTED),
       f"every ticker with a row is analysed exactly once: {sorted(calls)}")
 check(len(calls) == len(set(calls)), f"no ticker analysed twice: {calls}")
 check(set(store) == EXPECTED, f"...and every one lands in the store: {sorted(store)}")
-check(peak == 2, f"two analyses really do overlap, and never more than two (peak {peak})")
+check(peak == 3, f"three analyses really do overlap, and never more than three (peak {peak})")
 check(overlaps == 0, f"the store is never saved by two threads at once ({overlaps} overlap(s))")
 
 # REFRESH_LIMIT has to stay deterministic: the plan is built in registry order
@@ -113,8 +113,8 @@ check(set(store) == EXPECTED, "...and ends up in the store like the rest")
 # Successful search+reasoning pairs ran 36-145s (median 86) on 2026-09-18, so a
 # per-call 120s ceiling sat above the whole distribution while 68 calls spent the
 # full 120s answering nothing.
-check(getattr(llm_util, "SEARCH_TIMEOUT_SECONDS", None) == 90,
-      f"SEARCH_TIMEOUT_SECONDS is 90 (got {getattr(llm_util, 'SEARCH_TIMEOUT_SECONDS', None)})")
+check(getattr(llm_util, "SEARCH_TIMEOUT_SECONDS", None) == 120,
+      f"SEARCH_TIMEOUT_SECONDS is 120 (got {getattr(llm_util, 'SEARCH_TIMEOUT_SECONDS', None)})")
 for mod in ("fundamentals_eval.py", "expert_views.py"):
     src = (Path(REPO) / mod).read_text()
     check("timeout=llm_util.SEARCH_TIMEOUT_SECONDS" in src or "timeout=SEARCH_TIMEOUT_SECONDS" in src,

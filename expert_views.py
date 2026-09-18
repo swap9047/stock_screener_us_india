@@ -37,17 +37,20 @@ def _clean_json_text(text):
 # The grounded-search ladder for this pipeline's news stage, and the source
 # label written to the view for whichever rung answered.
 SEARCH_MODEL = "models/gemma-4-26b-a4b-it"
-SEARCH_FALLBACK_MODEL = "models/gemma-4-31b-it"
-SEARCH_SOURCE_LABELS = {
-    SEARCH_MODEL: "🔍 Gemma-4-26B (Google Search)",
-    SEARCH_FALLBACK_MODEL: "🔍 Gemma-4-31B (Google Search)",
-}
+SEARCH_SOURCE_LABELS = {SEARCH_MODEL: "🔍 Gemma-4-26B (Google Search)"}
+# There is no fallback MODEL any more, deliberately. This used to end on
+# models/gemma-4-31b-it, which answered 0 of ~63 calls across four runs on
+# 2026-09-17/18 (overwhelmingly 500 INTERNAL) while 26b answered ~83% -- a second
+# Gemma on the same backend was never an independent failure domain. The ladder is
+# three attempts on SEARCH_MODEL instead, each on a different API key
+# (llm_util.same_model_tiers + RotatingGeminiClient._pick's `avoid`).
 
 
 def fetch_gemma_expert_news(client, ticker, market, company_name, is_retry=False):
     """Fetches news specifically for Expert Views: a grounded search on
-    SEARCH_MODEL, retried once on the same model, then SEARCH_FALLBACK_MODEL --
-    llm_util.standard_tiers, the ladder the news pipeline's Stage 1 already uses.
+    three attempts on SEARCH_MODEL, each on a different API key
+    (llm_util.same_model_tiers). There is no second model: see the note above the
+    constants for why the 31b rung was dropped rather than kept as insurance.
 
     This was a hand-rolled two-rung loop (26b, then 31b) with no same-model
     retry, so a single transient 429/503 -- the likeliest failure on a ~110-call
@@ -84,7 +87,7 @@ def fetch_gemma_expert_news(client, ticker, market, company_name, is_retry=False
     config = types.GenerateContentConfig(tools=[grounding_tool])
 
     resp, used = llm_util.run_model_ladder(
-        client, prompt, llm_util.standard_tiers(SEARCH_MODEL, SEARCH_FALLBACK_MODEL),
+        client, prompt, llm_util.same_model_tiers(SEARCH_MODEL),
         lambda m: config, label="expert-search", subject=ticker, timeout=llm_util.SEARCH_TIMEOUT_SECONDS,
     )
     if used is not None:
