@@ -190,7 +190,11 @@ def main():
             if limit and len(plan) >= limit:
                 break
             if tk in seen:
-                print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - SKIP (already analyzed this run)")
+                # "queued", not "analyzed": the plan is built before any worker
+                # starts, so at this point nothing has been analysed yet. It said
+                # "already analyzed" when the loop was serial and decided
+                # skip-or-analyse one ticker at a time, which was true then.
+                print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - SKIP (already queued this run)")
                 continue
             seen.add(tk)
             row = next((r for r in results if r["ticker"] == tk), None)
