@@ -61,8 +61,9 @@ from stock_data import (
     load_watchlist_groups, save_watchlist_groups, MIN_DAILY_BARS, snapshot_calc_matches,
     apply_view_fields_to_rows, calc_settings, calc_settings_diff,
     load_interested, load_ticker_index, DataFileError, read_json_strict, atomic_write_json,
-    refresh_data_end_age, enrich_rows, COMBINED_TAB_LABELS, watchlist_label_error,
+    refresh_data_end_age, enrich_rows,
 )
+from watchlist_labels import COMBINED_TAB_LABELS, watchlist_label_error
 import llm_util
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE,
                      send_discord_batch, build_discord_messages_for_rule, describe_schedule,
@@ -4825,8 +4826,8 @@ market_tab_labels = [markets_registry_now[mkt]["label"] for mkt in market_keys_n
 # create a 3rd/4th group, by design) -- only MEMBERSHIP is user-editable,
 # via the "Configure this view" expander rendered on each combined tab,
 # which reads/writes watchlist_groups.json through load_watchlist_groups().
-# From stock_data, so the labels a watchlist may not take (watchlist_label_error)
-# and the labels the tab strip shows are one list.
+# From watchlist_labels, so the labels a watchlist may not take
+# (watchlist_label_error) and the labels the tab strip shows are one list.
 COMBINED_TAB_DEFS = list(COMBINED_TAB_LABELS.items())
 combined_keys = [k for k, _ in COMBINED_TAB_DEFS]
 combined_tab_labels = [lbl for _, lbl in COMBINED_TAB_DEFS]

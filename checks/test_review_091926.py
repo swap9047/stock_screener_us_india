@@ -357,36 +357,31 @@ except AttributeError as e:
 
 
 # --- T13 watchlist labels cannot duplicate another tab's label ---------------
-import filters as _filters
+# In its own module rather than stock_data.py: stock_data's code fingerprint
+# hashes that whole file, and editing it marks the stored snapshot stale.
+import watchlist_labels as wl
 
-d = tempfile.mkdtemp()
-restore = redirect([
-    (sd, "MARKETS_FILE", os.path.join(d, "markets.json")),
-    (sd, "WATCHLIST_FILE", os.path.join(d, "watchlist.json")),
-    (sd, "SETTINGS_FILE", os.path.join(d, "settings.json")),
-    (_filters, "CUSTOM_FILTERS_FILE", os.path.join(d, "custom_filters.json")),
-])
-try:
-    json.dump({"us_picks": {"label": "US Picks", "benchmark": "SPY"}}, open(sd.MARKETS_FILE, "w"))
-    reg = sd.load_markets_registry()
-    for bad in ("US Picks", "us  picks", "News", "alert rules", "All Invested", "ALL WATCHLIST"):
-        check(bool(sd.watchlist_label_error(bad, reg)), f"T13: label {bad!r} is rejected")
-    check(sd.watchlist_label_error("US Picks", reg, own_key="us_picks") == "",
-          "T13: re-saving a watchlist under its own label is allowed")
-    check(sd.watchlist_label_error("UK Picks", reg) == "", "T13: a new unique label is allowed")
-    try:
-        sd.add_watchlist("News", "SPY")
-        check(False, "T13: add_watchlist refuses a reserved label")
-    except ValueError:
-        check(True, "T13: add_watchlist refuses a reserved label")
-    check(set(sd.load_markets_registry()) == {"us_picks"}, "T13: ...and registers nothing")
-except AttributeError as e:
-    check(False, f"T13: stock_data.watchlist_label_error exists ({e})")
-finally:
-    restore()
+reg = {"us_picks": {"label": "US Picks", "benchmark": "SPY"}}
+for bad in ("US Picks", "us  picks", "News", "alert rules", "All Invested", "ALL WATCHLIST", "  "):
+    check(bool(wl.watchlist_label_error(bad, reg)), f"T13: label {bad!r} is rejected")
+check(wl.watchlist_label_error("US Picks", reg, own_key="us_picks") == "",
+      "T13: re-saving a watchlist under its own label is allowed")
+check(wl.watchlist_label_error("UK Picks", reg) == "", "T13: a new unique label is allowed")
+check(set(wl.COMBINED_TAB_LABELS) == set(sd.DEFAULT_WATCHLIST_GROUPS),
+      "T13: the combined tab labels cover exactly the combined group keys")
 
 check("list(COMBINED_TAB_LABELS.items())" in app_src,
-      "T13: app.py builds its combined tabs from the one label list stock_data checks against")
+      "T13: app.py builds its combined tabs from the one label list the check uses")
+# Every UI path that adds or renames a watchlist validates first.
+add_calls = app_src.count("add_watchlist(new_wl_label") + app_src.count("_dash_add_watchlist(dash_wl_label")
+check(add_calls == 2 and "watchlist_label_error(new_wl_label" in app_src
+      and "watchlist_label_error(dash_wl_label" in app_src
+      and "watchlist_label_error(new_mlabel, markets_registry, own_key=mkey)" in app_src,
+      "T13: both add paths and the rename path call watchlist_label_error")
+
+stock_data_src = (REPO / "stock_data.py").read_text()
+check("watchlist_label_error" not in stock_data_src,
+      "T13: stock_data.py is untouched, so the stored snapshot's code fingerprint still matches")
 
 
 # --- T14 no salted hash() in widget keys -------------------------------------

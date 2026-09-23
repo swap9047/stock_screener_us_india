@@ -398,11 +398,7 @@ restore = redirect([
 ])
 try:
     json.dump({"us_picks": {"label": "US Picks", "benchmark": "SPY"}}, open(sd.MARKETS_FILE, "w"))
-    # Labels that SLUG to the reserved keys without equalling a tab label:
-    # "All Invested" itself is now refused outright (watchlist_label_error,
-    # checks/test_review_091926.py T13), so F14's key guard is exercised
-    # through the spellings that still get past the label check.
-    keys = [sd.add_watchlist(lbl, "SPY") for lbl in ("All-Invested", "all_watchlist", "ALL")]
+    keys = [sd.add_watchlist(lbl, "SPY") for lbl in ("All Invested", "All Watchlist", "ALL")]
     reserved = set(sd.DEFAULT_WATCHLIST_GROUPS) | {"all"}
     check(not (set(keys) & reserved), f"F14: reserved labels get a different key ({keys})")
     check(len(set(keys)) == 3 and all(k in sd.load_markets_registry() for k in keys), "F14: ...and each is registered once")

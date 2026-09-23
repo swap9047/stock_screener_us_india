@@ -35,7 +35,7 @@ step names, so each key needs a line in the AI steps' `env:` blocks. Every run l
 `[key rotation] N key(s): ...`; if that number is lower than expected, that line is
 missing.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 505
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 507
 offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
@@ -61,6 +61,7 @@ verified by rendering the app headlessly; recipe at the bottom.
 | `weekly_wrapup.py` | 365 | Weekly Discord digest |
 | `custom_columns.py` | 285 | User-defined formula columns |
 | `ticker_notes.py` | 259 | Per-ticker notes/flags + auto-flag voting |
+| `watchlist_labels.py` | 46 | Tab labels a watchlist may not take. Kept out of `stock_data.py`, whose whole-file code fingerprint marks the snapshot stale on any edit |
 
 `refresh_*.py` and `*_check.py` are thin entry points that exist only to be run by GitHub
 Actions. They contain no logic worth duplicating — they call into the modules above.
