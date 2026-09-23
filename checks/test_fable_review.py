@@ -36,7 +36,7 @@ import re
 import tempfile
 import threading
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 fails = 0
@@ -226,8 +226,12 @@ finally:
     fundamentals_eval.yf.Ticker = saved_tk
 
 # --- F9 bulk re-analyze applies the same persistence rules as the batch ------
-valid = {"verdict": "HOLD", "headline": "fine", "model_used": "m", "as_of": "2026-09-17 00:00"}
-failed = {"verdict": "HOLD", "headline": "Analysis pending -- x", "model_used": "Error", "as_of": "2026-09-17 00:00"}
+# Relative to now, not a fixed date: "fresh" has to stay inside EXPERT_STALE_DAYS
+# on whatever day this runs. It was pinned to 2026-09-17 and silently turned
+# stale on 2026-09-22, failing CI with no code change at all.
+_fresh_stamp = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M")
+valid = {"verdict": "HOLD", "headline": "fine", "model_used": "m", "as_of": _fresh_stamp}
+failed = {"verdict": "HOLD", "headline": "Analysis pending -- x", "model_used": "Error", "as_of": _fresh_stamp}
 stale_prior = dict(valid, as_of="2026-01-01 00:00")
 try:
     store = {"ACME": dict(stale_prior)}
@@ -302,9 +306,16 @@ try:
     json.dump(["ACME"], open(sd.INTERESTED_FILE, "w"))
     base = {"company_name": "Acme", "last_close": 1.0, "trend": "Uptrend", "tech_uptrend": 1}
     # the stored row: newer data_end, but enrichment frozen at ITS fetch
-    stored = {**base, "ticker": "ACME", "data_end": "2026-09-16", "flag": "Green", "note": "", "interested": False,
+    # Relative dates for the same reason as F9: reject_stale_rows only holds a
+    # stored row while it is under max_hold_days old, so a pinned 2026-09-16
+    # stopped being substituted on 2026-09-22. Yesterday and the day before are
+    # never the still-forming session, which completed_sessions_only would reject.
+    _today_et = datetime.now(ZoneInfo("America/New_York")).date()
+    STORED_END = (_today_et - timedelta(days=1)).isoformat()
+    FRESH_END = (_today_et - timedelta(days=2)).isoformat()
+    stored = {**base, "ticker": "ACME", "data_end": STORED_END, "flag": "Green", "note": "", "interested": False,
               "expert_take": "Accumulate", "sentiment": "Positive", "market": "us_picks"}
-    fresh = {**base, "ticker": "ACME", "data_end": "2026-09-15", "flag": "Red", "note": "watch", "interested": True,
+    fresh = {**base, "ticker": "ACME", "data_end": FRESH_END, "flag": "Red", "note": "watch", "interested": True,
              "expert_take": "Pending", "sentiment": "Unknown", "market": "us_picks"}
     WL = {"us_picks": ["ACME"]}
     RULE = {"id": "r1", "name": "r", "enabled": True, "scope": "ALL", "notify_mode": "incremental",
@@ -350,7 +361,7 @@ try:
 
     run(alert_check, "evaluate_and_fire", cap_alerts)
     r = got["rows"][0]
-    check(r["data_end"] == "2026-09-16", "F13 alert_check: the stored (newer) row was substituted")
+    check(r["data_end"] == STORED_END, "F13 alert_check: the stored (newer) row was substituted")
     check(r["flag"] == "Red" and r["note"] == "watch" and r["interested"] is True and r["expert_take"] == "Pending",
           f"F13 alert_check: ...and re-enriched from the files before judging ({r['flag']}, {r['note']!r}, {r['interested']}, {r['expert_take']})")
 
@@ -387,7 +398,11 @@ restore = redirect([
 ])
 try:
     json.dump({"us_picks": {"label": "US Picks", "benchmark": "SPY"}}, open(sd.MARKETS_FILE, "w"))
-    keys = [sd.add_watchlist(lbl, "SPY") for lbl in ("All Invested", "All Watchlist", "ALL")]
+    # Labels that SLUG to the reserved keys without equalling a tab label:
+    # "All Invested" itself is now refused outright (watchlist_label_error,
+    # checks/test_review_091926.py T13), so F14's key guard is exercised
+    # through the spellings that still get past the label check.
+    keys = [sd.add_watchlist(lbl, "SPY") for lbl in ("All-Invested", "all_watchlist", "ALL")]
     reserved = set(sd.DEFAULT_WATCHLIST_GROUPS) | {"all"}
     check(not (set(keys) & reserved), f"F14: reserved labels get a different key ({keys})")
     check(len(set(keys)) == 3 and all(k in sd.load_markets_registry() for k in keys), "F14: ...and each is registered once")

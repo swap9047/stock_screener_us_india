@@ -16,6 +16,7 @@ from stock_data import load_data_snapshot, load_watchlists
 from fundamentals_eval import (
     load_fundamentals, save_fundamentals, generate_fundamental_view,
     _is_valid_view, _validate_sentiment, _view_age_days, SENTIMENT_STALE_DAYS,
+    _search_failed_unknown, _prior_worth_keeping,
 )
 from news_summary import get_gemini_api_key
 
@@ -57,11 +58,23 @@ def _unknown_fallback(reason):
 def _apply_result(fundamentals, tk, view, old_view, elapsed):
     """Decide what to persist for one ticker. Returns (failed_inc, detail).
 
-    - Fresh valid view (incl. "Unknown"): apply deterministic guard, write it.
+    - Fresh valid view (incl. "Unknown"): apply deterministic guard, write it --
+      EXCEPT an Unknown that exists only because the search failed, over a
+      prior that is still fresh: keep the prior (see below).
     - Failed generation with fresh prior: keep prior (bounded by staleness).
     - Failed generation with stale prior: overwrite with honest Unknown.
     - Failed generation with no usable prior: write full-schema Unknown.
     """
+    if _is_valid_view(view) and _search_failed_unknown(view) and _prior_worth_keeping(old_view):
+        # The retry pass runs generate_fundamental_view(is_retry=True), which
+        # settles for "No recent fundamental news found." / "No Source" when
+        # the search ladder is exhausted instead of raising the requeue signal.
+        # The model then answers Unknown -- a VALID view -- and this function
+        # used to write it over a fresh Positive/Negative. The retry queue only
+        # covers a first-pass TimeoutError; the retry pass, and a first pass
+        # whose search raised anything else, land here. Same guard as
+        # fundamentals_eval.analyze_single_ticker_sentiment.
+        return 1, f"FAILED ({elapsed:.1f}s): news search failed, keeping prior result"
     if _is_valid_view(view):
         # Record what the guard thinks, but do NOT overwrite the model's own
         # verdict on disk. This used to do

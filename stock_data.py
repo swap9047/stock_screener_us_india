@@ -62,7 +62,7 @@ TICKER_INDEX_FILE = os.path.join(SCRIPT_DIR, "ticker_index.json")
 WATCHLIST_GROUPS_FILE = os.path.join(SCRIPT_DIR, "watchlist_groups.json")
 
 # Default combined-tab membership -- group key -> member market keys. Group
-# keys/labels are fixed in app.py's COMBINED_TAB_DEFS (not user-creatable,
+# keys/labels are fixed by COMBINED_TAB_LABELS below (not user-creatable,
 # per the "reassignment only" design); only membership is user-editable via
 # load_watchlist_groups()/save_watchlist_groups() below. This is the mapping
 # an install had before that editor existed, so bootstrapping to it is a
@@ -71,6 +71,41 @@ DEFAULT_WATCHLIST_GROUPS = {
     "all_invested": ["us_invested", "india_invested"],
     "all_watchlist": ["india_watchlist", "us_watchlist"],
 }
+
+# The combined tabs' labels, and the two fixed tabs after them. app.py builds
+# its tab strip from these, and watchlist_label_error refuses a watchlist
+# label equal to any of them -- one list, so the two cannot drift.
+COMBINED_TAB_LABELS = {
+    "all_invested": "All Invested",
+    "all_watchlist": "All Watchlist",
+}
+FIXED_TAB_LABELS = ("News", "Alert Rules")
+
+
+def _label_norm(label):
+    return " ".join(str(label or "").split()).casefold()
+
+
+def watchlist_label_error(label, registry, own_key=None):
+    """Why `label` cannot name a watchlist, or "" if it can.
+
+    Watchlist KEYS were already deduplicated (add_watchlist), labels were not.
+    The tab strip is keyed by label (st.tabs(key="main_tabs") stores the
+    selected LABEL), so two tabs sharing one could not be told apart: picking
+    the second selected the first on the next rerun, and the sidebar sort
+    control edited whichever market the label mapped to last. Compared
+    case- and whitespace-insensitively, since "us  picks" beside "US Picks"
+    reads as the same tab. `own_key` lets a watchlist keep its own label."""
+    norm = _label_norm(label)
+    if not norm:
+        return "A label is required."
+    reserved = list(COMBINED_TAB_LABELS.values()) + list(FIXED_TAB_LABELS)
+    if norm in {_label_norm(r) for r in reserved}:
+        return f'"{label.strip()}" is the name of a built-in tab. Pick another label.'
+    for key, info in (registry or {}).items():
+        if key != own_key and _label_norm((info or {}).get("label")) == norm:
+            return f'Another watchlist is already labelled "{info.get("label")}". Pick another label.'
+    return ""
 
 # Legacy fallback list -- kept only for the one-off markets.json bootstrap
 # and any old code (e.g. debug_snap.py) that still imports it directly. Live
@@ -334,6 +369,11 @@ def add_watchlist(label, benchmark):
     from filters import load_custom_filters, save_custom_filters
 
     registry = load_markets_registry()
+    # The UI checks first and shows the message; this is the backstop for any
+    # other caller.
+    err = watchlist_label_error(label, registry)
+    if err:
+        raise ValueError(err)
     base_key = _slugify_market_key(label)
     # "all" is the alert-scope "every watchlist" word, and the combined tabs use
     # the DEFAULT_WATCHLIST_GROUPS keys as synthetic market keys for their own
@@ -371,6 +411,9 @@ def rename_watchlist(key, new_label):
     registry = load_markets_registry()
     if key not in registry:
         raise KeyError(f"Unknown market key: {key}")
+    err = watchlist_label_error(new_label, registry, own_key=key)
+    if err:
+        raise ValueError(err)
     registry[key]["label"] = new_label.strip()
     save_markets_registry(registry)
 

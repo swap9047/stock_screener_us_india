@@ -61,7 +61,7 @@ from stock_data import (
     load_watchlist_groups, save_watchlist_groups, MIN_DAILY_BARS, snapshot_calc_matches,
     apply_view_fields_to_rows, calc_settings, calc_settings_diff,
     load_interested, load_ticker_index, DataFileError, read_json_strict, atomic_write_json,
-    refresh_data_end_age, enrich_rows,
+    refresh_data_end_age, enrich_rows, COMBINED_TAB_LABELS, watchlist_label_error,
 )
 import llm_util
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE,
@@ -95,7 +95,7 @@ from expert_views import (load_expert_views, save_expert_views, analyze_single_t
                           validate_verdict, verdict_flag_note,
                           expert_view_has_news as _expert_view_has_news)
 from fundamentals_eval import (
-    load_fundamentals, _validate_sentiment, SENTIMENT_STALE_DAYS,
+    load_fundamentals, save_fundamentals, _validate_sentiment, SENTIMENT_STALE_DAYS,
     analyze_single_ticker_sentiment, _is_valid_view as _is_valid_sentiment_view,
 )
 from custom_columns import (
@@ -999,7 +999,7 @@ PERF_PCT_COLS = ["Perf 1M %", "Perf 3M %", "Perf 6M %", "Perf 1Y %", "Perf 3Y %"
 # decimal, not 0: these are scan inputs tested against thresholds as tight
 # as ">= 1", where PERF_PCT_COLS' whole-number rounding would render a 0.4
 # and a 1.4 identically.
-REL_PCT_COLS = ["1M Ret vs Index", "6M Ret vs Index"]
+REL_PCT_COLS = ["1W Ret vs Index", "1M Ret vs Index", "6M Ret vs Index"]
 # Unsigned percentages -- always >= 0, so formatted WITHOUT a sign prefix.
 # PCT_COLS' "+12.5%" would read as 12.5% ABOVE the high for the distances,
 # the exact opposite of what they mean, and a signed share-of-volume makes
@@ -1418,10 +1418,17 @@ def settings_dialog():
         mc3.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
         if mc3.button("Save", key=f"mkt_save_{mkey}"):
             changed = False
+            label_err = ""
             if new_mlabel.strip() and new_mlabel.strip() != minfo["label"]:
-                markets_registry[mkey]["label"] = new_mlabel.strip()
-                changed = True
-            if new_mbench.strip() and new_mbench.strip() != minfo["benchmark"]:
+                label_err = watchlist_label_error(new_mlabel, markets_registry, own_key=mkey)
+                if label_err:
+                    st.error(label_err)
+                else:
+                    markets_registry[mkey]["label"] = new_mlabel.strip()
+                    changed = True
+            # A rejected label blocks the whole save: saving just the benchmark
+            # would st.rerun() and wipe the error before it could be read.
+            if not label_err and new_mbench.strip() and new_mbench.strip() != minfo["benchmark"]:
                 markets_registry[mkey]["benchmark"] = new_mbench.strip()
                 changed = True
             if changed:
@@ -1435,7 +1442,7 @@ def settings_dialog():
                 st.success(f"Saved changes to {mkey}.")
                 time.sleep(1)
                 st.rerun()
-            else:
+            elif not label_err:
                 st.info("No changes detected.")
 
     st.markdown("➕ **Add Watchlist**")
@@ -1446,6 +1453,8 @@ def settings_dialog():
     if aw3.button("Add", key="add_watchlist_btn"):
         if not new_wl_label.strip() or not new_wl_bench.strip():
             st.error("Both a label and a benchmark ticker are required.")
+        elif watchlist_label_error(new_wl_label, markets_registry):
+            st.error(watchlist_label_error(new_wl_label, markets_registry))
         else:
             add_watchlist(new_wl_label.strip(), new_wl_bench.strip())
             gh_token, gh_repo, gh_branch = get_data_repo_config(getattr(st, "secrets", None))
@@ -2271,6 +2280,7 @@ def build_column_defs(labels, custom_columns=None):
         ("vstop_weekly_14", "VStop-W (14)"),
         ("vstop_weekly_direction", "VStop Dir"),
         ("vstop_change", "VStop Weeks Ago"),
+        ("gc_weeks_10_30", "10/30 W Golden Cross (weeks ago)"),
         ("volume_trend", "Vol Trend"),
         ("net_volume_10d_dir", "Net Vol 10D"),
         ("tech_uptrend_label", "Tech Uptrend"),
@@ -2292,6 +2302,7 @@ def build_column_defs(labels, custom_columns=None):
         ("avg_volume_10d", "Vol 10D"),
         ("avg_volume_20d", "Vol 20D"),
         ("avg_volume_100d", "Vol 100D"),
+        ("rel_ret_1w_index", "1W Ret vs Index"),
         ("rel_ret_1m_index", "1M Ret vs Index"),
         ("rel_ret_6m_index", "6M Ret vs Index"),
         ("perf_1m", "Perf 1M %"),
@@ -2612,9 +2623,9 @@ def render_sort_control(market, market_label, label_by_key, key_by_label, sample
     'Make watchlist tables fill page height with sticky header' in the
     project history) since iframes need a fixed height.
 
-    Returns a list of up to 3 (sort_field_key, ascending) tuples, in
-    priority order (empty list = no sort, i.e. raw list order). Level 1 is
-    the primary key and offers "(default order)"; levels 2-3 are optional
+    Returns a list of up to _SORT_LEVELS (6) (sort_field_key, ascending)
+    tuples, in priority order (empty list = no sort, i.e. raw list order).
+    Level 1 is the primary key and offers "(default order)"; the rest are optional
     tie-breakers and offer "(none)", each only shown once the level above
     it has a real column chosen."""
     # matched_alerts (Alerts) and vstop_change (VStop Weeks Ago) are computed
@@ -2841,7 +2852,11 @@ def render_shared_column_picker(labels, active_market=None, active_market_label=
             st.rerun()
 
         current_labels = [label_by_key[k] for k in st.session_state[SHARED_ORDER_KEY] if k in label_by_key]
-        multiselect_key = f"shared_col_multiselect_{hash(tuple(st.session_state[SHARED_ORDER_KEY]))}"
+        # sha1, not the builtin hash(): that is salted per process, so the key
+        # changed on every container restart. The key still changes whenever
+        # the ORDER does, which is what re-seeds the widget from the new order.
+        _order_digest = hashlib.sha1("\x1f".join(st.session_state[SHARED_ORDER_KEY]).encode()).hexdigest()[:12]
+        multiselect_key = f"shared_col_multiselect_{_order_digest}"
         visible_labels = st.multiselect(
             "Columns to show", options=all_labels, default=current_labels, key=multiselect_key
         )
@@ -3218,6 +3233,10 @@ def sync_ai_views_to_github(message, filenames=("expert_views.json", "fundamenta
     buttons refresh Sentiment too, and a local-only fundamentals.json would be
     silently overwritten by the next pull.
     """
+    # Every name here is evaluated on entry, whichever file is being synced.
+    # save_fundamentals was once missing from the imports, so EVERY call raised
+    # NameError -- after the model calls and the local save, so UI re-analyses
+    # were never pushed. checks/test_review_091926.py (T0) runs pyflakes now.
     loaders = {"expert_views.json": (load_expert_views, save_expert_views),
                "fundamentals.json": (load_fundamentals, save_fundamentals)}
     token, repo, branch = get_data_repo_config(st.secrets)
@@ -4806,10 +4825,9 @@ market_tab_labels = [markets_registry_now[mkt]["label"] for mkt in market_keys_n
 # create a 3rd/4th group, by design) -- only MEMBERSHIP is user-editable,
 # via the "Configure this view" expander rendered on each combined tab,
 # which reads/writes watchlist_groups.json through load_watchlist_groups().
-COMBINED_TAB_DEFS = [
-    ("all_invested", "All Invested"),
-    ("all_watchlist", "All Watchlist"),
-]
+# From stock_data, so the labels a watchlist may not take (watchlist_label_error)
+# and the labels the tab strip shows are one list.
+COMBINED_TAB_DEFS = list(COMBINED_TAB_LABELS.items())
 combined_keys = [k for k, _ in COMBINED_TAB_DEFS]
 combined_tab_labels = [lbl for _, lbl in COMBINED_TAB_DEFS]
 combined_display_label_by_key = {k: lbl for k, lbl in COMBINED_TAB_DEFS}
@@ -4900,6 +4918,8 @@ with dash2:
         if st.button("Add", key="dash_add_watchlist_btn"):
             if not dash_wl_label.strip() or not dash_wl_bench.strip():
                 st.error("Both a label and a benchmark ticker are required.")
+            elif watchlist_label_error(dash_wl_label, load_markets_registry()):
+                st.error(watchlist_label_error(dash_wl_label, load_markets_registry()))
             else:
                 from stock_data import add_watchlist as _dash_add_watchlist
                 _dash_add_watchlist(dash_wl_label.strip(), dash_wl_bench.strip())

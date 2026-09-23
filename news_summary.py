@@ -3,8 +3,10 @@ LLM-generated news/announcements summary for the watchlists -- a
 Perplexity-Finance-style digest built with a 3-stage per-ticker architecture:
 
   Stage 1 (Web Search): a Gemma model with Google Search Grounding.
-     ONE grounded search per unique ticker. Ladder: the configured search model
-     (default gemma-4-26b-a4b-it) -> gemma-4-31b-it -> retry queue -> failed.
+     ONE grounded search per unique ticker. Ladder: three attempts on the
+     configured search model (default gemma-4-26b-a4b-it), each on a different
+     API key -> the default model, if a different one is configured -> retry
+     queue -> failed.
 
   Stage 2 (Significance filter): gemini-3.5-flash-lite, no search.
      Filters one ticker's raw notes against strict recency (24h, plus scheduled
@@ -57,7 +59,9 @@ NEWS_SUMMARY_FILE = os.path.join(SCRIPT_DIR, "news_summary.json")
 # Stage 1 ladder. The default matches settings.json's news_search_model so the
 # code default and the saved setting can't silently disagree.
 SEARCH_MODEL = "models/gemma-4-26b-a4b-it"
-SEARCH_FALLBACK_MODEL = "models/gemma-4-31b-it"
+# There is no search fallback MODEL. It was gemma-4-31b-it, which answered 0 of
+# ~63 calls across four runs (see llm_util.same_model_tiers); the key varies
+# between attempts instead. Expert Take and Sentiment made the same change.
 
 # Stage 2 ladder.
 REASONING_MODEL = "models/gemini-3.5-flash-lite"
@@ -288,33 +292,46 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None,
     grounding_tool = types.Tool(google_search=types.GoogleSearch())
     config = types.GenerateContentConfig(tools=[grounding_tool])
 
-    # standard_tiers = the good model, the good model again after a short
-    # backoff, then the fallback. The hand-rolled [model, fallback] list this
-    # replaces had NO same-model retry, so a single transient 429 -- the
-    # likeliest failure on a ~115-call serial run -- permanently demoted that
-    # ticker to the weaker search model for the night.
+    # Three attempts on the configured model, each on a freshly rotated key,
+    # the same ladder the Expert Take and Sentiment searches use
+    # (llm_util.same_model_tiers). This used to be standard_tiers(model,
+    # gemma-4-31b-it): the second attempt went back to the SAME key -- this loop
+    # never passed avoid_key, so a 429 on one key retried on that key -- and the
+    # third went to a model that answered 0 of ~63 calls.
+    #
+    # One extra rung on SEARCH_MODEL when news_search_model names something
+    # else. That setting is editable from the dashboard, and a typo'd or retired
+    # id must still fall to a model that works rather than fail every ticker.
+    # A model that reports itself unavailable is skipped for its remaining
+    # rungs: retrying a 404 just burns the attempts the default rung needs.
     #
     # This stage keeps its own loop rather than calling run_model_ladder
     # because the caller inspects the RAISED exception to choose between the
     # retry queue and a terminal failure, and the ladder helper does not
-    # surface it.
+    # surface it. It mirrors that helper's key handling instead.
+    tiers = llm_util.same_model_tiers(model)
+    if model != SEARCH_MODEL:
+        tiers.append((SEARCH_MODEL, 0))
     last_exc = None
-    for attempt_model, backoff in llm_util.standard_tiers(model, SEARCH_FALLBACK_MODEL):
+    avoid_key = None
+    unavailable = set()
+    for attempt_model, backoff in tiers:
+        if attempt_model in unavailable:
+            continue
         if backoff:
             time.sleep(backoff)
         try:
             resp = _generate_with_timeout(client, attempt_model, prompt, config,
-                                          timeout=CALL_TIMEOUT_SECONDS)
+                                          timeout=CALL_TIMEOUT_SECONDS, avoid_key=avoid_key)
             return (resp.text or "").strip(), _extract_sources(resp)
         except Exception as e:
             last_exc = e
-            print(f"  [stage1 {attempt_model} failed] {ticker}: {e}")
+            # Tagged by generate_with_timeout with the key that made THIS call.
+            avoid_key = getattr(e, "_gemini_key", None)
+            via = f" via {avoid_key}" if avoid_key else ""
+            print(f"  [stage1 {attempt_model} failed{via}] {ticker}: {e}")
             if llm_util.is_model_unavailable(e):
-                # A wrong/retired/unavailable model id says nothing about the
-                # next tier. is_retryable() returns False for these, so the old
-                # `break` meant a typo'd news_search_model -- a settings value
-                # editable straight from the dashboard -- failed EVERY ticker
-                # without ever trying the fallback that would have worked.
+                unavailable.add(attempt_model)
                 continue
             if not _is_retryable(e):
                 break

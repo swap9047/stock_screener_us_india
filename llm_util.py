@@ -198,6 +198,22 @@ def is_retryable(exc):
     return not any(marker in text for marker in TERMINAL_ERROR_MARKERS)
 
 
+def json_object(text):
+    """json.loads that insists on a JSON OBJECT, for the ladders' on_success.
+
+    Every structured stage asks for an object and then indexes the result like
+    one. JSON mode does not guarantee the shape, and a top-level array parsed
+    fine, left the ladder as a success, and then raised TypeError on
+    `data["as_of"] = ...` -- outside the ladder, so no other rung was tried.
+    Raising here instead makes a wrong shape what a parse error already was:
+    a retryable failure that moves the ladder on."""
+    import json
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        raise ValueError(f"expected a JSON object from the model, got {type(data).__name__}")
+    return data
+
+
 def run_model_ladder(client, prompt, tiers, config_for, label="llm", subject="",
                      timeout=CALL_TIMEOUT_SECONDS, on_success=None):
     """Try each (model, backoff) tier in order until one answers.

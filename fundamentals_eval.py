@@ -1,4 +1,3 @@
-import json
 import os
 from datetime import datetime, timedelta, timezone
 from google.genai import types
@@ -163,6 +162,17 @@ def save_fundamentals(data):
     _atomic_write_json(FUNDAMENTALS_FILE, data)
 
 SENTIMENT_STALE_DAYS = 4
+
+def normalize_view(data):
+    """Tidy the model's sentiment before it is validated: "POSITIVE " is the
+    same answer as "Positive". _is_valid_view matches the four labels exactly,
+    so a case or whitespace slip used to discard a complete analysis. Anything
+    that is not a dict is returned untouched -- the ladder rejects that shape
+    (llm_util.json_object)."""
+    if isinstance(data, dict) and isinstance(data.get("sentiment"), str):
+        data["sentiment"] = data["sentiment"].strip().capitalize()
+    return data
+
 
 def _is_valid_view(view):
     if not view:
@@ -618,7 +628,7 @@ def generate_fundamental_view(client, row_data, news_text=None, news_source=None
         client, prompt,
         llm_util.standard_tiers(model, REASONING_FALLBACK_MODEL),
         _config_for, label="sentiment", subject=ticker,
-        on_success=lambda resp: json.loads(_clean_json_text(resp.text)),
+        on_success=lambda resp: normalize_view(llm_util.json_object(_clean_json_text(resp.text))),
     )
     if used is None:
         return _pending_fallback("reasoning ladder exhausted")
@@ -642,7 +652,7 @@ def generate_fundamental_view(client, row_data, news_text=None, news_source=None
                 client, build_sentiment_prompt(company_name, ticker, combined),
                 llm_util.standard_tiers(model, REASONING_FALLBACK_MODEL),
                 _config_for, label="sentiment-retry", subject=ticker,
-                on_success=lambda resp: json.loads(_clean_json_text(resp.text)),
+                on_success=lambda resp: normalize_view(llm_util.json_object(_clean_json_text(resp.text))),
             )
             if used2 is not None and _has_hard_evidence(data2):
                 news_text = combined
@@ -714,8 +724,9 @@ def analyze_single_ticker_sentiment(ticker, row_data, api_key, is_retry=True, cl
         # signal the batch loop relies on. The model then answers "Unknown",
         # which is a perfectly valid view by _is_valid_view, and writing it
         # replaced a fresh Positive/Negative with Unknown for the rest of the
-        # day. The batch path is covered by refresh_fundamentals' retry queue;
-        # this one had nothing, so guard it here.
+        # day. The batch path needs the same guard, and has it in
+        # refresh_fundamentals._apply_result: its retry queue only covers a
+        # first-pass TimeoutError, and its retry pass runs with is_retry=True.
         return None
     # Re-read rather than reusing the copy loaded above: generate_fundamental_view
     # can take minutes, and the nightly refresh writes this same file, so holding

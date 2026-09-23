@@ -25,7 +25,8 @@ from stock_data import (fetch_all_markets, load_settings, get_filterable_metrics
                         reject_stale_rows, load_watchlists, enrich_rows)
 from json_store import DataFileError
 from alerts import (load_rules, load_state_status, save_state, load_discord_webhook, evaluate_and_fire,
-                    send_discord_batch, is_rule_due, notify_mode, STATE_FILE)
+                    send_discord_batch, is_rule_due, notify_mode, STATE_FILE,
+                    dead_rule_legs, prune_state)
 
 
 # Above this share of the universe missing, the run is treated as a throttled
@@ -117,6 +118,12 @@ def main():
     if gaps:
         print(f"WARNING: {n_gaps} ticker(s) have no row this run and cannot match anything: "
               + ", ".join(f"{mkt} ({len(t)})" for mkt, t in sorted(gaps.items())))
+    # A rule leg that can never match -- a retired metric key, a metric no row
+    # has a value for, a reference to a disabled rule -- used to look exactly
+    # like a rule that simply had nothing to report. Log only; see
+    # alerts.dead_rule_legs.
+    for warning in dead_rule_legs(all_rules, combined):
+        print(f"WARNING: {warning}")
 
 
     metric_labels = {v: k for k, v in get_filterable_metrics(settings).items()}
@@ -135,6 +142,10 @@ def main():
     # Pass the FULL ruleset so any rule-references inside due_rules can resolve
     # against rules that aren't due today; only due_rules actually fires.
     messages, new_state = evaluate_and_fire(all_rules, combined, state, due_rules=due_rules, metric_labels=metric_labels)
+    # Drop keys for deleted rules and for tickers in no watchlist (not merely
+    # missing from tonight's fetch) -- see alerts.prune_state. Done before the
+    # diff below, which only ever looks at keys of live rules and members.
+    new_state = prune_state(new_state, all_rules, watchlists)
     if seeding:
         save_state(new_state)
         active = sum(1 for v in new_state.values() if v.get("was_active"))

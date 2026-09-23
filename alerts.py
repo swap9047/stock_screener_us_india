@@ -356,6 +356,78 @@ def save_state(state):
     atomic_write_json(STATE_FILE, state)
 
 
+def prune_state(state, rules, watchlists):
+    """A copy of `state` without keys for rules that no longer exist or tickers
+    that are in no watchlist. Keys are "<rule_id>:<ticker>".
+
+    evaluate_and_fire only ever adds and updates keys, so a deleted rule or a
+    removed ticker left its entry behind for good. Mostly dead weight -- but a
+    ticker removed while a rule was TRUE for it kept was_active=True, so when
+    it was added back later and the rule was still true, the edge trigger saw
+    no transition and never announced it.
+
+    Membership comes from the watchlists, NOT from the rows fetched this run:
+    a ticker Yahoo failed to return tonight is still in a watchlist, keeps its
+    state, and so cannot re-fire tomorrow as if it were new. A disabled rule
+    keeps its state too, for the same reason when it is re-enabled."""
+    rule_ids = {r.get("id") for r in rules or []}
+    members = {t for tickers in (watchlists or {}).values() for t in tickers}
+    out = {}
+    for key, value in (state or {}).items():
+        rule_id, _, ticker = key.partition(":")
+        if rule_id in rule_ids and ticker in members:
+            out[key] = value
+    return out
+
+
+def dead_rule_legs(rules, rows):
+    """Human-readable warnings for enabled rules with a leg that cannot match
+    on this data, so the nightly log says so instead of the rule just looking
+    quiet. passes_filter fails closed on a missing value by design; this is
+    the visibility that choice was missing.
+
+      - a metric no row carries at all (a renamed or retired key);
+      - a metric every row carries as None (computed nowhere with this data);
+      - a reference to a rule that is disabled or does not exist, which
+        compute_rule_truth resolves to False.
+
+    Disabled rules are not audited -- they cannot fire anyway."""
+    rows = rows or []
+    carried = {}
+    for row in rows:
+        for k, v in row.items():
+            carried[k] = carried.get(k, False) or v is not None
+    by_id = {r.get("id"): r for r in rules or []}
+    out = []
+    for rule in rules or []:
+        if not rule.get("enabled", True) or not rule.get("conditions"):
+            continue
+        name = rule.get("name") or rule.get("id")
+        problems = []
+        for cond in rule["conditions"]:
+            if cond.get("type") == "rule":
+                ref = cond.get("rule_id")
+                target = by_id.get(ref)
+                if target is None:
+                    problems.append(f"references rule {ref}, which does not exist")
+                elif not target.get("enabled", True) or not target.get("conditions"):
+                    problems.append(f"references rule {ref} ({target.get('name') or ref}), which is disabled")
+                continue
+            metrics = [cond.get("metric_a")]
+            if cond.get("compare_type") == "metric":
+                metrics.append(cond.get("metric_b"))
+            for m in metrics:
+                if not m or not rows:
+                    continue
+                if m not in carried:
+                    problems.append(f"uses {m}, which no row carries")
+                elif not carried[m]:
+                    problems.append(f"uses {m}, which is empty on every row")
+        if problems:
+            out.append(f'Rule "{name}": ' + "; ".join(dict.fromkeys(problems)))
+    return out
+
+
 def load_discord_webhook():
     """Checks, in order: DISCORD_WEBHOOK_URL env var (for headless runs like
     GitHub Actions), then discord_config.json (local Streamlit runs).
@@ -700,6 +772,10 @@ def _format_cell(metric_key, value):
     if value is None:
         return "—"
     if metric_key == "tech_uptrend":
+        return "Yes" if value else "No"
+    # Before the int branch: bool IS an int, so Interested rendered as 1/0
+    # while the rule builder and the table both say Yes/No.
+    if isinstance(value, bool):
         return "Yes" if value else "No"
     if isinstance(value, float):
         return f"{value:,.1f}"

@@ -90,6 +90,10 @@ CATEGORICAL_METRICS = {
     # "Unknown" included, since that's what a stale//evidence-less view
     # resolves to and you may well want to filter for exactly those.
     "sentiment": ["Positive", "Neutral", "Negative", "Unknown"],
+    # Net Vol 10D: accumulation vs distribution (stock_data sets exactly these
+    # two, or None). It was a plain text metric, so it got a free-text box
+    # instead of a dropdown and sorted alphabetically -- Negative first.
+    "net_volume_10d_dir": ["Positive", "Negative"],
 }
 
 
@@ -240,6 +244,17 @@ def _resolve_metric_b(row, filt):
         multiplier = filt.get("multiplier")
         multiplier = 1 if multiplier is None else multiplier
         offset = filt.get("offset") or 0
+        # float(), failing closed: the builder's number_input only ever writes
+        # numbers, but a hand-edited "1.5" or "abc" reached `b * multiplier`
+        # and raised TypeError (or, for an int b, repeated the string) -- the
+        # same uncaught path the TEXT metric guard above exists for.
+        # Numbers pass through untouched, so an int metric with no scaling stays
+        # an int and the alert preview keeps printing it without a ".0".
+        try:
+            multiplier, offset = (x if isinstance(x, (int, float)) else float(x)
+                                  for x in (multiplier, offset))
+        except (TypeError, ValueError):
+            return None
         return b * multiplier + offset
     if filt.get("operator") == "in":
         return filt.get("value")

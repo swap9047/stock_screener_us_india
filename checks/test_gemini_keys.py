@@ -325,8 +325,8 @@ for mod in ("fundamentals_eval.py", "expert_views.py"):
     src = (Path(REPO) / mod).read_text()
     check("same_model_tiers(SEARCH_MODEL)" in src, f"{mod}'s grounded search uses same_model_tiers")
     # The search fallback MODEL is gone entirely -- the key is what varies now.
-    # (Both modules still name 31b in their REASONING ladder, which is a
-    # different stage and a different question.)
+    # Neither REASONING ladder names 31b any more either -- see
+    # checks/test_review_091926.py T3.
     check("SEARCH_FALLBACK_MODEL" not in src,
           f"{mod} has no search fallback model left to drift")
 

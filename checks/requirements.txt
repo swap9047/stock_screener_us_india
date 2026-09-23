@@ -2,3 +2,6 @@
 # they parse the workflow YAML (test_workflows.py). Kept out of the app's own
 # requirements so production installs nothing it does not import.
 pyyaml~=6.0
+# test_review_091926.py (T0) runs pyflakes over every module and fails on an
+# undefined name -- the class of bug that crashed every UI re-analyze.
+pyflakes~=3.2

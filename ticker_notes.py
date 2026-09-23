@@ -91,9 +91,10 @@ def compute_auto_flag(row, expert_verdict=None, sentiment=None):
     requires >=3 of 4 bullish votes, Red requires >=3 of 4 bearish votes.
     Missing/unclear data (Trend not yet computed, Sentiment "Unknown" or
     "Neutral", Expert Take not yet generated) simply abstains rather than
-    shrinking the pass threshold below 3. Tech Uptrend is the one exception:
-    it's a plain boolean (never "unknown" by construction in stock_data.py),
-    so it always casts a vote one way or the other.
+    shrinking the pass threshold below 3. Tech Uptrend is a plain boolean
+    once computed, so it normally always votes; when it is MISSING from the
+    row (no computed value at all) it abstains like the others. It used to
+    read bool(None) == False and cast a Red vote for data that did not exist.
 
     Vote definitions (deliberately asymmetric, not a copy-paste mirror):
       GREEN vote: Expert Take in (ACCUMULATE, HOLD) -- HOLD is the model's
@@ -126,7 +127,8 @@ def compute_auto_flag(row, expert_verdict=None, sentiment=None):
     so the hover tooltip explains both the vote AND the veto, not just the
     final color."""
     trend = row.get("trend")
-    tech_uptrend = bool(row.get("tech_uptrend"))
+    raw_tech = row.get("tech_uptrend")
+    tech_uptrend = bool(raw_tech)
     green_hits, red_hits = [], []
 
     if expert_verdict in ("ACCUMULATE", "HOLD"):
@@ -139,7 +141,8 @@ def compute_auto_flag(row, expert_verdict=None, sentiment=None):
     if trend in ("Downtrend", "Strong Downtrend"):
         red_hits.append(f"Trend={trend}")
 
-    (green_hits if tech_uptrend else red_hits).append(f"Tech Uptrend={'Yes' if tech_uptrend else 'No'}")
+    if raw_tech is not None:
+        (green_hits if tech_uptrend else red_hits).append(f"Tech Uptrend={'Yes' if tech_uptrend else 'No'}")
 
     if sentiment == "Positive":
         green_hits.append("Sentiment=Bullish")

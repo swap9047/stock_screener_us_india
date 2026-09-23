@@ -35,7 +35,7 @@ step names, so each key needs a line in the AI steps' `env:` blocks. Every run l
 `[key rotation] N key(s): ...`; if that number is lower than expected, that line is
 missing.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 380
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 505
 offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
@@ -196,6 +196,9 @@ note that the sortable field (`sentiment`, `tech_uptrend`) and the column key
 
 Skipping any of these is silent — the column renders fine and simply isn't available
 somewhere. 14 columns were unfilterable for months this way.
+The reverse gap is now caught: `checks/test_review_091926.py` (T5) fails when a
+filterable metric has no `build_column_defs` entry. Two alertable metrics, one of
+them driving a live nightly rule, had no column until 2026-09-22.
 
 1. **`build_column_defs`** (`app.py`) — registers the column and its label.
 2. **`get_filterable_metrics`** (`stock_data.py`) — makes it usable in custom filters and
@@ -237,6 +240,11 @@ the same thing on every column — preserve that when adding one.
 
 Each of these has actually bitten this codebase.
 
+- **A name used but never imported crashes only when that line runs.** `app.py` used
+  `save_fundamentals` without importing it, so every re-analyze button raised NameError
+  after the model calls finished, and no check noticed because none clicks a button that
+  calls Gemini. `checks/test_review_091926.py` (T0) now runs pyflakes over every module
+  and fails on any undefined name.
 - **Nothing in `app.py` may load a data file before the `bootstrap_data_files` block.**
   The loaders create an empty default for a missing file. On a fresh container, the next
   save would then push those blanks over the real data. The block stops the app instead.

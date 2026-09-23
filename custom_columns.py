@@ -84,14 +84,23 @@ def validate_formula(formula, valid_names):
     internally by safe_eval_formula() before every real evaluation."""
     if not formula or not formula.strip():
         return False, "Formula is empty."
+    # RecursionError is caught on both steps: a pathologically long or deep
+    # formula (a pasted blob, a hand-edited custom_columns.json) exhausts the
+    # recursion limit in the parser or in _check_ast's walk. This function runs
+    # OUTSIDE safe_eval_formula's try, so it used to escape into every tab's
+    # render path and the headless jobs.
     try:
         tree = ast.parse(formula, mode="eval")
     except SyntaxError as e:
         return False, f"Syntax error: {e.msg}"
+    except (RecursionError, MemoryError):
+        return False, "Formula is too long or too deeply nested."
     try:
         _check_ast(tree, valid_names)
     except FormulaError as e:
         return False, str(e)
+    except RecursionError:
+        return False, "Formula is too long or too deeply nested."
     return True, ""
 
 

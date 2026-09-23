@@ -7,7 +7,6 @@ Evaluates rich quantitative indicators, trend rules, active alert conditions,
 and free web news catalysts to produce actionable investor takes.
 """
 
-import json
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -37,6 +36,8 @@ def _clean_json_text(text):
 # The grounded-search ladder for this pipeline's news stage, and the source
 # label written to the view for whichever rung answered.
 SEARCH_MODEL = "models/gemma-4-26b-a4b-it"
+# Last rung of the REASONING ladder (see generate_expert_view).
+REASONING_FALLBACK_MODEL = "models/gemma-4-26b-a4b-it"
 SEARCH_SOURCE_LABELS = {SEARCH_MODEL: "🔍 Gemma-4-26B (Google Search)"}
 # There is no fallback MODEL any more, deliberately. This used to end on
 # models/gemma-4-31b-it, which answered 0 of ~63 calls across four runs on
@@ -142,6 +143,17 @@ def stale_view_fallback(reason):
         "news_source": "⚪ Unknown",
         "model_used": "Error",
     }
+
+
+def normalize_view(data):
+    """Tidy the model's verdict before it is validated: " accumulate " is the
+    same answer as "ACCUMULATE". _is_valid_view matches the three verdicts
+    exactly, so a case or whitespace slip used to discard a complete analysis
+    and keep the ticker Pending. Anything that is not a dict is returned
+    untouched -- the ladder rejects that shape (llm_util.json_object)."""
+    if isinstance(data, dict) and isinstance(data.get("verdict"), str):
+        data["verdict"] = data["verdict"].strip().upper()
+    return data
 
 
 def _is_valid_view(view):
@@ -451,7 +463,6 @@ Return ONLY a valid JSON object matching this schema:
 
 def generate_expert_view(client, row_data, news_text=None, news_source=None, active_alerts_text=None, is_retry=False):
     from google.genai import types
-    import json
     from datetime import datetime, timezone
 
     ticker = row_data.get("ticker", "UNKNOWN")
@@ -518,11 +529,14 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
     # permanently dropped that ticker to a weaker model for the night. The
     # ladder also stops early now on a terminal error instead of burning every
     # tier on a bad key or an exhausted quota.
-    tiers = llm_util.standard_tiers(model, "models/gemma-4-31b-it")
-    tiers.append(("models/gemma-4-26b-a4b-it", 0))
+    #
+    # The fallback is 26b alone. gemma-4-31b-it used to sit ahead of it, and
+    # it answered 0 of ~63 calls on the search side (llm_util.same_model_tiers),
+    # so every exhausted primary spent a full call timeout on it first.
+    tiers = llm_util.standard_tiers(model, REASONING_FALLBACK_MODEL)
     data, used = llm_util.run_model_ladder(
         client, prompt, tiers, _config_for, label="expert", subject=ticker,
-        on_success=lambda resp: json.loads(_clean_json_text(resp.text)),
+        on_success=lambda resp: normalize_view(llm_util.json_object(_clean_json_text(resp.text))),
     )
     if used is not None:
         data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
