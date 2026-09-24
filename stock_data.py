@@ -2773,6 +2773,15 @@ def reject_stale_rows(fresh_per_market, previous_per_market, max_hold_days=5, to
     edge-triggered, never fired again. With the flag set, a previous row whose
     data_end IS the still-forming session (forming_session_date) can never win:
     it is the row that is wrong, not the fresh one.
+
+    A held row still takes every FIELD it lacks from the fresh row. The stored
+    row may predate a code change that added a column: on 2026-09-24 Yahoo
+    served five .BO tickers a session behind, so this guard kept rows computed
+    before TA Rules existed and the new column read blank on them until Yahoo
+    caught up. Filling only ABSENT keys keeps every price and indicator the
+    stored row has (nothing moves backwards in time), and a new field carries
+    the fresh fetch's value, one session older at most -- and the saved row
+    now has that field, so the next refresh holds it like any other.
     """
     prev_by_market = {
         m: {r.get("ticker"): r for r in rows}
@@ -2807,7 +2816,8 @@ def reject_stale_rows(fresh_per_market, previous_per_market, max_hold_days=5, to
             if (today - old_end).days > max_hold_days:
                 kept.append(row)          # the valve -- see the docstring
                 continue
-            kept.append(old)
+            missing = {k: v for k, v in row.items() if k not in old}
+            kept.append({**old, **missing} if missing else old)
             stale.append(row.get("ticker"))
         out[market] = kept
         if stale:
