@@ -170,7 +170,17 @@ DEFAULT_SETTINGS = {
     # -- Tech Uptrend column (boolean) -- independent of Vol Trend's ratio above --
     "tech_uptrend_min_vstop_weeks": 3,   # weeks since last VStop flip required for Tech Uptrend
     "tech_uptrend_volume_ratio": 1.4,   # avg_volume_10d / avg_volume_100d must be >= this
-    
+    # -- TA Rules column (TheWrap flowchart, see compute_ta_rules) --
+    "ta_converge_pct": 3.0,        # EMAs "converging" when (max - min) of the 3 WEMAs <= this % of the slow one
+    "ta_break_pct": 3.0,           # a weekly close must be this % past an EMA / S-R zone to count as broken
+    "ta_sr_lookback_weeks": 156,   # weekly bars searched for support/resistance pivots
+    "ta_sr_pivot_weeks": 3,        # a pivot's wick is the extreme of +/- this many weeks
+    "ta_sr_reaction_pct": 8.0,     # ...and price must then move this % away from it (rebound/retreat)
+    "ta_sr_reaction_weeks": 8,     # ...within this many weeks
+    "ta_sr_zone_pct": 3.0,         # pivots within this % of each other form one zone
+    "ta_sr_min_touches": 2,        # a zone is a level only with at least this many pivots
+    "ta_sr_recent_weeks": 13,      # a zone counts as broken only if price was on its other side this recently
+
     # -- News Pipeline Defaults --
     "news_search_model": "models/gemma-4-26b-a4b-it",
     "news_reasoning_model": "models/gemini-3.5-flash-lite",
@@ -493,6 +503,7 @@ def get_filterable_metrics(settings=None):
         "10/30 W Golden Cross (weeks ago)": "gc_weeks_10_30",
         "1W Ret vs Index": "rel_ret_1w_index",
         "Tech Uptrend": "tech_uptrend",
+        "TA Rules": "ta_rules",
         "Flag": "flag",
         "Notes": "note",
         "Expert Take": "expert_take",
@@ -1060,6 +1071,157 @@ def compute_trend(last_close, ema_slow_series, rs_weekly, week52_high, week52_lo
     return label, rank, detail
 
 
+# TA Rules outcomes, exactly as TheWrap's flowchart words them. Best-first,
+# which is also filters.CATEGORICAL_METRICS' declaration (sort) order.
+TA_RULES_OUTCOMES = (
+    "Bullish Signal", "Maintain Position / Add", "Wait/Watch",
+    "Momentum Fading", "Be Cautious", "Exit",
+)
+
+
+def completed_weekly_bars(weekly, ticker, now=None):
+    """`weekly` minus its trailing bar when that week is still forming.
+
+    A W-FRI bar is complete once its Friday is past in the exchange's own
+    timezone, or it IS that Friday and the session has settled. Deliberately
+    not the VStop test (is the Friday label a printed trading day?): that one
+    never releases a week whose Friday is a holiday, and it counts a Friday
+    bar as complete while Friday's session is still trading."""
+    if weekly is None or len(weekly) == 0:
+        return weekly
+    now = now or datetime.now(ZoneInfo("UTC"))
+    tz = EXCHANGE_SESSIONS[exchange_session(ticker)][0]
+    local_today = now.astimezone(ZoneInfo(tz)).date()
+    friday = weekly.index[-1].date()
+    if friday > local_today or (friday == local_today and forming_session_date(ticker, now) is not None):
+        return weekly.iloc[:-1]
+    return weekly
+
+
+def find_sr_zones(weekly, pivot_weeks=3, reaction_pct=8.0, reaction_weeks=8,
+                  zone_pct=3.0, min_touches=2):
+    """Support/resistance zones from weekly WICKS: prices where the stock turned
+    around at least `min_touches` times.
+
+    A swing high is a week whose High tops the +/- `pivot_weeks` weeks around
+    it (strictly above the earlier ones, so a flat double-top week pair counts
+    once) and after which price RETREATED at least `reaction_pct` within
+    `reaction_weeks` weeks. A swing low is the mirror image, with a REBOUND.
+    Without the reaction test every sideways wiggle is a "level".
+
+    Pivots within `zone_pct` of the lowest one in a group form a zone. Highs
+    and lows count alike: a zone is not support or resistance by origin, only
+    by which side of it price is on -- a broken ceiling that later holds as a
+    floor is one level with more touches (role reversal).
+
+    Returns [{"low", "high", "touches", "last_touch"}], lowest first."""
+    n = len(weekly)
+    if n < 2 * pivot_weeks + 2:
+        return []
+    highs = weekly["High"].to_numpy(dtype=float)
+    lows = weekly["Low"].to_numpy(dtype=float)
+    up, down = 1 + reaction_pct / 100, 1 - reaction_pct / 100
+    pivots = []   # (price, bar position)
+    # The last `pivot_weeks` bars can't be pivots yet: their right side hasn't
+    # happened. So the breakout week can never create its own level.
+    for i in range(pivot_weeks, n - pivot_weeks):
+        before = slice(i - pivot_weeks, i)
+        after = slice(i + 1, i + 1 + pivot_weeks)
+        reaction = slice(i + 1, min(n, i + 1 + reaction_weeks))
+        if (highs[i] > highs[before].max() and highs[i] >= highs[after].max()
+                and lows[reaction].min() <= highs[i] * down):
+            pivots.append((highs[i], i))
+        if (lows[i] < lows[before].min() and lows[i] <= lows[after].min()
+                and highs[reaction].max() >= lows[i] * up):
+            pivots.append((lows[i], i))
+
+    zones, group = [], []
+
+    def _close_group():
+        if len(group) >= min_touches:
+            zones.append({
+                "low": round(float(min(p for p, _ in group)), 2),
+                "high": round(float(max(p for p, _ in group)), 2),
+                "touches": len(group),
+                "last_touch": weekly.index[max(i for _, i in group)].strftime("%Y-%m-%d"),
+            })
+
+    for price, i in sorted(pivots):
+        if group and price > group[0][0] * (1 + zone_pct / 100):
+            _close_group()
+            group = []
+        group.append((price, i))
+    _close_group()
+    return zones
+
+
+def compute_ta_rules(close, ema_fast, ema_mid, ema_slow, zones, recent_closes,
+                     converge_pct=3.0, break_pct=3.0, periods=(10, 20, 40)):
+    """TheWrap's TA Rules flowchart, node for node. All inputs are the LAST
+    COMPLETED weekly bar: its close and the three WEMAs as of that week.
+
+      EMAs converging?  (max - min of the 3 WEMAs <= converge_pct of the slow one)
+        Yes -> broken support?     -> Exit
+               broken resistance?  -> Bullish Signal
+               else                -> Wait/Watch
+        No  -> broken slow WEMA?   -> Exit
+               broken mid WEMA?    -> Be Cautious
+               broken fast WEMA?   -> Momentum Fading
+               else                -> Maintain Position / Add
+
+    "Broken" = the close is more than break_pct past the line. For an S/R zone
+    it also needs one of `recent_closes` (the weeks just before this one) on
+    the zone's other side: otherwise every zone from years ago that price now
+    sits far below would read as broken support. No zones at all falls through
+    to Wait/Watch, the chart's own No -> No path.
+
+    Returns (verdict, detail) -- detail feeds app.ta_rules_tooltip."""
+    buf = break_pct / 100
+    spread_pct = (max(ema_fast, ema_mid, ema_slow) - min(ema_fast, ema_mid, ema_slow)) / ema_slow * 100
+    converging = spread_pct <= converge_pct
+    detail = {
+        "close": round(float(close), 2),
+        "ema_fast": round(float(ema_fast), 2),
+        "ema_mid": round(float(ema_mid), 2),
+        "ema_slow": round(float(ema_slow), 2),
+        "periods": list(periods),
+        "spread_pct": round(float(spread_pct), 2),
+        "converge_pct": converge_pct,
+        "break_pct": break_pct,
+        "converging": converging,
+    }
+
+    if converging:
+        broken_support = [z for z in zones if close < z["low"] * (1 - buf)
+                          and any(c >= z["low"] for c in recent_closes)]
+        broken_resistance = [z for z in zones if close > z["high"] * (1 + buf)
+                             and any(c <= z["high"] for c in recent_closes)]
+        below = [z for z in zones if z["low"] <= close]
+        above = [z for z in zones if z["high"] >= close]
+        detail.update({
+            "zone_count": len(zones),
+            "support": max(below, key=lambda z: z["low"]) if below else None,
+            "resistance": min(above, key=lambda z: z["high"]) if above else None,
+        })
+        if broken_support:
+            # The chart asks about support first, so a close that breaks both
+            # a support and a resistance zone (a wild week) reads Exit.
+            detail["decided_by"] = {"test": "support", "zone": max(broken_support, key=lambda z: z["low"])}
+            return "Exit", detail
+        if broken_resistance:
+            detail["decided_by"] = {"test": "resistance", "zone": max(broken_resistance, key=lambda z: z["high"])}
+            return "Bullish Signal", detail
+        return "Wait/Watch", detail
+
+    for name, ema, verdict in (("slow", ema_slow, "Exit"),
+                               ("mid", ema_mid, "Be Cautious"),
+                               ("fast", ema_fast, "Momentum Fading")):
+        if close < ema * (1 - buf):
+            detail["decided_by"] = {"test": name}
+            return verdict, detail
+    return "Maintain Position / Add", detail
+
+
 def _fetch_info_with_retry(yf_t, ticker, attempts=3, base_delay=3):
     """yf.Ticker.info makes one HTTP request per ticker with no built-in retry --
     back-to-back calls across a full watchlist reliably trip Yahoo's rate limiter
@@ -1407,6 +1569,17 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
     volume_decline_ratio = settings.get("volume_decline_ratio", 0.7)
     tech_uptrend_min_vstop_weeks = settings.get("tech_uptrend_min_vstop_weeks", 3)
     tech_uptrend_volume_ratio = settings.get("tech_uptrend_volume_ratio", 1.4)
+    ta_converge_pct = float(settings.get("ta_converge_pct", 3.0))
+    ta_break_pct = float(settings.get("ta_break_pct", 3.0))
+    ta_sr_lookback_weeks = int(settings.get("ta_sr_lookback_weeks", 156))
+    ta_sr_kwargs = {
+        "pivot_weeks": int(settings.get("ta_sr_pivot_weeks", 3)),
+        "reaction_pct": float(settings.get("ta_sr_reaction_pct", 8.0)),
+        "reaction_weeks": int(settings.get("ta_sr_reaction_weeks", 8)),
+        "zone_pct": float(settings.get("ta_sr_zone_pct", 3.0)),
+        "min_touches": int(settings.get("ta_sr_min_touches", 2)),
+    }
+    ta_sr_recent_weeks = int(settings.get("ta_sr_recent_weeks", 13))
 
     if not tickers:
         return [], datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M ET")
@@ -1656,6 +1829,27 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
                 ema20_series = weekly["Close"].ewm(span=w_mid, adjust=False).mean()
                 ema10 = round(float(ema10_series.iloc[-1]), 1)
                 ema20 = round(float(ema20_series.iloc[-1]), 1)
+
+            # TA Rules (TheWrap flowchart, see compute_ta_rules). Judged on the
+            # last COMPLETED week only -- the flowchart reads weekly closes, and
+            # a mid-week dip must not flip a holding to Exit. EMAs are causal,
+            # so recomputing them on the completed bars gives exactly the
+            # full-series values as of that week.
+            ta_rules = ta_rules_detail = None
+            weekly_done = completed_weekly_bars(weekly, t)
+            if len(weekly_done) >= w_slow + 1:
+                closes_w = weekly_done["Close"]
+                ta_rules, ta_rules_detail = compute_ta_rules(
+                    float(closes_w.iloc[-1]),
+                    float(closes_w.ewm(span=w_fast, adjust=False).mean().iloc[-1]),
+                    float(closes_w.ewm(span=w_mid, adjust=False).mean().iloc[-1]),
+                    float(closes_w.ewm(span=w_slow, adjust=False).mean().iloc[-1]),
+                    find_sr_zones(weekly_done.iloc[-ta_sr_lookback_weeks:], **ta_sr_kwargs),
+                    closes_w.iloc[:-1].iloc[-ta_sr_recent_weeks:].tolist() if ta_sr_recent_weeks > 0 else [],
+                    converge_pct=ta_converge_pct, break_pct=ta_break_pct,
+                    periods=(w_fast, w_mid, w_slow),
+                )
+                ta_rules_detail["week"] = weekly_done.index[-1].strftime("%Y-%m-%d")
 
             # Daily SMAs (fast/mid/slow, e.g. 10/50/200)
             ema10_daily = ema50 = ema200 = None
@@ -2120,6 +2314,8 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
                 "trend_rank": trend_rank,
                 "trend_detail": trend_detail,
                 "tech_uptrend": tech_uptrend,
+                "ta_rules": ta_rules,
+                "ta_rules_detail": ta_rules_detail,
                 "ema10": ema10,
                 "ema20": ema20,
                 "ema40": ema40,

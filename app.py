@@ -506,6 +506,14 @@ def _plain_text(val):
     return val
 
 
+# TA Rules cell colours, copied from the flowchart's outcome boxes (Momentum
+# Fading and Maintain / Add share its purple).
+TA_RULES_COLORS = {
+    "Bullish Signal": "#1e8449", "Wait/Watch": "#138d75", "Be Cautious": "#d35400",
+    "Momentum Fading": "#7d3c98", "Maintain Position / Add": "#7d3c98", "Exit": "#c0392b",
+}
+
+
 def style_row(row, ema_labels):
     styles = [""] * len(row)
     # If there are duplicate 'Last' columns, row["Last"] might be a Series.
@@ -519,7 +527,7 @@ def style_row(row, ema_labels):
         # Access by index rather than label to avoid returning a Series
         # when duplicate column names exist in the DataFrame.
         val = row.iloc[i]
-        if col in ("Trend", "Vol Trend", "Tech Uptrend", "Net Vol 10D"):
+        if col in ("Trend", "Vol Trend", "Tech Uptrend", "Net Vol 10D", "TA Rules"):
             val = _plain_text(val)
         if col in ema_cols and pd.notna(val):
             styles[i] = "color:#c0392b;font-weight:600" if last < val else "color:#1e8449;font-weight:600"
@@ -550,6 +558,11 @@ def style_row(row, ema_labels):
         elif col in ("% Chg", "Qtr Profit Growth %", "Qtr Revenue Growth %",
                      "Perf 1M %", "Perf 3M %", "Perf 6M %", "Perf 1Y %") and pd.notna(val):
             styles[i] = "color:#1e8449;font-weight:600" if val > 0 else ("color:#c0392b;font-weight:600" if val < 0 else "")
+        elif col == "TA Rules" and isinstance(val, str):
+            # The colours of TheWrap flowchart's own outcome boxes.
+            color = TA_RULES_COLORS.get(val)
+            if color:
+                styles[i] = f"color:{color};font-weight:700"
         elif col == "Vol Trend" and isinstance(val, str):
             vol_colors = {"Exploding": "#1e8449", "Declining": "#c0392b"}
             color = vol_colors.get(val)
@@ -662,6 +675,55 @@ def trend_tooltip(row, labels):
     else:
         lines.append(f"n/a Vol 10D ≥ {detail['volume_ratio']}× Vol 100D (no volume data)")
     lines.append(f"→ {'Strong' if detail['strong'] else 'Not Strong'}")
+    return "\n".join(lines)
+
+
+def ta_rules_tooltip(row):
+    """Hover text for a TA Rules cell: the path taken through TheWrap's
+    flowchart, with the numbers each node was decided on."""
+    d = row.get("ta_rules_detail")
+    if not d:
+        return "Not enough completed weekly history yet (needs the slow WEMA)."
+    fast, mid, slow = d["periods"]
+    buf = d["break_pct"]
+    lines = [f"Week ending {d.get('week', '?')} · weekly close {d['close']:,.2f}"]
+    lines.append(
+        f"EMAs converging? spread {d['spread_pct']:.1f}% of the {slow}W "
+        f"({'≤' if d['converging'] else '>'} {d['converge_pct']:g}%) → {'Yes' if d['converging'] else 'No'}"
+    )
+    decided = d.get("decided_by") or {}
+
+    def _zone(z):
+        span = f"{z['low']:,.2f}" if z["low"] == z["high"] else f"{z['low']:,.2f}–{z['high']:,.2f}"
+        return f"{span} ({z['touches']} touches)"
+
+    if d["converging"]:
+        sup, res = d.get("support"), d.get("resistance")
+        if not d.get("zone_count"):
+            lines.append("No support/resistance zone found in the lookback.")
+        if sup:
+            lines.append(f"Support {_zone(sup)}: broken below {sup['low'] * (1 - buf / 100):,.2f}")
+        if res:
+            lines.append(f"Resistance {_zone(res)}: broken above {res['high'] * (1 + buf / 100):,.2f}")
+        if decided.get("test") == "support":
+            lines.append(f"Broken support {_zone(decided['zone'])} → Yes")
+        else:
+            lines.append("Broken support? → No")
+            if decided.get("test") == "resistance":
+                lines.append(f"Broken resistance {_zone(decided['zone'])} → Yes")
+            else:
+                lines.append("Broken resistance? → No")
+    else:
+        for name, period, key in (("slow", slow, "ema_slow"), ("mid", mid, "ema_mid"), ("fast", fast, "ema_fast")):
+            ema = d[key]
+            broken = decided.get("test") == name
+            lines.append(
+                f"Broken {period}W EMA? close {d['close']:,.2f} vs {ema:,.2f} "
+                f"(line {ema * (1 - buf / 100):,.2f}) → {'Yes' if broken else 'No'}"
+            )
+            if broken:
+                break
+    lines.append(f"→ {row.get('ta_rules') or '—'}")
     return "\n".join(lines)
 
 
@@ -874,6 +936,8 @@ def build_ai_review_payload(
         breakdowns = []
         if "trend" in visible_keys:
             breakdowns.append(("Trend", trend_tooltip(r, labels)))
+        if "ta_rules" in visible_keys:
+            breakdowns.append(("TA Rules", ta_rules_tooltip(r)))
         if "volume_trend" in visible_keys:
             breakdowns.append(("Vol Trend", vol_trend_tooltip(r, settings)))
         if "tech_uptrend_label" in visible_keys:
@@ -1190,6 +1254,15 @@ def column_definitions(settings, labels):
             f"Exploding: 10D avg volume ≥ {settings.get('volume_explode_ratio', 1.4)}× the 100D avg. "
             f"Declining: ≤ {settings.get('volume_decline_ratio', 0.7)}× the 100D avg. Otherwise In-line. "
             "Hover a cell for the actual ratio."
+        ),
+        "TA Rules": (
+            "TheWrap flowchart, on the last completed weekly close. If the three WEMAs are within "
+            f"{settings.get('ta_converge_pct', 3.0):g}% of each other (converging): broken support → Exit, "
+            "broken resistance → Bullish Signal, else Wait/Watch. Otherwise: broken slow WEMA → Exit, mid → "
+            "Be Cautious, fast → Momentum Fading, none → Maintain Position / Add. Broken = the close is more than "
+            f"{settings.get('ta_break_pct', 3.0):g}% past the line. Support/resistance = price zones the stock "
+            f"turned at {settings.get('ta_sr_min_touches', 2)}+ times (weekly wicks, "
+            f"{settings.get('ta_sr_reaction_pct', 8.0):g}%+ move away). Hover a cell for the path taken."
         ),
         "Tech Uptrend": (
             "Yes only if ALL of: close > weekly VStop, VStop held its direction for more than "
@@ -1529,9 +1602,70 @@ def settings_dialog():
              "though both default to the same value.",
     )
 
+    st.markdown("**TA Rules column** (TheWrap flowchart)")
+    st.caption(
+        "Judged on the last completed weekly close. Converging WEMAs → support/resistance decide "
+        "(Exit / Bullish Signal / Wait/Watch); otherwise the slow, mid and fast WEMAs decide "
+        "(Exit / Be Cautious / Momentum Fading / Maintain Position / Add)."
+    )
+    ta1, ta2, ta3 = st.columns(3)
+    ta_converge_pct = ta1.number_input(
+        "22. Converging: WEMA spread ≤ %", min_value=0.1, step=0.5, format="%.1f",
+        value=float(settings.get("ta_converge_pct", 3.0)), key="set_ta_converge",
+        help="The EMAs count as converging when the gap between the highest and lowest of the three "
+             "WEMAs is at most this % of the slow WEMA.",
+    )
+    ta_break_pct = ta2.number_input(
+        "23. Broken: close past line by %", min_value=0.0, step=0.5, format="%.1f",
+        value=float(settings.get("ta_break_pct", 3.0)), key="set_ta_break",
+        help="A WEMA, support or resistance only counts as broken when the weekly close is more than "
+             "this % beyond it. 0 = any close past the line.",
+    )
+    ta_sr_lookback = ta3.number_input(
+        "24. S/R lookback (weeks)", min_value=20, step=4,
+        value=int(settings.get("ta_sr_lookback_weeks", 156)), key="set_ta_sr_lookback",
+        help="How many weeks back support/resistance turning points are searched for. 156 = 3 years.",
+    )
+    ta4, ta5, ta6 = st.columns(3)
+    ta_sr_pivot = ta4.number_input(
+        "25. Turning point: extreme of ± weeks", min_value=1, step=1,
+        value=int(settings.get("ta_sr_pivot_weeks", 3)), key="set_ta_sr_pivot",
+        help="A week's high (low) is a turning point only if it is the highest (lowest) of this many "
+             "weeks either side. Also means a turning point is confirmed only this many weeks later.",
+    )
+    ta_sr_reaction = ta5.number_input(
+        "26. Turning point: move away ≥ %", min_value=0.0, step=1.0, format="%.1f",
+        value=float(settings.get("ta_sr_reaction_pct", 8.0)), key="set_ta_sr_reaction",
+        help="After the turning point price must retreat (from a high) or rebound (from a low) by at "
+             "least this %, within the window on the right. Filters out sideways wiggles.",
+    )
+    ta_sr_reaction_weeks = ta6.number_input(
+        "27. ...within weeks", min_value=1, step=1,
+        value=int(settings.get("ta_sr_reaction_weeks", 8)), key="set_ta_sr_reaction_weeks",
+        help="The window the move away has to happen in.",
+    )
+    ta7, ta8, ta9 = st.columns(3)
+    ta_sr_zone = ta7.number_input(
+        "28. Zone width %", min_value=0.1, step=0.5, format="%.1f",
+        value=float(settings.get("ta_sr_zone_pct", 3.0)), key="set_ta_sr_zone",
+        help="Turning points within this % of each other are the same level. Highs and lows both "
+             "count, so a broken ceiling that later holds as a floor is one level.",
+    )
+    ta_sr_touches = ta8.number_input(
+        "29. Min touches per zone", min_value=1, step=1,
+        value=int(settings.get("ta_sr_min_touches", 2)), key="set_ta_sr_touches",
+        help="A zone is support/resistance only with at least this many turning points in it.",
+    )
+    ta_sr_recent = ta9.number_input(
+        "30. Break must be within weeks", min_value=1, step=1,
+        value=int(settings.get("ta_sr_recent_weeks", 13)), key="set_ta_sr_recent",
+        help="A zone counts as broken only if a weekly close was on its other side within this many "
+             "weeks. Stops a level broken years ago from reading as \"broken support\" today.",
+    )
+
     st.markdown("**Ticker Notes**")
     note_dropdown_options = st.text_input(
-        "22. Dropdown Options (comma-separated)",
+        "31. Dropdown Options (comma-separated)",
         value=settings.get("note_dropdown_options", ""),
         key="set_note_opts",
         help="If provided, the Ticker Notes field in the sidebar will become a dropdown menu with these specific values (along with a 'Custom...' option for free text)."
@@ -1565,6 +1699,15 @@ def settings_dialog():
                 "volume_decline_ratio": float(volume_decline_ratio),
                 "tech_uptrend_min_vstop_weeks": int(tech_uptrend_min_vstop_weeks),
                 "tech_uptrend_volume_ratio": float(tech_uptrend_vol_ratio),
+                "ta_converge_pct": float(ta_converge_pct),
+                "ta_break_pct": float(ta_break_pct),
+                "ta_sr_lookback_weeks": int(ta_sr_lookback),
+                "ta_sr_pivot_weeks": int(ta_sr_pivot),
+                "ta_sr_reaction_pct": float(ta_sr_reaction),
+                "ta_sr_reaction_weeks": int(ta_sr_reaction_weeks),
+                "ta_sr_zone_pct": float(ta_sr_zone),
+                "ta_sr_min_touches": int(ta_sr_touches),
+                "ta_sr_recent_weeks": int(ta_sr_recent),
                 "note_dropdown_options": note_dropdown_options.strip(),
             })
             st.success("Settings saved. Click **Refresh Data** to recompute with the new settings.")
@@ -2247,6 +2390,7 @@ def build_column_defs(labels, custom_columns=None):
         ("expert_take", "Expert Take"),
         ("expert_news_backed", "Expert News?"),
         ("trend", "Trend"),
+        ("ta_rules", "TA Rules"),
         ("flag", "Flag"),
         ("note", "Notes"),
         ("interested_label", "Interested"),
@@ -2923,7 +3067,7 @@ def render_category_order_manager(label_by_key):
     label_for = {
         "trend": "Trend", "volume_trend": "Vol Trend", "sentiment": "Sentiment",
         "expert_take": "Expert Take", "expert_news_backed": "Expert News?",
-        "flag": "Flag", "tech_uptrend": "Tech Uptrend",
+        "flag": "Flag", "tech_uptrend": "Tech Uptrend", "ta_rules": "TA Rules",
         "vstop_weekly_direction": "VStop Dir", "interested": "Interested",
     }
 
@@ -4022,6 +4166,9 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         raw_df["trend"] = [
             with_tooltip(r["trend"] if r["trend"] else "—", trend_tooltip(r, labels))
             for r in filtered
+        ]
+        raw_df["ta_rules"] = [
+            with_tooltip(r.get("ta_rules") or "—", ta_rules_tooltip(r)) for r in filtered
         ]
         raw_df["volume_trend"] = [
             with_tooltip(r["volume_trend"] if r["volume_trend"] else "—", vol_trend_tooltip(r, settings))

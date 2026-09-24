@@ -77,6 +77,9 @@ CATEGORICAL_METRICS = {
     "volume_trend": ["Exploding", "In-line", "Declining"],
     "vstop_weekly_direction": ["Up", "Down"],
     "tech_uptrend": ["Yes", "No"],
+    # TheWrap flowchart outcomes -- stock_data.TA_RULES_OUTCOMES, same order.
+    "ta_rules": ["Bullish Signal", "Maintain Position / Add", "Wait/Watch",
+                 "Momentum Fading", "Be Cautious", "Exit"],
     "flag": FLAG_CHOICES,  # see ticker_notes.py -- Red/Yellow/Green/Blue
     "expert_take": ["Accumulate", "Hold", "Caution", "Pending"],
     # Did the Expert Take verdict have any news behind it, or is it a
