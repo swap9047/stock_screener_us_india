@@ -38,14 +38,14 @@ TODAY = date(2026, 9, 24)
 STORED = {"ticker": "ZED.BO", "data_end": "2026-09-23", "last_close": 110.0, "ema40": 100.0}
 # fresh: Yahoo a session behind, computed by the new code
 FRESH = {"ticker": "ZED.BO", "data_end": "2026-09-22", "last_close": 105.0, "ema40": 99.0,
-         "ta_rules": "Maintain Position / Add", "ta_rules_detail": {"week": "2026-09-18"}}
+         "ta_rules": "Maintain/Add", "ta_rules_detail": {"week": "2026-09-18"}}
 
 stored_before = dict(STORED)
 out, stale = sd.reject_stale_rows({"m": [dict(FRESH)]}, {"m": [STORED]}, today=TODAY)
 row = out["m"][0]
 check(row["data_end"] == "2026-09-23" and row["last_close"] == 110.0 and row["ema40"] == 100.0,
       "the newer stored row's prices and indicators are kept -- nothing moves backwards")
-check(row.get("ta_rules") == "Maintain Position / Add" and row.get("ta_rules_detail") == {"week": "2026-09-18"},
+check(row.get("ta_rules") == "Maintain/Add" and row.get("ta_rules_detail") == {"week": "2026-09-18"},
       "fields the stored row lacked are filled from the fresh row")
 check(stale == {"m": ["ZED.BO"]}, "the ticker is still reported as served stale")
 check(STORED == stored_before, "the previous snapshot's row object is not mutated")
@@ -79,20 +79,34 @@ try:
         return sd.load_data_snapshot()["per_market"]["m"][0]
 
     first = refresh(FRESH)
-    check(first["data_end"] == "2026-09-23" and first.get("ta_rules") == "Maintain Position / Add",
+    check(first["data_end"] == "2026-09-23" and first.get("ta_rules") == "Maintain/Add",
           "refresh 1 (older data): saved row keeps 09-23 prices and gains TA Rules")
 
     # Refresh 2: Yahoo STILL a session behind, now with a different verdict.
     second = refresh(dict(FRESH, ta_rules="Exit", last_close=90.0))
     check(second["data_end"] == "2026-09-23" and second["last_close"] == 110.0,
           "refresh 2 (older data again): the 09-23 row is not undone")
-    check(second.get("ta_rules") == "Maintain Position / Add",
+    check(second.get("ta_rules") == "Maintain/Add",
           "refresh 2: the held row keeps its own TA Rules rather than the older fetch's")
 
     # Refresh 3: Yahoo catches up -- the whole row moves forward.
     third = refresh(dict(FRESH, data_end="2026-09-24", last_close=121.0, ta_rules="Bullish Signal"))
     check(third["data_end"] == "2026-09-24" and third["last_close"] == 121.0 and third["ta_rules"] == "Bullish Signal",
           "refresh 3 (newer data): the row is replaced by the newer fetch")
+finally:
+    sd.DATA_SNAPSHOT_FILE = orig
+
+# --- a renamed verdict value is migrated as the snapshot loads -----------------
+# "Maintain Position / Add" became "Maintain/Add" (2026-09-24). A HELD row keeps
+# its stored value, so the rename has to happen on load, not only on refresh.
+sd.DATA_SNAPSHOT_FILE = os.path.join(d, "data_snapshot.json")
+try:
+    sd.save_data_snapshot("2026-09-24 00:00 ET", {"m": [dict(STORED, ta_rules="Maintain Position / Add")]})
+    loaded = sd.load_data_snapshot()["per_market"]["m"][0]
+    check(loaded["ta_rules"] == "Maintain/Add", "an old 'Maintain Position / Add' loads as 'Maintain/Add'")
+    held, _ = sd.reject_stale_rows({"m": [dict(FRESH, ta_rules="Exit")]}, sd.load_data_snapshot()["per_market"],
+                                   today=TODAY)
+    check(held["m"][0]["ta_rules"] == "Maintain/Add", "and a held row is saved back under the new label")
 finally:
     sd.DATA_SNAPSHOT_FILE = orig
 

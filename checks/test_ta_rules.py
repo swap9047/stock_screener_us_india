@@ -2,7 +2,7 @@
 
     EMAs converging? -- Yes: broken support -> Exit, broken resistance ->
     Bullish Signal, else Wait/Watch. No: broken 40W -> Exit, 20W -> Be
-    Cautious, 10W -> Momentum Fading, else Maintain Position / Add.
+    Cautious, 10W -> Momentum Fading, else Maintain/Add.
 
 "Broken" = the weekly close is more than ta_break_pct past the line; an S/R
 zone must also have had a close on its other side within ta_sr_recent_weeks.
@@ -48,9 +48,9 @@ def weekly_from(closes, wick=0.0):
 
 # --- the trending branch: 40W, then 20W, then 10W ---------------------------
 TREND = (110.0, 100.0, 90.0)   # fast, mid, slow; spread 22% of the slow one
-check(verdict(120, TREND) == "Maintain Position / Add", "above all three WEMAs -> Maintain Position / Add")
-check(verdict(108, TREND) == "Maintain Position / Add",
-      "1.8% under the 10W is inside the 3% buffer -> still Maintain Position / Add")
+check(verdict(120, TREND) == "Maintain/Add", "above all three WEMAs -> Maintain/Add")
+check(verdict(108, TREND) == "Maintain/Add",
+      "1.8% under the 10W is inside the 3% buffer -> still Maintain/Add")
 check(verdict(106, TREND) == "Momentum Fading", "3.6% under the 10W -> Momentum Fading")
 check(verdict(96, TREND) == "Be Cautious", "more than 3% under the 20W -> Be Cautious")
 check(verdict(90 * 0.98, TREND) == "Be Cautious", "2% under the 40W is NOT broken")
@@ -58,9 +58,9 @@ check(verdict(90 * 0.96, TREND) == "Exit", "4% under the 40W is broken -> Exit")
 check(verdict(95, TREND, break_pct=0) == "Be Cautious",
       "break_pct=0: any close under the 20W breaks it")
 # Literal reading, flagged to the user: fanned-out EMAs in a DOWNtrend and a
-# bounce above all three is still the chart's "Maintain Position / Add".
-check(verdict(95, (80.0, 85.0, 92.0)) == "Maintain Position / Add",
-      "downtrend EMAs, close above all three -> Maintain Position / Add (as drawn)")
+# bounce above all three is still the chart's "Maintain/Add".
+check(verdict(95, (80.0, 85.0, 92.0)) == "Maintain/Add",
+      "downtrend EMAs, close above all three -> Maintain/Add (as drawn)")
 check(verdict(70, (80.0, 85.0, 92.0)) == "Exit", "downtrend, close under the 40W -> Exit")
 
 # --- the converging branch: support, then resistance -------------------------
@@ -92,7 +92,7 @@ check(verdict(77, FLAT, [SUP, LOW_RES], [81.0, 69.5]) == "Exit",
 # Convergence threshold
 check(verdict(106, (103.0, 101.5, 100.0), ZONES, RECENT_INSIDE) == "Bullish Signal",
       "spread exactly 3% counts as converging")
-check(verdict(106, (103.1, 101.5, 100.0), ZONES, RECENT_INSIDE) == "Maintain Position / Add",
+check(verdict(106, (103.1, 101.5, 100.0), ZONES, RECENT_INSIDE) == "Maintain/Add",
       "spread 3.1% is not converging -> the EMA branch decides")
 check(verdict(106, (104.0, 101.0, 100.0), ZONES, RECENT_INSIDE, converge_pct=5) == "Bullish Signal",
       "converge_pct is honoured")

@@ -507,10 +507,10 @@ def _plain_text(val):
 
 
 # TA Rules cell colours, copied from the flowchart's outcome boxes (Momentum
-# Fading and Maintain / Add share its purple).
+# Fading and Maintain/Add share its purple).
 TA_RULES_COLORS = {
     "Bullish Signal": "#1e8449", "Wait/Watch": "#138d75", "Be Cautious": "#d35400",
-    "Momentum Fading": "#7d3c98", "Maintain Position / Add": "#7d3c98", "Exit": "#c0392b",
+    "Momentum Fading": "#7d3c98", "Maintain/Add": "#7d3c98", "Exit": "#c0392b",
 }
 
 
@@ -1259,7 +1259,7 @@ def column_definitions(settings, labels):
             "TheWrap flowchart, on the last completed weekly close. If the three WEMAs are within "
             f"{settings.get('ta_converge_pct', 3.0):g}% of each other (converging): broken support → Exit, "
             "broken resistance → Bullish Signal, else Wait/Watch. Otherwise: broken slow WEMA → Exit, mid → "
-            "Be Cautious, fast → Momentum Fading, none → Maintain Position / Add. Broken = the close is more than "
+            "Be Cautious, fast → Momentum Fading, none → Maintain/Add. Broken = the close is more than "
             f"{settings.get('ta_break_pct', 3.0):g}% past the line. Support/resistance = price zones the stock "
             f"turned at {settings.get('ta_sr_min_touches', 2)}+ times (weekly wicks, "
             f"{settings.get('ta_sr_reaction_pct', 8.0):g}%+ move away). Hover a cell for the path taken."
@@ -1606,7 +1606,7 @@ def settings_dialog():
     st.caption(
         "Judged on the last completed weekly close. Converging WEMAs → support/resistance decide "
         "(Exit / Bullish Signal / Wait/Watch); otherwise the slow, mid and fast WEMAs decide "
-        "(Exit / Be Cautious / Momentum Fading / Maintain Position / Add)."
+        "(Exit / Be Cautious / Momentum Fading / Maintain/Add)."
     )
     ta1, ta2, ta3 = st.columns(3)
     ta_converge_pct = ta1.number_input(

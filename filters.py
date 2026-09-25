@@ -78,7 +78,7 @@ CATEGORICAL_METRICS = {
     "vstop_weekly_direction": ["Up", "Down"],
     "tech_uptrend": ["Yes", "No"],
     # TheWrap flowchart outcomes -- stock_data.TA_RULES_OUTCOMES, same order.
-    "ta_rules": ["Bullish Signal", "Maintain Position / Add", "Wait/Watch",
+    "ta_rules": ["Bullish Signal", "Maintain/Add", "Wait/Watch",
                  "Momentum Fading", "Be Cautious", "Exit"],
     "flag": FLAG_CHOICES,  # see ticker_notes.py -- Red/Yellow/Green/Blue
     "expert_take": ["Accumulate", "Hold", "Caution", "Pending"],
@@ -115,6 +115,16 @@ METRIC_RENAMES = {
     "rel_ret_1w_n50": "rel_ret_1w_index",
     "rel_ret_1m_n500": "rel_ret_1m_index",
     "rel_ret_6m_n500": "rel_ret_6m_index",
+}
+
+
+# Old -> current VALUE of a categorical metric, applied to snapshot rows as
+# they are loaded (stock_data.load_data_snapshot). A refresh recomputes every
+# row it fetches, but a row reject_stale_rows HOLDS (Yahoo served an older one)
+# keeps its stored value, so without this the old label would linger on it
+# until Yahoo caught up.
+VALUE_RENAMES = {
+    "ta_rules": {"Maintain Position / Add": "Maintain/Add"},
 }
 
 

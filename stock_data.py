@@ -1074,7 +1074,7 @@ def compute_trend(last_close, ema_slow_series, rs_weekly, week52_high, week52_lo
 # TA Rules outcomes, exactly as TheWrap's flowchart words them. Best-first,
 # which is also filters.CATEGORICAL_METRICS' declaration (sort) order.
 TA_RULES_OUTCOMES = (
-    "Bullish Signal", "Maintain Position / Add", "Wait/Watch",
+    "Bullish Signal", "Maintain/Add", "Wait/Watch",
     "Momentum Fading", "Be Cautious", "Exit",
 )
 
@@ -1167,7 +1167,7 @@ def compute_ta_rules(close, ema_fast, ema_mid, ema_slow, zones, recent_closes,
         No  -> broken slow WEMA?   -> Exit
                broken mid WEMA?    -> Be Cautious
                broken fast WEMA?   -> Momentum Fading
-               else                -> Maintain Position / Add
+               else                -> Maintain/Add
 
     "Broken" = the close is more than break_pct past the line. For an S/R zone
     it also needs one of `recent_closes` (the weeks just before this one) on
@@ -1219,7 +1219,7 @@ def compute_ta_rules(close, ema_fast, ema_mid, ema_slow, zones, recent_closes,
         if close < ema * (1 - buf):
             detail["decided_by"] = {"test": name}
             return verdict, detail
-    return "Maintain Position / Add", detail
+    return "Maintain/Add", detail
 
 
 def _fetch_info_with_retry(yf_t, ticker, attempts=3, base_delay=3):
@@ -2646,12 +2646,15 @@ def load_data_snapshot():
     # A snapshot written before a metric rename still carries the old keys
     # until the next refresh rewrites it; serve them under the current names so
     # the columns and rules don't go blank in between.
-    from filters import METRIC_RENAMES
+    from filters import METRIC_RENAMES, VALUE_RENAMES
     for rows in ((snapshot or {}).get("per_market") or {}).values():
         for row in rows:
             for old, new in METRIC_RENAMES.items():
                 if old in row and new not in row:
                     row[new] = row.pop(old)
+            for field, renames in VALUE_RENAMES.items():
+                if row.get(field) in renames:
+                    row[field] = renames[row[field]]
     return snapshot
 
 
