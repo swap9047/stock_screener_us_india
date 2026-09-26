@@ -87,7 +87,7 @@ from filters import (load_custom_filters, get_market_filters, save_market_filter
                      TEXT_METRICS)
 from github_sync import (get_github_config, get_data_repo_config, bootstrap_data_files,
                          push_all_config, trigger_github_workflow, pull_generated_files, SYNCABLE_FILES, WORKFLOW_GENERATED_FILES,
-                         push_json_entry_changes, read_remote_json, refresh_snapshot_from_repo)
+                         push_json_entry_changes, read_remote_json, read_remote_bytes, refresh_snapshot_from_repo)
 from news_summary import (load_news_summary, MARKET_LABELS, get_gemini_api_key,
                           get_gemini_api_keys, resolve_news_scope, DEFAULT_NEWS_SCOPE_GROUP)
 from expert_views import (load_expert_views, save_expert_views, analyze_single_ticker,
@@ -606,7 +606,7 @@ def _note_preview(text, limit=40):
     return text if len(text) <= limit else text[:limit].rstrip() + "…"
 
 
-def with_tooltip(display_value, tooltip_text):
+def with_tooltip(display_value, tooltip_text, nowrap=False):
     """Wraps a cell's display text so the cell itself stays compact (just the
     label, e.g. "Uptrend") while the full breakdown is reachable two ways:
     a native hover tooltip (title=...) for desktop, and a click-to-expand
@@ -626,16 +626,23 @@ def with_tooltip(display_value, tooltip_text):
     spilling into the cell). Encoding newlines as an entity means the
     generated markup never contains a literal blank line, so it can't
     happen. The expandable body below uses real <br> tags instead (safe --
-    those are tag content, not an attribute value)."""
+    those are tag content, not an attribute value).
+
+    `nowrap` keeps the visible label on one line, e.g. TA Rules' "Momentum
+    Fading", which otherwise broke onto two lines in a squeezed table. It is
+    set on the <summary> itself, inline: a column-level style from style_row
+    would go through the Styler's <style> block (see sticky_header_html). The
+    expanded body keeps white-space:normal, so it still wraps."""
     value_esc = html.escape(str(display_value))
     if not tooltip_text:
-        return value_esc
+        return f'<span style="white-space:nowrap">{value_esc}</span>' if nowrap else value_esc
     tooltip_esc = html.escape(tooltip_text)
     title_attr = tooltip_esc.replace("\n", "&#10;")
     body_html = tooltip_esc.replace("\n", "<br>")
+    summary_style = "cursor:help;white-space:nowrap" if nowrap else "cursor:help"
     return (
         f'<details style="display:inline-block" title="{title_attr}">'
-        f'<summary style="cursor:help">{value_esc}</summary>'
+        f'<summary style="{summary_style}">{value_esc}</summary>'
         f'<div style="font-size:11px;font-weight:400;line-height:1.5;'
         f'white-space:normal;margin-top:4px;">{body_html}</div>'
         f'</details>'
@@ -1285,7 +1292,8 @@ def column_definitions(settings, labels):
             "Be Cautious, fast → Momentum Fading, none → Maintain/Add. Broken = the close is more than "
             f"{settings.get('ta_break_pct', 3.0):g}% past the line. Support/resistance = price zones the stock "
             f"turned at {settings.get('ta_sr_min_touches', 2)}+ times (weekly wicks, "
-            f"{settings.get('ta_sr_reaction_pct', 8.0):g}%+ move away). Hover a cell for the path taken."
+            f"{settings.get('ta_sr_reaction_pct', 8.0):g}%+ move away). Hover a cell for the path taken; "
+            "the flowchart itself is under \"TA Rules flowchart\" in the sidebar."
         ),
         "Tech Uptrend": (
             "Yes only if ALL of: close > weekly VStop, VStop held its direction for more than "
@@ -3064,10 +3072,49 @@ def render_shared_column_picker(labels, active_market=None, active_market_label=
 
     render_category_order_manager(label_by_key)
     render_metric_glossary(labels, custom_columns, key_by_label)
+    render_ta_rules_flowchart()
     render_custom_columns_manager()
     render_ticker_notes_manager()
 
     return st.session_state[SHARED_ORDER_KEY], label_by_key, key_by_label
+
+
+# The flowchart the TA Rules column follows. The image lives in the PRIVATE
+# data repo, not here: this code repo is public, and the chart was shared
+# privately by the trader who wrote the rules.
+TA_RULES_FLOWCHART_FILE = "ta_rules_flowchart.png"
+
+
+@st.cache_data(ttl=24 * 3600, max_entries=1, show_spinner=False)
+def _load_ta_rules_flowchart(repo, branch, _token):
+    """The flowchart PNG's bytes from the data repo. Raises instead of
+    returning None on failure, so st.cache_data does not keep a failed fetch
+    for a whole day."""
+    data = read_remote_bytes(_token, repo, branch, TA_RULES_FLOWCHART_FILE)
+    if not data:
+        raise FileNotFoundError(TA_RULES_FLOWCHART_FILE)
+    return data
+
+
+def render_ta_rules_flowchart():
+    """Sidebar expander showing the TA Rules flowchart image. It is fetched
+    only while the expander is open (on_change="rerun" gives it an .open
+    state): a plain expander runs its body on every rerun, collapsed or not,
+    which would download the image on every page load for no one."""
+    exp = st.sidebar.expander("TA Rules flowchart", key="ta_rules_flowchart_exp", on_change="rerun")
+    if not exp.open:
+        return
+    with exp:
+        token, repo, branch = get_data_repo_config(st.secrets)
+        if not token:
+            st.caption("The flowchart is kept in the private data repo, and DATA_REPO_TOKEN is not set.")
+            return
+        try:
+            image = _load_ta_rules_flowchart(repo, branch, token)
+        except FileNotFoundError:
+            st.caption(f"Could not load {TA_RULES_FLOWCHART_FILE} from the data repo.")
+            return
+        st.image(image, caption="TheWrap TA Rules flowchart — the TA Rules column follows it node for node.")
 
 
 def render_category_order_manager(label_by_key):
@@ -4191,7 +4238,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             for r in filtered
         ]
         raw_df["ta_rules"] = [
-            with_tooltip(r.get("ta_rules") or "—", ta_rules_tooltip(r)) for r in filtered
+            with_tooltip(r.get("ta_rules") or "—", ta_rules_tooltip(r), nowrap=True) for r in filtered
         ]
         raw_df["volume_trend"] = [
             with_tooltip(r["volume_trend"] if r["volume_trend"] else "—", vol_trend_tooltip(r, settings))

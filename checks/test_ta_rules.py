@@ -216,6 +216,25 @@ check("inside zone 100.00–102.00" in ta_rules_tooltip(
            "ta_rules_detail": sd.compute_ta_rules(101.0, *FLAT, [ZONE], [101.0])[1]}),
       "tooltip says the close is inside the zone")
 
+# --- the label stays on one line; the flowchart image comes from the data repo -
+import html as _html
+
+_fn = next(n for n in _tree.body if isinstance(n, ast.FunctionDef) and n.name == "with_tooltip")
+_ns = {"html": _html}
+exec(compile(ast.Module(body=[_fn], type_ignores=[]), "app.py", "exec"), _ns)
+_cell = _ns["with_tooltip"]("Momentum Fading", "path", nowrap=True)
+check('<summary style="cursor:help;white-space:nowrap">Momentum Fading</summary>' in _cell
+      and "white-space:normal" in _cell,
+      "a nowrap cell keeps its label on one line, and its expanded body still wraps")
+check('<summary style="cursor:help">Uptrend</summary>' in _ns["with_tooltip"]("Uptrend", "path"),
+      "other columns' cells are unchanged")
+_src = (REPO / "app.py").read_text()
+check('ta_rules_tooltip(r), nowrap=True)' in _src, "the TA Rules column asks for nowrap")
+# The chart was shared privately and this repo is public: it must be read from
+# the data repo at runtime, never kept as a file in this repo.
+check(not list(REPO.rglob("ta_rules_flowchart.*")) and "read_remote_bytes(_token, repo, branch, TA_RULES_FLOWCHART_FILE)" in _src,
+      "the flowchart image is fetched from the private data repo, not stored in this one")
+
 print("TOTAL", "all passed" if not fails else "")
 print(f"FAILURES: {fails}")
 sys.exit(1 if fails else 0)

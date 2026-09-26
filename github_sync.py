@@ -475,6 +475,20 @@ def read_remote_json(token, repo, branch, filename):
     """The parsed JSON of `filename` at the tip of `branch`, or None if it is
     missing, unreadable, or not JSON. Content is fetched by blob SHA (not the
     raw CDN) for the same cache reason as pull_generated_files."""
+    raw = read_remote_bytes(token, repo, branch, filename)
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except ValueError:
+        return None
+
+
+def read_remote_bytes(token, repo, branch, filename):
+    """The raw bytes of `filename` (a file at the repo ROOT) at the tip of
+    `branch`, or None if it is missing or unreadable. Also serves non-JSON
+    files kept in the private data repo, such as the TA Rules flowchart image,
+    which must not live in this public code repo."""
     if not repo:
         return None
     headers = _headers(token) if token else {"Accept": "application/vnd.github+json"}
@@ -489,7 +503,7 @@ def read_remote_json(token, repo, branch, filename):
                             headers={**headers, "Accept": "application/vnd.github.raw"}, timeout=30)
         if blob.status_code != 200:
             return None
-        return json.loads(blob.content.decode("utf-8"))
+        return blob.content
     except (requests.RequestException, ValueError):
         return None
 
