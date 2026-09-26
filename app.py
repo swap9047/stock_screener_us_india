@@ -698,19 +698,42 @@ def ta_rules_tooltip(row):
         return f"{span} ({z['touches']} touches)"
 
     if d["converging"]:
+        # stock_data picks `support` as the highest zone starting at or below
+        # the close and `resistance` as the lowest zone ending at or above it,
+        # so a close INSIDE a zone made both the same zone and the tooltip
+        # listed it twice, once as each. And the zone that decided the verdict
+        # usually sits on the far side of the close by then (a broken ceiling
+        # is below price), so it was listed again as "Support" right above
+        # "Broken resistance". Both are fixed here rather than in stock_data,
+        # whose code fingerprint would mark the stored snapshot stale.
         sup, res = d.get("support"), d.get("resistance")
+        decided_zone = decided.get("zone")
+        close = d["close"]
         if not d.get("zone_count"):
             lines.append("No support/resistance zone found in the lookback.")
-        if sup:
-            lines.append(f"Support {_zone(sup)}: broken below {sup['low'] * (1 - buf / 100):,.2f}")
-        if res:
-            lines.append(f"Resistance {_zone(res)}: broken above {res['high'] * (1 + buf / 100):,.2f}")
+        if sup and sup == res:
+            lines.append(
+                f"Close is inside zone {_zone(sup)}: broken below {sup['low'] * (1 - buf / 100):,.2f} "
+                f"or above {sup['high'] * (1 + buf / 100):,.2f}"
+            )
+        else:
+            if sup and sup != decided_zone:
+                lines.append(f"Support {_zone(sup)}: broken below {sup['low'] * (1 - buf / 100):,.2f}")
+            if res and res != decided_zone:
+                lines.append(f"Resistance {_zone(res)}: broken above {res['high'] * (1 + buf / 100):,.2f}")
         if decided.get("test") == "support":
-            lines.append(f"Broken support {_zone(decided['zone'])} → Yes")
+            z = decided_zone
+            lines.append(
+                f"Broken support {_zone(z)}? close {close:,.2f} < {z['low'] * (1 - buf / 100):,.2f} → Yes"
+            )
         else:
             lines.append("Broken support? → No")
             if decided.get("test") == "resistance":
-                lines.append(f"Broken resistance {_zone(decided['zone'])} → Yes")
+                z = decided_zone
+                lines.append(
+                    f"Broken resistance {_zone(z)}? close {close:,.2f} > "
+                    f"{z['high'] * (1 + buf / 100):,.2f} → Yes"
+                )
             else:
                 lines.append("Broken resistance? → No")
     else:

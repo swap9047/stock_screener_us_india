@@ -187,6 +187,35 @@ check(filters.passes_filter(row, {"metric_a": "ta_rules", "operator": "in", "com
                                   "value": ["Exit", "Be Cautious"]}),
       "a rule 'TA Rules in [Exit, Be Cautious]' matches an Exit row")
 
+# --- the hover text names each zone once -------------------------------------
+# app.ta_rules_tooltip, lifted out of app.py (importing app would run the whole
+# Streamlit script). A close inside a zone used to list it as both Support and
+# Resistance, and the zone a verdict was decided on was listed again under the
+# role it has now (a broken ceiling shown as "Support" above "Broken resistance").
+import ast
+
+_tree = ast.parse((REPO / "app.py").read_text())
+_fn = next(n for n in _tree.body if isinstance(n, ast.FunctionDef) and n.name == "ta_rules_tooltip")
+_ns = {}
+exec(compile(ast.Module(body=[_fn], type_ignores=[]), "app.py", "exec"), _ns)
+ta_rules_tooltip = _ns["ta_rules_tooltip"]
+
+ZONE = {"low": 100.0, "high": 102.0, "touches": 3, "last_touch": "2026-01-02"}
+FLAT = (101.0, 100.5, 100.0)   # spread 1% -> converging
+for label, close, recent, want in (
+    ("close inside the zone", 101.0, [101.0], "Wait/Watch"),
+    ("broke up through it", 110.0, [101.0], "Bullish Signal"),
+    ("broke down through it", 95.0, [101.0], "Exit"),
+):
+    v, detail = sd.compute_ta_rules(close, *FLAT, [ZONE], recent)
+    tip = ta_rules_tooltip({"ta_rules": v, "ta_rules_detail": detail})
+    check(v == want and tip.count("100.00–102.00") == 1,
+          f"tooltip, {label} ({v}): the zone is named once")
+check("inside zone 100.00–102.00" in ta_rules_tooltip(
+          {"ta_rules": "Wait/Watch",
+           "ta_rules_detail": sd.compute_ta_rules(101.0, *FLAT, [ZONE], [101.0])[1]}),
+      "tooltip says the close is inside the zone")
+
 print("TOTAL", "all passed" if not fails else "")
 print(f"FAILURES: {fails}")
 sys.exit(1 if fails else 0)
