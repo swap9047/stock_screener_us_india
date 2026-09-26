@@ -33,6 +33,9 @@ TICKER_NOTES_FILE = os.path.join(SCRIPT_DIR, "ticker_notes.json")
 FLAG_CHOICES = ["Red", "Yellow", "Green", "Blue"]
 FLAG_EMOJI = {"Red": "🔴", "Yellow": "🟡", "Green": "🟢", "Blue": "🔵"}
 NO_FLAG = ""  # stored value for "no flag set"
+# flag_reason of a flag the user set by hand -- how expert_views tells it
+# apart from the auto-vote, which it must not show the model.
+MANUAL_FLAG_REASON = "Manually assigned"
 
 
 def load_ticker_notes():
@@ -250,7 +253,7 @@ def apply_notes_to_rows(rows, notes=None, min_vstop_weeks=3, expert_views=None, 
         manual_flag = get_ticker_flag(notes, ticker)
         if manual_flag:
             row["flag"] = manual_flag
-            row["flag_reason"] = "Manually assigned"
+            row["flag_reason"] = MANUAL_FLAG_REASON
         else:
             verdict = _guarded_verdict(expert_views.get(ticker), row)
             fund_view = fundamentals.get(ticker)

@@ -643,16 +643,48 @@ def active_alerts_by_ticker(rules, snapshot_results, metric_labels=None):
     return {t: "\n".join(lines) for t, lines in out.items()}
 
 
+# Metrics that carry a previous Expert Take verdict: the verdict itself, its
+# news-backed marker, and `flag`, whose auto-vote counts the verdict. A rule on
+# any of them must not reach the Expert Take prompt, or the model is shown its
+# own last answer -- e.g. a "green flag" rule firing because last night's
+# ACCUMULATE helped make the flag Green. See build_expert_prompt's flag note.
+PRIOR_VERDICT_METRICS = {"expert_take", "expert_news_backed", "flag"}
+
+
+def rules_using_prior_verdict(all_rules):
+    """ids of rules that read a PRIOR_VERDICT_METRICS metric, directly or through
+    a rule they reference, at any depth. Taken over ALL rules, disabled ones
+    included, since an enabled rule can reference a disabled one."""
+    by_id = {r.get("id"): r for r in all_rules}
+    tainted = {
+        rid for rid, r in by_id.items()
+        if any(c.get("metric_a") in PRIOR_VERDICT_METRICS or c.get("metric_b") in PRIOR_VERDICT_METRICS
+               for c in r.get("conditions", []))
+    }
+    changed = True
+    while changed:
+        changed = False
+        for rid, r in by_id.items():
+            if rid not in tainted and _rule_references(r) & tainted:
+                tainted.add(rid)
+                changed = True
+    return tainted
+
+
 def active_alerts_for_prompt(snapshot_results, metric_labels=None):
-    """active_alerts_by_ticker over the CONFIGURED rules, or None when no rule
-    is configured at all -- the distinction build_expert_prompt renders as
+    """active_alerts_by_ticker over the configured rules, minus any that read a
+    prior Expert Take verdict (rules_using_prior_verdict), or None when no such
+    rule is left -- the distinction build_expert_prompt renders as
     "not evaluated" rather than "evaluated, nothing fired".
 
     metric_labels is resolved from settings when not supplied; the import is
     local because stock_data is the heavier module and nothing else in this
     file needs it.
     """
-    rules = [r for r in load_rules() if r.get("enabled", True) and r.get("conditions")]
+    all_rules = load_rules()
+    excluded = rules_using_prior_verdict(all_rules)
+    rules = [r for r in all_rules
+             if r.get("enabled", True) and r.get("conditions") and r.get("id") not in excluded]
     if not rules:
         return None
     if metric_labels is None:

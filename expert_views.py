@@ -370,8 +370,16 @@ def build_expert_prompt(row_data, news_text, active_alerts_text=None):
     net_vol_ratio = row_data.get("net_volume_10d_ratio", "N/A")
     h52 = row_data.get("week52_high", "N/A")
     l52 = row_data.get("week52_low", "N/A")
-    flag = row_data.get("flag", "None")
-    note = row_data.get("note", "None")
+    # Only a flag the user set by hand. Every other flag is ticker_notes'
+    # auto-vote, which counts the PREVIOUS Expert Take verdict as one of its
+    # four votes -- and section 3 below presents it as the user's own flag. So
+    # an ACCUMULATE helped paint the row Green, and the next night the model was
+    # told "the user flagged this Green": each verdict propped up the next. On
+    # 2026-09-26 none of the 124 flags was manual and 106 cited Expert Take.
+    # Notes are left out as well, at the user's request.
+    from ticker_notes import MANUAL_FLAG_REASON
+    flag = row_data.get("flag") if row_data.get("flag_reason") == MANUAL_FLAG_REASON else None
+    flag = flag or "None"
     from stock_data import get_benchmark_display
     bench = get_benchmark_display(market)
     
@@ -426,9 +434,9 @@ recent web news findings provided below.
 {alerts_section}
 
 ======================================================================
-3. USER FLAGS & NOTES
+3. USER FLAG (set by hand)
 ======================================================================
-- Flag: {flag} | Note: {note}
+- Flag: {flag}
 
 ======================================================================
 4. RECENT WEB NEWS & ANNOUNCEMENTS (Last 24-48 hours via Grounded Search)
