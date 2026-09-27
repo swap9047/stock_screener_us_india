@@ -114,6 +114,12 @@ def fetch_fundamental_news(client, ticker, market, company_name, is_retry=False)
         f"forward guidance, and recent analyst coverage/ratings for {exchange} stock {name} "
         f"between {cutoff_date} and {as_of_date}. "
         "Extract hard numbers (EPS, Revenue, Guidance) and explicit analyst upgrades/downgrades. "
+        # Most companies (India especially) give no formal guidance, and on
+        # 2026-09-26 only 12 of 124 views recorded a guidance change. Ask for
+        # what management DID say about the coming quarters, in its own words,
+        # so the reasoning stage can read an outlook tone (see rule 8 there).
+        "If the company gives no formal guidance, report management's own stated outlook for the "
+        "coming quarters (demand, margins, orders), quoting their words and the date. "
         # The window is 50 days and can hold a report plus later guidance and
         # several analyst notes, so say which one wins rather than leaving the
         # ordering to the model: NEWEST FIRST, each dated, latest wins a conflict.
@@ -171,7 +177,75 @@ def normalize_view(data):
     (llm_util.json_object)."""
     if isinstance(data, dict) and isinstance(data.get("sentiment"), str):
         data["sentiment"] = data["sentiment"].strip().capitalize()
+    if isinstance(data, dict):
+        _normalize_outlook(data)
+        _normalize_analyst(data)
     return data
+
+
+OUTLOOK_TONES = ("improving", "steady", "cautious")
+
+
+def _normalize_outlook(data):
+    """Keep an outlook tone only if it is one of OUTLOOK_TONES AND carries
+    management's words in outlook_quote. A tone with no quote is the model's
+    own impression, not something management said -- exactly the soft,
+    upbeat-press-release reading rule 8 exists to keep out. Always leaves both
+    keys present (None when absent)."""
+    tone = data.get("outlook_tone")
+    tone = tone.strip().lower() if isinstance(tone, str) else None
+    quote = data.get("outlook_quote")
+    quote = quote.strip() if isinstance(quote, str) else None
+    if tone not in OUTLOOK_TONES or not quote or _field_is_placeholder(quote):
+        tone, quote = None, None
+    data["outlook_tone"], data["outlook_quote"] = tone, quote
+    return data
+
+
+# Rating sources that are an algorithm or a website, not an analyst (rule 9).
+# Matched as lower-case substrings of analyst_firm. Found live on 2026-09-26: a
+# StockInvest.us "upgrade" turned a Negative view Positive, and a MarketsMojo
+# "Buy" was cited as analyst support.
+NON_ANALYST_SOURCES = (
+    "stockinvest", "marketsmojo", "mojo", "zacks rank", "tipranks", "smart score",
+    "simply wall", "trendlyne", "tickertape", "seeking alpha", "wallstreetzen",
+    "stockopedia", "gurufocus", "macroaxis", "danelfin", "weiss", "investing.com",
+)
+
+
+def _normalize_analyst(data):
+    """Keep analyst_action only with a named firm that is not an algorithmic
+    rating source (rule 9). Always leaves both keys present."""
+    action = data.get("analyst_action")
+    action = action.strip().lower() if isinstance(action, str) else None
+    firm = data.get("analyst_firm")
+    firm = firm.strip() if isinstance(firm, str) else None
+    if (action not in ("upgrade", "downgrade") or not firm or _field_is_placeholder(firm)
+            or any(src in firm.lower() for src in NON_ANALYST_SOURCES)):
+        action, firm = None, None
+    data["analyst_action"], data["analyst_firm"] = action, firm
+    return data
+
+
+# Short tag shown next to the Sentiment label: explicit guidance first, since
+# rule 7 makes it the strongest input; the softer outlook tone only when there
+# is no guidance change.
+_GUIDANCE_ARROWS = {"raised": "↑", "lowered": "↓", "maintained": "="}
+_OUTLOOK_ARROWS = {"improving": "↑", "cautious": "↓", "steady": "="}
+
+
+def evidence_tag(view):
+    """"Guidance ↑" / "Outlook ↓" / ... for the Sentiment cell, or "" when the
+    view has neither. Callers skip it for a view _validate_sentiment has ruled
+    stale or data-less: that guidance is no longer current."""
+    view = view or {}
+    g = (view.get("guidance_change") or "").strip().lower()
+    if g in _GUIDANCE_ARROWS:
+        return f"Guidance {_GUIDANCE_ARROWS[g]}"
+    o = (view.get("outlook_tone") or "").strip().lower()
+    if o in _OUTLOOK_ARROWS and view.get("outlook_quote"):
+        return f"Outlook {_OUTLOOK_ARROWS[o]}"
+    return ""
 
 
 def _is_valid_view(view):
@@ -417,6 +491,9 @@ CRITICAL RULES (these override everything else):
 4. "earnings_report_date" is the date the results were ANNOUNCED (YYYY-MM-DD), not the date the quarter ended. For example, an Indian company reporting Q1 FY27 (quarter ending 2026-06-30) in late July announces on roughly 2026-07-24 — use the announcement date. If the news does not state one, set it to null; do NOT guess, and do NOT substitute the quarter-end date.
 5. Setting "earnings_report_date" to null does not invalidate the rest of your answer. Judge "sentiment" from the facts you actually found, using rules 1-3 above. Report only what the news supports.
 6. The news above is ordered newest first and each item carries its date. Where several items bear on the same thing, judge on the MOST RECENT one: an older item never overrides a newer one. A downgrade last week outranks an upgrade a month ago, and the latest guidance is the guidance. Prefer the newest EPS figure for the current quarter over any earlier restatement of it.
+7. Forward guidance outranks the reported quarter. When the quarter's results and its guidance point different ways, the guidance decides: an EPS beat with LOWERED guidance is "Negative", and an EPS miss with RAISED guidance can be "Positive". "Maintained" guidance is neutral on its own, so the other evidence decides. Rule 6 still applies across dates: a newer analyst action is weighed against the guidance, not overridden by it.
+8. If there is no explicit guidance change, record management's own stated outlook for the coming quarters as "outlook_tone" ("improving" | "steady" | "cautious"), with "outlook_quote" holding management's exact words and the date. Only management's statements about the next few quarters count -- not analyst opinion, not past results, and not multi-year aspirations such as a 5-year CAGR target. With no such statement, set both to null. The outlook tone may tip a verdict that EPS or an analyst action already supports (an EPS beat with a cautious outlook can be "Neutral"), but on its own it NEVER makes the sentiment "Positive" or "Negative".
+9. "analyst_action" is an upgrade or downgrade by a named brokerage, investment bank or research-house analyst, and "analyst_firm" must name that firm. A rating produced by an algorithm or a website -- quant scores, star or "smart" ratings, stock-screening sites (e.g. StockInvest.us, MarketsMojo, Zacks Rank, TipRanks, Simply Wall St, Trendlyne), or a contributor article on Seeking Alpha -- is NOT an analyst action: set "analyst_action" and "analyst_firm" to null. Price-target changes and reiterated ratings are not upgrades or downgrades either.
 
 Return ONLY a valid JSON object matching this schema:
 {{
@@ -427,6 +504,9 @@ Return ONLY a valid JSON object matching this schema:
   "eps_value": "$2.02 actual vs $1.89 est." or null,
   "guidance_change": "raised" | "lowered" | "maintained" | null,
   "analyst_action": "upgrade" | "downgrade" | null,
+  "analyst_firm": "Morgan Stanley" or null,
+  "outlook_tone": "improving" | "steady" | "cautious" | null,
+  "outlook_quote": "Management on 2026-07-24: 'we expect demand to stay strong next quarter'" or null,
   "sentiment": "Positive" | "Neutral" | "Negative" | "Unknown",
   "reasoning": "Explain why you chose this sentiment based on the facts."
 }}"""
@@ -570,6 +650,9 @@ def generate_fundamental_view(client, row_data, news_text=None, news_source=None
             "eps_value": None,
             "guidance_change": None,
             "analyst_action": None,
+            "outlook_tone": None,
+            "outlook_quote": None,
+            "analyst_firm": None,
             "sentiment": "Unknown",
             "reasoning": f"Analysis pending -- {reason}",
             "targeted_retry": None,
@@ -591,6 +674,8 @@ def generate_fundamental_view(client, row_data, news_text=None, news_source=None
         # The legacy branch must only ever serve genuinely pre-schema records.
         for key in ("earnings_report_date", "eps_value", "guidance_change", "analyst_action"):
             data.setdefault(key, None)
+        _normalize_outlook(data)
+        _normalize_analyst(data)
         data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         data["news_used"] = news_text
         data["news_source"] = news_source or "⚪ Unknown"

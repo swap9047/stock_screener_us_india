@@ -183,7 +183,16 @@ EXPERT_NO_NEWS_MARKERS = ("no recent news found", "no news found", "no material 
 
 
 def expert_view_has_news(view):
-    text = str((view or {}).get("news_used") or "").strip().lower().rstrip(".")
+    """The "Expert News?" column: did the verdict have any news behind it --
+    the 24-hour search (news_used) OR this quarter's checked fundamentals
+    (section 4 of the prompt, recorded as quarter_facts_used). Counting only
+    the 24-hour search would call a verdict built on last month's results and
+    raised guidance "technicals-only"; in a 2026-09-26 trial 5 of 12 read "No"
+    that way while their catalyst summaries cited the quarter's numbers."""
+    view = view or {}
+    if view.get("quarter_facts_used"):
+        return True
+    text = str(view.get("news_used") or "").strip().lower().rstrip(".")
     if not text:
         return False
     return not any(text.startswith(m) for m in EXPERT_NO_NEWS_MARKERS)
@@ -316,7 +325,8 @@ VERDICT_RULES = """MANDATORY VERDICT RULES — apply these strictly before choos
 - ACCUMULATE requires ALL of: (a) Trend is "Uptrend" or "Strong Uptrend", (b) VStop direction is UP held ≥ 3 weeks, (c) RS is positive or N/A for very new data, (d) No negative news catalyst. If news is ABSENT, you may still give ACCUMULATE ONLY if ALL technical conditions above are clearly met — never give ACCUMULATE just because news is absent.
 - CAUTION requires AT LEAST TWO of the following five signals to agree — a single isolated signal (e.g. trend just not yet confirmed as an uptrend, with everything else neutral or positive) is NOT enough on its own and must fall through to HOLD instead: (1) Trend is Downtrend, (2) VStop flipped DOWN, (3) RSI > 80 on weekly or monthly (severely overbought), (4) heavy distribution (Net Volume 10D Negative with large ratio), (5) a clearly negative news catalyst.
 - NEVER give ACCUMULATE when news shows a negative catalyst (earnings miss, downgrade, regulatory issue, fraud, etc.).
-- NEVER give ACCUMULATE solely because news is absent or minimal — absent news → lean HOLD unless technicals fully satisfy the ACCUMULATE criteria above."""
+- NEVER give ACCUMULATE solely because news is absent or minimal — absent news → lean HOLD unless technicals fully satisfy the ACCUMULATE criteria above.
+- "News" in these rules means BOTH section 4 (this quarter's fundamentals) and section 5 (the last 24 hours). LOWERED guidance, an EPS miss, or a named-firm downgrade in section 4 is a negative catalyst; RAISED guidance or a named-firm upgrade is a positive one."""
 
 
 # The deterministic guard validate_verdict applies on top of whatever the model
@@ -329,7 +339,76 @@ VERDICT_GUARD_RULES = f"""A deterministic guard runs after the model answers and
 - HOLD and CAUTION are not re-checked: HOLD is the rules' own default, and CAUTION's five-signal test includes news judgement that cannot be reconstructed from the metrics."""
 
 
-def build_expert_prompt(row_data, news_text, active_alerts_text=None):
+def _fmt(v, suffix="", digits=1):
+    """A metric for the prompt: rounded, with a unit, or "N/A"."""
+    if v is None or v == "":
+        return "N/A"
+    try:
+        return f"{float(v):,.{digits}f}{suffix}"
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def _ta_rules_text(row_data):
+    """One line on the TA Rules column: the verdict and the flowchart node that
+    decided it, as of the last completed week."""
+    verdict = row_data.get("ta_rules")
+    d = row_data.get("ta_rules_detail") or {}
+    if not verdict or not d:
+        return "N/A (not enough completed weekly history)"
+    fast, mid, slow = d.get("periods") or (10, 20, 40)
+    path = (f"EMAs converging ({d.get('spread_pct')}% spread)" if d.get("converging")
+            else f"EMAs not converging ({d.get('spread_pct')}% spread)")
+    test = (d.get("decided_by") or {}).get("test")
+    decided = {"slow": f"broke the {slow}W EMA", "mid": f"broke the {mid}W EMA", "fast": f"broke the {fast}W EMA",
+               "support": "broke a support zone", "resistance": "broke a resistance zone"}.get(test, "no line broken")
+    return f"{verdict} (week ending {d.get('week', '?')}: {path}, {decided}; a break = weekly close {d.get('break_pct')}% past the line)"
+
+
+def _quarter_fundamentals_text(view):
+    """Section 4 of the prompt: the Sentiment pipeline's checked facts for the
+    current quarter -- EPS, guidance, management outlook, named-firm analyst
+    actions -- found by its own ~50-day search. The Expert Take search looks
+    at the last 24 HOURS only, so before this the model never saw a result or
+    guidance change older than a day, and 43 of 124 verdicts on 2026-09-26 were
+    technicals-only. Sentiment never reads Expert Take, so this adds no loop.
+
+    Facts, not Sentiment's Positive/Negative label: the label would just be
+    copied, and the two columns are meant to be read side by side. The same
+    guards as the Sentiment cell apply: a stale, unconfirmed-quarter or
+    data-less view is withheld, and an analyst action is kept only with a
+    named brokerage (fundamentals_eval._normalize_analyst)."""
+    from fundamentals_eval import _validate_sentiment, _normalize_analyst, _field_is_placeholder
+    if view is None:
+        return "Not provided for this run -- treat as NO INFORMATION, not as evidence of no news."
+    if not view:
+        return "None on file for this ticker."
+    _sentiment, flag = _validate_sentiment(view)
+    if flag in ("STALE", "STALE_QUARTER", "NO_DATA"):
+        why = {"STALE": "the analysis is out of date", "STALE_QUARTER": "a newer quarterly report exists that it did not cover",
+               "NO_DATA": "no earnings, guidance or analyst facts were found"}[flag]
+        return f"Not usable -- {why}. Treat as NO INFORMATION."
+    v = _normalize_analyst(dict(view))
+    lines = []
+    if v.get("earnings_report_date"):
+        lines.append(f"- Results announced: {v['earnings_report_date']}")
+    if not _field_is_placeholder(v.get("earnings_summary")):
+        lines.append(f"- Earnings: {v['earnings_summary']}")
+    if v.get("eps_value"):
+        lines.append(f"- EPS: {v['eps_value']}")
+    if v.get("guidance_change") or not _field_is_placeholder(v.get("future_guidance")):
+        change = f"{v['guidance_change'].upper()} -- " if v.get("guidance_change") else ""
+        lines.append(f"- Company guidance: {change}{v.get('future_guidance') or ''}".rstrip(" -"))
+    if v.get("outlook_tone") and v.get("outlook_quote"):
+        lines.append(f"- Management outlook ({v['outlook_tone']}): {v['outlook_quote']}")
+    if v.get("analyst_action") and v.get("analyst_firm"):
+        lines.append(f"- Analyst action: {v['analyst_action']} by {v['analyst_firm']}")
+    if not lines:
+        return "Nothing specific found in the last ~50 days."
+    return "\n".join(lines) + f"\n(Checked {v.get('as_of', '?')} UTC.)"
+
+
+def build_expert_prompt(row_data, news_text, active_alerts_text=None, fundamental_view=None):
     # These two used to be hardcoded as "> 3 wks" and ">= 1.4x" in the prompt
     # text below, but both are settings-driven -- and this repo runs
     # tech_uptrend_volume_ratio at 0.1, so the model was being told Tech Uptrend
@@ -383,15 +462,25 @@ def build_expert_prompt(row_data, news_text, active_alerts_text=None):
     from stock_data import get_benchmark_display
     bench = get_benchmark_display(market)
     
+    from stock_data import exchange_session
+    currency = "INR" if exchange_session(ticker) == "INDIA" else "USD"
+    data_end = row_data.get("data_end", "N/A")
+    fundamentals_text = _quarter_fundamentals_text(fundamental_view)
+    has_fundamentals = fundamentals_text.startswith("- ")
+
     # Flag whether news is genuinely absent
     news_absent = not news_text or news_text.strip().lower() in (
         "no recent news found.", "no recent news found", "", "none"
     )
-    news_quality_note = (
-        "⚠️ NEWS DATA: ABSENT — no material news was found for this ticker. "
-        "This MUST constrain the verdict (see rules below)."
-        if news_absent else ""
-    )
+    if news_absent and not has_fundamentals:
+        news_quality_note = (
+            "⚠️ NEWS DATA: ABSENT — no material news was found for this ticker, in the last 24 hours "
+            "or in this quarter's fundamentals. This MUST constrain the verdict (see rules below)."
+        )
+    elif news_absent:
+        news_quality_note = "No news in the last 24 hours. This quarter's fundamentals are in section 4."
+    else:
+        news_quality_note = ""
 
     # "None" reads to the model as "every rule was checked and none fired" --
     # a positive signal. For the life of this feature no caller passed anything
@@ -409,12 +498,13 @@ def build_expert_prompt(row_data, news_text, active_alerts_text=None):
     prompt = f"""You are an elite equity portfolio manager combining Stan Weinstein stage analysis, trend momentum,
 volume accumulation/distribution analysis, and fundamental catalyst evaluation.
 
-Analyze the stock {company_name} (Ticker: {ticker}) ({market} market) using the structured quantitative metrics and
-recent web news findings provided below.
+Analyze the stock {company_name} (Ticker: {ticker}) ({market} market) using the structured quantitative metrics, this
+quarter's checked fundamentals and recent web news provided below.
 
 ======================================================================
 1. QUANTITATIVE & TECHNICAL METRICS
 ======================================================================
+- Data as of: {data_end} (last daily close; prices in {currency})
 - Last Close: {last_close}
 - Weekly EMAs (Fast/Mid/Slow): 10 WEMA={ema10}, 20 WEMA={ema20}, 40 WEMA={ema40}
 - Daily EMAs (Fast/Mid/Slow): 10 DEMA={ema10_daily}, 50 DEMA={ema50}, 200 DEMA={ema200}
@@ -427,6 +517,9 @@ recent web news findings provided below.
 - Volume Analysis: Vol 10D={vol_10d}, Vol 100D={vol_100d}, Vol Trend={vol_trend}
 - Net Volume 10D (Accumulation vs Distribution): Direction={net_vol_dir}, Ratio={net_vol_ratio}%
 - 52-Week Range: High={h52}, Low={l52}
+- TA Rules (TheWrap weekly EMA flowchart): {_ta_rules_text(row_data)}
+- Valuation: Trailing P/E={_fmt(row_data.get('trailing_pe'))}, Forward P/E={_fmt(row_data.get('forward_pe'))}, P/B={_fmt(row_data.get('pb_ratio'))}, EV/EBITDA={_fmt(row_data.get('ev_ebitda'))}, ROE={_fmt(row_data.get('roe'), '%')}, ROCE={_fmt(row_data.get('roce'), '%')}
+- Latest quarter ({row_data.get('reported_qtr') or 'N/A'}) YoY growth: EPS={_fmt(row_data.get('qtr_eps_growth'), '%')}, Net profit={_fmt(row_data.get('qtr_profit_growth'), '%')}, Revenue={_fmt(row_data.get('qtr_revenue_growth'), '%')}
 
 ======================================================================
 2. ACTIVE ALERT RULES TRIGGERED
@@ -439,7 +532,12 @@ recent web news findings provided below.
 - Flag: {flag}
 
 ======================================================================
-4. RECENT WEB NEWS & ANNOUNCEMENTS (Last 24-48 hours via Grounded Search)
+4. THIS QUARTER'S FUNDAMENTALS (results, guidance, analyst actions -- last ~50 days, checked)
+======================================================================
+{fundamentals_text}
+
+======================================================================
+5. RECENT WEB NEWS & ANNOUNCEMENTS (Last 24 hours via Grounded Search)
 ======================================================================
 {news_quality_note}
 {news_text}
@@ -455,7 +553,7 @@ Then:
 1. State the Verdict (ACCUMULATE / HOLD / CAUTION).
 2. Provide a 1-line headline summarizing the key reason.
 3. Concise Technical & Volume Assessment (2-3 sentences).
-4. Concise Catalyst Assessment — if no news, explicitly state "No material news found; verdict based on technicals only."
+4. Concise Catalyst Assessment covering sections 4 and 5 — if BOTH are empty, explicitly state "No material news found; verdict based on technicals only."
 5. Actionable Take (2-3 sentences): entry/add zones, trailing stop levels, or exit triggers.
 
 Return ONLY a valid JSON object matching this schema:
@@ -469,7 +567,14 @@ Return ONLY a valid JSON object matching this schema:
     return prompt
 
 
-def generate_expert_view(client, row_data, news_text=None, news_source=None, active_alerts_text=None, is_retry=False):
+# Default for generate_expert_view's fundamental_view: read the ticker's view
+# from fundamentals.json. None is a different, deliberate value -- "not
+# available for this run" -- which section 4 renders as NO INFORMATION.
+_LOAD_FUNDAMENTALS = object()
+
+
+def generate_expert_view(client, row_data, news_text=None, news_source=None, active_alerts_text=None, is_retry=False,
+                         fundamental_view=_LOAD_FUNDAMENTALS):
     from google.genai import types
     from datetime import datetime, timezone
 
@@ -492,7 +597,19 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
             print(f"  [expert news fetch failed/timeout] {ticker}: {e} -> Proceeding with technical evaluation only")
             news_text, news_source = "No recent news found.", "⚪ No Source"
 
-    prompt = build_expert_prompt(row_data, news_text, active_alerts_text)
+    # Section 4 (this quarter's fundamentals). A caller looping over many
+    # tickers passes the view it already loaded; anyone else gets it read here,
+    # so no call path silently goes without it.
+    # A corrupt fundamentals.json must not stop Expert Take: it is the
+    # Sentiment job's file, and that job already fails loudly on it.
+    if fundamental_view is _LOAD_FUNDAMENTALS:
+        from fundamentals_eval import load_fundamentals
+        try:
+            fundamental_view = load_fundamentals().get(ticker) or {}
+        except Exception as e:
+            print(f"  [expert] {ticker}: fundamentals.json unreadable ({e}) -> section 4 not provided")
+            fundamental_view = None
+    prompt = build_expert_prompt(row_data, news_text, active_alerts_text, fundamental_view)
 
     from stock_data import load_settings
     settings = load_settings()
@@ -549,6 +666,7 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
     if used is not None:
         data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         data["news_used"] = news_text
+        data["quarter_facts_used"] = _quarter_fundamentals_text(fundamental_view).startswith("- ")
         data["news_source"] = news_source or "⚪ Unknown"
         data["model_used"] = model.split("/")[-1] if used == model else f"{used.split('/')[-1]} (Fallback)"
         return data
@@ -607,7 +725,8 @@ def apply_regenerated_view(store, ticker, view):
     return True
 
 
-def analyze_single_ticker(ticker, row_data, api_key, active_alerts_text=None, is_retry=True, client=None):
+def analyze_single_ticker(ticker, row_data, api_key, active_alerts_text=None, is_retry=True, client=None,
+                          fundamental_view=_LOAD_FUNDAMENTALS):
     """Regenerate one ticker's Expert Take and persist it.
 
     Returns the stored view, or None when generation failed and the existing
@@ -617,7 +736,8 @@ def analyze_single_ticker(ticker, row_data, api_key, active_alerts_text=None, is
     `client` lets a caller looping over tickers reuse one RotatingGeminiClient --
     see analyze_single_ticker_sentiment for why that matters."""
     client = client or llm_util.make_client(api_key)
-    view = generate_expert_view(client, row_data, active_alerts_text=active_alerts_text, is_retry=is_retry)
+    view = generate_expert_view(client, row_data, active_alerts_text=active_alerts_text, is_retry=is_retry,
+                                fundamental_view=fundamental_view)
     all_views = load_expert_views()
     if not apply_regenerated_view(all_views, ticker, view):
         return None

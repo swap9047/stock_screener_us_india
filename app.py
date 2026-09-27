@@ -98,6 +98,7 @@ from expert_views import (load_expert_views, save_expert_views, analyze_single_t
 from fundamentals_eval import (
     load_fundamentals, save_fundamentals, _validate_sentiment, SENTIMENT_STALE_DAYS,
     analyze_single_ticker_sentiment, _is_valid_view as _is_valid_sentiment_view,
+    evidence_tag,
 )
 from custom_columns import (
     load_custom_columns, save_custom_columns, validate_formula, column_key, custom_column_name_error,
@@ -1022,9 +1023,11 @@ def build_ai_review_payload(
             if note:
                 out.append(note)
             for lbl, fld in (("Earnings", "earnings_summary"), ("Guidance", "future_guidance"),
+                             ("Management outlook", "outlook_quote"),
                              ("Analyst Coverage", "analyst_coverage"), ("Reasoning", "reasoning")):
                 if v.get(fld):
-                    out.append(f"- {lbl}: {v[fld]}")
+                    val = f"{v['outlook_tone']} — {v[fld]}" if fld == "outlook_quote" and v.get("outlook_tone") else v[fld]
+                    out.append(f"- {lbl}: {val}")
             if v.get("as_of"):
                 out.append(f"(model: {v.get('model_used', '?')}, as of {v['as_of']})")
 
@@ -1312,10 +1315,10 @@ def column_definitions(settings, labels):
         ),
         "Expert Take": "AI-generated synthesis of technical indicators and recent analyst coverage: ACCUMULATE, HOLD, or CAUTION.",
         "Expert News?": (
-            "Whether the Expert Take verdict had any news behind it. \"No\" means the grounded search "
-            "returned nothing for this ticker, so the verdict is a technicals-only read -- still valid "
-            "(the rules say absent news leans Hold), but not news-informed. Roughly 30% of verdicts are "
-            "technicals-only on a typical day."
+            "Whether the Expert Take verdict had any news behind it: either the last 24 hours' web news, "
+            "or this quarter's checked results, guidance and analyst actions from the Sentiment job. "
+            "\"No\" means neither was found, so the verdict is a technicals-only read -- still valid "
+            "(the rules say absent news leans Hold), but not news-informed."
         ),
         "10/30 W Golden Cross (weeks ago)": "Weeks since the 10-week EMA crossed above the 30-week EMA. Lower numbers mean a more recent bullish cross.",
         "Notes": "Your free-text note for this ticker, set via the sidebar 'Ticker Notes' panel. Hover/tap a truncated note to see the full text.",
@@ -3548,6 +3551,15 @@ def _reanalyze_tickers_in_dashboard(tickers, results, api_key, sync_message,
     # references need; passing only the selected tickers would change which
     # rules resolve as true.
     alerts_by_ticker = active_alerts_for_prompt(results) if scope == "expert" else None
+    # Section 4 of the Expert Take prompt (this quarter's checked fundamentals),
+    # read once for the batch. Unreadable -> None, which the prompt renders as
+    # "not provided" rather than "no news".
+    fund_views = None
+    if scope == "expert":
+        try:
+            fund_views = load_fundamentals()
+        except Exception as e:
+            print(f"[re-analyze] fundamentals.json unreadable, Expert Take runs without it: {e}")
 
     for idx, tk in enumerate(tickers):
         row = next((r for r in results if r["ticker"] == tk), None)
@@ -3564,6 +3576,7 @@ def _reanalyze_tickers_in_dashboard(tickers, results, api_key, sync_message,
                     client, row,
                     active_alerts_text=alerts_text_for(alerts_by_ticker, tk),
                     is_retry=True,
+                    fundamental_view=(fund_views.get(tk) or {}) if fund_views is not None else None,
                 )
                 # Same persistence rules as the nightly batch and the per-ticker
                 # button (expert_views.apply_regenerated_view): a failure keeps a
@@ -3819,12 +3832,22 @@ def render_expert_view_expander(market, filtered_rows, settings, results=None):
                              width="content"):
                 return
             with st.spinner(f"Re-analyzing {ticker} (Expert Take + Sentiment)..."):
-                ev_ok = True
                 # One client for both halves of this click: the two calls used to
                 # build one each, so a key retired by the first was rediscovered
                 # and retried by the second. st_secrets keeps real key names in
                 # the rotation log -- see _reanalyze_tickers_in_dashboard.
                 single_client = llm_util.make_client(api_key, st_secrets=st.secrets)
+                # Sentiment FIRST: Expert Take's prompt now reads this quarter's
+                # fundamentals from fundamentals.json (section 4), so running it
+                # second hands it the facts this click just refreshed -- the
+                # same order as the nightly jobs (9 PM Sentiment, 1 AM Expert).
+                sent_ok = True
+                try:
+                    analyze_single_ticker_sentiment(ticker, row, api_key, is_retry=True,
+                                                    client=single_client)
+                except Exception as e:
+                    sent_ok = False
+                    st.error(f"Sentiment refresh failed: {e}")
                 try:
                     alerts_by_ticker = active_alerts_for_prompt(results or filtered_rows)
                     analyze_single_ticker(
@@ -3833,16 +3856,10 @@ def render_expert_view_expander(market, filtered_rows, settings, results=None):
                         is_retry=True, client=single_client,
                     )
                 except Exception as e:
-                    ev_ok = False
-                    st.error(f"Expert Take refresh failed: {e}")
-                try:
-                    analyze_single_ticker_sentiment(ticker, row, api_key, is_retry=True,
-                                                    client=single_client)
-                except Exception as e:
-                    if ev_ok:
-                        st.warning(f"Expert Take updated; Sentiment refresh failed: {e}")
+                    if sent_ok:
+                        st.warning(f"Sentiment updated; Expert Take refresh failed: {e}")
                     else:
-                        st.error(f"Sentiment refresh failed: {e}")
+                        st.error(f"Expert Take refresh failed: {e}")
                 sync_ai_views_to_github(f"Re-analyze single ticker ({ticker}) via UI", tickers=[ticker])
                 st.rerun()
 
@@ -4456,8 +4473,16 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
                     )
                 )
 
+            # The guidance/outlook tag rides next to the label so the strongest
+            # input (rule 7: guidance outranks the quarter) is visible without
+            # hovering. Not for a stale or data-less view: that guidance is
+            # no longer current, and the label already says so.
+            tag = "" if flag in ("STALE", "STALE_QUARTER", "NO_DATA") else evidence_tag(v)
+            outlook_line = ""
+            if v.get("outlook_tone") and v.get("outlook_quote"):
+                outlook_line = f"Outlook: {v['outlook_tone']} — {v['outlook_quote']}\n\n"
             tooltip_esc = html.escape(
-                f"Earnings: {earnings}\n\nGuidance: {guidance}\n\n"
+                f"Earnings: {earnings}\n\nGuidance: {guidance}\n\n{outlook_line}"
                 f"Analyst Coverage: {analyst}\n\nReasoning: {reasoning}\n\n"
                 f"As of: {as_of}  |  Source: {news_source}  |  Model: {model_used}"
             )
@@ -4467,6 +4492,8 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
                 f'<span style="color:{color};font-weight:500">{html.escape(label)}</span>'
                 if color else html.escape(label)
             )
+            if tag:
+                label_html += f' <span style="font-size:0.85em;opacity:0.8">· {html.escape(tag)}</span>'
             return (
                 f'<details style="display:inline-block" title="{title_attr}">'
                 f'<summary style="cursor:help">{label_html}</summary>'

@@ -22,6 +22,7 @@ from expert_views import (
     EXPERT_STALE_DAYS, _view_age_days, stale_view_fallback,
 )
 from alerts import active_alerts_for_prompt, alerts_text_for
+from fundamentals_eval import load_fundamentals
 from news_summary import get_gemini_api_key
 
 
@@ -101,6 +102,16 @@ def main():
         print(f"::error::{e}")
         sys.exit(1)
     _prune_orphans(expert_views, watchlists, "expert_views")
+    # Section 4 of the prompt: this quarter's checked fundamentals from the
+    # Sentiment job (9 PM ET), read once here rather than once per ticker.
+    # Unreadable is not fatal here: the Sentiment job fails loudly on its own
+    # file, and Expert Take is still worth running on technicals and news.
+    try:
+        fundamental_views = load_fundamentals()
+        print(f"[{_ts()}] Sentiment facts on file for {len(fundamental_views)} tickers")
+    except DataFileError as e:
+        print(f"::warning::{e} -- Expert Take runs without this quarter's fundamentals")
+        fundamental_views = None
 
     # REFRESH_MARKETS scopes the run to specific watchlists -- set by the
     # dashboard's per-tab "Re-analyze All" button (see the workflow's
@@ -178,7 +189,8 @@ def main():
                     client,
                     row,
                     active_alerts_text=alerts_text,
-                    is_retry=False
+                    is_retry=False,
+                    fundamental_view=(fundamental_views.get(tk) or {}) if fundamental_views is not None else None,
                 )
                 elapsed = time.time() - t0
 
@@ -220,7 +232,8 @@ def main():
                     client,
                     row,
                     active_alerts_text=alerts_text,
-                    is_retry=True
+                    is_retry=True,
+                    fundamental_view=(fundamental_views.get(tk) or {}) if fundamental_views is not None else None,
                 )
                 elapsed = time.time() - t0
 
