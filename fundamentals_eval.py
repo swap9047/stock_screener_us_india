@@ -49,6 +49,41 @@ def search_window_days(market=None, ticker=None):
     return INDIA_SEARCH_WINDOW_DAYS if market == "india_invested" else US_SEARCH_WINDOW_DAYS
 
 
+# The window above is the FLOOR. A fixed 50 days still loses each quarter's
+# results for the second half of the quarter: companies report every ~91 days,
+# so on 2026-10-02 31 of 44 US and all 47 India tickers with a known report
+# date had last reported 51-81 days earlier. Those results were still the
+# latest, but out of range, so Sentiment fell to "Neutral, no evidence" until
+# the next season -- Positives went 67 -> 33 in a week and Red flags 17 -> 27,
+# and it would repeat every quarter. So the window now reaches back to the
+# company's own last report (Yahoo's confirmed date), with a few days' lead for
+# the pre-results run-up.
+ANCHOR_LEAD_DAYS = 7
+# A report older than this is not "the current quarter" any more (overdue
+# filer, or Yahoo returning an ancient date -- one India ticker carried an
+# 8-year-old one), so it is not used as an anchor.
+MAX_ANCHOR_AGE_DAYS = 120
+MAX_SEARCH_WINDOW_DAYS = 120
+# No usable date (27 of 74 India tickers had none): a full quarter plus the
+# usual reporting lag, so the last report is still very likely in range.
+FALLBACK_SEARCH_WINDOW_DAYS = 100
+
+
+def search_window_for(ticker, last_report=None, market=None, today=None):
+    """Days of news the Sentiment search covers for this ticker: back to its
+    last confirmed results (`last_report`, a date) minus ANCHOR_LEAD_DAYS,
+    never less than search_window_days() and never more than
+    MAX_SEARCH_WINDOW_DAYS; FALLBACK_SEARCH_WINDOW_DAYS when there is no
+    plausible report date."""
+    floor = search_window_days(market, ticker)
+    today = today or datetime.now(timezone.utc).date()
+    if last_report is not None:
+        age = (today - last_report).days
+        if 0 <= age <= MAX_ANCHOR_AGE_DAYS:
+            return min(max(floor, age + ANCHOR_LEAD_DAYS), MAX_SEARCH_WINDOW_DAYS)
+    return max(floor, FALLBACK_SEARCH_WINDOW_DAYS)
+
+
 # How far back a cited earnings date may sit and still belong to the SAME
 # reporting period. Deliberately separate from the search window above: one is
 # "how far back do we look for news", the other is "is this the current
@@ -90,7 +125,7 @@ SEARCH_SOURCE_LABELS = {SEARCH_MODEL: "🔍 Gemma-4-26B (Google Search)"}
 REASONING_FALLBACK_MODEL = "models/gemma-4-26b-a4b-it"
 
 
-def fetch_fundamental_news(client, ticker, market, company_name, is_retry=False):
+def fetch_fundamental_news(client, ticker, market, company_name, is_retry=False, window_days=None):
     """Grounded search for the current quarter's numbers: three attempts on
     SEARCH_MODEL, each on a different API key (llm_util.same_model_tiers).
 
@@ -102,7 +137,7 @@ def fetch_fundamental_news(client, ticker, market, company_name, is_retry=False)
     from stock_data import get_exchange_label
 
     as_of_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    window = search_window_days(market, ticker)
+    window = window_days or search_window_days(market, ticker)
     cutoff_date = (datetime.now(timezone.utc) - timedelta(days=window)).strftime("%Y-%m-%d")
     exchange = get_exchange_label(market, ticker)
     
@@ -379,7 +414,7 @@ def _fetch_last_reported_earnings_date(ticker, timeout=15):
     except Exception:
         return None
 
-def _check_quarter_freshness(model_earnings_date, real_last_earnings_date, market, ticker=None):
+def _check_quarter_freshness(model_earnings_date, real_last_earnings_date, market, ticker=None, window_days=None):
     """Pure comparison (no I/O) — True if the model's claimed earnings date is
     consistent with the actual last-reported date, or if there isn't enough
     signal to contradict the model (fail open).
@@ -390,7 +425,7 @@ def _check_quarter_freshness(model_earnings_date, real_last_earnings_date, marke
     """
     if real_last_earnings_date is None:
         return True
-    window = search_window_days(market, ticker)
+    window = window_days or search_window_days(market, ticker)
     today = datetime.now(timezone.utc).date()
     if (today - real_last_earnings_date).days > window:
         return True  # nothing new expected within the search window either way
@@ -558,7 +593,9 @@ def needs_targeted_retry(view, market=None, ticker=None):
     except Exception:
         return False
     days_ago = (datetime.now(timezone.utc).date() - reported).days
-    return 0 <= days_ago <= search_window_days(market, ticker)
+    # The window this view was actually searched with (search_window_for),
+    # falling back to the floor for views stored before it was recorded.
+    return 0 <= days_ago <= (view.get("search_window_days") or search_window_days(market, ticker))
 
 
 def fetch_targeted_earnings_numbers(client, ticker, company_name, market, announced_on):
@@ -623,9 +660,24 @@ def generate_fundamental_view(client, row_data, news_text=None, news_source=None
     market = row_data.get("market", "us_invested")
     company_name = row_data.get("company_name", ticker)
 
+    # The confirmed last-results date: looked up BEFORE the search so the
+    # window can reach back to it (search_window_for), and reused by
+    # _finalize's quarter check -- once per call, never twice (it used to be
+    # re-fetched for the targeted retry). Lazy, so a caller that supplies
+    # news_text and never reaches _finalize makes no Yahoo call at all.
+    _lookup = {}
+
+    def _report_and_window():
+        if not _lookup:
+            real = _fetch_last_reported_earnings_date(ticker)
+            _lookup.update(real=real, window=search_window_for(ticker, real, market))
+        return _lookup["real"], _lookup["window"]
+
     if news_text is None:
+        _real_date, window_days = _report_and_window()
         try:
-            news_text, news_source = fetch_fundamental_news(client, ticker, market, company_name, is_retry=is_retry)
+            news_text, news_source = fetch_fundamental_news(client, ticker, market, company_name, is_retry=is_retry,
+                                                            window_days=window_days)
         except TimeoutError:
             # Let the requeue signal through. fetch_fundamental_news raises this
             # on a first-pass ladder exhaustion specifically so the caller can
@@ -680,9 +732,11 @@ def generate_fundamental_view(client, row_data, news_text=None, news_source=None
         data["news_used"] = news_text
         data["news_source"] = news_source or "⚪ Unknown"
         data["model_used"] = model_used
-        real_date = _fetch_last_reported_earnings_date(ticker)
-        data["quarter_verified"] = _check_quarter_freshness(data.get("earnings_report_date"), real_date, market, ticker)
+        real_date, window_days = _report_and_window()
+        data["quarter_verified"] = _check_quarter_freshness(data.get("earnings_report_date"), real_date, market, ticker,
+                                                            window_days=window_days)
         data["real_earnings_date"] = real_date.isoformat() if real_date else None
+        data["search_window_days"] = window_days
         return data
 
     from stock_data import load_settings

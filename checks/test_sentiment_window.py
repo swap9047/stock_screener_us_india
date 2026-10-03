@@ -165,5 +165,72 @@ check('standard_tiers(model, "models/gemma-4-31b-it")' not in _fe_src,
 check(_fe_src.count("standard_tiers(model, REASONING_FALLBACK_MODEL)") == 2,
       "both reasoning ladders (sentiment, sentiment-retry) use the constant")
 
+
+# --- the window reaches back to the company's own last results ----------------
+# A fixed 50 days lost each quarter's results halfway through the quarter: on
+# 2026-10-02 every India ticker with a known date had last reported 51+ days
+# earlier, so Sentiment read "Neutral, no evidence" on results that were still
+# the latest. 50 is now the floor; the window follows the report date.
+TODAY = datetime(2026, 10, 2, tzinfo=timezone.utc).date()
+
+
+def win(age_days, tk="ACME"):
+    report = None if age_days is None else TODAY - timedelta(days=age_days)
+    return fe.search_window_for(tk, report, today=TODAY)
+
+
+check(win(67) == 74, f"report 67 days ago -> window 74 (67 + 7 days' lead), got {win(67)}")
+check(win(67, "ZED.NS") == 74, "...the same for an India ticker")
+check(win(10) == 50, f"report 10 days ago -> the 50-day floor, got {win(10)}")
+check(win(118) == 120, f"report 118 days ago -> capped at 120, got {win(118)}")
+check(win(3153) == 100, f"an implausible 8-year-old date is not an anchor -> fallback 100, got {win(3153)}")
+check(win(-5) == 100, "a future date is not an anchor -> fallback 100")
+check(win(None) == 100, "no report date -> fallback 100 (a quarter plus the reporting lag)")
+
+# The real path: the date is looked up BEFORE the search, the search uses it,
+# the view records it, and the quarter check judges against it.
+import types as _types
+import stock_data
+
+seen = {}
+REPORT = (datetime.now(timezone.utc) - timedelta(days=67)).date()
+
+
+def _fake_ladder3(client, prompt, tiers, config_for, label="llm", subject="", timeout=None, on_success=None):
+    seen[label] = prompt
+    if label == "fundamental-search":
+        return _types.SimpleNamespace(text="Acme reported Q2 results."), "models/gemma-4-26b-a4b-it"
+    if label == "sentiment":
+        return fe.normalize_view({"sentiment": "Neutral", "earnings_summary": "Revenue up 4%",
+                                  "future_guidance": "N/A", "analyst_coverage": "N/A",
+                                  "earnings_report_date": str(REPORT - timedelta(days=100)),
+                                  "reasoning": "x"}), "models/gemini-3.5-flash-lite"
+    return None, None
+
+
+_real = (llm_util.run_model_ladder, fe._fetch_last_reported_earnings_date, stock_data.load_settings)
+llm_util.run_model_ladder = _fake_ladder3
+fe._fetch_last_reported_earnings_date = lambda ticker, timeout=15: REPORT
+stock_data.load_settings = lambda: {**stock_data.DEFAULT_SETTINGS, "sentiment_targeted_retry": False}
+try:
+    v = fe.generate_fundamental_view(None, {"ticker": "ACME", "market": "us_invested", "company_name": "Acme Corp"})
+    expect = (datetime.now(timezone.utc) - timedelta(days=74)).strftime("%Y-%m-%d")
+    check(expect in seen.get("fundamental-search", ""), f"the search reaches back to the last report minus 7 days ({expect})")
+    check(v.get("search_window_days") == 74, "the view records the window it was searched with")
+    # The model cited the PREVIOUS quarter's date while a newer report sits in
+    # range: with the 50-day window that report was out of range and the check
+    # failed open; now it is caught.
+    check(v.get("quarter_verified") is False, "citing an older quarter than the one in range is caught (STALE_QUARTER)")
+finally:
+    llm_util.run_model_ladder, fe._fetch_last_reported_earnings_date, stock_data.load_settings = _real
+
+# The targeted second search uses the stored window, not the 50-day floor.
+nv = {"sentiment": "Neutral", "eps_value": None, "guidance_change": None, "analyst_action": None,
+      "earnings_report_date": str(REPORT), "earnings_summary": "Revenue up 4%"}
+check(fe.needs_targeted_retry({**nv, "search_window_days": 74}, "us_invested", "ACME"),
+      "a 67-day-old report inside the stored 74-day window earns the targeted search")
+check(not fe.needs_targeted_retry(nv, "us_invested", "ACME"),
+      "...an older view without the stored window keeps the 50-day floor")
+
 print(f"FAILURES: {fails}")
 sys.exit(1 if fails else 0)
