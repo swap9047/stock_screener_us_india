@@ -81,9 +81,27 @@ def main():
     totals = news_data.get("totals", {})
     print(f"Saved news_summary.json (as_of {news_data['as_of']}). Totals: {totals}")
 
+    # A run where every ticker threw used to be byte-indistinguishable from a
+    # genuinely quiet news day: build_news_summary still returned a well-formed
+    # dict of "No major news..." summaries, the workflow committed it and went
+    # green, and the only evidence was a line in the Actions log. Fail the job
+    # instead when the search stage largely didn't work.
+    #
+    # Decided BEFORE posting. This used to post first and fail after, and a
+    # failed run makes the slot gate re-run the job -- so on 2026-09-30 Discord
+    # got the 25-of-51-failed digest and then, from the retry, a second one. Now
+    # a failed run posts nothing; the file is still saved (and committed) so the
+    # News tab's "search failed" count shows what happened, and the retry posts
+    # the day's only digest.
+    searched = totals.get("searched", 0)
+    failed = totals.get("failed", 0)
+    run_failed = bool(searched and failed >= max(1, searched // 2))
+
     webhook = load_discord_webhook()
     if partial:
         print("Partial run -- summary was NOT sent to Discord.")
+    elif run_failed:
+        print("Search largely failed -- summary was NOT sent to Discord (the slot gate retries the run).")
     elif webhook:
         messages = build_discord_messages(news_data)
         if messages:
@@ -99,17 +117,9 @@ def main():
     else:
         print("No DISCORD_WEBHOOK_URL / discord_config.json set -- summary was NOT sent to Discord.")
 
-    # A run where every ticker threw used to be byte-indistinguishable from a
-    # genuinely quiet news day: build_news_summary still returned a well-formed
-    # dict of "No major news..." summaries, the workflow committed it and went
-    # green, and the only evidence was a line in the Actions log. Fail the job
-    # instead when the search stage largely didn't work.
-    searched = totals.get("searched", 0)
-    failed = totals.get("failed", 0)
-    if searched and failed >= max(1, searched // 2):
+    if run_failed:
         print(f"ERROR: {failed}/{searched} tickers failed their news search -- treating this run as failed.")
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()

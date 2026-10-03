@@ -26,7 +26,9 @@ automated alerts to Discord.
     moment they're created.
 *   **Signal (Chart × News):** One automatic label per ticker from the two independent
     inputs — the chart (Trend) and the news (Sentiment): *Confirmed*, *Chart only*,
-    *News divergence*, *Chart up, news negative*, or *Avoid*. Its colour is the dot next to
+    *Mixed*, *News divergence*, *Chart up, news negative*, or *Avoid*. Trend itself is
+    *Uptrend* only when all four of its conditions agree, *Downtrend* when all four
+    disagree, and *Mixed* in between. Its colour is the dot next to
     the ticker symbol, and it is filterable, sortable and usable in alert rules.
 *   **TA Rules:** A trader's weekly EMA flowchart (EMA convergence, support/resistance
     breaks, 10/20/40-week EMA breaks) applied node for node to the last completed week;
@@ -36,9 +38,11 @@ automated alerts to Discord.
 *   **Discord integrations:** GitHub Actions cron jobs evaluate your rules and ping a
     Discord webhook when they trigger, plus a weekly wrap-up digest. Every post ends with
     a short "not investment advice" footer.
-*   **State persistence:** Configuration changed in the UI is committed straight back to
-    the private data repository as a single atomic commit, so it survives Streamlit
-    Community Cloud redeploys — where the container filesystem is ephemeral.
+*   **State persistence:** Configuration changed in the UI — watchlists, alert rules,
+    notes and flags, settings, filters, custom columns, column layout — is committed back
+    to the private data repository automatically, as one atomic commit at the end of the
+    click that changed it. So the nightly jobs see it the same night, and it survives
+    Streamlit Community Cloud redeploys, where the container filesystem is ephemeral.
 
 ## 🧠 AI Pipelines
 
@@ -68,7 +72,7 @@ underlying evidence is stale, missing, or predates a confirmed earnings report �
 
 ### Market News (`news_summary.py`)
 A noise-free summary of material catalysts (FDA approvals, earnings surprises, M&A) from
-the last 48 hours, filtered to strip out fluff.
+the last 24 hours, plus events due in the next few days, filtered to strip out fluff.
 
 Both AI columns can be regenerated from the dashboard — for selected tickers, for whatever
 is currently pending, or for a whole watchlist in the background via GitHub Actions scoped

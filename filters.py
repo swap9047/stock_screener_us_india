@@ -73,7 +73,8 @@ EQ_TOLERANCE = 0.05  # values are rounded to 1 decimal, so treat "==" as approx-
 # the "in" operator (match ANY of several selected values, e.g. Trend in
 # [Downtrend, Strong Downtrend]) instead of only single-value "==".
 CATEGORICAL_METRICS = {
-    "trend": ["Strong Uptrend", "Uptrend", "Downtrend", "Strong Downtrend"],
+    # "Mixed" = the four trend conditions disagree (stock_data.compute_trend).
+    "trend": ["Strong Uptrend", "Uptrend", "Mixed", "Downtrend", "Strong Downtrend"],
     "volume_trend": ["Exploding", "In-line", "Declining"],
     "vstop_weekly_direction": ["Up", "Down"],
     "tech_uptrend": ["Yes", "No"],

@@ -35,7 +35,7 @@ step names, so each key needs a line in the AI steps' `env:` blocks. Every run l
 `[key rotation] N key(s): ...`; if that number is lower than expected, that line is
 missing.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 697
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 767
 offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
@@ -45,22 +45,22 @@ verified by rendering the app headlessly; recipe at the bottom.
 
 ## Module map
 
-~17.9k lines total (the app itself; checks/ adds ~4.6k). The weighting matters: `app.py` is over a third of it.
+~18.1k lines total (the app itself; checks/ adds ~4.9k). The weighting matters: `app.py` is over a third of it.
 
 | File | Lines | What it owns |
 |---|---:|---|
-| `app.py` | 6557 | The entire UI: tabs, tables, sidebar, filters, sort, editors, AI control bars, News + Alert Rules tabs |
-| `stock_data.py` | 3031 | yfinance fetching, all indicator maths, watchlist/markets registry IO, `get_filterable_metrics` |
-| `alerts.py` | 1125 | Alert rule evaluation + Discord message building; every Discord post goes through `send_discord_batch`, which appends the disclaimer |
+| `app.py` | 6668 | The entire UI: tabs, tables, sidebar, filters, sort, editors, AI control bars, News + Alert Rules tabs |
+| `stock_data.py` | 3083 | yfinance fetching, all indicator maths, watchlist/markets registry IO, `get_filterable_metrics` |
+| `alerts.py` | 1127 | Alert rule evaluation + Discord message building; every Discord post goes through `send_discord_batch`, which appends the disclaimer |
 | `news_summary.py` | 861 | News gathering + LLM summarisation |
 | `fundamentals_eval.py` | 877 | Sentiment ("fundamental view") generation + validation; the search window is anchored to each company's last results (`search_window_for`) |
-| `github_sync.py` | 671 | Atomic config push + `workflow_dispatch` trigger |
-| `expert_views.py` | 765 | Expert Take verdict generation; its prompt also gets Sentiment's checked facts for the quarter (section 4), and `chart_rule_verdict` drives the ⚑ marker |
-| `filters.py` | 486 | The boolean condition engine — shared by UI filters **and** background alerts |
+| `github_sync.py` | 715 | Atomic config push, the end-of-run push of edited config (`unpushed_config_files`) + `workflow_dispatch` trigger |
+| `expert_views.py` | 773 | Expert Take verdict generation; its prompt also gets Sentiment's checked facts for the quarter (section 4), and `chart_rule_verdict` drives the ⚑ marker |
+| `filters.py` | 487 | The boolean condition engine — shared by UI filters **and** background alerts |
 | `llm_util.py` | 679 | Shared Gemini-call plumbing (timeout wrapper, retry/model-ladder logic, `FailureFuse`) for the three AI pipelines |
 | `weekly_wrapup.py` | 365 | Weekly Discord digest |
 | `custom_columns.py` | 294 | User-defined formula columns |
-| `ticker_notes.py` | 166 | Per-ticker notes and manual flags, plus `signal` (Chart × News: Trend × Sentiment) |
+| `ticker_notes.py` | 176 | Per-ticker notes and manual flags, plus `signal` (Chart × News: Trend × Sentiment) |
 | `watchlist_labels.py` | 46 | Tab labels a watchlist may not take. Kept out of `stock_data.py`, whose code fingerprint (comments and docstrings excluded) marks the snapshot stale on any code edit |
 
 `refresh_*.py` and `*_check.py` are thin entry points that exist only to be run by GitHub
@@ -98,6 +98,11 @@ repo is public (free Actions minutes), so the data lives in the private repo
 The files fall into **three classes that must not be conflated**:
 
 **1. User config** — edited in the UI, pushed to the data repo by `github_sync.push_all_config`.
+**Every edit is pushed automatically** at the end of the run that made it: the last block
+of `app.py` pushes whatever `github_sync.unpushed_config_files()` reports (local bytes no
+longer match the blob this container last pulled or pushed) as one commit, and retries a
+failed push on the next run. A file with no pull/push record is never auto-pushed -- a
+stale copy must not overwrite the repo. The "Push to GitHub" button is the manual fallback.
 The authoritative list is `SYNCABLE_FILES` in `github_sync.py`:
 `watchlist.json`, `markets.json`, `interested.json`, `custom_filters.json`,
 `settings.json`, `alerts_config.json`, `column_prefs.json`, `custom_columns.json`,
@@ -292,7 +297,11 @@ Each of these has actually bitten this codebase.
 - **`session_state` is seeded only when a widget key is absent.** Any code that rewrites
   prefs behind a live widget must `pop` that widget's keys, or the widget re-renders its
   old value and writes it straight back over your change. This is why the copy-sort
-  feature pops `sort_field_*`/`sort_dir_*`.
+  feature pops `sort_field_*`/`sort_dir_*`. **The same goes for one setting rendered by
+  several widgets** -- the two "Show fundamental columns" boxes, and the AI model and
+  budget pickers drawn on every market tab: each copy saved its stale value back, so none
+  of them stuck until 2026-10-03. Save such a setting through `_save_setting_reset_widgets`
+  (or `_set_show_fundamentals`), which drops every copy's state before rerunning.
 - **Widget keys must be namespaced per market** (`f"...{market}..."`), and per section
   where a control appears twice. A duplicate key raises and takes down the whole app.
 - **Combined tabs must de-duplicate by ticker.** They concatenate member watchlists, and a
@@ -342,7 +351,10 @@ Three things about it you cannot guess:
 
 - **"Done" means the WORK JOB succeeded**, not the run. A run whose gate said "no" also
   reports success, and counting those would skip the slot forever. Hence `work-job`, and
-  hence the gate needs `actions: read`.
+  hence the gate needs `actions: read`. A **partial** manual run (`markets` or `limit`
+  given) is titled "partial run" by the workflow's `run-name` and never counts -- one tab's
+  "Re-analyze All" must not stand in for the nightly full run. Runs are listed without
+  `?status=completed`, a filter that lagged and let the alerts slot be worked twice.
 - **`grace-hours` must stay below the gap between slots.** Breadth has two slots 12 h
   apart, so it keeps 10 h; the others have one slot a day and use 22 h.
 - **`days` filters the SLOT's weekday, not the run's.** The Sunday wrap-up slot is still
@@ -412,7 +424,12 @@ not `st.dataframe`.
 
 Set **`SKIP_GITHUB_PULL=1`** in the environment for local and `AppTest` runs. It skips
 both the startup download and `pull_generated_files`, so the run uses the JSON already in
-your folder and doesn't overwrite it with the data repo's copies.
+your folder and doesn't overwrite it with the data repo's copies, and it turns off the
+end-of-run push of edited config. Other writes still reach the data repo when a token is
+set -- `app.py` loads `.env`, which holds `DATA_REPO_TOKEN` -- so for a headless render that
+clicks anything, also blank `DATA_REPO_TOKEN`, `GITHUB_TOKEN` and `DISCORD_WEBHOOK_URL` in
+the environment (`load_dotenv` never overrides a variable that is already set), or render a
+copy of the app in a scratch directory with no `.env`.
 
 Two things that will waste your time otherwise:
 

@@ -340,8 +340,9 @@ def _view_age_days(view):
 # payload would then be describing a decision rule the model never saw.
 VERDICT_RULES = """MANDATORY VERDICT RULES — apply these strictly before choosing a verdict:
 - HOLD is the DEFAULT. Use it whenever the picture is mixed, data is thin, or confidence is low.
+- Trend "Mixed" means its four conditions disagree (see Trend Detail): it is neither an uptrend for ACCUMULATE nor a Downtrend signal for CAUTION.
 - ACCUMULATE requires ALL of: (a) Trend is "Uptrend" or "Strong Uptrend", (b) VStop direction is UP held ≥ 3 weeks, (c) RS is positive or N/A for very new data, (d) No negative news catalyst. If news is ABSENT, you may still give ACCUMULATE ONLY if ALL technical conditions above are clearly met — never give ACCUMULATE just because news is absent.
-- CAUTION requires AT LEAST TWO of the following five signals to agree — a single isolated signal (e.g. trend just not yet confirmed as an uptrend, with everything else neutral or positive) is NOT enough on its own and must fall through to HOLD instead: (1) Trend is Downtrend, (2) VStop flipped DOWN, (3) RSI > 80 on weekly or monthly (severely overbought), (4) heavy distribution (Net Volume 10D Negative with large ratio), (5) a clearly negative news catalyst.
+- CAUTION requires AT LEAST TWO of the following five signals to agree — a single isolated signal (e.g. trend just not yet confirmed as an uptrend, with everything else neutral or positive) is NOT enough on its own and must fall through to HOLD instead: (1) Trend is Downtrend or Strong Downtrend (not Mixed), (2) VStop flipped DOWN, (3) RSI > 80 on weekly or monthly (severely overbought), (4) heavy distribution (Net Volume 10D Negative with large ratio), (5) a clearly negative news catalyst.
 - NEVER give ACCUMULATE when news shows a negative catalyst (earnings miss, downgrade, regulatory issue, fraud, etc.).
 - NEVER give ACCUMULATE solely because news is absent or minimal — absent news → lean HOLD unless technicals fully satisfy the ACCUMULATE criteria above.
 - "News" in these rules means BOTH section 4 (this quarter's fundamentals) and section 5 (the last 24 hours). LOWERED guidance, an EPS miss, or a named-firm downgrade in section 4 is a negative catalyst; RAISED guidance or a named-firm upgrade is a positive one."""
@@ -386,7 +387,8 @@ def _ta_rules_text(row_data):
 def _quarter_fundamentals_text(view):
     """Section 4 of the prompt: the Sentiment pipeline's checked facts for the
     current quarter -- EPS, guidance, management outlook, named-firm analyst
-    actions -- found by its own ~50-day search. The Expert Take search looks
+    actions -- found by its own search, which reaches back to the company's last
+    reported results (fundamentals_eval.search_window_for). The Expert Take search looks
     at the last 24 HOURS only, so before this the model never saw a result or
     guidance change older than a day, and 43 of 124 verdicts on 2026-09-26 were
     technicals-only. Sentiment never reads Expert Take, so this adds no loop.
@@ -422,21 +424,27 @@ def _quarter_fundamentals_text(view):
     if v.get("analyst_action") and v.get("analyst_firm"):
         lines.append(f"- Analyst action: {v['analyst_action']} by {v['analyst_firm']}")
     if not lines:
-        return "Nothing specific found in the last ~50 days."
+        return "Nothing specific found since the last reported results."
     return "\n".join(lines) + f"\n(Checked {v.get('as_of', '?')} UTC.)"
 
 
 def build_expert_prompt(row_data, news_text, active_alerts_text=None, fundamental_view=None):
     # These two used to be hardcoded as "> 3 wks" and ">= 1.4x" in the prompt
-    # text below, but both are settings-driven -- and this repo runs
-    # tech_uptrend_volume_ratio at 0.1, so the model was being told Tech Uptrend
-    # implied a 1.4x volume expansion when in practice it implied almost no
-    # volume constraint at all. The weeks figure also disagreed with
-    # VERDICT_RULES, which says ">= 3" where this said "> 3".
+    # text below, but both are settings-driven -- and this repo has run
+    # tech_uptrend_volume_ratio well below 1.4, so the model was being told Tech
+    # Uptrend implied a 1.4x volume expansion when it did not. Both are stated
+    # the way stock_data tests them: strictly greater. (VERDICT_RULES' ">= 3
+    # weeks" is a different rule -- ACCUMULATE's own precondition, enforced by
+    # validate_verdict -- not Tech Uptrend's.)
     from stock_data import load_settings as _ls
     _s = _ls()
     tu_weeks = _s.get("tech_uptrend_min_vstop_weeks", 3)
     tu_vol = _s.get("tech_uptrend_volume_ratio", 1.4)
+    # Periods from Settings, like the table's column labels. The daily averages
+    # are SIMPLE moving averages (stock_data: rolling().mean()); the prompt
+    # used to call them "Daily EMAs ... DEMA" with the periods hard-coded.
+    w_fast, w_mid, w_slow = _s.get("ema_weekly", [10, 20, 40])
+    d_fast, d_mid, d_slow = _s.get("ema_daily", [10, 50, 200])
     ticker = row_data.get("ticker", "UNKNOWN")
     company_name = row_data.get("company_name", ticker)
     market = row_data.get("market", "us_invested")
@@ -477,8 +485,8 @@ def build_expert_prompt(row_data, news_text, active_alerts_text=None, fundamenta
     from ticker_notes import MANUAL_FLAG_REASON
     flag = row_data.get("flag") if row_data.get("flag_reason") == MANUAL_FLAG_REASON else None
     flag = flag or "None"
-    from stock_data import get_benchmark_display
-    bench = get_benchmark_display(market)
+    from stock_data import benchmark_display_for_row
+    bench = benchmark_display_for_row(row_data)
     
     from stock_data import exchange_session
     currency = "INR" if exchange_session(ticker) == "INDIA" else "USD"
@@ -524,14 +532,14 @@ quarter's checked fundamentals and recent web news provided below.
 ======================================================================
 - Data as of: {data_end} (last daily close; prices in {currency})
 - Last Close: {last_close}
-- Weekly EMAs (Fast/Mid/Slow): 10 WEMA={ema10}, 20 WEMA={ema20}, 40 WEMA={ema40}
-- Daily EMAs (Fast/Mid/Slow): 10 DEMA={ema10_daily}, 50 DEMA={ema50}, 200 DEMA={ema200}
+- Weekly EMAs (Fast/Mid/Slow): {w_fast} WEMA={ema10}, {w_mid} WEMA={ema20}, {w_slow} WEMA={ema40}
+- Daily SMAs (Fast/Mid/Slow): {d_fast} DSMA={ema10_daily}, {d_mid} DSMA={ema50}, {d_slow} DSMA={ema200}
 - Momentum RSI: Daily={rsi_d}, Weekly={rsi_w}, Monthly={rsi_m}
 - Mansfield Relative Strength (vs {bench}): Daily={rs_d}, Weekly={rs_w}, Monthly={rs_m}
 - Trend Status: {trend} (Rank: {trend_rank})
-  └ Trend Detail: Price > 40 WEMA: {trend_detail.get('price_above_ma')}, 40 WEMA Slope Rising: {trend_detail.get('slope_rising')}, Fast > Slow WEMA: {trend_detail.get('ema_aligned')}, RS Positive: {trend_detail.get('rs_positive')}, Near 52W High/Low: {trend_detail.get('near_high_low_pass')}
+  └ Trend Detail: Price > {w_slow} WEMA: {trend_detail.get('price_above_ma')}, {w_slow} WEMA Slope Rising: {trend_detail.get('slope_rising')}, Fast > Slow WEMA: {trend_detail.get('ema_aligned')}, RS Positive: {trend_detail.get('rs_positive')}, Near 52W High/Low: {trend_detail.get('near_high_low_pass')}
 - Volatility Stop (VStop-W): Direction={vstop_dir}, Stop Level={vstop_weekly}, Weeks Held={vstop_wks}
-- Tech Uptrend: {tech_uptrend} (Requires VStop uptrend >= {tu_weeks} wks, Price > 40 WEMA, Vol 10D >= {tu_vol}x Vol 100D)
+- Tech Uptrend: {tech_uptrend} (Requires VStop uptrend > {tu_weeks} wks, Price > {w_slow} WEMA, Vol 10D > {tu_vol}x Vol 100D)
 - Volume Analysis: Vol 10D={vol_10d}, Vol 100D={vol_100d}, Vol Trend={vol_trend}
 - Net Volume 10D (Accumulation vs Distribution): Direction={net_vol_dir}, Ratio={net_vol_ratio}%
 - 52-Week Range: High={h52}, Low={l52}
@@ -550,7 +558,7 @@ quarter's checked fundamentals and recent web news provided below.
 - Flag: {flag}
 
 ======================================================================
-4. THIS QUARTER'S FUNDAMENTALS (results, guidance, analyst actions -- last ~50 days, checked)
+4. THIS QUARTER'S FUNDAMENTALS (results, guidance, analyst actions since the last reported results, checked)
 ======================================================================
 {fundamentals_text}
 

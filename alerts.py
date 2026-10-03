@@ -1083,7 +1083,9 @@ def with_disclaimer(messages):
     messages = list(messages)
     if not messages:
         return messages
-    if len(messages[-1]) + 1 + len(DISCORD_FOOTER) <= _DISCORD_SAFE_LEN:
+    # _discord_len, like every other length check here: len() counts an emoji
+    # once, Discord counts it twice.
+    if _discord_len(messages[-1]) + 1 + _discord_len(DISCORD_FOOTER) <= _DISCORD_SAFE_LEN:
         messages[-1] = f"{messages[-1]}\n{DISCORD_FOOTER}"
     else:
         messages.append(DISCORD_FOOTER)

@@ -44,11 +44,11 @@ MANUAL_FLAG_REASON = "Manually assigned"
 # Signal: the automatic read, from the two independent inputs only -- the chart
 # (Trend) and the news (Sentiment). Best-first, which is also
 # filters.CATEGORICAL_METRICS' declaration (sort) order.
-SIGNAL_OUTCOMES = ("Confirmed", "Chart only", "News divergence", "Chart up, news negative", "Avoid")
+SIGNAL_OUTCOMES = ("Confirmed", "Chart only", "Mixed", "News divergence", "Chart up, news negative", "Avoid")
 # The dot on the ticker when no manual flag is set. There is no light-green
 # emoji, so "Chart only" is the white dot; the Signal column itself uses real
 # shades (app.SIGNAL_COLORS).
-SIGNAL_EMOJI = {"Confirmed": "🟢", "Chart only": "⚪", "News divergence": "🟡",
+SIGNAL_EMOJI = {"Confirmed": "🟢", "Chart only": "⚪", "Mixed": "🟣", "News divergence": "🟡",
                 "Chart up, news negative": "🟠", "Avoid": "🔴"}
 
 
@@ -106,8 +106,14 @@ def compute_signal(trend, sentiment, tag=""):
       Chart up (Trend Uptrend / Strong Uptrend) + news Positive  -> Confirmed
       Chart up + news Neutral or Unknown                         -> Chart only
       Chart up + news Negative                                   -> Chart up, news negative
-      Chart down + news Positive                                 -> News divergence
-      Chart down + news anything else                            -> Avoid
+      Chart Mixed + news Neutral or Unknown                      -> Mixed
+      Chart not up (Mixed or down) + news Positive               -> News divergence
+      Chart not up (Mixed or down) + news Negative               -> Avoid
+      Chart down + news Neutral or Unknown                       -> Avoid
+
+    "Mixed" is Trend's own split state (stock_data.compute_trend): the four
+    trend conditions disagree. It used to be folded into Downtrend, which made
+    a stock above a rising 40W EMA that merely lagged its index read "Avoid".
 
     `sentiment` must already be the GUARDED value (fundamentals_eval.
     _validate_sentiment): a stale or evidence-less view reads Unknown or
@@ -126,8 +132,12 @@ def compute_signal(trend, sentiment, tag=""):
     up = trend in ("Uptrend", "Strong Uptrend")
     if up:
         label = {"Positive": "Confirmed", "Negative": "Chart up, news negative"}.get(sentiment, "Chart only")
+    elif sentiment == "Positive":
+        label = "News divergence"
+    elif trend == "Mixed" and sentiment != "Negative":
+        label = "Mixed"
     else:
-        label = "News divergence" if sentiment == "Positive" else "Avoid"
+        label = "Avoid"
     return label, f"Chart: {trend} · News: {news}"
 
 

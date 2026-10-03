@@ -113,6 +113,11 @@ CONFIG_PULLABLE_FILES = [name for name, _ in SYNCABLE_FILES if name not in WORKF
 DATA_FILES = sorted({name for name, _ in SYNCABLE_FILES} | set(PULLABLE_FILES))
 
 
+def _blob_sha(body):
+    """The SHA git (and GitHub's tree API) gives these bytes."""
+    return hashlib.sha1(b"blob %d\0" % len(body) + body).hexdigest()
+
+
 def _git_blob_sha(path):
     """The SHA git (and GitHub's tree API) would give this file's bytes, or None."""
     try:
@@ -120,7 +125,7 @@ def _git_blob_sha(path):
             body = f.read()
     except OSError:
         return None
-    return hashlib.sha1(b"blob %d\0" % len(body) + body).hexdigest()
+    return _blob_sha(body)
 
 # Container-local, gitignored. Remembers the blob SHA of each file we last
 # pulled plus when we last checked, so a rerun costs one small API call at
@@ -301,6 +306,41 @@ def refresh_snapshot_from_repo(token, repo, branch="main"):
                                 force=True, stamp_checked=False)
 
 
+def unpushed_config_files(files=None):
+    """User config files (CONFIG_PULLABLE_FILES) edited on this container since
+    they were last pulled or pushed: the local bytes no longer match the blob
+    recorded in the sync state. The app pushes these at the end of every run.
+
+    WHY: alert rules, notes and flags, settings, custom filters, custom columns
+    and the column layout used to be saved only to the container's disk, and
+    reached the data repo only when someone clicked "Push to GitHub" -- so a rule
+    added in the app never fired (the alert job reads the data repo), a manual
+    flag never reached the Expert Take prompt, a calc-settings change fought the
+    hourly refresh, and a container rebuild lost them all.
+
+    A file with NO recorded blob is left out on purpose: without a baseline a
+    local edit and a stale local copy look the same, and auto-pushing a stale
+    copy would overwrite newer data in the repo. Every file a container has
+    pulled (bootstrap included) has a baseline; anything else waits for the
+    manual button."""
+    known = _read_sync_state().get("blobs") or {}
+    out = []
+    for name in (files if files is not None else CONFIG_PULLABLE_FILES):
+        path = os.path.join(SCRIPT_DIR, name)
+        if name in known and os.path.exists(path) and _git_blob_sha(path) != known[name]:
+            out.append(name)
+    return out
+
+
+def _record_pushed(shas):
+    """Record the blobs just committed as this container's baseline, so the
+    next pull doesn't mistake them for local edits and unpushed_config_files
+    stops reporting them. `shas` is {filename: blob sha of the bytes PUSHED} --
+    not of the file as it is now, which may have been edited since."""
+    state = _read_sync_state()
+    _write_sync_state({**state, "blobs": {**(state.get("blobs") or {}), **shas}})
+
+
 def _config_value(st_secrets, key, default=None):
     """Streamlit secrets first, then environment variables. `st_secrets` is
     passed in (rather than importing streamlit here) so this module has zero
@@ -412,9 +452,12 @@ def push_all_config(token, repo, branch="main", filenames=None, message=None):
 
     # 2. One blob per file.
     tree_entries = []
+    pushed_shas = {}
     for filename in targets:
         with open(os.path.join(SCRIPT_DIR, filename), "rb") as f:
-            content_b64 = base64.b64encode(f.read()).decode("ascii")
+            body = f.read()
+        pushed_shas[filename] = _blob_sha(body)
+        content_b64 = base64.b64encode(body).decode("ascii")
         try:
             blob_resp = requests.post(
                 f"{base_url}/git/blobs", headers=headers,
@@ -468,6 +511,7 @@ def push_all_config(token, repo, branch="main", filenames=None, message=None):
     if move_resp.status_code != 200:
         return False, f"Couldn't move branch ref ({move_resp.status_code}): {_short(move_resp)}"
 
+    _record_pushed(pushed_shas)
     return True, f"Pushed {len(targets)} file(s) in one commit ({new_commit_sha[:7]}): {', '.join(targets)}."
 
 

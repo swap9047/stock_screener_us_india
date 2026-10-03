@@ -69,8 +69,26 @@ def _api(path, token):
         return json.load(resp)
 
 
+# run-name of a workflow_dispatch run given `markets` or `limit` (see the
+# run-name line in expert-views.yml, fundamentals.yml and news-summary.yml).
+PARTIAL_RUN_TITLE = "partial run"
+
+
 def worked_runs(repo, workflow, work_job, token, since, exclude_run_id=None):
     """Start times of this workflow's runs since `since` whose work job succeeded.
+
+    A PARTIAL run -- a manual dispatch scoped to some watchlists or capped at N
+    tickers, titled PARTIAL_RUN_TITLE -- never counts. It used to: one tab's
+    "Re-analyze All" clicked after 1:00 AM ET, before the throttled cron picked
+    the slot up, made the gate report the night's full Expert Take run as done,
+    and every other watchlist went without; a news smoke test after 8 PM ET did
+    the same to that evening's digest, which a partial run never posts.
+
+    Runs are listed WITHOUT ?status=completed. That filter is served from a
+    separately indexed view that lagged: on 2026-09-30 a gate at 09:30 ET did not
+    see the run that had done the 21:00 slot at 02:28 ET, and the alerts slot was
+    worked twice. The work job's own conclusion already excludes a run still in
+    progress (its conclusion is null), so the filter added nothing but that lag.
 
     Never raises: on an API failure it returns [] with a note, so the gate errs
     toward running. A duplicate run is cheap; a silently skipped slot is not.
@@ -84,7 +102,7 @@ def worked_runs(repo, workflow, work_job, token, since, exclude_run_id=None):
     try:
         for page in range(1, MAX_PAGES + 1):
             batch = (_api(f"/repos/{repo}/actions/workflows/{workflow}/runs"
-                          f"?per_page={PER_PAGE}&status=completed&page={page}", token)
+                          f"?per_page={PER_PAGE}&page={page}", token)
                      .get("workflow_runs") or [])
             candidates.extend(batch)
             oldest = batch[-1].get("run_started_at") or batch[-1].get("created_at") if batch else None
@@ -96,6 +114,8 @@ def worked_runs(repo, workflow, work_job, token, since, exclude_run_id=None):
     out = []
     for run in candidates:
         if str(run.get("id")) == str(exclude_run_id):
+            continue
+        if str(run.get("display_title") or "").startswith(PARTIAL_RUN_TITLE):
             continue
         started = run.get("run_started_at") or run.get("created_at")
         if not started:

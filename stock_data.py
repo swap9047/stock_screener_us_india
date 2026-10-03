@@ -433,6 +433,22 @@ def get_benchmark_display(market):
     return load_markets_registry().get(market, {}).get("benchmark", market)
 
 
+def benchmark_display_for_row(row):
+    """The benchmark a row's RS and relative returns were ACTUALLY computed
+    against, for captions and the Expert Take prompt, e.g. "S&P 500 (SPY)".
+
+    fetch_all_markets measures every ticker against its own index
+    (ticker_index.json), and uses the watchlist's markets.json benchmark only
+    for a ticker it could not classify. The prompt used to name the watchlist's
+    benchmark regardless, so a watchlist registered with ^IXIC told the model
+    its RS was vs ^IXIC while every number on it was vs SPY."""
+    row = row or {}
+    index_name = row.get("index_name")
+    if index_name in INDEX_DEFINITIONS:
+        return f"{index_name} ({INDEX_DEFINITIONS[index_name]})"
+    return get_benchmark_display(row.get("market"))
+
+
 def get_filterable_metrics(settings=None):
     """Metrics available for the custom filter builder (label -> field name).
     Labels for the SMA rows embed the currently configured period, so they
@@ -980,13 +996,13 @@ def compute_vstop_tv(ohlc_df, length=VSTOP_LENGTH, factor=VSTOP_FACTOR):
 def compute_trend(last_close, ema_slow_series, rs_weekly, week52_high, week52_low,
                    avg_volume_10d, avg_volume_100d, slope_lookback,
                    near_high_low_pct=0.10, volume_ratio=1.0, ema_fast=None):
-    """Returns (trend_label, trend_rank) -- a 4-level trend-strength read:
-    "Strong Uptrend" / "Uptrend" / "Downtrend" / "Strong Downtrend"
-    (trend_rank: 4/3/2/1, for numeric sort/filter use).
+    """Returns (trend_label, trend_rank) -- a 5-level trend read:
+    "Strong Uptrend" / "Uptrend" / "Mixed" / "Downtrend" / "Strong Downtrend"
+    (trend_rank: 5/4/3/2/1, for numeric sort/filter use).
 
-    Direction (up vs down) is a hard AND across up to 4 conditions --
-    "Uptrend" requires ALL of the following that are evaluable (no partial
-    credit, no majority vote):
+    Direction is a hard AND across up to 4 conditions -- "Uptrend" requires
+    ALL of the following that are evaluable (no partial credit, no majority
+    vote):
       1. price above the slow WEMA
       2. the WEMA's own regression slope over `slope_lookback` weeks is
          rising (a least-squares fit, not a raw two-point diff -- see note
@@ -994,13 +1010,16 @@ def compute_trend(last_close, ema_slow_series, rs_weekly, week52_high, week52_lo
       3. fast WEMA above slow WEMA (e.g. 10 WEMA > 40 WEMA) -- moving-average
          alignment, required whenever `ema_fast` is supplied
       4. Mansfield RS vs the benchmark is positive, if available
-    "Downtrend" is the mirror image (all 4 conditions bearish). Any mixed
-    result -- some conditions bullish, some not, short of unanimous either
-    way -- is conservatively classified as "Downtrend": Uptrend must be
-    fully earned, not just have more signals in its favor. RS is the only
-    condition that can be skipped (when there isn't enough history yet for
-    the RS lookback) -- when skipped, only the remaining 3 need to
-    unanimously agree.
+    "Downtrend" is the mirror image (all 4 conditions bearish). Anything
+    short of unanimous either way is "Mixed": Uptrend must still be fully
+    earned, but a split is not reported as a Downtrend either. It used to be:
+    on 2026-10-03, 16 of 124 tickers with 2-3 of the 4 conditions bullish read
+    Downtrend -- 9 of them only because RS was negative while price sat above a
+    rising 40W with 10W > 40W -- so Signal called them "Avoid" while the TA
+    Rules flowchart said Maintain/Add for 10 of them. RS is the only condition
+    that can be skipped (when there isn't enough history yet for the RS
+    lookback) -- when skipped, only the remaining 3 need to unanimously agree.
+    Mixed is never "Strong".
 
     Strength ("Strong" prefix) requires BOTH of:
       - price within `near_high_low_pct` of its trailing 52-week high (for an
@@ -1058,24 +1077,26 @@ def compute_trend(last_close, ema_slow_series, rs_weekly, week52_high, week52_lo
     elif all(bearish):
         direction = "Downtrend"
     else:
-        # Mixed signals -- not unanimous either way. Conservative default:
-        # Uptrend must be fully confirmed, so anything short of that is
-        # Downtrend rather than a partial-credit guess.
-        direction = "Downtrend"
+        # Not unanimous either way -- see the docstring for why this is its
+        # own state rather than Downtrend.
+        direction = "Mixed"
 
     near_high = week52_high is not None and week52_high > 0 and last_close >= week52_high * (1 - near_high_low_pct)
     near_low = week52_low is not None and week52_low > 0 and last_close <= week52_low * (1 + near_high_low_pct)
     volume_rising = (
         avg_volume_10d is not None and avg_volume_100d is not None and avg_volume_10d >= volume_ratio * avg_volume_100d
     )
-    near_high_low_relevant = near_high if direction == "Uptrend" else near_low
+    near_high_low_relevant = {"Uptrend": near_high, "Downtrend": near_low}.get(direction)
 
     if direction == "Uptrend":
         strong = near_high and volume_rising
-        label, rank = ("Strong Uptrend" if strong else "Uptrend"), (4 if strong else 3)
-    else:
+        label, rank = ("Strong Uptrend" if strong else "Uptrend"), (5 if strong else 4)
+    elif direction == "Downtrend":
         strong = near_low and volume_rising
         label, rank = ("Strong Downtrend" if strong else "Downtrend"), (1 if strong else 2)
+    else:
+        strong = False
+        label, rank = "Mixed", 3
 
     detail = {
         "direction": direction,
@@ -2518,8 +2539,38 @@ def enrich_rows(rows, settings=None):
     return rows
 
 
+# A row is stale once this many weekday sessions have passed with no newer bar.
+STALE_MISSED_SESSIONS = 2
+
+
+def missed_sessions(data_end, today=None):
+    """Weekdays strictly between `data_end` and `today` (ET), i.e. sessions that
+    should have produced a newer bar by now; None if data_end is unparseable.
+    Exchange holidays are not modelled, so a holiday counts as missed."""
+    end = _parse_data_end(data_end)
+    if end is None:
+        return None
+    today = today or datetime.now(ZoneInfo("America/New_York")).date()
+    if today <= end:
+        return 0
+    return int(np.busday_count(end + timedelta(days=1), today))
+
+
+def data_end_is_stale(data_end, today=None):
+    """True when STALE_MISSED_SESSIONS or more sessions have passed since
+    data_end. Shared by the "Data Thru" colouring and the "haven't updated"
+    caption, which used to test 3+ CALENDAR days -- so Friday's close read stale
+    every Monday morning, and the colouring used the server's date (UTC on
+    Streamlit Cloud) while the caption used ET. Two missed sessions matches the
+    old rule's weekday sensitivity (Monday's bar still missing on Thursday)
+    without the weekend false alarm."""
+    missed = missed_sessions(data_end, today)
+    return missed is not None and missed >= STALE_MISSED_SESSIONS
+
+
 def refresh_data_end_age(rows, today=None):
-    """Recompute each row's `data_end_age_days` from its `data_end`, in place.
+    """Recompute each row's `data_end_age_days` and `sessions_behind` (see
+    missed_sessions) from its `data_end`, in place.
 
     fetch_snapshot stores the age at FETCH time and nothing recomputed it, so
     the dashboard's "N tickers haven't updated in 3+ days" caption -- a
@@ -2536,6 +2587,7 @@ def refresh_data_end_age(rows, today=None):
         end = _parse_data_end(row.get("data_end"))
         if end:
             row["data_end_age_days"] = (today - end).days
+            row["sessions_behind"] = missed_sessions(row["data_end"], today)
     return rows
 
 

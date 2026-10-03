@@ -31,6 +31,7 @@ It needs no secrets, so it works from a fork.
 | `test_disclaimer.py` | Every Discord batch ends with the disclaimer without breaking the length limit; the sidebar shows it |
 | `test_code_fingerprint.py` | The snapshot fingerprint ignores comments and docstrings, changes on any code edit, and is the same on every Python (a pinned sample) |
 | `test_validate_ticker.py` | A ticker added while Yahoo throttles is kept with a warning, not dropped as a typo |
+| `test_review_100326.py` | The 2026-10-03 review: Trend's Mixed state and its Signal; edited config is pushed at the end of the run (never a file with no baseline, never under `SKIP_GITHUB_PULL`); a mostly-failed news run posts nothing; a partial manual run never counts as the slot's work; Data Thru counts missed sessions; Reset resets calculation settings only; the benchmark shown is the one RS used; one setting drawn by several widgets can't be reverted by a stale copy |
 
 Fixtures are invented (`ACME`, `ZED.NS`, "Newsletter Picks"). Nothing here reads
 or writes the real JSON: every path is redirected to a temp directory. Keep it

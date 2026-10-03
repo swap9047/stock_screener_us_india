@@ -81,12 +81,7 @@ For **local runs**, the equivalent is a `.streamlit/secrets.toml` file (same for
 
 Streamlit Cloud only runs the interactive web app — it can't run `alert_check.py` on a timer. Free fix: a **GitHub Actions** workflow, already committed at `.github/workflows/daily-alerts.yml`.
 
-The alert trigger cadence is managed by the GitHub Actions YAML, not by Streamlit. The current workflow wakes up only around **9:00 PM ET**, using two UTC cron lines so daylight saving time is handled safely:
-
-```yaml
-- cron: "15 1 * * *"   # 9:15 PM ET during EDT
-- cron: "15 2 * * *"   # 9:15 PM ET during EST
-```
+The alert trigger cadence is managed by the GitHub Actions YAML, not by Streamlit. Like every scheduled workflow here, `daily-alerts.yml` wakes **hourly**, and a shared slot gate (`.github/actions/slot-gate`) lets the first wake-up after **9:00 PM ET** do that evening's check, up to 22 hours late. Slots are wall-clock ET hours, so daylight saving needs no arithmetic, and a cron run GitHub delays or drops no longer costs a day.
 
 The app's Alert Rules tab lets you choose which **days** a scheduled rule should run. The hour picker is intentionally limited to the one hour the workflow actually supports: **9:00 PM ET**. If you ever want alerts at more times, update both places together:
 
@@ -117,10 +112,10 @@ Get a free key at [Google AI Studio](https://aistudio.google.com/apikey). The wo
 
 A few things worth knowing:
 
-- **Free-tier quotas are account-specific.** Check your own limits at AI Studio's Rate Limit dashboard before changing the model or batch size — this project's `gemini-2.5-flash` + 13-tickers-per-batch choice was tuned to fit comfortably under a 20-requests/day cap that's tighter than Google's generic published numbers, and the entire Gemini 3.x model family (3, 3.1, 3.5, 3.6, Lite or not) had **zero** free Search-grounding quota on the account this was built against.
+- **Free-tier quotas are account-specific.** Check your own limits at AI Studio's Rate Limit dashboard before changing models. Search runs on `gemma-4-26b-a4b-it` with Google Search grounding (one search per ticker, three attempts, each on a different key), because the Gemini 3.x models had **zero** free Search-grounding quota on the account this was built against; the reasoning and collation stages use Gemini models.
 - **This workflow commits `news_summary.json` to the private data repo itself** (via `DATA_REPO_TOKEN`) — unlike the other config files, this one is machine-generated, not edited through the app UI, so there's nothing to push from the app's GitHub sync button for this file.
-- If the Gemini API call fails for a given day (rate limit, outage, etc.), that day's digest is simply skipped — no Discord message, no `news_summary.json` update, and the app's News tab keeps showing the last successful run until the next one succeeds.
-- **Manual smoke tests:** The workflow accepts `markets` (comma-separated watchlist keys) and `limit` (max tickers to analyze) inputs on manual `workflow_dispatch`. When either is provided, the run is considered a partial test: it replaces only those watchlists' digests in `news_summary.json` and skips posting to Discord.
+- If half or more of the day's searches fail (rate limits, an outage, dead keys), the run posts **nothing** to Discord and fails, so the slot gate retries it on a later wake-up; the retry posts the day's only digest. The failed run's `news_summary.json` is still saved, so the News tab's "search failed" count shows what happened.
+- **Manual smoke tests:** The workflow accepts `markets` (comma-separated watchlist keys) and `limit` (max tickers to analyze) inputs on manual `workflow_dispatch`. When either is provided, the run is considered a partial test: it replaces only those watchlists' digests in `news_summary.json`, skips posting to Discord, and is titled "partial run" so the slot gate never counts it as that evening's digest (the same holds for `expert-views.yml` and `fundamentals.yml`, so a tab's **Re-analyze All** never stands in for the nightly full run).
 
 ## 8. Data refresh (faster page loads)
 
@@ -162,7 +157,9 @@ It uses `DISCORD_WEBHOOK_URL` and `DATA_REPO_TOKEN` repo secrets.
 
 ## 9. Push config changes made through the deployed app back to GitHub
 
-If you edit alert rules, the watchlist, custom filters, or Settings through the **deployed** app's UI, that write first lands on that Streamlit Cloud instance's local disk, which a restart wipes and the GitHub Actions workflows never see. So the app commits those edits to the **private data repo** via GitHub's REST API (no git/SSH needed — just HTTPS with `requests`): saving a watchlist, adding or renaming one, and the AI re-analyze buttons push automatically, and the Alert Rules tab's **☁️ Push config to GitHub** section pushes the rest (rules, filters, settings, column prefs, notes).
+If you edit alert rules, the watchlist, custom filters, notes and flags, custom columns, the column layout or Settings through the **deployed** app's UI, that write first lands on that Streamlit Cloud instance's local disk, which a restart wipes and the GitHub Actions workflows never see. So the app commits every such edit to the **private data repo** via GitHub's REST API (no git/SSH needed — just HTTPS with `requests`), automatically: watchlist saves, adds and renames push as they happen, the AI re-analyze buttons push the tickers they changed, and everything else is pushed as one commit at the end of the click that changed it. A push that fails shows a sidebar warning and is retried on your next click; the Alert Rules tab's **☁️ Push config to GitHub** button remains as a manual fallback.
+
+A config file is only auto-pushed when this container has a record of having pulled or pushed it (every file downloaded at startup has one), so a stale local copy can never overwrite newer data. Local and AppTest runs with `SKIP_GITHUB_PULL=1` never auto-push.
 
 This uses the same `DATA_REPO_TOKEN` as step 1b — nothing else to set up. Each push is **one combined commit**, so a multi-file change (watchlist + interested + snapshot) is never half-applied.
 

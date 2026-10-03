@@ -56,12 +56,12 @@ from streamlit_sortables import sort_items
 from stock_data import (
     load_watchlists, save_watchlist, fetch_all_markets, validate_ticker, tradingview_url,
     load_settings, save_settings, DEFAULT_SETTINGS, get_benchmarks, get_filterable_metrics,
-    load_markets_registry, load_data_snapshot, snapshot_is_usable, save_data_snapshot,
+    load_markets_registry, load_data_snapshot, snapshot_is_usable, save_data_snapshot, INDEX_DEFINITIONS,
     rebuild_snapshot_for_market, fill_snapshot_gaps, reject_stale_rows,
     load_watchlist_groups, save_watchlist_groups, MIN_DAILY_BARS, snapshot_calc_matches,
     apply_view_fields_to_rows, calc_settings, calc_settings_diff,
     load_interested, load_ticker_index, DataFileError, read_json_strict, atomic_write_json,
-    refresh_data_end_age, enrich_rows,
+    refresh_data_end_age, enrich_rows, data_end_is_stale, STALE_MISSED_SESSIONS,
 )
 from watchlist_labels import COMBINED_TAB_LABELS, watchlist_label_error
 import llm_util
@@ -87,7 +87,8 @@ from filters import (load_custom_filters, get_market_filters, save_market_filter
                      TEXT_METRICS)
 from github_sync import (get_github_config, get_data_repo_config, bootstrap_data_files,
                          push_all_config, trigger_github_workflow, pull_generated_files, SYNCABLE_FILES, WORKFLOW_GENERATED_FILES,
-                         push_json_entry_changes, read_remote_json, read_remote_bytes, refresh_snapshot_from_repo)
+                         push_json_entry_changes, read_remote_json, read_remote_bytes, refresh_snapshot_from_repo,
+                         unpushed_config_files)
 from news_summary import (load_news_summary, MARKET_LABELS, get_gemini_api_key,
                           get_gemini_api_keys, resolve_news_scope, DEFAULT_NEWS_SCOPE_GROUP)
 from expert_views import (load_expert_views, save_expert_views, analyze_single_ticker,
@@ -147,6 +148,42 @@ def load_column_prefs():
 
 def save_column_prefs(order):
     update_column_prefs("order", order)
+
+
+def _set_show_fundamentals(value):
+    """Save the "Show fundamental columns" setting and rerun, for BOTH of its
+    checkboxes (the sidebar column picker's and the one above the tabs).
+
+    Each used to save on its own and rerun, and the OTHER checkbox -- keyed, so
+    seeded from session_state rather than from settings.json -- still held the
+    old value, saw it differ from the file, and saved it straight back: neither
+    toggle ever stuck (found 2026-10-03, reproduced headlessly). Dropping both
+    widgets' state makes both re-seed from the file on the next run."""
+    settings = load_settings()
+    settings["show_fundamental_columns"] = value
+    save_settings(settings)
+    for key in ("show_fundamental_columns_toggle", "dash_show_fundamental_columns_toggle"):
+        st.session_state.pop(key, None)
+    st.rerun()
+
+
+def _save_setting_reset_widgets(changes, widget_prefixes):
+    """Save `changes` ({setting: value}) and rerun, after dropping the state of
+    every widget whose key starts with one of `widget_prefixes`.
+
+    For a setting with one picker PER TAB -- the Expert Take and Sentiment model
+    and thinking-budget pickers are rendered on every market tab, all bound to
+    one setting. A change on one tab used to save and rerun, and the next tab's
+    copy, still holding the old value in session_state, saved it straight back
+    (reproduced 2026-10-03: saves went new -> old), so the pickers never stuck.
+    Same failure as _set_show_fundamentals; dropping every copy makes them all
+    re-seed from settings.json on the next run."""
+    settings = load_settings()
+    settings.update(changes)
+    save_settings(settings)
+    for key in [k for k in st.session_state if k.startswith(tuple(widget_prefixes))]:
+        st.session_state.pop(key, None)
+    st.rerun()
 
 # ---------- auth gate ----------
 
@@ -519,7 +556,7 @@ TA_RULES_COLORS = {
 # Signal cell colours: real shades, best to worst (the ticker dot can only use
 # ticker_notes.SIGNAL_EMOJI, which has no light green).
 SIGNAL_COLORS = {
-    "Confirmed": "#1e8449", "Chart only": "#52be80", "News divergence": "#b7950b",
+    "Confirmed": "#1e8449", "Chart only": "#52be80", "Mixed": "#7d3c98", "News divergence": "#b7950b",
     "Chart up, news negative": "#d35400", "Avoid": "#c0392b",
 }
 
@@ -551,15 +588,12 @@ def style_row(row, ema_labels):
         elif col == "VStop Dir" and val in ("Up", "Down"):
             styles[i] = "color:#1e8449;font-weight:600" if val == "Up" else "color:#c0392b;font-weight:600"
         elif col == "Data Thru" and isinstance(val, str) and val != "—":
-            try:
-                age_days = (date.today() - datetime.strptime(val, "%Y-%m-%d").date()).days
-                if age_days >= 3:
-                    styles[i] = "color:#c0392b;font-weight:600"
-            except ValueError:
-                pass
+            # Missed weekday sessions, in ET -- see stock_data.data_end_is_stale.
+            if data_end_is_stale(val):
+                styles[i] = "color:#c0392b;font-weight:600"
         elif col == "Trend" and isinstance(val, str):
             trend_colors = {
-                "Strong Uptrend": "#145a32", "Uptrend": "#1e8449",
+                "Strong Uptrend": "#145a32", "Uptrend": "#1e8449", "Mixed": "#9a7d0a",
                 "Downtrend": "#c0392b", "Strong Downtrend": "#7b241c",
             }
             color = trend_colors.get(val)
@@ -672,7 +706,7 @@ def trend_tooltip(row, labels):
         return "Not enough weekly history yet to compute Trend."
     w_slow = labels["w_slow"]
     w_fast = labels["w_fast"]
-    lines = ["Uptrend requires ALL of (else Downtrend):"]
+    lines = ["All ✓ → Uptrend · all ✗ → Downtrend · otherwise Mixed:"]
     lines.append(f"{_mark(detail['price_above_ma'])} Price > {w_slow} ({detail['last_close']:.1f} vs {detail['last_ma']:.1f})")
     lines.append(f"{_mark(detail['slope_rising'])} {w_slow} slope rising ({detail['slope']:+.3f}/wk)")
     if detail.get("ema_aligned") is not None:
@@ -680,6 +714,10 @@ def trend_tooltip(row, labels):
     if detail.get("rs_positive") is not None:
         lines.append(f"{_mark(detail['rs_positive'])} Weekly RS positive ({detail['rs_weekly']:+.1f})")
     lines.append(f"→ {detail['direction']}")
+    if detail["direction"] == "Mixed":
+        lines.append("")
+        lines.append("(Mixed is never Strong: the conditions above disagree.)")
+        return "\n".join(lines)
     lines.append("")
     lines.append("Strong also needs BOTH:")
     ref_price = detail["week52_high"] if detail["direction"] == "Uptrend" else detail["week52_low"]
@@ -815,7 +853,7 @@ def tech_uptrend_tooltip(row, settings, labels):
         f"{_mark(close_above_vstop)} Close > Weekly VStop ({last_close:.1f} vs {vstop:.1f})",
         f"{_mark(held_long_enough)} Held > {min_weeks} weeks since VStop flip ({weeks_since} weeks)",
         f"{_mark(close_above_wema)} Close > {w_slow} ({last_close:.1f} vs {ema40:.1f})",
-        f"{_mark(vol_surging)} Vol 10D ≥ {vol_ratio}× Vol 100D ({ratio:.2f}× )" if ratio is not None else f"{_mark(vol_surging)} Vol 10D ≥ {vol_ratio}× Vol 100D",
+        f"{_mark(vol_surging)} Vol 10D > {vol_ratio}× Vol 100D ({ratio:.2f}× )" if ratio is not None else f"{_mark(vol_surging)} Vol 10D > {vol_ratio}× Vol 100D",
         f"→ {'Yes' if row.get('tech_uptrend') else 'No'}",
     ]
     return "\n".join(lines)
@@ -1207,7 +1245,7 @@ def column_definitions(settings, labels):
     """label -> plain-language definition, for the header info-icon hover
     tooltip. Bench/period/threshold numbers are pulled from `settings` so
     the tooltip always reflects your current configuration, not defaults."""
-    bench_note = "your configured benchmark"
+    bench_note = "the ticker's own index (S&P 500 → SPY, Nifty 500 → ^CRSLDX; see the Index column)"
     defs = {
         "Ticker": "Click to open this symbol's chart on TradingView.",
         "Company Name": "Full name of the company or ETF.",
@@ -1230,10 +1268,10 @@ def column_definitions(settings, labels):
         "VStop Dir": "Current direction of the weekly VStop: Up or Down.",
         "VStop Weeks Ago": "Weeks since the weekly VStop last flipped direction.",
         "Trend": (
-            "Strong Uptrend / Uptrend / Downtrend / Strong Downtrend. Uptrend requires ALL of: price above "
-            f"slow WEMA, slow WEMA slope rising over {settings.get('trend_slope_lookback', 3)} weeks, fast "
-            "WEMA above slow WEMA, and weekly RS positive (when available) -- no partial credit, anything "
-            "short of unanimous is Downtrend. Strong additionally needs price within "
+            "Strong Uptrend / Uptrend / Mixed / Downtrend / Strong Downtrend. Uptrend requires ALL of: price "
+            f"above slow WEMA, slow WEMA slope rising over {settings.get('trend_slope_lookback', 3)} weeks, fast "
+            "WEMA above slow WEMA, and weekly RS positive (when available); Downtrend requires all four bearish; "
+            "anything in between is Mixed (never Strong). Strong additionally needs price within "
             f"{settings.get('trend_near_high_low_pct', 0.10) * 100:.0f}% of the 52W high/low AND 10D avg "
             f"volume ≥ {settings.get('trend_volume_ratio', 1.0)}× the 100D avg. Hover a cell for the "
             "per-condition breakdown."
@@ -1289,7 +1327,7 @@ def column_definitions(settings, labels):
             "because this metric uses the exact close while that column recomputes from the "
             "rounded stored close."
         ),
-        "Data Thru": "Most recent date with price data for this ticker. Shown in red if 3+ days stale.",
+        "Data Thru": "Most recent date with price data for this ticker. Shown in red once 2+ weekday sessions have passed with no newer bar.",
         "Net Vol 10D": (
             "Sums each of the last 10 trading days' volume as UP-volume (close higher than the "
             "prior day) or DOWN-volume (close lower). Positive means more volume traded on up "
@@ -1314,17 +1352,18 @@ def column_definitions(settings, labels):
         "Tech Uptrend": (
             "Yes only if ALL of: close > weekly VStop, VStop held its direction for more than "
             f"{settings.get('tech_uptrend_min_vstop_weeks', 3)} weeks, close > slow WEMA, and 10D avg volume "
-            f"≥ {settings.get('tech_uptrend_volume_ratio', 1.4)}× the 100D avg. Hover a cell for the "
+            f"> {settings.get('tech_uptrend_volume_ratio', 1.4)}× the 100D avg. Hover a cell for the "
             "per-condition breakdown."
         ),
         "Vol 10D": "Average daily share volume over the last 10 trading days.",
         "Vol 100D": "Average daily share volume over the last 100 trading days.",
         "Signal": (
             "The automatic read, from two independent inputs: the chart (Trend) and the news (Sentiment). "
-            "Confirmed = Uptrend + Bullish news; Chart only = Uptrend, news Neutral/Unknown; Chart up, news "
-            "negative = Uptrend + Bearish news; News divergence = not an Uptrend but Bullish news (a possible "
-            "turnaround -- or a trap); Avoid = not an Uptrend and no Bullish news. Its colour is the dot next "
-            "to the ticker when you haven't set a Flag. Hover a cell for both inputs."
+            "Confirmed = Uptrend + Bullish news; Chart only = Uptrend, news Neutral/Unknown; Mixed = Trend "
+            "Mixed, news Neutral/Unknown; News divergence = not an Uptrend but Bullish news (a possible "
+            "turnaround -- or a trap); Chart up, news negative = Uptrend + Bearish news; Avoid = Downtrend "
+            "without Bullish news, or Mixed with Bearish news. Its colour is the dot next to the ticker when "
+            "you haven't set a Flag. Hover a cell for both inputs."
         ),
         "Flag": (
             "Your own marker, set via the sidebar 'Ticker Notes' panel (Red/Yellow/Green/Blue), also shown "
@@ -1542,7 +1581,8 @@ def settings_dialog():
 
     st.markdown("**Watchlists**")
     st.caption(
-        "Each watchlist's benchmark ticker and display label, plus adding a new watchlist. Renaming a "
+        "Each watchlist's display label and fallback benchmark (used only for a ticker whose index can't be "
+        "detected), plus adding a new watchlist. Renaming a "
         "label is always safe (nothing else changes). Deleting an existing watchlist isn't available "
         "here by design -- it's a deliberate, code-level-only action, not a clickable button."
     )
@@ -1552,7 +1592,8 @@ def settings_dialog():
     for mkey, minfo in list(markets_registry.items()):
         mc1, mc2, mc3 = st.columns([2, 2, 1])
         new_mlabel = mc1.text_input(f"Label ({mkey})", value=minfo["label"], key=f"mkt_label_{mkey}")
-        new_mbench = mc2.text_input(f"Benchmark ticker ({mkey})", value=minfo["benchmark"], key=f"mkt_bench_{mkey}")
+        new_mbench = mc2.text_input(f"Fallback benchmark ({mkey})", value=minfo["benchmark"], key=f"mkt_bench_{mkey}",
+                                    help="Used only for a ticker whose index can't be detected. Every US or India ticker is measured against its own index (S&P 500 → SPY, Nifty 500 → ^CRSLDX), whatever this says.")
         mc3.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
         if mc3.button("Save", key=f"mkt_save_{mkey}"):
             changed = False
@@ -1586,11 +1627,12 @@ def settings_dialog():
     st.markdown("➕ **Add Watchlist**")
     aw1, aw2, aw3 = st.columns([2, 2, 1])
     new_wl_label = aw1.text_input("Label", key="new_watchlist_label", placeholder="e.g. UK Watchlist")
-    new_wl_bench = aw2.text_input("Benchmark ticker", key="new_watchlist_bench", placeholder="e.g. ^FTSE")
+    new_wl_bench = aw2.text_input("Fallback benchmark", key="new_watchlist_bench", placeholder="e.g. ^FTSE",
+                                  help="Used only for a ticker whose index can't be detected. Every US or India ticker is measured against its own index (S&P 500 → SPY, Nifty 500 → ^CRSLDX), whatever this says.")
     aw3.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
     if aw3.button("Add", key="add_watchlist_btn"):
         if not new_wl_label.strip() or not new_wl_bench.strip():
-            st.error("Both a label and a benchmark ticker are required.")
+            st.error("Both a label and a fallback benchmark are required.")
         elif watchlist_label_error(new_wl_label, markets_registry):
             st.error(watchlist_label_error(new_wl_label, markets_registry))
         else:
@@ -1605,11 +1647,11 @@ def settings_dialog():
             time.sleep(1)
             st.rerun()
 
-    st.markdown("**Trend column** (Strong Uptrend / Uptrend / Downtrend / Strong Downtrend)")
+    st.markdown("**Trend column** (Strong Uptrend / Uptrend / Mixed / Downtrend / Strong Downtrend)")
     st.caption(
         "Uptrend requires ALL of: price above slow WEMA, the WEMA's own slope rising, fast WEMA above "
         "slow WEMA (e.g. 10 WEMA > 40 WEMA), and Mansfield RS positive (when available) — no partial "
-        "credit; anything short of unanimous is Downtrend. "
+        "credit. Downtrend requires all four bearish; anything in between is Mixed. "
         "\"Strong\" additionally needs BOTH of the two thresholds below — parameters here only affect "
         "this column, independent of Vol Trend or Tech Uptrend."
     )
@@ -1661,7 +1703,7 @@ def settings_dialog():
     tech_uptrend_vol_ratio = tu2.number_input(
         "21. Min 10D ÷ 100D vol ratio", min_value=0.0, step=0.1, format="%.2f",
         value=float(settings.get("tech_uptrend_volume_ratio", 1.4)), key="set_tech_vol_ratio",
-        help="Tech Uptrend also requires 10-day average volume ≥ this many times the 100-day average. "
+        help="Tech Uptrend also requires 10-day average volume above this many times the 100-day average. "
              "This column's own parameter — independent of Vol Trend's 'Exploding' ratio above, even "
              "though both default to the same value.",
     )
@@ -1776,10 +1818,31 @@ def settings_dialog():
             })
             st.success("Settings saved. Click **Refresh Data** to recompute with the new settings.")
             st.rerun()
+    # Resets the CALCULATION settings only -- the ones this dialog edits above.
+    # It used to save dict(DEFAULT_SETTINGS), which also reset settings this
+    # dialog never shows: the AI models and budgets, the news scope, the note
+    # dropdown options and the fundamental-columns toggle. Two steps, because
+    # one click also undoes deliberate choices here (a non-default Tech Uptrend
+    # volume ratio, say): the first lists every value that would change.
     if c2.button("Reset to defaults", width="stretch"):
-        save_settings(dict(DEFAULT_SETTINGS))
-        st.success("Reset to defaults. Click **Refresh Data** to recompute with default settings.")
-        st.rerun()
+        st.session_state["_confirm_settings_reset"] = True
+    if st.session_state.get("_confirm_settings_reset"):
+        _reset_diff = calc_settings_diff(settings, DEFAULT_SETTINGS)
+        if not _reset_diff:
+            st.info("Every calculation setting is already at its default.")
+            st.session_state.pop("_confirm_settings_reset", None)
+        else:
+            st.warning("Reset these calculation settings to their defaults?\n\n" + "\n".join(
+                f"- `{k}`: {now} → {default}" for k, (now, default) in _reset_diff.items()))
+            rc1, rc2 = st.columns(2)
+            if rc1.button("Confirm reset", type="primary", width="stretch"):
+                save_settings(calc_settings(DEFAULT_SETTINGS))
+                st.session_state.pop("_confirm_settings_reset", None)
+                st.success("Reset to defaults. Click **Refresh Data** to recompute with default settings.")
+                st.rerun()
+            if rc2.button("Cancel", width="stretch", key="cancel_settings_reset"):
+                st.session_state.pop("_confirm_settings_reset", None)
+                st.rerun(scope="fragment")    # re-draw the dialog, don't close it
 
     st.divider()
     st.markdown("**Login (optional)**")
@@ -3054,8 +3117,7 @@ def render_shared_column_picker(labels, active_market=None, active_market_label=
     with st.sidebar.expander("Columns to show / reorder", expanded=False):
         st.caption(
             "Applies to both the US and India tables. Ticker and Last always show first. "
-            "Saved to column_prefs.json -- push it via the Alert Rules tab's GitHub button "
-            "to make this layout show up on the deployed app too."
+            "Saved to column_prefs.json and pushed to the data repo automatically."
         )
         from stock_data import load_settings, save_settings
         fund_settings = load_settings()
@@ -3066,9 +3128,7 @@ def render_shared_column_picker(labels, active_market=None, active_market_label=
             help="Turn off to hide all fundamental-data columns at once, instead of unchecking them individually below.",
         )
         if show_fundamentals != fund_settings.get("show_fundamental_columns", True):
-            fund_settings["show_fundamental_columns"] = show_fundamentals
-            save_settings(fund_settings)
-            st.rerun()
+            _set_show_fundamentals(show_fundamentals)
 
         current_labels = [label_by_key[k] for k in st.session_state[SHARED_ORDER_KEY] if k in label_by_key]
         # sha1, not the builtin hash(): that is salted per process, so the key
@@ -3308,8 +3368,7 @@ def render_custom_columns_manager():
             "e.g. `(week52_high - last_close) / week52_high * 100` for '% off 52W high'. "
             "Use the 'Insert a metric' picker below to add exact column names without typing "
             "them by hand. Only + - * / ** and parentheses are allowed, no other functions. "
-            "Saved to custom_columns.json -- push it via the Alert Rules tab's GitHub button "
-            "to make it show up on the deployed app too."
+            "Saved to custom_columns.json and pushed to the data repo automatically."
         )
         with st.expander("All available metric keys", expanded=False):
             ref_lines = "\n".join(f"- `{k}` — {lbl}" for lbl, k in sorted(metrics_by_label.items()))
@@ -3419,8 +3478,8 @@ def render_ticker_notes_manager():
         st.caption(
             "Jot a note and/or pick a flag color for any ticker -- the note shows up "
             "in the Notes column, and the flag color marks the ticker symbol itself. "
-            "Saved to ticker_notes.json -- push it via the Alert Rules tab's GitHub button "
-            "to make it show up on the deployed app too."
+            "Saved to ticker_notes.json and pushed to the data repo automatically, so the "
+            "nightly jobs see a flag the same night."
         )
         picked = st.selectbox("Ticker", all_tickers, key="tn_picked_ticker")
         current_note = get_ticker_note(notes, picked)
@@ -3708,7 +3767,9 @@ def render_expert_analysis_control_bar(market, results, combined_markets=None):
     from stock_data import load_settings, save_settings
     settings_now = load_settings()
 
-    REASON_CHOICES = ["models/gemini-3.5-flash-lite", "models/gemma-4-31b-it", "models/gemma-4-26b-a4b-it"]
+    # No gemma-4-31b-it: it answered 0 of ~63 calls and was taken out of every
+    # ladder (llm_util.same_model_tiers); offering it here only bought dead rungs.
+    REASON_CHOICES = ["models/gemini-3.5-flash-lite", "models/gemma-4-26b-a4b-it"]
     DEFAULT_REASON = "models/gemini-3.5-flash-lite"
 
     def _normalize_reason(val):
@@ -3737,9 +3798,9 @@ def render_expert_analysis_control_bar(market, results, combined_markets=None):
                 key=f"{scope}_reasoning_model_select_{market}",
             )
             if new_reason != saved_reason:
-                settings_now[model_key] = new_reason
-                save_settings(settings_now)
-                st.rerun()
+                # The budget pickers too: their choices change with the model.
+                _save_setting_reset_widgets({model_key: new_reason},
+                                            (f"{scope}_reasoning_model_select_", f"{scope}_reasoning_budget_select_"))
 
         with col3:
             # Gemma exposes a named reasoning LEVEL; Gemini a numeric token
@@ -3770,9 +3831,7 @@ def render_expert_analysis_control_bar(market, results, combined_markets=None):
                 key=f"{scope}_reasoning_budget_select_{market}",
             )
             if new_budget != current_val:
-                settings_now[budget_key] = new_budget
-                save_settings(settings_now)
-                st.rerun()
+                _save_setting_reset_widgets({budget_key: new_budget}, (f"{scope}_reasoning_budget_select_",))
 
         c1, c2, c3, c4 = st.columns([3.5, 1.3, 1.8, 1.4])
 
@@ -3973,19 +4032,18 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
     custom_columns = load_custom_columns()
     filterable_metrics = get_all_filterable_metrics(settings, custom_columns)
 
-    if combined_markets is not None:
-        registry_now = load_markets_registry()
-        # Used both in the caption below and in the RS-formula footer glossary
-        # further down -- a combined tab has no single benchmark, so this is
-        # a legend of each underlying market's, not one ticker symbol. Empty
-        # when zero members are configured -- " · ".join of nothing is "".
-        bench = " · ".join(
-            f"{registry_now.get(m, {}).get('label', m)} vs {benchmarks.get(m, 'SPY')}" for m in combined_markets
-        ) or "no watchlists configured yet"
-        rs_caption = f"Mansfield RS vs each row's own index benchmark ({bench}) -- see the Index column"
-    else:
-        bench = benchmarks[market]
-        rs_caption = f"Mansfield RS vs {bench}"
+    # The benchmark(s) these rows were ACTUALLY measured against, for the caption
+    # below and the RS-formula footer. fetch_all_markets uses each ticker's own
+    # index (ticker_index.json -- SPY or ^CRSLDX) and falls back to the
+    # watchlist's markets.json benchmark only for a ticker it could not
+    # classify. This used to print the watchlist's benchmark, so a watchlist
+    # registered with ^IXIC said "Mansfield RS vs ^IXIC" over rows that were
+    # all measured against SPY.
+    bench = " / ".join(sorted({
+        INDEX_DEFINITIONS.get(r.get("index_name")) or benchmarks.get(r.get("market"), "SPY")
+        for r in results
+    })) or "each ticker's index"
+    rs_caption = f"Mansfield RS vs {bench} (each ticker's own index -- see the Index column)"
     st.caption(
         f"{labels['w_fast']}/{labels['w_mid']}/{labels['w_slow']} · "
         f"{labels['d_fast']}/{labels['d_mid']}/{labels['d_slow']} · "
@@ -3997,7 +4055,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
     if results:
         starts = [r["data_start"] for r in results if r.get("data_start")]
         ends = [r["data_end"] for r in results if r.get("data_end")]
-        stale = [r["ticker"] for r in results if r.get("data_end_age_days", 0) >= 3]
+        stale = [r["ticker"] for r in results if r.get("sessions_behind", 0) >= STALE_MISSED_SESSIONS]
         if starts and ends:
             range_msg = f"Price history used: **{min(starts)} → {max(ends)}**"
             if len(set(ends)) > 1:
@@ -4005,7 +4063,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             st.caption(range_msg)
             if stale:
                 st.caption(
-                    f"⚠️ {len(stale)} ticker(s) haven't updated in 3+ days (likely a data-provider lag, "
+                    f"⚠️ {len(stale)} ticker(s) are {STALE_MISSED_SESSIONS}+ sessions behind (likely a data-provider lag, "
                     f"common for NSE/.NS tickers): {', '.join(stale[:8])}"
                     + (f" +{len(stale) - 8} more" if len(stale) > 8 else "")
                     + ". See the 'Data Thru' column below for the exact date per ticker."
@@ -4111,7 +4169,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
 
         fc1, fc2, fc3, fc4 = st.columns([1.2, 1.2, 1.3, 0.8])
         f_trend = fc1.selectbox(
-            "Trend", ["Any", "Strong Uptrend", "Uptrend", "Downtrend", "Strong Downtrend"],
+            "Trend", ["Any", "Strong Uptrend", "Uptrend", "Mixed", "Downtrend", "Strong Downtrend"],
             key=f"f_trend_{market}",
         )
         f_vol_trend = fc2.selectbox(
@@ -4788,17 +4846,17 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
     st.caption(
         f"Mansfield RS = ((price/{bench} ratio today ÷ SMA of that ratio, n) − 1) × 100. "
         "Positive = outperforming the benchmark's trend, negative = underperforming. "
-        "WEMA = weekly EMA, DSMA = daily EMA. "
+        "WEMA = weekly EMA, DSMA = daily SMA. "
         f"VStop-W = weekly Volatility Stop (ATR stop-and-reverse system, "
         f"length={settings['vstop_length']}, factor={settings['vstop_factor']}, "
         f"{'TradingView-exact engine, Source=close' if settings.get('vstop_mode', 'tv') == 'tv' else 'legacy app engine'}"
         f"{', incl. in-progress week (matches TradingView)' if settings.get('vstop_include_incomplete_week', True) else ', completed weeks only'}) — not independently "
         "cross-checked against your chart the way RS/RSI were, so compare a few readings before relying "
-        "on it. Trend = a 4-level read (Strong Uptrend / Uptrend / Downtrend / Strong Downtrend). Uptrend "
-        "requires ALL of: price above the slow WEMA, that WEMA's "
+        "on it. Trend = a 5-level read (Strong Uptrend / Uptrend / Mixed / Downtrend / Strong Downtrend). "
+        "Uptrend requires ALL of: price above the slow WEMA, that WEMA's "
         f"{settings.get('trend_slope_lookback', 3)}-week slope rising, fast WEMA above slow WEMA (e.g. 10 "
-        "WEMA > 40 WEMA), and weekly RS positive (when available) — no partial credit, anything short of "
-        "unanimous is Downtrend. 'Strong' additionally requires price within "
+        "WEMA > 40 WEMA), and weekly RS positive (when available); Downtrend requires all four bearish, and "
+        "anything in between is Mixed. 'Strong' additionally requires price within "
         f"{settings.get('trend_near_high_low_pct', 0.10) * 100:.0f}% of its 52-week high/low AND 10D avg "
         f"volume ≥ {settings.get('trend_volume_ratio', 1.0)}× the 100D avg — its own parameters, "
         "editable in Settings, independent of Vol Trend/Tech Uptrend below — a sort/filter aid, not a "
@@ -4809,7 +4867,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         f"Declining (≤{settings.get('volume_decline_ratio', 0.7)}×), or In-line — thresholds editable in "
         "Settings. Tech Uptrend = close above the weekly VStop (held for more than "
         f"{settings.get('tech_uptrend_min_vstop_weeks', 3)} weeks) AND close above the slow WEMA AND 10D "
-        f"volume ≥ {settings.get('tech_uptrend_volume_ratio', 1.4)}× the 100D avg — its own volume ratio, "
+        f"volume > {settings.get('tech_uptrend_volume_ratio', 1.4)}× the 100D avg — its own volume ratio, "
         "independent of Vol Trend's Exploding ratio even though they default to the same value. All "
         "values shown to 1 decimal. Use 'Columns to show' above the table to hide/show columns. Edit any "
         "of these parameters via Settings in the sidebar."
@@ -5117,6 +5175,14 @@ if _snap_age_h is not None:
         )
     else:
         st.sidebar.caption(f"↻ {_snap_age_h:.1f}h old · sync: {_pull_note}")
+# Set by the end-of-run push below when it failed; that push retries on every
+# run, so this clears itself once GitHub accepts the files.
+if st.session_state.get("_config_push_error"):
+    _failed_files, _failed_msg = st.session_state["_config_push_error"]
+    st.sidebar.warning(
+        f"Not yet saved to GitHub: {', '.join(_failed_files)} ({_failed_msg}). "
+        "Retried on your next click -- or use **Push config to GitHub** in the Alert Rules tab."
+    )
 markets_registry_now = load_markets_registry()
 st.sidebar.caption(
     " · ".join(
@@ -5167,9 +5233,12 @@ combined_markets_by_key = {k: watchlist_groups_now.get(k, []) for k in combined_
 # strip first closes that gap for every widget below it, not just one.
 #
 # Tab bodies still all execute: with on_change="rerun" they run unless each is
-# individually guarded on `.open`, and skipping hidden MARKET tabs would change
-# what the visible one shows (they populate alert_matches). The News tab is the
-# exception and IS guarded -- nothing else reads it (see `with tab_news:`).
+# individually guarded on `.open`. The market tabs are not guarded, but not
+# because another tab reads their results (none does -- alert_matches and the
+# rest are locals of render_market_tab): a widget that isn't rendered loses its
+# session_state, so gating them would reset each tab's filters, search and
+# unsaved watchlist edits whenever you switched away. The News tab IS guarded,
+# with its few widget keys kept alive by hand (see `with tab_news:`).
 # Real watchlists first (in markets.json order -- the registry's insertion
 # order IS the display order), then the combined roll-ups, then the two fixed
 # tabs. Reorder watchlists by reordering markets.json, not by hardcoding a
@@ -5222,16 +5291,15 @@ with dash1:
         help="Sentiment, Qtr Profit/Revenue Growth %. Same setting as the toggle in the column picker.",
     )
     if dash_show_fundamentals != settings_now.get("show_fundamental_columns", True):
-        settings_now["show_fundamental_columns"] = dash_show_fundamentals
-        save_settings(settings_now)
-        st.rerun()
+        _set_show_fundamentals(dash_show_fundamentals)
 with dash2:
     with st.popover("➕ Add Watchlist"):
         dash_wl_label = st.text_input("Label", key="dash_new_watchlist_label", placeholder="e.g. UK Watchlist")
-        dash_wl_bench = st.text_input("Benchmark ticker", key="dash_new_watchlist_bench", placeholder="e.g. ^FTSE")
+        dash_wl_bench = st.text_input("Fallback benchmark", key="dash_new_watchlist_bench", placeholder="e.g. ^FTSE",
+                                      help="Used only for a ticker whose index can't be detected. Every US or India ticker is measured against its own index (S&P 500 → SPY, Nifty 500 → ^CRSLDX), whatever this says.")
         if st.button("Add", key="dash_add_watchlist_btn"):
             if not dash_wl_label.strip() or not dash_wl_bench.strip():
-                st.error("Both a label and a benchmark ticker are required.")
+                st.error("Both a label and a fallback benchmark are required.")
             elif watchlist_label_error(dash_wl_label, load_markets_registry()):
                 st.error(watchlist_label_error(dash_wl_label, load_markets_registry()))
             else:
@@ -5285,8 +5353,8 @@ with tab_news:
     # Only on the run where the News tab is on screen. Every tab body runs on
     # every rerun, and this one is the heaviest that nothing else reads: breadth
     # and performance charts plus the news digest, ~540 lines of plotly work
-    # paid on every click anywhere in the app. Unlike the market tabs (which
-    # feed alert_matches), skipping it changes nothing on the visible tab.
+    # paid on every click anywhere in the app. Like every tab, nothing outside
+    # it reads what it computes, so skipping it changes nothing on the visible tab.
     # main_tabs reruns on change, so opening News renders it on that same click.
     if not tab_news.open:
         # A widget that is not rendered on a run loses its session_state, so
@@ -5686,8 +5754,8 @@ with tab_news:
             help=(
                 "Groups expand to their member watchlists when the digest runs, so changing a "
                 "group's membership re-scopes news automatically. Clearing the box falls back to "
-                "All Invested. Push settings to GitHub (Alert Rules tab) so the scheduled "
-                "GitHub Actions workflow respects this selection."
+                "All Invested. Saved to settings.json and pushed automatically, so the next "
+                "scheduled run uses it."
             ),
         )
         _new_scope_keys = [_all_news_market_opts[lbl] for lbl in _selected_scope_labels]
@@ -5723,7 +5791,8 @@ with tab_news:
                     st.error("Missing GITHUB_TOKEN or GITHUB_REPO in secrets.")
                 
         with col2:
-            search_choices = ["models/gemma-4-31b-it", "models/gemma-4-26b-a4b-it"]
+            # gemma-4-31b-it is not offered: see REASON_CHOICES above.
+            search_choices = ["models/gemma-4-26b-a4b-it"]
             new_search = st.selectbox(
                 "Search Model", search_choices,
                 index=search_choices.index(settings_now.get("news_search_model", search_choices[0])) if settings_now.get("news_search_model") in search_choices else 0,
@@ -5735,7 +5804,7 @@ with tab_news:
                 st.rerun()
 
         with col3:
-            reason_choices = ["models/gemini-3.5-flash-lite", "models/gemma-4-31b-it", "models/gemma-4-26b-a4b-it"]
+            reason_choices = ["models/gemini-3.5-flash-lite", "models/gemma-4-26b-a4b-it"]
             current_reason = settings_now.get("news_reasoning_model", "models/gemini-3.5-flash-lite")
             if current_reason == "gemini-3.5-flash-lite":
                 current_reason = "models/gemini-3.5-flash-lite"
@@ -6533,16 +6602,17 @@ with tab_alerts:
             st.caption(
                 "Edits made here (watchlist, custom filters, settings, alert rules) only live on "
                 "this instance's disk -- they won't reach GitHub Actions (or survive a redeploy) "
-                "until pushed. Set **DATA_REPO_TOKEN** (a fine-grained PAT with Contents: read/write "
+                "without a data repo. Set **DATA_REPO_TOKEN** (a fine-grained PAT with Contents: read/write "
                 "on the private data repo) as a secret to enable this -- see DEPLOYMENT.md. "
                 "**GITHUB_TOKEN** + **GITHUB_REPO** are only for starting background jobs."
             )
         else:
             st.caption(f"Target: `{gh_repo}` @ `{gh_branch}`")
             st.caption(
-                "Pushes all configuration files (watchlists, filters, settings, alerts) "
-                "to the private data repo as one combined commit, so a multi-file "
-                "change is never half-applied. The data snapshot is "
+                "Every edit is pushed automatically at the end of the click that made it; this "
+                "button is the manual fallback. It pushes all configuration files (watchlists, "
+                "filters, settings, alerts) to the private data repo as one combined commit, so a "
+                "multi-file change is never half-applied. The data snapshot is "
                 "included only when this app's copy is newer than GitHub's; AI "
                 "results are synced per ticker by the actions that change them."
             )
@@ -6567,4 +6637,32 @@ with tab_alerts:
                     pass
                 ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=targets)
                 (st.success if ok else st.error)(msg)
+
+
+# Push every user-config file this run changed -- alert rules, notes and flags,
+# settings, custom filters, custom columns, column layout -- as ONE commit, at the
+# end of the run so a click that changes several files makes one commit, and after
+# every tab so nothing written later in the run is missed. These used to reach the
+# data repo only via the manual "Push to GitHub" button above: a rule added in the
+# app never fired (the alert job reads the data repo), a manual flag never reached
+# the Expert Take prompt, and a container rebuild lost them. See
+# github_sync.unpushed_config_files for what counts as changed. A failed push
+# stays pending and is retried on the next run; the sidebar says so meanwhile.
+#
+# Not under SKIP_GITHUB_PULL: local and AppTest runs work on local copies and
+# must never write the data repo by themselves (the manual button still does).
+if not os.environ.get("SKIP_GITHUB_PULL"):
+    try:
+        _pending_cfg = unpushed_config_files()
+        _cfg_token, _cfg_repo, _cfg_branch = get_data_repo_config(st.secrets)
+        if _pending_cfg and _cfg_token and _cfg_repo:
+            _cfg_ok, _cfg_msg = push_all_config(_cfg_token, _cfg_repo, _cfg_branch, filenames=_pending_cfg,
+                                                message=f"Update {', '.join(_pending_cfg)} via app")
+            if _cfg_ok:
+                st.session_state.pop("_config_push_error", None)
+                st.toast(f"✓ Saved to GitHub: {', '.join(_pending_cfg)}")
+            else:
+                st.session_state["_config_push_error"] = (_pending_cfg, _cfg_msg)
+    except Exception as _e:                                   # never break the page
+        st.session_state["_config_push_error"] = (["config"], f"{type(_e).__name__}: {_e}")
 
