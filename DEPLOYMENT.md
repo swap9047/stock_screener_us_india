@@ -131,18 +131,20 @@ No new secret needed beyond `DATA_REPO_TOKEN` — it commits `data_snapshot.json
 A few things worth knowing:
 
 - **The "Refresh Data" button in the sidebar still works exactly as before** — clicking it always fetches live data for that session, bypassing the snapshot entirely. The sidebar caption shows which one you're looking at: "(daily snapshot)" or "(live fetch)".
-- **The snapshot is skipped automatically, falling back to a live fetch, if it's stale in a way that matters**: if you've added a ticker to the watchlist since the last scheduled refresh (the snapshot won't have it yet), or changed a calc parameter in Settings (EMA lengths, thresholds, etc. — the snapshot was computed with whatever settings were live at refresh time). Either case just means one live fetch until the next hourly refresh catches up.
-- GitHub's scheduler is best-effort, so a run can occasionally be delayed — with an hourly cron this self-heals within the hour. The once-a-day workflows (news digest, Expert Views, Fundamentals) deliberately don't try to skip a late run either: their gate only checks which of the two DST cron lines matches, and runs anyway if GitHub fires it late, on the reasoning that a late digest beats a skipped one.
+- **The snapshot is skipped automatically, falling back to a live fetch, if it's stale in a way that matters**: if you've added a ticker to the watchlist since the last scheduled refresh (the snapshot won't have it yet), or changed a calc parameter in Settings (EMA lengths, thresholds, etc. — the snapshot was computed with whatever settings were live at refresh time), or the calculation code in `stock_data.py` changed since the snapshot was made (comment- and docstring-only edits don't count). Any of these just means one live fetch until the next hourly refresh catches up — after deploying a change to `stock_data.py`, you can run the data refresh workflow by hand to skip the wait.
+- GitHub's scheduler is best-effort, so a run can occasionally be delayed — with an hourly cron this self-heals within the hour. The once-a-day workflows (news digest, Expert Views, Fundamentals, alerts) wake hourly too, and a shared slot gate lets the first run after their ET slot do the work, up to 22 hours late, on the reasoning that a late run beats a skipped one (see AGENTS.md, "GitHub Actions").
 
 ## 8b. Expert Views generation
 
-A fourth GitHub Actions workflow, `.github/workflows/expert-views.yml`, does its work once per **1:00 AM ET** slot. It refreshes `data_snapshot.json` first to guarantee same-day price data, then generates AI Expert Take verdicts (`ACCUMULATE`, `HOLD`, `CAUTION`) across all tickers and commits `expert_views.json` (and the updated snapshot) to the private data repo.
+A fourth GitHub Actions workflow, `.github/workflows/expert-views.yml`, does its work once per **1:00 AM ET** slot. It refreshes `data_snapshot.json` first to guarantee same-day price data, then generates AI Expert Take verdicts (`ACCUMULATE`, `HOLD`, `CAUTION`) across all tickers and commits `expert_views.json` (and the updated snapshot) to the private data repo. Each verdict also reads that ticker's checked quarterly facts from `fundamentals.json`, which the 9:00 PM Sentiment run (8c) writes a few hours earlier.
+
+If 10 tickers in a row fail (typically dead keys or an exhausted quota), the run stops, keeps every previous verdict, and fails, so it shows red in the Actions tab; the slot gate retries it at the next hourly wake-up. The same applies to 8c.
 
 It uses `GEMINI_API_KEY` and `DATA_REPO_TOKEN` repo secrets. It supports `workflow_dispatch` with optional `markets` and `limit` inputs for scoped runs and smoke tests.
 
 ## 8c. Fundamental Views generation
 
-A fifth GitHub Actions workflow, `.github/workflows/fundamentals.yml`, does its work once per **9:00 PM ET** slot. It reads the latest `data_snapshot.json` and evaluates quarterly earnings, filings, and analyst coverage to produce fundamental sentiment (`fundamentals.json`), committing the results to the private data repo.
+A fifth GitHub Actions workflow, `.github/workflows/fundamentals.yml`, does its work once per **9:00 PM ET** slot. It reads the latest `data_snapshot.json` and evaluates quarterly earnings, guidance, management outlook and analyst coverage to produce fundamental sentiment (`fundamentals.json`), committing the results to the private data repo. Each ticker's news search reaches back to its last reported results (looked up from Yahoo; 100 days when Yahoo has no date), so the latest quarter stays in view between reporting seasons.
 
 It uses `GEMINI_API_KEY` and `DATA_REPO_TOKEN` repo secrets. It supports `workflow_dispatch` with optional `markets` and `limit` inputs.
 

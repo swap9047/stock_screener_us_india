@@ -24,11 +24,18 @@ automated alerts to Discord.
     ★ next to the symbol and are filterable and sortable like any other column.
 *   **Custom columns:** User-defined formula columns, usable in filters and alerts the
     moment they're created.
-*   **Ticker notes & flags:** Per-ticker free-text notes plus a colour flag, either set by
-    hand or auto-assigned by a 4-signal majority vote (Expert Take, Trend, Tech Uptrend,
-    Sentiment).
+*   **Signal (Chart × News):** One automatic label per ticker from the two independent
+    inputs — the chart (Trend) and the news (Sentiment): *Confirmed*, *Chart only*,
+    *News divergence*, *Chart up, news negative*, or *Avoid*. Its colour is the dot next to
+    the ticker symbol, and it is filterable, sortable and usable in alert rules.
+*   **TA Rules:** A trader's weekly EMA flowchart (EMA convergence, support/resistance
+    breaks, 10/20/40-week EMA breaks) applied node for node to the last completed week;
+    the flowchart itself can be viewed from the sidebar.
+*   **Ticker notes & flags:** Per-ticker free-text notes plus a colour flag that only you
+    set — it takes the place of the Signal dot next to the ticker.
 *   **Discord integrations:** GitHub Actions cron jobs evaluate your rules and ping a
-    Discord webhook when they trigger, plus a weekly wrap-up digest.
+    Discord webhook when they trigger, plus a weekly wrap-up digest. Every post ends with
+    a short "not investment advice" footer.
 *   **State persistence:** Configuration changed in the UI is committed straight back to
     the private data repository as a single atomic commit, so it survives Streamlit
     Community Cloud redeploys — where the container filesystem is ephemeral.
@@ -39,16 +46,25 @@ Search and reasoning are deliberately separated, to keep verdicts grounded in re
 evidence rather than model recall.
 
 ### Expert Views (`expert_views.py`)
-Actionable verdicts — `ACCUMULATE`, `HOLD`, `CAUTION` — combining pre-computed technical
-indicators with a targeted search for analyst ratings and upgrades/downgrades. Falls back
-through a shared model ladder (`llm_util.py`) on rate limits — retrying the primary model
-before conceding to a weaker one — so an analysis is always produced.
+Actionable verdicts — `ACCUMULATE`, `HOLD`, `CAUTION` — synthesising the pre-computed
+technical indicators, the TA Rules verdict, valuation, this quarter's checked results,
+guidance and analyst actions (from the Sentiment pipeline), and a search for the last 24
+hours' news. It never sees its own previous verdict or the notes. A deterministic guard
+demotes an `ACCUMULATE` the chart doesn't support, and the table marks with ⚑ the
+verdicts that differ from what the chart alone says — the ones where the model added a
+view of its own. Falls back through a shared model ladder (`llm_util.py`) on rate limits —
+retrying the primary model before conceding to a weaker one.
 
 ### Fundamental Sentiment (`fundamentals_eval.py`)
 A `Positive` / `Neutral` / `Negative` read on the most recent earnings, guidance and
-analyst coverage. A deterministic post-hoc guard downgrades a verdict to `Neutral` or
-`Unknown` when the underlying evidence is stale, missing, or predates a confirmed earnings
-report — so "Unknown" means unproven, not neutral.
+analyst coverage. The search reaches back to each company's last reported results, so the
+latest quarter stays in view until the next one replaces it. Forward guidance outranks the
+reported quarter; when a company gives no formal guidance, management's quoted outlook is
+recorded (but never decides the verdict on its own); only named brokerages count as analyst
+actions, not algorithmic rating sites. The cell shows a "Guidance ↑/↓" or "Outlook ↑/↓"
+tag. A deterministic post-hoc guard downgrades a verdict to `Neutral` or `Unknown` when the
+underlying evidence is stale, missing, or predates a confirmed earnings report — so
+"Unknown" means unproven, not neutral.
 
 ### Market News (`news_summary.py`)
 A noise-free summary of material catalysts (FDA approvals, earnings surprises, M&A) from
@@ -67,8 +83,10 @@ to just the tab you clicked from.
 *   `filters.py` — the shared boolean condition engine behind both UI filters and
     background alerts.
 *   `llm_util.py` — shared Gemini timeout/retry/model-ladder plumbing used by all three AI
-    pipelines.
+    pipelines, including the fuse that stops a nightly job early when its calls keep
+    failing.
 *   `alerts.py` / `alert_check.py` — rule evaluation and the Discord cron job.
+*   `ticker_notes.py` — notes, manual flags, and the Signal (Chart × News) label.
 *   `github_sync.py` — atomic commits via the GitHub API, and workflow dispatch.
 *   `refresh_*.py` — background entry points run by GitHub Actions.
 

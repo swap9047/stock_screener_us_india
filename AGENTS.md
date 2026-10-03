@@ -45,22 +45,22 @@ verified by rendering the app headlessly; recipe at the bottom.
 
 ## Module map
 
-~16.4k lines total (the app itself; checks/ adds ~2.1k). The weighting matters: `app.py` is nearly 40% of it.
+~17.9k lines total (the app itself; checks/ adds ~4.6k). The weighting matters: `app.py` is over a third of it.
 
 | File | Lines | What it owns |
 |---|---:|---|
-| `app.py` | 6222 | The entire UI: tabs, tables, sidebar, filters, sort, editors, AI control bars, News + Alert Rules tabs |
-| `stock_data.py` | 2741 | yfinance fetching, all indicator maths, watchlist/markets registry IO, `get_filterable_metrics` |
-| `alerts.py` | 989 | Alert rule evaluation + Discord message building |
-| `news_summary.py` | 840 | News gathering + LLM summarisation |
-| `fundamentals_eval.py` | 685 | Sentiment ("fundamental view") generation + validation |
-| `github_sync.py` | 657 | Atomic config push + `workflow_dispatch` trigger |
-| `expert_views.py` | 602 | Expert Take verdict generation |
-| `filters.py` | 456 | The boolean condition engine — shared by UI filters **and** background alerts |
-| `llm_util.py` | 496 | Shared Gemini-call plumbing (timeout wrapper, retry/model-ladder logic) for the three AI pipelines |
+| `app.py` | 6557 | The entire UI: tabs, tables, sidebar, filters, sort, editors, AI control bars, News + Alert Rules tabs |
+| `stock_data.py` | 3031 | yfinance fetching, all indicator maths, watchlist/markets registry IO, `get_filterable_metrics` |
+| `alerts.py` | 1125 | Alert rule evaluation + Discord message building; every Discord post goes through `send_discord_batch`, which appends the disclaimer |
+| `news_summary.py` | 861 | News gathering + LLM summarisation |
+| `fundamentals_eval.py` | 877 | Sentiment ("fundamental view") generation + validation; the search window is anchored to each company's last results (`search_window_for`) |
+| `github_sync.py` | 671 | Atomic config push + `workflow_dispatch` trigger |
+| `expert_views.py` | 765 | Expert Take verdict generation; its prompt also gets Sentiment's checked facts for the quarter (section 4), and `chart_rule_verdict` drives the ⚑ marker |
+| `filters.py` | 486 | The boolean condition engine — shared by UI filters **and** background alerts |
+| `llm_util.py` | 679 | Shared Gemini-call plumbing (timeout wrapper, retry/model-ladder logic, `FailureFuse`) for the three AI pipelines |
 | `weekly_wrapup.py` | 365 | Weekly Discord digest |
-| `custom_columns.py` | 285 | User-defined formula columns |
-| `ticker_notes.py` | 259 | Per-ticker notes and manual flags, plus `signal` (Chart × News: Trend × Sentiment) |
+| `custom_columns.py` | 294 | User-defined formula columns |
+| `ticker_notes.py` | 166 | Per-ticker notes and manual flags, plus `signal` (Chart × News: Trend × Sentiment) |
 | `watchlist_labels.py` | 46 | Tab labels a watchlist may not take. Kept out of `stock_data.py`, whose code fingerprint (comments and docstrings excluded) marks the snapshot stale on any code edit |
 
 `refresh_*.py` and `*_check.py` are thin entry points that exist only to be run by GitHub
@@ -137,7 +137,7 @@ spine, in order:
 1. Auth gate.
 2. **Data load** — `data_snapshot.json` if fresh, else a live `fetch_all_markets`.
    Produces `per_market = {market_key: [row dicts]}`.
-3. **Enrichment loop** over `per_market` — custom columns, notes/flags, then
+3. **Enrichment loop** over `per_market` — custom columns, notes/flags and `signal`, then
    `interested`, `sentiment`, `expert_take` attached to every row.
 4. **`st.tabs(...)`** with `key="main_tabs"`.
 5. **Sidebar** — column picker, sort control, category order, glossary, custom columns,
@@ -301,6 +301,15 @@ Each of these has actually bitten this codebase.
 - **A `workflow_dispatch` input must be on `main` before it can be dispatched.** GitHub
   reads the input definition from the branch, so dispatching before pushing fails with
   "unexpected input".
+- **Expert Take must never see its own previous verdict.** It used to, twice over: the
+  prompt showed the row's flag as a "user flag" while the flag was an auto-vote that counted
+  the last verdict, and it listed alert rules that fire on that flag. Now Flag is set only by
+  hand (the automatic read is `signal`, from Trend + Sentiment, which never reads Expert
+  Take), the prompt shows a flag only when `flag_reason == MANUAL_FLAG_REASON`, and
+  `alerts.PRIOR_VERDICT_METRICS` keeps rules on `expert_take`/`expert_news_backed` out of
+  it. A new field derived from the verdict belongs in that set.
+- **Post to Discord only through `alerts.send_discord_batch`.** It appends the disclaimer
+  footer (`with_disclaimer`) to every batch; a direct webhook post would skip it.
 - **Don't rename the watchlist keys.** `us_invested` / `india_invested` / `all_invested`
   are registry keys and group keys, unrelated to the `interested` flag.
 
@@ -355,6 +364,12 @@ A late evening job lands inside NSE's ~23:45-06:00 ET session and gets a forming
 bar. Jobs that judge closes pass `completed_sessions_only=True` to `fetch_all_markets`
 (`alert_check.py`, `weekly_wrapup_check.py`), which drops each ticker's unfinished bar
 by its own exchange. The dashboard and `refresh_data.py` leave it off to show live prices.
+
+**The two nightly AI jobs stop early on a run of failures.** `refresh_fundamentals.py` and
+`refresh_expert_views.py` use `llm_util.FailureFuse`: after 10 consecutive failed tickers they
+skip the rest (those keep their previous views) and exit 1. A red Sentiment or Expert Take
+run with `::error::Stopped early` almost always means dead keys or an exhausted quota; the
+gate retries the slot, and each retry now costs minutes rather than a 2-hour grind.
 
 `alerts.ALLOWED_HOURS` must match the alert gate's `slots`, or the app's schedule picker
 would offer an hour nothing wakes up for. `daily-alerts.yml`'s gate also asks

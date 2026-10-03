@@ -1330,7 +1330,13 @@ def column_definitions(settings, labels):
             "Your own marker, set via the sidebar 'Ticker Notes' panel (Red/Yellow/Green/Blue), also shown "
             "next to the ticker symbol, where it takes the place of the Signal dot. Never set automatically."
         ),
-        "Expert Take": "AI-generated synthesis of technical indicators and recent analyst coverage: ACCUMULATE, HOLD, or CAUTION.",
+        "Expert Take": (
+            "AI verdict -- ACCUMULATE, HOLD or CAUTION -- from the technical indicators, TA Rules, valuation, "
+            "this quarter's checked results, guidance and analyst actions (from Sentiment) and the last 24 hours' "
+            "news. ⚑ marks a verdict that differs from what the chart alone says (Accumulate when Trend is up and "
+            "Tech Uptrend is Yes, Caution when Trend is down, otherwise Hold) -- the ones where the model added a "
+            "view of its own. Hover a cell for the reasoning and the trade plan."
+        ),
         "Expert News?": (
             "Whether the Expert Take verdict had any news behind it: either the last 24 hours' web news, "
             "or this quarter's checked results, guidance and analyst actions from the Sentiment job. "
@@ -1340,7 +1346,14 @@ def column_definitions(settings, labels):
         "10/30 W Golden Cross (weeks ago)": "Weeks since the 10-week EMA crossed above the 30-week EMA. Lower numbers mean a more recent bullish cross.",
         "Notes": "Your free-text note for this ticker, set via the sidebar 'Ticker Notes' panel. Hover/tap a truncated note to see the full text.",
         "Interested": "Whether you ticked this ticker as Interested in the watchlist editor.",
-        "Sentiment": "AI fundamental sentiment (Positive / Neutral / Negative) from the most recent earnings, guidance and analyst coverage. 'Unknown' means the view is stale, predates a confirmed earnings report, or had no hard evidence to stand on -- not that sentiment is neutral.",
+        "Sentiment": (
+            "AI fundamental sentiment (Positive / Neutral / Negative) from the latest reported quarter: EPS, "
+            "guidance (which outranks the quarter's results) and analyst actions by named firms. The search reaches "
+            "back to each company's last results. The tag shows what drove it: Guidance ↑/↓/=, or, when the company "
+            "gave no formal guidance, management's quoted Outlook ↑/↓/= (which never decides the verdict alone). "
+            "'Unknown' means the view is stale, predates a confirmed earnings report, or had no hard evidence to "
+            "stand on -- not that sentiment is neutral."
+        ),
         "Qtr Profit Growth %": "Year-over-year net income growth for the most recent reported quarter, vs. the same quarter a year ago (Yahoo Finance). Ignores share count -- compare against Qtr EPS Growth % to spot dilution.",
         "Qtr EPS Growth %": "Year-over-year growth in DILUTED earnings per share for the most recent reported quarter, vs. the same quarter a year ago. Same profit figure as Qtr Profit Growth % but divided by share count, so growth funded by issuing equity (QIP, warrant conversion) shows up lower here -- a materially smaller number than Qtr Profit Growth % means shareholders were diluted. Blank when Yahoo has fewer than 5 quarters of statements or the year-ago quarter was loss-making (growth undefined), which is why it is sparser than Qtr Profit Growth %.",
         "Qtr Revenue Growth %": "Year-over-year revenue growth for the most recent reported quarter, vs. the same quarter a year ago (Yahoo Finance).",

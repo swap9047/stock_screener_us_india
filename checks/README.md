@@ -23,6 +23,14 @@ It needs no secrets, so it works from a fork.
 | `test_gemini_keys.py` | Every `GEMINI_API_KEY*` name joins the rotation, load spreads across all keys, a key that hits its quota is skipped |
 | `test_refresh_limit.py` | The `limit` input analyses only the first N tickers; a partial news run replaces only its own digest and posts nothing |
 | `test_fable_review.py` | The 2026-09-17 evening review's fixes: a subset settings save keeps the rest; `is_rule_due` judges the slot's day; substituted snapshot rows are re-enriched before the jobs judge them; the search ladders retry the primary model; a hung yfinance call leaves no non-daemon worker; the combined-tab keys cannot be minted as a watchlist; and the follow-ups a review of those fixes found -- the app's own snapshot-writing paths re-enrich too, a one-file force pull leaves the shared pull clock alone, a timeout raised by the call keeps its own message |
+| `test_ta_rules.py` | TA Rules follows the weekly EMA flowchart node for node; support/resistance zones; only completed weeks are judged; the label stays on one line; the flowchart image is read from the private data repo, never stored here |
+| `test_signal.py` | Signal = Trend × guarded Sentiment (all five labels); Flag is manual-only; Signal is registered as a column, filter and alert metric; the Expert Take ⚑ marks only verdicts that differ from the chart rule |
+| `test_expert_prompt_inputs.py` | Expert Take never sees its own previous verdict (no auto flag, no notes, no verdict-based alert rules); section 4 carries the quarter's checked facts, not Sentiment's label; an unreadable `fundamentals.json` does not stop the run |
+| `test_sentiment_guidance.py`, `test_sentiment_window.py` | Sentiment rules 7-9 (guidance outranks the quarter, quoted outlook never decides alone, only named-firm analyst actions); the search window reaches back to the last reported results |
+| `test_failure_fuse.py` | 10 consecutive failed tickers stop the Sentiment / Expert Take job and exit 1; scattered failures never do |
+| `test_disclaimer.py` | Every Discord batch ends with the disclaimer without breaking the length limit; the sidebar shows it |
+| `test_code_fingerprint.py` | The snapshot fingerprint ignores comments and docstrings, changes on any code edit, and is the same on every Python (a pinned sample) |
+| `test_validate_ticker.py` | A ticker added while Yahoo throttles is kept with a warning, not dropped as a typo |
 
 Fixtures are invented (`ACME`, `ZED.NS`, "Newsletter Picks"). Nothing here reads
 or writes the real JSON: every path is redirected to a temp directory. Keep it
@@ -45,3 +53,6 @@ cannot run in CI. They live outside the repo in `docs/private/checks/`
 - `simulate_jobs.sh` -- the alert and wrap-up jobs end to end against live
   Yahoo, pushing only to a local mirror.
 - `scan_run_log.py` -- scans a finished Actions run's log for anything personal.
+- `backtest_signals.py` -- replays the data repo's daily snapshots and measures
+  each signal state's 5/20/60-day return against its benchmark. Reads holdings,
+  so it stays local; useful from mid-October 2026, once 4-week returns exist.
