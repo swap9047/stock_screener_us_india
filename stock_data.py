@@ -205,6 +205,10 @@ DEFAULT_SETTINGS = {
     # extra calls entirely. Prefixed "sentiment_" so it counts as a UI/pipeline
     # setting and does not invalidate the snapshot cache -- see calc_settings.
     "sentiment_targeted_retry": True,
+    # Sentiment: the year-on-year profit change (EPS, else PAT) beyond which the
+    # reported quarter counts as a small signal -- it can tip a balance between
+    # forward signals but never decides alone (fundamentals_eval.score_sentiment).
+    "sentiment_profit_yoy_pct": 15.0,
 
     "note_dropdown_options": "",
 

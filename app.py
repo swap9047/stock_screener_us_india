@@ -918,7 +918,12 @@ def sentiment_flag_note(flag, as_of):
 # The deterministic guard _validate_sentiment applies on top of whatever the
 # model wrote. Spelled out for the AI-review payload so the reader knows the
 # displayed Sentiment isn't raw model output.
-SENTIMENT_GUARD_RULES = f"""A deterministic guard runs after the model answers and can override it:
+SENTIMENT_GUARD_RULES = f"""The label is forward-looking, decided by a fixed rule from the facts the model extracts:
+guidance raised/lowered (which outweighs everything), management's quoted outlook improving/
+cautious, or an upgrade/downgrade by a named firm -- each decides on its own, opposite ones
+cancel. The quarter just reported (profit up/down >15% YoY, a beat/miss) weighs much less: it
+only breaks a tie between those and never decides alone.
+A deterministic guard then runs and can override it:
 - View older than {SENTIMENT_STALE_DAYS} days -> Unknown (STALE)
 - Earnings, guidance and analyst coverage all missing/N/A -> Unknown (NO_DATA)
 - A confirmed earnings report the news didn't account for -> Unknown (STALE_QUARTER)
@@ -1073,6 +1078,8 @@ def build_ai_review_payload(
             note = sentiment_flag_note(flag, v.get("as_of", "unknown"))
             if note:
                 out.append(note)
+            if v.get("sentiment_drivers"):
+                out.append(f"- Decided by: {'; '.join(v['sentiment_drivers'])}")
             for lbl, fld in (("Earnings", "earnings_summary"), ("Guidance", "future_guidance"),
                              ("Management outlook", "outlook_quote"),
                              ("Analyst Coverage", "analyst_coverage"), ("Reasoning", "reasoning")):
@@ -1386,10 +1393,14 @@ def column_definitions(settings, labels):
         "Notes": "Your free-text note for this ticker, set via the sidebar 'Ticker Notes' panel. Hover/tap a truncated note to see the full text.",
         "Interested": "Whether you ticked this ticker as Interested in the watchlist editor.",
         "Sentiment": (
-            "AI fundamental sentiment (Positive / Neutral / Negative) from the latest reported quarter: EPS, "
-            "guidance (which outranks the quarter's results) and analyst actions by named firms. The search reaches "
-            "back to each company's last results. The tag shows what drove it: Guidance ↑/↓/=, or, when the company "
-            "gave no formal guidance, management's quoted Outlook ↑/↓/= (which never decides the verdict alone). "
+            "Forward-looking fundamental sentiment (Positive / Neutral / Negative), decided by a fixed rule from "
+            "facts the AI extracts. Mainly: guidance raised/lowered (which outweighs everything), management's "
+            "quoted outlook improving/cautious, and upgrades/downgrades by named firms -- each decides on its own. "
+            "The quarter just reported (profit up/down more than 15% YoY, a beat/miss of a stated consensus) weighs "
+            "much less: it only breaks a tie between those, never decides alone, and never outvotes management -- "
+            "strong growth with a cautious outlook reads Negative. The search reaches back to each company's last "
+            "results. The tag shows the evidence, forward signals first (e.g. Upgrade · Outlook ↑ · Profit +22%); "
+            "hover for what decided it. "
             "'Unknown' means the view is stale, predates a confirmed earnings report, or had no hard evidence to "
             "stand on -- not that sentiment is neutral."
         ),
@@ -1769,6 +1780,16 @@ def settings_dialog():
              "weeks. Stops a level broken years ago from reading as \"broken support\" today.",
     )
 
+    st.markdown("**Sentiment column**")
+    sentiment_profit_yoy = st.number_input(
+        "32. Profit change that counts for the reported quarter (YoY %, more than, either way)",
+        min_value=1.0, step=1.0, format="%.0f",
+        value=float(settings.get("sentiment_profit_yoy_pct", 15.0)), key="set_sentiment_profit_yoy",
+        help="Sentiment is decided mainly by guidance, management's quoted outlook and named-firm analyst "
+             "actions. The quarter's profit (EPS, else PAT) up or down more than this much, like a beat or miss, "
+             "only tips a balance between those -- it never decides on its own. Applies from the next run.",
+    )
+
     st.markdown("**Ticker Notes**")
     note_dropdown_options = st.text_input(
         "31. Dropdown Options (comma-separated)",
@@ -1815,6 +1836,7 @@ def settings_dialog():
                 "ta_sr_min_touches": int(ta_sr_touches),
                 "ta_sr_recent_weeks": int(ta_sr_recent),
                 "note_dropdown_options": note_dropdown_options.strip(),
+                "sentiment_profit_yoy_pct": float(sentiment_profit_yoy),
             })
             st.success("Settings saved. Click **Refresh Data** to recompute with the new settings.")
             st.rerun()
@@ -4607,8 +4629,26 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             outlook_line = ""
             if v.get("outlook_tone") and v.get("outlook_quote"):
                 outlook_line = f"Outlook: {v['outlook_tone']} — {v['outlook_quote']}\n\n"
+            # What decided the label (fundamentals_eval.score_sentiment), and the
+            # model's own call when it differs -- the code decides from the
+            # extracted facts, so the reasoning text can argue for another label.
+            decided_line = ""
+            if v.get("sentiment_drivers"):
+                decided_line = f"Decided by: {'; '.join(v['sentiment_drivers'])}\n\n"
+            if v.get("model_sentiment") and v.get("model_sentiment") != v.get("sentiment"):
+                decided_line += (f"(The model alone said {v['model_sentiment']}; the evidence rule decides.)\n\n")
+            # The reported quarter's facts. Sales is context only; a profit change
+            # beyond the threshold, or a beat/miss, can tip a tie (see "Decided by").
+            _ctx = []
+            for _key, _word in (("revenue_yoy_pct", "Sales"), ("profit_yoy_pct", v.get("profit_metric") or "Profit")):
+                if isinstance(v.get(_key), (int, float)) and not isinstance(v.get(_key), bool):
+                    _ctx.append(f"{_word} {v[_key]:+.0f}% YoY")
+            if v.get("results_vs_estimate") in ("beat", "miss", "inline"):
+                _ctx.append(f"{v['results_vs_estimate']} vs estimates")
+            if _ctx:
+                decided_line += f"Reported quarter: {' · '.join(_ctx)}\n\n"
             tooltip_esc = html.escape(
-                f"Earnings: {earnings}\n\nGuidance: {guidance}\n\n{outlook_line}"
+                f"{decided_line}Earnings: {earnings}\n\nGuidance: {guidance}\n\n{outlook_line}"
                 f"Analyst Coverage: {analyst}\n\nReasoning: {reasoning}\n\n"
                 f"As of: {as_of}  |  Source: {news_source}  |  Model: {model_used}"
             )

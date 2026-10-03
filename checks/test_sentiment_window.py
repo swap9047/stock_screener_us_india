@@ -80,7 +80,9 @@ check("never overrides a newer one" in reasoning_prompt,
       "the reasoning prompt says an older item cannot override a newer one")
 # The guard docstrings cite "the prompt's own rules 2-3" by number, so a new
 # rule goes on the END. If this fails, something was inserted mid-list.
-_rule2 = reasoning_prompt.find("2. If the current quarter's EPS")
+# By number, not text: rule 2's wording changed on 2026-10-03 (the evidence
+# rule); its position must not.
+_rule2 = reasoning_prompt.find("\n2. ")
 _recency = reasoning_prompt.find("never overrides a newer one")
 check(0 <= _rule2 < _recency,
       "...added after the existing numbered rules, which _validate_sentiment cites by number")

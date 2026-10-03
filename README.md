@@ -60,15 +60,17 @@ view of its own. Falls back through a shared model ladder (`llm_util.py`) on rat
 retrying the primary model before conceding to a weaker one.
 
 ### Fundamental Sentiment (`fundamentals_eval.py`)
-A `Positive` / `Neutral` / `Negative` read on the most recent earnings, guidance and
-analyst coverage. The search reaches back to each company's last reported results, so the
-latest quarter stays in view until the next one replaces it. Forward guidance outranks the
-reported quarter; when a company gives no formal guidance, management's quoted outlook is
-recorded (but never decides the verdict on its own); only named brokerages count as analyst
-actions, not algorithmic rating sites. The cell shows a "Guidance ↑/↓" or "Outlook ↑/↓"
-tag. A deterministic post-hoc guard downgrades a verdict to `Neutral` or `Unknown` when the
-underlying evidence is stale, missing, or predates a confirmed earnings report — so
-"Unknown" means unproven, not neutral.
+A forward-looking `Positive` / `Neutral` / `Negative` read. The model extracts the facts and
+a fixed rule decides. Forward signals carry the weight, and each decides on its own: guidance
+raised or lowered (which outweighs everything), management's quoted outlook (improving or
+cautious), and upgrades or downgrades by named brokerages (not algorithmic rating sites). The
+quarter just reported weighs much less: profit up or down more than 15% year on year, or a
+beat or miss against a stated consensus. It only breaks a tie between forward signals; it never
+decides alone, and it never outvotes management, so strong growth with a cautious outlook reads
+Negative. The search reaches back to each company's last reported results, and Yahoo's
+year-on-year growth fills in when the news only gave absolute figures. The cell shows the
+evidence, forward signals first (e.g. "Upgrade · Outlook ↑ · Profit +22%"), and the hover says
+what decided it.
 
 ### Market News (`news_summary.py`)
 A noise-free summary of material catalysts (FDA approvals, earnings surprises, M&A) from

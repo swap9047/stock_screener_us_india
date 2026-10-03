@@ -40,7 +40,9 @@ r6, r7, r8 = p.find("\n6. "), p.find("\n7. Forward guidance outranks"), p.find("
 check(0 <= r6 < r7 < r8, "rules 7 and 8 are appended after rule 6 (the guards cite rules 2-3 by number)")
 check("LOWERED guidance is \"Negative\"" in p and "RAISED guidance can be \"Positive\"" in p,
       "rule 7 spells out guidance beating the quarter both ways")
-check("NEVER makes the sentiment \"Positive\" or \"Negative\"" in p, "rule 8: an outlook alone is never directional")
+# Changed 2026-10-03 (owner): Sentiment is forward-looking, so a quoted outlook
+# now decides on its own; the reported quarter no longer does.
+check("decides the sentiment on its own" in p, "rule 8: a quoted outlook decides on its own")
 check('"outlook_tone": "improving" | "steady" | "cautious" | null' in p and '"outlook_quote"' in p,
       "the schema asks for outlook_tone and outlook_quote")
 
@@ -68,14 +70,14 @@ check(all(k in norm(None, None) and norm(None, None)[k] is None
           for k in ("outlook_tone", "outlook_quote", "analyst_action", "analyst_firm")),
       "every evidence key is always present")
 
-# --- an outlook alone cannot make a directional verdict -----------------------
+# --- an outlook alone now makes a directional verdict (owner, 2026-10-03) ------
 only_outlook = {"as_of": fe.datetime.now(fe.timezone.utc).strftime("%Y-%m-%d %H:%M"),
                 "earnings_summary": "Revenue up 10% YoY", "future_guidance": "N/A", "analyst_coverage": "N/A",
                 "eps_value": None, "guidance_change": None, "analyst_action": None,
                 "outlook_tone": "improving", "outlook_quote": "Management: 'we see strong demand'",
                 "sentiment": "Positive"}
-check(fe._validate_sentiment(only_outlook) == ("Neutral", "PARTIAL"),
-      "Positive resting on an outlook alone is capped at Neutral by the guard")
+check(fe._validate_sentiment(only_outlook) == ("Positive", ""),
+      "Positive resting on a quoted outlook alone stands")
 with_eps = {**only_outlook, "eps_value": "$1.10 vs $1.00 est.", "outlook_tone": "cautious", "sentiment": "Neutral"}
 check(fe._validate_sentiment(with_eps)[0] == "Neutral", "EPS beat + cautious outlook may stand as Neutral")
 

@@ -416,6 +416,16 @@ def _quarter_fundamentals_text(view):
         lines.append(f"- Earnings: {v['earnings_summary']}")
     if v.get("eps_value"):
         lines.append(f"- EPS: {v['eps_value']}")
+    sales = v.get("revenue_yoy_pct")
+    if isinstance(sales, (int, float)) and not isinstance(sales, bool):
+        source = " (Yahoo)" if "Yahoo" in str(v.get("revenue_yoy_source") or "") else ""
+        lines.append(f"- Sales YoY: {sales:+.0f}%{source}")
+    yoy = v.get("profit_yoy_pct")
+    if isinstance(yoy, (int, float)) and not isinstance(yoy, bool):
+        source = " (Yahoo)" if "Yahoo" in str(v.get("profit_yoy_source") or "") else ""
+        lines.append(f"- Profit YoY: {yoy:+.0f}% ({v.get('profit_metric') or 'profit'}){source}")
+    if v.get("results_vs_estimate") in ("beat", "miss", "inline"):
+        lines.append(f"- Results vs consensus estimates: {v['results_vs_estimate']}")
     if v.get("guidance_change") or not _field_is_placeholder(v.get("future_guidance")):
         change = f"{v['guidance_change'].upper()} -- " if v.get("guidance_change") else ""
         lines.append(f"- Company guidance: {change}{v.get('future_guidance') or ''}".rstrip(" -"))

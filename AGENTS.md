@@ -53,7 +53,7 @@ verified by rendering the app headlessly; recipe at the bottom.
 | `stock_data.py` | 3083 | yfinance fetching, all indicator maths, watchlist/markets registry IO, `get_filterable_metrics` |
 | `alerts.py` | 1127 | Alert rule evaluation + Discord message building; every Discord post goes through `send_discord_batch`, which appends the disclaimer |
 | `news_summary.py` | 861 | News gathering + LLM summarisation |
-| `fundamentals_eval.py` | 877 | Sentiment ("fundamental view") generation + validation; the search window is anchored to each company's last results (`search_window_for`) |
+| `fundamentals_eval.py` | 1122 | Sentiment ("fundamental view") generation + validation. The model only extracts facts; `score_sentiment` decides the label, weighted toward forward signals (guidance ±9, quoted outlook ±3, named-firm action ±3; the quarter's profit >15% YoY or a beat/miss ±1 only breaks ties). The search window is anchored to each company's last results (`search_window_for`) |
 | `github_sync.py` | 715 | Atomic config push, the end-of-run push of edited config (`unpushed_config_files`) + `workflow_dispatch` trigger |
 | `expert_views.py` | 773 | Expert Take verdict generation; its prompt also gets Sentiment's checked facts for the quarter (section 4), and `chart_rule_verdict` drives the ⚑ marker |
 | `filters.py` | 487 | The boolean condition engine — shared by UI filters **and** background alerts |
