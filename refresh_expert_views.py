@@ -132,10 +132,13 @@ def main():
     # equivalently, since the prompt embeds {market} and its benchmark, so the
     # surviving analysis depended on dict iteration order.
     seen = set()
+    fuse = llm_util.FailureFuse()
 
     # Process each market
     for market, mkt_tickers in watchlists.items():
         if limit and analysed >= limit:
+            break
+        if fuse.tripped:
             break
         if only_markets and market not in only_markets:
             continue
@@ -155,6 +158,8 @@ def main():
 
         for idx, tk in enumerate(mkt_tickers):
             if limit and analysed >= limit:
+                break
+            if fuse.tripped:
                 break
             if tk in seen:
                 print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - SKIP (already analyzed this run)")
@@ -197,13 +202,16 @@ def main():
                 failed_inc, fallback_inc, detail = _apply_result(expert_views, tk, view, old_view, elapsed)
                 total_failed += failed_inc
                 total_fallback_used += fallback_inc
+                fuse.record(not _is_valid_view(view))
                 print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - {detail}")
             except TimeoutError as e:
                 print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - TIMEOUT: {e}. Added to retry queue.")
                 retry_queue.append((market, tk, row, old_view, alerts_text))
+                fuse.record(True)
             except Exception as e:
                 print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - EXCEPTION: {e}")
                 total_failed += 1
+                fuse.record(True)
                 # Apply the staleness circuit breaker here too. Keeping the
                 # prior view unconditionally is what let a permanently-failing
                 # ticker display a confident verdict indefinitely; the
@@ -220,10 +228,13 @@ def main():
             if idx < len(mkt_tickers) - 1:
                 time.sleep(5)
                 
-    # Process retry queue
-    if retry_queue:
+    # Process retry queue -- not after a tripped fuse: the same dead keys
+    # would fail every one of them too.
+    if retry_queue and not fuse.tripped:
         print(f"\n[{_ts()}] === Processing Retry Queue ({len(retry_queue)} tickers) ===")
         for idx, (market, tk, row, old_view, alerts_text) in enumerate(retry_queue):
+            if fuse.tripped:
+                break
             company_name = row.get("company_name", tk)
             print(f"[{_ts()}] [RETRY] [{market}] [{idx+1}/{len(retry_queue)}] {tk} ({company_name}) - starting...")
             try:
@@ -240,10 +251,12 @@ def main():
                 failed_inc, fallback_inc, detail = _apply_result(expert_views, tk, view, old_view, elapsed)
                 total_failed += failed_inc
                 total_fallback_used += fallback_inc
+                fuse.record(not _is_valid_view(view))
                 print(f"[{_ts()}] [RETRY] [{market}] [{idx+1}/{len(retry_queue)}] {tk} - {detail}")
             except Exception as e:
                 print(f"[{_ts()}] [RETRY] [{market}] [{idx+1}/{len(retry_queue)}] {tk} - EXCEPTION: {e}")
                 total_failed += 1
+                fuse.record(True)
                 
             save_expert_views(expert_views)
 
@@ -255,6 +268,7 @@ def main():
     print(f"Final failures: {total_failed}.")
     # Per-key calls and failures, worst key first -- see usage_summary.
     llm_util.log_key_usage(client)
+    fuse.exit_if_tripped()
 
 if __name__ == "__main__":
     main()

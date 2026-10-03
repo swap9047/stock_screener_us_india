@@ -198,6 +198,24 @@ def expert_view_has_news(view):
     return not any(text.startswith(m) for m in EXPERT_NO_NEWS_MARKERS)
 
 
+def chart_rule_verdict(row):
+    """What the chart alone says, in Expert Take's words: ACCUMULATE when Trend
+    is up and Tech Uptrend is Yes, CAUTION when Trend is down, HOLD otherwise.
+
+    The app marks an Expert Take verdict that DIFFERS from this with ⚑. On
+    2026-09-26 the model agreed with it for 93 of 124 tickers, so the verdict
+    was mostly the chart restated; the ⚑ points at the ~30 where the model
+    added a view of its own (news, earnings, guidance), which are the ones
+    worth reading."""
+    row = row or {}
+    trend = row.get("trend")
+    if trend in ("Uptrend", "Strong Uptrend") and row.get("tech_uptrend"):
+        return "ACCUMULATE"
+    if trend in ("Downtrend", "Strong Downtrend"):
+        return "CAUTION"
+    return "HOLD"
+
+
 def is_pending_view(view):
     """True if a record EXISTS but is a failure/pending placeholder rather than
     a real analysis.
@@ -554,7 +572,7 @@ Then:
 2. Provide a 1-line headline summarizing the key reason.
 3. Concise Technical & Volume Assessment (2-3 sentences).
 4. Concise Catalyst Assessment covering sections 4 and 5 — if BOTH are empty, explicitly state "No material news found; verdict based on technicals only."
-5. Actionable Take (2-3 sentences): entry/add zones, trailing stop levels, or exit triggers.
+5. Actionable Take (2-3 sentences): entry/add zones, trailing stop levels, or exit triggers. Write it as analysis for the reader's own research, not as personal investment advice, and do not state certainty about future prices.
 
 Return ONLY a valid JSON object matching this schema:
 {{

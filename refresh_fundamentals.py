@@ -222,6 +222,8 @@ def main():
     store_lock = threading.Lock()
     counters = {"processed": 0, "failed": 0}
 
+    fuse = llm_util.FailureFuse()
+
     def _analyse(entry, is_retry=False):
         """One ticker, start to stored result. Runs on a worker thread.
 
@@ -232,6 +234,8 @@ def main():
         outside the lock, which is the entire point.
         """
         market, idx, total, tk, row = entry
+        if fuse.tripped:
+            return None  # after a run of failures: keep this ticker's previous view
         tag = f"[RETRY]" if is_retry else f"[{market}] [{idx+1}/{total}]"
         company_name = row.get("company_name", tk)
         old_view = fundamentals.get(tk)
@@ -249,6 +253,9 @@ def main():
                 failed_inc, detail = _apply_result(fundamentals, tk, view, old_view, elapsed)
                 counters["failed"] += failed_inc
                 save_fundamentals(fundamentals)
+            # The CALL failed, whether or not a fresh prior was kept (which
+            # _apply_result does not count as a failure).
+            fuse.record(not _is_valid_view(view) or _search_failed_unknown(view))
             print(f"[{_ts()}] {tag} {tk} - {detail}")
         except TimeoutError as e:
             # First pass only: fetch_fundamental_news raises this so the ticker
@@ -256,8 +263,10 @@ def main():
             # exhausted search settle for "no news" instead of raising.
             print(f"[{_ts()}] {tag} {tk} - TIMEOUT: {e}. Added to retry queue.")
             requeue = entry
+            fuse.record(True)
         except Exception as e:
             print(f"[{_ts()}] {tag} {tk} - ERROR: {e}")
+            fuse.record(True)
             age = _view_age_days(old_view)
             with store_lock:
                 if _is_valid_view(old_view) and (age is None or age <= SENTIMENT_STALE_DAYS):
@@ -289,7 +298,7 @@ def main():
 
     retry_queue = _run_all(plan)
 
-    if retry_queue:
+    if retry_queue and not fuse.tripped:
         print(f"\n[{_ts()}] === Retrying {len(retry_queue)} timed-out stocks ===")
         _run_all(retry_queue, is_retry=True)
 
@@ -301,6 +310,7 @@ def main():
     print(f"Failed: {total_failed}")
     # Per-key calls and failures, worst key first -- see usage_summary.
     llm_util.log_key_usage(client)
+    fuse.exit_if_tripped()
 
 if __name__ == "__main__":
     main()

@@ -643,12 +643,13 @@ def active_alerts_by_ticker(rules, snapshot_results, metric_labels=None):
     return {t: "\n".join(lines) for t, lines in out.items()}
 
 
-# Metrics that carry a previous Expert Take verdict: the verdict itself, its
-# news-backed marker, and `flag`, whose auto-vote counts the verdict. A rule on
-# any of them must not reach the Expert Take prompt, or the model is shown its
-# own last answer -- e.g. a "green flag" rule firing because last night's
-# ACCUMULATE helped make the flag Green. See build_expert_prompt's flag note.
-PRIOR_VERDICT_METRICS = {"expert_take", "expert_news_backed", "flag"}
+# Metrics that carry a previous Expert Take verdict: the verdict itself and its
+# news-backed marker. A rule on either must not reach the Expert Take prompt, or
+# the model is shown its own last answer. `flag` was on this list while it was
+# an auto-vote that counted the verdict; since 2026-10-02 it is set only by
+# hand (the automatic read is `signal`, from Trend + Sentiment, which never
+# reads Expert Take), so a rule on it is the user's own judgement and may go in.
+PRIOR_VERDICT_METRICS = {"expert_take", "expert_news_backed"}
 
 
 def rules_using_prior_verdict(all_rules):
@@ -1065,6 +1066,29 @@ def _post_discord(webhook_url, content):
 
 DISCORD_BATCH_PACING_SECONDS = 0.3
 
+# Shown in the app's sidebar and appended to every Discord batch (as small
+# "-#" subtext). The app's AI verdicts come with entry and stop levels, and
+# Discord posts get forwarded out of context.
+DISCLAIMER = "For personal research only — not investment advice. AI-written text can be wrong; check before acting."
+DISCORD_FOOTER = f"-# {DISCLAIMER}"
+# Discord rejects a message over 2000 characters; the message builders stay
+# under 1900, which this footer must not push past.
+_DISCORD_SAFE_LEN = 1900
+
+
+def with_disclaimer(messages):
+    """`messages` with DISCORD_FOOTER on the end: added to the last message
+    when it fits under _DISCORD_SAFE_LEN, otherwise sent as one more short
+    message. An empty batch stays empty -- no message for a footer alone."""
+    messages = list(messages)
+    if not messages:
+        return messages
+    if len(messages[-1]) + 1 + len(DISCORD_FOOTER) <= _DISCORD_SAFE_LEN:
+        messages[-1] = f"{messages[-1]}\n{DISCORD_FOOTER}"
+    else:
+        messages.append(DISCORD_FOOTER)
+    return messages
+
 
 def send_discord_batch(webhook_url, messages, stop_on_failure=True):
     """Posts each of `messages` in order via _post_discord, pacing them
@@ -1084,9 +1108,13 @@ def send_discord_batch(webhook_url, messages, stop_on_failure=True):
     first failure at the end -- what a multi-part digest wants, since one
     rejected part shouldn't swallow the other four. The default stays True so
     the wrap-up and the interactive buttons keep their existing fail-fast
-    behavior."""
+    behavior.
+
+    Every batch ends with the DISCLAIMER footer (with_disclaimer) -- all
+    Discord output (alerts, wrap-up, news digest, the app's buttons) comes
+    through here, so this is the one place it is added."""
     first_detail = ""
-    for idx, content in enumerate(messages):
+    for idx, content in enumerate(with_disclaimer(messages)):
         if idx > 0:
             time.sleep(DISCORD_BATCH_PACING_SECONDS)
         ok, detail = _post_discord(webhook_url, content)

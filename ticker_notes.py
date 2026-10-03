@@ -9,7 +9,11 @@ by the SAME ticker symbol used everywhere else in the app (e.g. "AAPL",
 "TCS.NS") -- global across both markets, not per-market, since a
 ticker symbol is already unique across the whole watchlist.
 
-Both fields flow into every row dict via apply_notes_to_rows(), called from
+Flag is ONLY what you set by hand. The automatic read is a separate field,
+`signal` (Chart x News, see compute_signal), which replaced a 4-signal flag
+vote on 2026-10-02.
+
+All three fields flow into every row dict via apply_notes_to_rows(), called from
 stock_data.fetch_all_markets() (same pattern as custom_columns.py), so a
 note/flag is available to the table, the column picker, custom filters,
 and alert conditions -- and to the headless alert_check.py/refresh_data.py
@@ -36,6 +40,16 @@ NO_FLAG = ""  # stored value for "no flag set"
 # flag_reason of a flag the user set by hand -- how expert_views tells it
 # apart from the auto-vote, which it must not show the model.
 MANUAL_FLAG_REASON = "Manually assigned"
+
+# Signal: the automatic read, from the two independent inputs only -- the chart
+# (Trend) and the news (Sentiment). Best-first, which is also
+# filters.CATEGORICAL_METRICS' declaration (sort) order.
+SIGNAL_OUTCOMES = ("Confirmed", "Chart only", "News divergence", "Chart up, news negative", "Avoid")
+# The dot on the ticker when no manual flag is set. There is no light-green
+# emoji, so "Chart only" is the white dot; the Signal column itself uses real
+# shades (app.SIGNAL_COLORS).
+SIGNAL_EMOJI = {"Confirmed": "🟢", "Chart only": "⚪", "News divergence": "🟡",
+                "Chart up, news negative": "🟠", "Avoid": "🔴"}
 
 
 def load_ticker_notes():
@@ -85,181 +99,68 @@ def flag_marker_html(flag):
     return f"{emoji} " if emoji else ""
 
 
-def compute_auto_flag(row, expert_verdict=None, sentiment=None):
-    """Auto-assigns a Green/Red/Yellow flag via a 4-signal majority vote:
-    Expert Take, Trend, Tech Uptrend, and Sentiment. Returns (flag_color,
-    reason_string), or ("", "") if neither threshold below is met.
+def compute_signal(trend, sentiment, tag=""):
+    """Signal = Chart x News. Returns (label, reason), or ("", reason) when
+    Trend is not computed yet (too little weekly history).
 
-    Each signal casts a vote for at most one side (never both) -- Green
-    requires >=3 of 4 bullish votes, Red requires >=3 of 4 bearish votes.
-    Missing/unclear data (Trend not yet computed, Sentiment "Unknown" or
-    "Neutral", Expert Take not yet generated) simply abstains rather than
-    shrinking the pass threshold below 3. Tech Uptrend is a plain boolean
-    once computed, so it normally always votes; when it is MISSING from the
-    row (no computed value at all) it abstains like the others. It used to
-    read bool(None) == False and cast a Red vote for data that did not exist.
+      Chart up (Trend Uptrend / Strong Uptrend) + news Positive  -> Confirmed
+      Chart up + news Neutral or Unknown                         -> Chart only
+      Chart up + news Negative                                   -> Chart up, news negative
+      Chart down + news Positive                                 -> News divergence
+      Chart down + news anything else                            -> Avoid
 
-    Vote definitions (deliberately asymmetric, not a copy-paste mirror):
-      GREEN vote: Expert Take in (ACCUMULATE, HOLD) -- HOLD is the model's
-        stated "mixed/low-confidence" default, not a bearish read, so it
-        counts here but has no bearish counterpart below.
-      RED vote:   Expert Take == CAUTION specifically.
-      GREEN vote: Trend in (Uptrend, Strong Uptrend).
-      RED vote:   Trend in (Downtrend, Strong Downtrend).
-      GREEN vote: Tech Uptrend is True.
-      RED vote:   Tech Uptrend is False.
-      GREEN vote: Sentiment == "Positive".
-      RED vote:   Sentiment == "Negative".
+    `sentiment` must already be the GUARDED value (fundamentals_eval.
+    _validate_sentiment): a stale or evidence-less view reads Unknown or
+    Neutral, never a directional label. `tag` is the cell's guidance/outlook
+    tag, carried into the reason only.
 
-    Veto layer: even when a threshold is met, a specific contradicting
-    signal downgrades the result to "Yellow" (further study) instead --
-    reuses the existing manual Red/Yellow/Green/Blue flag palette rather
-    than inventing a 5th color, since "further study" is exactly what
-    Yellow already means there. The veto sets are intentionally NOT
-    symmetric: Green has 2 veto conditions, Red has 4 -- Red is harder to
-    trigger than Green (any single strong contradiction blocks it, while
-    Green tolerates Trend/Tech Uptrend disagreeing), consistent with the
-    HOLD/CAUTION asymmetry above.
-      GREEN is vetoed by: Expert Take == CAUTION, or Sentiment == Negative.
-      RED is vetoed by: Expert Take == ACCUMULATE, or Tech Uptrend == True,
-        or Trend == "Strong Uptrend" specifically (plain "Uptrend" does NOT
-        veto Red), or Sentiment == Positive.
-
-    The reason string always states the vote tally and contributing
-    signals, and additionally names the veto(s) when downgraded to Yellow --
-    so the hover tooltip explains both the vote AND the veto, not just the
-    final color."""
-    trend = row.get("trend")
-    raw_tech = row.get("tech_uptrend")
-    tech_uptrend = bool(raw_tech)
-    green_hits, red_hits = [], []
-
-    if expert_verdict in ("ACCUMULATE", "HOLD"):
-        green_hits.append(f"Expert Take={expert_verdict.title()}")
-    if expert_verdict == "CAUTION":
-        red_hits.append("Expert Take=Caution")
-
-    if trend in ("Uptrend", "Strong Uptrend"):
-        green_hits.append(f"Trend={trend}")
-    if trend in ("Downtrend", "Strong Downtrend"):
-        red_hits.append(f"Trend={trend}")
-
-    if raw_tech is not None:
-        (green_hits if tech_uptrend else red_hits).append(f"Tech Uptrend={'Yes' if tech_uptrend else 'No'}")
-
-    if sentiment == "Positive":
-        green_hits.append("Sentiment=Bullish")
-    if sentiment == "Negative":
-        red_hits.append("Sentiment=Bearish")
-
-    if len(green_hits) >= 3:
-        vetoes = []
-        if expert_verdict == "CAUTION":
-            vetoes.append("Expert Take=Caution")
-        if sentiment == "Negative":
-            vetoes.append("Sentiment=Bearish")
-        vote_desc = f"{len(green_hits)}/4 bullish votes ({', '.join(green_hits)})"
-        if vetoes:
-            return "Yellow", f"{vote_desc} -- further study: vetoed by {', '.join(vetoes)}"
-        return "Green", vote_desc
-
-    if len(red_hits) >= 3:
-        vetoes = []
-        if expert_verdict == "ACCUMULATE":
-            vetoes.append("Expert Take=Accumulate")
-        if tech_uptrend:
-            vetoes.append("Tech Uptrend=Yes")
-        if trend == "Strong Uptrend":
-            vetoes.append("Trend=Strong Uptrend")
-        if sentiment == "Positive":
-            vetoes.append("Sentiment=Bullish")
-        vote_desc = f"{len(red_hits)}/4 bearish votes ({', '.join(red_hits)})"
-        if vetoes:
-            return "Yellow", f"{vote_desc} -- further study: vetoed by {', '.join(vetoes)}"
-        return "Red", vote_desc
-
-    return "", ""
-
-
-def _guarded_verdict(view, row):
-    """The Expert Take verdict compute_auto_flag is allowed to vote on, or None.
-
-    The SAME guards stock_data.apply_view_fields_to_rows applies before putting
-    `expert_take` on the row: is_pending_view first (a failed-generation
-    placeholder stores verdict "HOLD", so keying off the verdict alone counts a
-    broken analysis as a genuine Hold), then validate_verdict, which ages out a
-    view past EXPERT_STALE_DAYS and demotes an ACCUMULATE the row's own
-    technicals don't support.
-
-    This used to read view["verdict"] raw -- note the sentiment on the very next
-    line was already guarded, so only this half was unprotected. A stale or
-    failed view therefore displayed as "Pending" in the table while its auto-flag
-    tooltip asserted "Expert Take=Accumulate" and painted the row Green. Latent
-    while the nightly workflow runs; it fires exactly when that workflow stops,
-    which is the case validate_verdict's staleness check exists for. `flag` is a
-    CATEGORICAL_METRIC, so this reached saved filters and Discord rules too.
-
-    None means "abstain" -- compute_auto_flag casts no Expert Take vote for it,
-    which is what an unknown verdict should do.
-    """
-    from expert_views import is_pending_view, validate_verdict
-    view = view or {}
-    if not view or is_pending_view(view):
-        return None
-    verdict, _flag = validate_verdict(view, row)
-    return verdict if verdict in ("ACCUMULATE", "HOLD", "CAUTION") else None
+    WHY this replaced the flag vote: three of its four voters were the chart
+    said three ways (Expert Take agreed with Trend 93% and with Tech Uptrend
+    95% on 2026-09-26), so it counted the chart three times and the news once,
+    painted 56% of tickers Green, and folded three unrelated situations into
+    Yellow behind asymmetric vetoes. Two inputs, no vetoes, every ticker gets a
+    label. Expert Take and Tech Uptrend stay columns to read, not votes."""
+    news = f"{sentiment}" + (f" ({tag})" if tag else "")
+    if not trend:
+        return "", f"Chart: no Trend yet · News: {news}"
+    up = trend in ("Uptrend", "Strong Uptrend")
+    if up:
+        label = {"Positive": "Confirmed", "Negative": "Chart up, news negative"}.get(sentiment, "Chart only")
+    else:
+        label = "News divergence" if sentiment == "Positive" else "Avoid"
+    return label, f"Chart: {trend} · News: {news}"
 
 
 def apply_notes_to_rows(rows, notes=None, min_vstop_weeks=3, expert_views=None, fundamentals=None):
-    """Attaches `note`, `flag`, and `flag_reason` fields onto every row dict
-    in place, from the shared ticker_notes.json (or an already-loaded `notes`
-    dict, to avoid re-reading the file once per market).
+    """Attaches `note`, `flag`, `flag_reason`, `signal` and `signal_reason`
+    onto every row dict in place, from the shared ticker_notes.json (or an
+    already-loaded `notes` dict, to avoid re-reading the file once per market).
 
-    `min_vstop_weeks` is accepted for backward compatibility with existing
-    call sites but no longer used -- compute_auto_flag()'s vote-based rules
-    don't reference VStop duration at all.
+    `flag` is the manual flag only ("" when none is set); `flag_reason` is
+    MANUAL_FLAG_REASON or "". `signal` is compute_signal(Trend, guarded
+    Sentiment) -- see there for why it replaced the automatic flag vote.
 
-    Expert Take verdict and Sentiment (needed by compute_auto_flag()'s vote
-    but not present on the row itself, since those live in
-    expert_views.json/fundamentals.json rather than the technical snapshot)
-    are loaded once per call here, not once per row, same reasoning as the
-    `notes` load above.
-
-    Flag priority:
-      1. Manual flag from ticker_notes.json -- never overridden.
-      2. Auto-computed flag from compute_auto_flag() -- applied only when
-         no manual flag is set.
-      3. No flag -- neutral.
-
-    `flag_reason` is set on every row:
-      - "Manually assigned" if a manual flag is present.
-      - The vote tally (and veto, if any) for auto-flags -- see
-        compute_auto_flag()'s docstring.
-      - "" if no flag at all."""
+    `min_vstop_weeks` and `expert_views` are accepted for backward
+    compatibility with existing call sites but no longer used (they fed the
+    retired vote)."""
     if notes is None:
         notes = load_ticker_notes()
 
-    from expert_views import load_expert_views
-    from fundamentals_eval import load_fundamentals, _validate_sentiment
+    from fundamentals_eval import load_fundamentals, _validate_sentiment, evidence_tag
     # Accepted pre-loaded for the same reason as `notes`: app.py calls this once
-    # per watchlist per render and already holds both files, so re-reading them
-    # here cost ~14 redundant parses of ~270 KB on every interaction.
-    expert_views = load_expert_views() if expert_views is None else expert_views
+    # per watchlist per render and already holds the file, so re-reading it
+    # here cost redundant parses of ~270 KB on every interaction.
     fundamentals = load_fundamentals() if fundamentals is None else fundamentals
 
     for row in rows:
         ticker = row.get("ticker")
         row["note"] = get_ticker_note(notes, ticker)
         manual_flag = get_ticker_flag(notes, ticker)
-        if manual_flag:
-            row["flag"] = manual_flag
-            row["flag_reason"] = MANUAL_FLAG_REASON
-        else:
-            verdict = _guarded_verdict(expert_views.get(ticker), row)
-            fund_view = fundamentals.get(ticker)
-            sentiment = _validate_sentiment(fund_view)[0] if fund_view else "Unknown"
-            auto_flag, auto_reason = compute_auto_flag(row, expert_verdict=verdict, sentiment=sentiment)
-            row["flag"] = auto_flag
-            row["flag_reason"] = auto_reason
+        row["flag"] = manual_flag or NO_FLAG
+        row["flag_reason"] = MANUAL_FLAG_REASON if manual_flag else ""
+        fund_view = fundamentals.get(ticker)
+        sentiment, guard = _validate_sentiment(fund_view) if fund_view else ("Unknown", "NO_DATA")
+        tag = "" if guard in ("STALE", "STALE_QUARTER", "NO_DATA") else evidence_tag(fund_view)
+        row["signal"], row["signal_reason"] = compute_signal(row.get("trend"), sentiment, tag)
     return rows
 

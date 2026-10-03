@@ -66,7 +66,7 @@ from stock_data import (
 from watchlist_labels import COMBINED_TAB_LABELS, watchlist_label_error
 import llm_util
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE,
-                     send_discord_batch, build_discord_messages_for_rule, describe_schedule,
+                     send_discord_batch, build_discord_messages_for_rule, describe_schedule, DISCLAIMER,
                      NOTIFY_MODES, NOTIFY_MODE_LABELS, notify_mode, describe_notify_mode,
                      DAY_CODES, DAY_LABELS, DEFAULT_DAYS, ALLOWED_HOURS, HOUR_LABELS,
                      compute_rule_truth, RULE_COLOR_HEX, _metrics_used_in_conditions,
@@ -93,7 +93,7 @@ from news_summary import (load_news_summary, MARKET_LABELS, get_gemini_api_key,
 from expert_views import (load_expert_views, save_expert_views, analyze_single_ticker,
                           generate_expert_view, _is_valid_view, is_pending_view, apply_regenerated_view,
                           VERDICT_RULES, VERDICT_GUARD_RULES,
-                          validate_verdict, verdict_flag_note,
+                          validate_verdict, verdict_flag_note, chart_rule_verdict,
                           expert_view_has_news as _expert_view_has_news)
 from fundamentals_eval import (
     load_fundamentals, save_fundamentals, _validate_sentiment, SENTIMENT_STALE_DAYS,
@@ -107,6 +107,7 @@ from custom_columns import (
 from ticker_notes import (
     load_ticker_notes, save_ticker_notes, set_ticker_note, get_ticker_note, get_ticker_flag,
     apply_notes_to_rows, flag_marker_html, FLAG_CHOICES, FLAG_EMOJI, TICKER_NOTES_FILE,
+    SIGNAL_EMOJI,
 )
 import json
 import os
@@ -515,6 +516,14 @@ TA_RULES_COLORS = {
 }
 
 
+# Signal cell colours: real shades, best to worst (the ticker dot can only use
+# ticker_notes.SIGNAL_EMOJI, which has no light green).
+SIGNAL_COLORS = {
+    "Confirmed": "#1e8449", "Chart only": "#52be80", "News divergence": "#b7950b",
+    "Chart up, news negative": "#d35400", "Avoid": "#c0392b",
+}
+
+
 def style_row(row, ema_labels):
     styles = [""] * len(row)
     # If there are duplicate 'Last' columns, row["Last"] might be a Series.
@@ -528,7 +537,7 @@ def style_row(row, ema_labels):
         # Access by index rather than label to avoid returning a Series
         # when duplicate column names exist in the DataFrame.
         val = row.iloc[i]
-        if col in ("Trend", "Vol Trend", "Tech Uptrend", "Net Vol 10D", "TA Rules"):
+        if col in ("Trend", "Vol Trend", "Tech Uptrend", "Net Vol 10D", "TA Rules", "Signal"):
             val = _plain_text(val)
         if col in ema_cols and pd.notna(val):
             styles[i] = "color:#c0392b;font-weight:600" if last < val else "color:#1e8449;font-weight:600"
@@ -562,6 +571,10 @@ def style_row(row, ema_labels):
         elif col == "TA Rules" and isinstance(val, str):
             # The colours of TheWrap flowchart's own outcome boxes.
             color = TA_RULES_COLORS.get(val)
+            if color:
+                styles[i] = f"color:{color};font-weight:700"
+        elif col == "Signal" and isinstance(val, str):
+            color = SIGNAL_COLORS.get(val)
             if color:
                 styles[i] = f"color:{color};font-weight:700"
         elif col == "Vol Trend" and isinstance(val, str):
@@ -1306,12 +1319,16 @@ def column_definitions(settings, labels):
         ),
         "Vol 10D": "Average daily share volume over the last 10 trading days.",
         "Vol 100D": "Average daily share volume over the last 100 trading days.",
+        "Signal": (
+            "The automatic read, from two independent inputs: the chart (Trend) and the news (Sentiment). "
+            "Confirmed = Uptrend + Bullish news; Chart only = Uptrend, news Neutral/Unknown; Chart up, news "
+            "negative = Uptrend + Bearish news; News divergence = not an Uptrend but Bullish news (a possible "
+            "turnaround -- or a trap); Avoid = not an Uptrend and no Bullish news. Its colour is the dot next "
+            "to the ticker when you haven't set a Flag. Hover a cell for both inputs."
+        ),
         "Flag": (
-            "A colored marker, also shown next to the ticker symbol itself. Manually set via the sidebar "
-            "'Ticker Notes' panel always wins; otherwise auto-computed from a vote across Expert Take, "
-            "Trend, Tech Uptrend, and Sentiment -- Green needs 3+ of 4 bullish, Red needs 3+ of 4 bearish, "
-            "and a strong contradicting signal downgrades either to Yellow ('further study'). Hover a "
-            "flagged cell for the exact vote/veto breakdown."
+            "Your own marker, set via the sidebar 'Ticker Notes' panel (Red/Yellow/Green/Blue), also shown "
+            "next to the ticker symbol, where it takes the place of the Signal dot. Never set automatically."
         ),
         "Expert Take": "AI-generated synthesis of technical indicators and recent analyst coverage: ACCUMULATE, HOLD, or CAUTION.",
         "Expert News?": (
@@ -1811,8 +1828,17 @@ def _apply_watchlist_tickers(market, market_label, existing_tickers, candidate_t
         for t in candidate_tickers:
             if t in existing_tickers:  # Already known to be valid
                 valid_tickers.append(t)
-            elif validate_ticker(t):
+                continue
+            ok = validate_ticker(t)
+            if ok:
                 valid_tickers.append(t)
+            elif ok is None:
+                # Yahoo answered nothing at all, not even for a control symbol
+                # (throttling), so this says nothing about the ticker. Keep it;
+                # a real typo shows up as an empty row after the next refresh.
+                valid_tickers.append(t)
+                st.warning(f"Couldn't check '{t}' — Yahoo Finance isn't responding right now. "
+                           "Added anyway; if it shows no prices after the next refresh, it's a typo.")
             else:
                 st.error(f"'{t}' doesn't return any price data from Yahoo Finance — dropping it.")
                 interested.discard(t)
@@ -2425,6 +2451,7 @@ def build_column_defs(labels, custom_columns=None):
         ("expert_news_backed", "Expert News?"),
         ("trend", "Trend"),
         ("ta_rules", "TA Rules"),
+        ("signal", "Signal"),
         ("flag", "Flag"),
         ("note", "Notes"),
         ("interested_label", "Interested"),
@@ -3140,7 +3167,7 @@ def render_category_order_manager(label_by_key):
     label_for = {
         "trend": "Trend", "volume_trend": "Vol Trend", "sentiment": "Sentiment",
         "expert_take": "Expert Take", "expert_news_backed": "Expert News?",
-        "flag": "Flag", "tech_uptrend": "Tech Uptrend", "ta_rules": "TA Rules",
+        "flag": "Flag", "tech_uptrend": "Tech Uptrend", "ta_rules": "TA Rules", "signal": "Signal",
         "vstop_weekly_direction": "VStop Dir", "interested": "Interested",
     }
 
@@ -4280,6 +4307,10 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             )
             for r in filtered
         ]
+        raw_df["signal"] = [
+            with_tooltip(r.get("signal") or "—", r.get("signal_reason", ""), nowrap=True)
+            for r in filtered
+        ]
         raw_df["net_volume_10d_dir"] = [
             with_tooltip(r.get("net_volume_10d_dir", "—") or "—",
                          f"Ratio: {r.get('net_volume_10d_ratio', 0)}% of total 10d vol" if r.get("net_volume_10d_dir") else "")
@@ -4305,7 +4336,8 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         # Two markers ride on the ticker symbol itself, so both are readable
         # while scanning without their own columns being shown or scrolled
         # into view (each also has a plain column of its own):
-        #   - Flag color, carrying a tooltip with its reason.
+        #   - Your Flag colour if you set one, otherwise the Signal colour,
+        #     carrying a tooltip saying which it is and why.
         #   - Interested, a ★ -- deliberately not a colored ⭐, since the cell
         #     already spends color on the flag dot and a second colored glyph
         #     would read as another status.
@@ -4320,9 +4352,14 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         def _ticker_cell(r):
             link = (f'<a href="{tradingview_url(r["ticker"])}" '
                     f'target="_blank" rel="noopener noreferrer">{r["ticker"]}</a>')
+            # Your manual flag wins the dot; otherwise it shows the Signal.
             flag = r.get("flag", "")
-            reason = html.escape(r.get("flag_reason", ""))
-            emoji = FLAG_EMOJI.get(flag)
+            if flag in FLAG_EMOJI:
+                emoji, reason = FLAG_EMOJI[flag], html.escape(f"Flag: {flag} (set by you)")
+            else:
+                sig = r.get("signal") or ""
+                emoji = SIGNAL_EMOJI.get(sig)
+                reason = html.escape(f"Signal: {sig} — {r.get('signal_reason', '')}") if emoji else ""
             markers = []
             if emoji and reason:
                 markers.append(f'<span title="{reason}">{emoji}</span>')
@@ -4414,18 +4451,36 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
                 # Never analysed, or aged past EXPERT_STALE_DAYS -- validate_verdict
                 # returns the non-verdict sentinel "PENDING" for the latter.
                 badge = "⚪ Pending"
+            # ⚑ where the model's verdict differs from what the chart alone says
+            # (chart_rule_verdict): those are the verdicts carrying a view of the
+            # model's own, so they are the ones worth reading.
+            chart_says = chart_rule_verdict(_row_by_ticker.get(ticker))
+            disagrees = (not is_pending_view(v) and verdict in ("ACCUMULATE", "HOLD", "CAUTION")
+                         and verdict != chart_says)
+            if disagrees:
+                badge = f"{badge} ⚑"
             if headline:
                 parts = [headline, actionable]
+                if disagrees:
+                    parts.insert(0, f"⚑ Differs from the chart: the chart alone says {chart_says.title()}, "
+                                    f"the model says {verdict.title()}. (Chart rule: Accumulate when Trend is up "
+                                    "and Tech Uptrend is Yes, Caution when Trend is down, otherwise Hold.)")
                 note = verdict_flag_note(vflag, as_of)
                 if note:
                     parts.append(note)
-                # The news the verdict actually rests on. This was never shown,
-                # so a technicals-only verdict looked identical to a
-                # news-informed one -- about 30% of them are the former.
-                if _expert_view_has_news(v):
-                    parts.append(f"News used:\n{str(v.get('news_used') or '').strip()}")
-                else:
-                    parts.append("News used: none found -- this verdict is a technicals-only read.")
+                # What the verdict rests on: the last 24 hours' news and/or this
+                # quarter's checked results and guidance (prompt section 4). A
+                # technicals-only verdict used to look identical to a
+                # news-informed one.
+                news_text = str(v.get("news_used") or "").strip()
+                has_24h = _expert_view_has_news({"news_used": news_text})
+                if has_24h:
+                    parts.append(f"News used (last 24 hours):\n{news_text}")
+                if v.get("quarter_facts_used"):
+                    parts.append("Also used: this quarter's results, guidance and analyst actions "
+                                 "(see the Sentiment cell).")
+                if not has_24h and not v.get("quarter_facts_used"):
+                    parts.append("News used: none found — this verdict is a technicals-only read.")
                 parts.append(f"As of: {as_of}  |  Source: {news_source}  |  Model: {model_used}")
                 tooltip = "\n\n".join(p for p in parts if p)
             else:
@@ -5099,9 +5154,9 @@ combined_markets_by_key = {k: watchlist_groups_now.get(k, []) for k in combined_
 # strip first closes that gap for every widget below it, not just one.
 #
 # Tab bodies still all execute: with on_change="rerun" they run unless each is
-# individually guarded on `.open`, and skipping hidden tabs would change what
-# the visible one shows (the market tabs populate alert_matches). Persistence
-# only, deliberately -- laziness is a separate job.
+# individually guarded on `.open`, and skipping hidden MARKET tabs would change
+# what the visible one shows (they populate alert_matches). The News tab is the
+# exception and IS guarded -- nothing else reads it (see `with tab_news:`).
 # Real watchlists first (in markets.json order -- the registry's insertion
 # order IS the display order), then the combined roll-ups, then the two fixed
 # tabs. Reorder watchlists by reordering markets.json, not by hardcoding a
@@ -5139,6 +5194,7 @@ shared_visible_keys, shared_label_by_key, shared_key_by_label = render_shared_co
     sample_rows=_sample_rows,
     other_tabs=_other_tabs,
 )
+st.sidebar.caption(DISCLAIMER)
 
 # Prominent, upfront dashboard controls -- shortcuts to settings that
 # otherwise require opening a sidebar expander or the Settings dialog.
@@ -5213,545 +5269,559 @@ for mkt in market_keys_now:
         )
 
 with tab_news:
-    st.subheader("Market Breadth & Performance")
-    col_filter, col_refresh = st.columns([3, 1])
-    with col_filter:
-        time_filter = st.radio("Time Horizon", ["3 Years", "5 Years"], horizontal=True, key="time_horizon_filter")
-        years = 3 if time_filter == "3 Years" else 5
-        
-    with col_refresh:
-        if st.button("🔄 Refresh Charts", width="stretch"):
-            st.cache_data.clear()
-            st.rerun()
-
-    # Helpers
-    import plotly.graph_objects as go
-    import pandas as pd
-
-    def plot_performance_plotly(df, portfolio_name, benchmark_name):
-        if df is None or df.empty:
-            return
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df.index, y=df['Portfolio'], name=portfolio_name, line=dict(color='#3498db', width=2)))
-        fig.add_trace(go.Scatter(x=df.index, y=df['Benchmark'], name=benchmark_name, line=dict(color='#95a5a6', width=1.5, dash='dot')))
-        fig.update_layout(
-            height=250, margin=dict(l=0, r=0, t=10, b=0),
-            hovermode="x unified",
-            xaxis=dict(showspikes=True, spikemode="across", spikesnap="cursor", showline=True, showgrid=False),
-            yaxis=dict(showgrid=True, title="Return (Base 100)"),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        )
-        st.plotly_chart(fig, width="stretch")
-
-    def plot_breadth_plotly(df, title, y_label, show_50=False):
-        if df is None or df.empty:
-            return
-        fig = go.Figure()
-        colors = ['#2ecc71', '#e74c3c', '#f39c12']
-        for i, col in enumerate([c for c in df.columns if c != 'Date']):
-            fig.add_trace(go.Scatter(x=df['Date'], y=df[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5)))
-            
-        if show_50:
-            fig.add_hline(y=50, line_dash="dash", line_color="rgba(0,0,0,0.3)", annotation_text="50%")
-            
-        fig.update_layout(
-            height=250, margin=dict(l=0, r=0, t=10, b=0),
-            hovermode="x unified",
-            xaxis=dict(showspikes=True, spikemode="across", spikesnap="cursor", showline=True, showgrid=False),
-            yaxis=dict(showgrid=True, title=y_label, range=[0, 100] if show_50 else None),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1) if len(df.columns) > 2 else dict(visible=False)
-        )
-        st.plotly_chart(fig, width="stretch")
-
-    def calculate_portfolio_returns(closes, tickers, benchmark_ticker, weights=None, filter_years=3):
-        if closes is None or closes.empty: return None
-        if closes.index.tzinfo is not None:
-            cutoff = pd.Timestamp.now(tz=closes.index.tz) - pd.DateOffset(years=filter_years)
-        else:
-            cutoff = pd.Timestamp.now().normalize() - pd.DateOffset(years=filter_years)
-            
-        closes = closes[closes.index >= cutoff]
-        if closes.empty: return None
-        
-        valid_tickers = [t for t in tickers if t in closes.columns]
-        if not valid_tickers: return None
-        
-        # Fill interior gaps before taking returns. pandas 3 dropped
-        # pct_change's implicit forward-fill, so a ticker missing one day
-        # (yfinance calendars differ per stock) got a NaN return on the NEXT
-        # day too and its whole move across the gap vanished -- India Invested
-        # lost 44 returns and its 5Y curve read 686 instead of 697. The
-        # .where(bfill) mask keeps the fill inside each ticker's own history,
-        # so a late listing or a delisting isn't padded with fake 0% days.
-        raw = closes[valid_tickers]
-        filled = raw.ffill().where(raw.bfill().notna())
-        returns = filled.pct_change(fill_method=None)
-        
-        w_dict = {}
-        for t in valid_tickers:
-            w_dict[t] = weights.get(t, 1.0) if weights else 1.0
-        w_series = pd.Series(w_dict)
-        
-        valid_weights = returns.notna() * w_series
-        weighted_returns = (returns * valid_weights).sum(axis=1) / valid_weights.sum(axis=1)
-        
-        portfolio = 100 * (1 + weighted_returns).cumprod()
-        portfolio.iloc[0] = 100
-            
-        bench = None
-        if benchmark_ticker in closes.columns and closes[benchmark_ticker].first_valid_index() is not None:
-            first_val = closes[benchmark_ticker].bfill().iloc[0]
-            if first_val > 0:
-                bench = (closes[benchmark_ticker] / first_val) * 100
-                
-        if portfolio is not None and bench is not None:
-            return pd.DataFrame({"Portfolio": portfolio, "Benchmark": bench})
-        return None
-
-    def format_json_breadth(market_data, filter_years):
-        if not market_data: return None, None
-        cutoff = pd.Timestamp.now().normalize() - pd.DateOffset(years=filter_years)
-        
-        # SMA
-        hist = market_data.get("history", {})
-        df_ema = pd.DataFrame(list(hist.items()), columns=["Date", "% Above 200d SMA"]) if hist else pd.DataFrame()
-        if not df_ema.empty:
-            df_ema["Date"] = pd.to_datetime(df_ema["Date"])
-            df_ema = df_ema[df_ema["Date"] >= cutoff]
-            
-        # HL
-        h_hist = market_data.get("highs_history", {})
-        l_hist = market_data.get("lows_history", {})
-        df_hl = pd.DataFrame()
-        if h_hist and l_hist:
-            df_hl = pd.DataFrame({
-                "Date": pd.to_datetime(list(h_hist.keys())),
-                "% New Highs": list(h_hist.values()),
-                "% New Lows": list(l_hist.values())
-            })
-            df_hl = df_hl[df_hl["Date"] >= cutoff]
-            
-        return df_ema, df_hl
-
-    # Load Data
-    breadth_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "market_breadth.json")
-    breadth_data = {}
-    if os.path.exists(breadth_file):
-        with open(breadth_file) as f:
-            breadth_data = json.load(f)
-
-    # Dashboard portfolio-vs-benchmark curves come from dashboard_perf.json,
-    # built by the same GitHub Actions market-breadth workflow -- NO live
-    # yfinance at render. Each market stores {ticker: {date: close}}, and the
-    # benchmark ticker is included as its own column so calculate_portfolio_returns
-    # works exactly as when the data was fetched live.
-    perf_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard_perf.json")
-    perf_data = {}
-    perf_as_of = None
-    if os.path.exists(perf_file):
-        try:
-            with open(perf_file) as f:
-                perf_data = json.load(f)
-            perf_as_of = perf_data.get("as_of")
-        except Exception:
-            perf_data = {}
-
-    def _closes_from_perf(market):
-        series_map = perf_data.get("markets", {}).get(market, {})
-        if not series_map:
-            return None
-        df = pd.DataFrame({t: dict(s) for t, s in series_map.items()})
-        df.index = pd.to_datetime(df.index)
-        return df.sort_index()
-            
-    # Each curve is the whole watchlist, equal-weighted, against its own
-    # benchmark: India Invested vs Nifty 500 (^CRSLDX), US Invested vs SPY.
-    # The India side used to be filtered down to whichever of its tickers were
-    # flagged in invested.json and weighted by that file; both are gone with
-    # the flag (every stored weight was 1.0, i.e. equal-weight already, and the
-    # filter matched all 29 tickers -- so the curves are unchanged).
-    #
-    # These are the "US Invested"/"India Invested" WATCHLISTS keyed by their
-    # markets.json registry keys -- not to be confused with market_breadth.json's
-    # "US"/"INDIA" keys below, which represent national S&P 500/Nifty 500
-    # breadth and are unrelated to the watchlist registry (see that lookup's
-    # own comment).
-    us_tickers = watchlists_now.get("us_invested", [])
-    ind_tickers = watchlists_now.get("india_invested", [])
-
-    st.divider()
-
-    from plotly.subplots import make_subplots
-    import plotly.graph_objects as go
-
-    # We will build a single 3x2 subplot figure so hover spikes sync perfectly across all rows.
-    with st.spinner("Loading Dashboards..."):
-        closes_ind = None
-        df_perf_ind = None
-        if ind_tickers:
-            closes_ind = _closes_from_perf("india_invested")
-            if closes_ind is not None and "^CRSLDX" in closes_ind.columns:
-                df_perf_ind = calculate_portfolio_returns(closes_ind, ind_tickers, "^CRSLDX", weights=None, filter_years=years)
-            
-        closes_us = None
-        df_perf_us = None
-        if us_tickers:
-            closes_us = _closes_from_perf("us_invested")
-            if closes_us is not None and "SPY" in closes_us.columns:
-                df_perf_us = calculate_portfolio_returns(closes_us, us_tickers, "SPY", weights=None, filter_years=years)
-            
-        if perf_as_of:
-            st.caption(
-                f"Portfolio & breadth data as of {perf_as_of} — refreshed by the scheduled GitHub Action. "
-                "Watchlist curves are the CURRENT watchlist, equal-weighted and rebalanced daily, "
-                "price return (no dividends) — a hindsight view, not your realized P&L."
-            )
-            
-        # market_breadth.json's "INDIA"/"US" keys are fixed national-index
-        # breadth (Nifty 500 / S&P 500), independent of the watchlist
-        # registry -- NOT renamed alongside markets.json/watchlist.json, so
-        # these stay as the literal keys refresh_market_breadth.py writes.
-        df_ema_ind, df_hl_ind = format_json_breadth(breadth_data.get("markets", {}).get("INDIA"), years)
-        df_ema_us, df_hl_us = format_json_breadth(breadth_data.get("markets", {}).get("US"), years)
-
-        def get_val(df, col):
-            if df is not None and not df.empty and col in df.columns:
-                return f"{df[col].iloc[-1]:.1f}"
-            return "--"
-            
-        # `or {}` is load-bearing: refresh_market_breadth.py's calculate_breadth
-        # returns None when every download batch fails, and a stored None made
-        # .get("US", {}) return None -- .get("total") on it raised AttributeError
-        # and took down this whole tab, not just one chart. The refresh script no
-        # longer writes None, but an older snapshot may still carry one.
-        def _breadth_block(market_key):
-            return (breadth_data.get("markets") or {}).get(market_key) or {}
-
-        # A market whose own as_of differs from the file's is preserved data from
-        # an earlier run -- its leg failed and main() kept the previous block
-        # rather than wiping it. Label it instead of passing it off as current.
-        _breadth_as_of = breadth_data.get("as_of")
-
-        def _stale_suffix(market_key):
-            block_as_of = _breadth_block(market_key).get("as_of")
-            if block_as_of and _breadth_as_of and block_as_of != _breadth_as_of:
-                return f" [stale: {block_as_of}]"
-            return ""
-
-        total_ind = _breadth_block("INDIA").get("total", "--")
-        total_us = _breadth_block("US").get("total", "--")
-        stale_ind = _stale_suffix("INDIA")
-        stale_us = _stale_suffix("US")
-            
-        title_ema_ind = f"Nifty 500: % Above 200-Day SMA (Current: {get_val(df_ema_ind, '% Above 200d SMA')}%, Captured: {total_ind}){stale_ind}"
-        title_ema_us = f"S&P 500: % Above 200-Day SMA (Current: {get_val(df_ema_us, '% Above 200d SMA')}%, Captured: {total_us}){stale_us}"
-        
-        title_hl_ind = f"Nifty 500: 52-Week Highs vs Lows (Highs: {get_val(df_hl_ind, '% New Highs')}%, Lows: {get_val(df_hl_ind, '% New Lows')}%){stale_ind}"
-        title_hl_us = f"S&P 500: 52-Week Highs vs Lows (Highs: {get_val(df_hl_us, '% New Highs')}%, Lows: {get_val(df_hl_us, '% New Lows')}%){stale_us}"
-        
-        def get_perf(df):
-            if df is not None and not df.empty and 'Portfolio' in df.columns and 'Benchmark' in df.columns:
-                ret_port = (df['Portfolio'].iloc[-1] / 100 - 1) * 100
-                bench_valid = df['Benchmark'].dropna()
-                ret_bench = (bench_valid.iloc[-1] / 100 - 1) * 100 if not bench_valid.empty else float('nan')
-                return f"Watchlist: {ret_port:+.1f}%, Bench: {ret_bench:+.1f}%"
-            return "--"
-            
-        _ind_display_label = markets_registry_now.get("india_invested", {}).get("label", "India Invested")
-        _us_display_label = markets_registry_now.get("us_invested", {}).get("label", "US Invested")
-        # These used to read markets.json's "benchmark", which holds the TICKER,
-        # so the title said "India Invested vs ^CRSLDX". The panels below
-        # always plot ^CRSLDX / SPY (hardcoded above), so name those directly.
-        _ind_bench_label = "Nifty 500"
-        _us_bench_label = "S&P 500"
-        title_perf_ind = f"{_ind_display_label} vs {_ind_bench_label} ({get_perf(df_perf_ind)})"
-        title_perf_us = f"{_us_display_label} vs {_us_bench_label} ({get_perf(df_perf_us)})"
-
-        fig = make_subplots(
-            rows=3, cols=2,
-            shared_xaxes="all",
-            vertical_spacing=0.08,
-            horizontal_spacing=0.05,
-            subplot_titles=(
-                title_ema_ind, title_ema_us,
-                title_hl_ind, title_hl_us,
-                title_perf_ind, title_perf_us
-            )
-        )
-        
-        colors = ['#2ecc71', '#e74c3c', '#f39c12']
-
-        # An empty panel is indistinguishable from a panel whose data is all
-        # zero. Say why it is blank -- the S&P breadth charts sat empty for 8
-        # days because a refresh leg was failing silently, and nothing on screen
-        # pointed at the refresh job.
-        def _no_data(row, col):
-            fig.add_annotation(
-                text="No data - last refresh failed",
-                showarrow=False,
-                xref="x domain", yref="y domain", x=0.5, y=0.5,
-                row=row, col=col,
-                font=dict(color="#95a5a6", size=13),
-            )
-
-        # Row 1: SMA Breadth
-        if df_ema_ind is not None and not df_ema_ind.empty:
-            for i, col in enumerate([c for c in df_ema_ind.columns if c != 'Date']):
-                fig.add_trace(go.Scatter(x=df_ema_ind['Date'], y=df_ema_ind[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5), showlegend=False), row=1, col=1)
-            fig.add_hline(y=50, line_dash="dash", line_color="rgba(0,0,0,0.3)", row=1, col=1)
-        else:
-            _no_data(1, 1)
-
-        if df_ema_us is not None and not df_ema_us.empty:
-            for i, col in enumerate([c for c in df_ema_us.columns if c != 'Date']):
-                fig.add_trace(go.Scatter(x=df_ema_us['Date'], y=df_ema_us[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5), showlegend=False), row=1, col=2)
-            fig.add_hline(y=50, line_dash="dash", line_color="rgba(0,0,0,0.3)", row=1, col=2)
-        else:
-            _no_data(1, 2)
-
-        # Row 2: High/Low Extremes
-        if df_hl_ind is not None and not df_hl_ind.empty:
-            for i, col in enumerate([c for c in df_hl_ind.columns if c != 'Date']):
-                fig.add_trace(go.Scatter(x=df_hl_ind['Date'], y=df_hl_ind[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5), showlegend=False), row=2, col=1)
-        else:
-            _no_data(2, 1)
-
-        if df_hl_us is not None and not df_hl_us.empty:
-            for i, col in enumerate([c for c in df_hl_us.columns if c != 'Date']):
-                fig.add_trace(go.Scatter(x=df_hl_us['Date'], y=df_hl_us[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5), showlegend=False), row=2, col=2)
-        else:
-            _no_data(2, 2)
-
-        # Row 3: Portfolio Performance
-        _ind_label = markets_registry_now.get("india_invested", {}).get("label", "India Invested")
-        _us_label = markets_registry_now.get("us_invested", {}).get("label", "US Invested")
-        if df_perf_ind is not None and not df_perf_ind.empty:
-            fig.add_trace(go.Scatter(x=df_perf_ind.index, y=df_perf_ind['Portfolio'], name=_ind_label, line=dict(color='#3498db', width=2), showlegend=False), row=3, col=1)
-            fig.add_trace(go.Scatter(x=df_perf_ind.index, y=df_perf_ind['Benchmark'], name=_ind_bench_label, line=dict(color='#95a5a6', width=1.5, dash='dot'), showlegend=False), row=3, col=1)
-        else:
-            _no_data(3, 1)
-
-        if df_perf_us is not None and not df_perf_us.empty:
-            fig.add_trace(go.Scatter(x=df_perf_us.index, y=df_perf_us['Portfolio'], name=_us_label, line=dict(color='#3498db', width=2), showlegend=False), row=3, col=2)
-            fig.add_trace(go.Scatter(x=df_perf_us.index, y=df_perf_us['Benchmark'], name=_us_bench_label, line=dict(color='#95a5a6', width=1.5, dash='dot'), showlegend=False), row=3, col=2)
-        else:
-            _no_data(3, 2)
-
-        fig.update_layout(
-            height=900,
-            hovermode="x unified",
-            # t=30 left the modebar sitting directly on the right column's
-            # subplot title. A vertical modebar parks it against the right edge
-            # and the extra headroom keeps it clear of the titles entirely.
-            margin=dict(l=0, r=0, t=55, b=0),
-            modebar=dict(orientation="v", bgcolor="rgba(0,0,0,0)"),
-            showlegend=False
-        )
-        fig.update_xaxes(showspikes=True, spikemode="across", spikesnap="cursor", showline=True, showgrid=False)
-        fig.update_yaxes(showgrid=True)
-        
-        st.plotly_chart(
-            fig,
-            width="stretch",
-            config={
-                "displaylogo": False,
-                "modeBarButtonsToRemove": ["lasso2d", "select2d", "autoScale2d"],
-            },
-        )
-
-    st.divider()
-    st.subheader("Watchlist news digest")
-    st.caption(
-        "Major announcements, developments, and stock moves for your watchlist tickers in the "
-        "last 24-48 hours, summarized via Gemini (Google Search grounding). Runs once a day at "
-        "8:00 PM ET via GitHub Actions and is also sent to Discord — this tab just shows the "
-        "same result."
-    )
-    news_data = load_news_summary()
-
-    # ── News scope selector ─────────────────────────────────────────────────
-    # Controls which watchlists are included when the news pipeline runs.
-    # The selection is persisted in settings.json so GitHub Actions picks it
-    # up on the next scheduled run (after pushing settings to GitHub).
-    # The combined GROUPS come first, then the individual watchlists. Selecting
-    # a group stores the GROUP key ("all_invested"), not today's members, so
-    # editing that group's membership on its combined tab re-scopes news
-    # automatically -- see news_summary.resolve_news_scope, which expands it at
-    # run time.
-    _all_news_market_opts = {}
-    for _gkey, _glabel in COMBINED_TAB_DEFS:
-        _members = combined_markets_by_key.get(_gkey) or []
-        _all_news_market_opts[f"{_glabel} (group of {len(_members)})"] = _gkey
-    for mkt in market_keys_now:
-        _all_news_market_opts[markets_registry_now.get(mkt, {}).get("label", mkt)] = mkt
-    _label_by_scope_key = {v: k for k, v in _all_news_market_opts.items()}
-
-    _saved_scope_keys = settings_now.get("news_watchlist_scope", [])
-    # An empty setting MEANS the default group, so show it selected rather than
-    # showing an empty box that silently behaves like something. The comparison
-    # below is against the raw saved value, so the first render after this
-    # change writes the default out explicitly and the two stop disagreeing.
-    _effective_scope_keys = _saved_scope_keys or [DEFAULT_NEWS_SCOPE_GROUP]
-    _saved_scope_labels = [
-        _label_by_scope_key[k] for k in _effective_scope_keys if k in _label_by_scope_key
-    ]
-    _selected_scope_labels = st.multiselect(
-        "📋 News scope — watchlists included in the digest",
-        options=list(_all_news_market_opts.keys()),
-        default=_saved_scope_labels,
-        key="news_scope_select",
-        help=(
-            "Groups expand to their member watchlists when the digest runs, so changing a "
-            "group's membership re-scopes news automatically. Clearing the box falls back to "
-            "All Invested. Push settings to GitHub (Alert Rules tab) so the scheduled "
-            "GitHub Actions workflow respects this selection."
-        ),
-    )
-    _new_scope_keys = [_all_news_market_opts[lbl] for lbl in _selected_scope_labels]
-    if _new_scope_keys != _saved_scope_keys:
-        settings_now["news_watchlist_scope"] = _new_scope_keys
-        save_settings(settings_now)
-        st.rerun()
-
-    # What that selection actually resolves to, with ticker counts -- a group
-    # name alone doesn't tell you how much the next run will cover.
-    _resolved_markets = resolve_news_scope(_new_scope_keys, watchlists_now, combined_markets_by_key)
-    _resolved_bits = [
-        f"{markets_registry_now.get(m, {}).get('label', m)} ({len(watchlists_now.get(m, []))})"
-        for m in _resolved_markets
-    ]
-    st.caption(
-        f"Next run covers {len(_resolved_markets)} watchlist(s), "
-        f"{sum(len(watchlists_now.get(m, [])) for m in _resolved_markets)} ticker slots: "
-        + ", ".join(_resolved_bits)
-    )
-
-    col1, col2, col3, col4 = st.columns([2, 3, 3, 3])
-    with col1:
-        if st.button("🔄 Refresh News", width="stretch"):
-            token, repo, _ = get_github_config(st.secrets)
-            if token and repo:
-                ok, msg = trigger_github_workflow(token, repo, "news-summary.yml")
-                if ok:
-                    st.success(f"News refresh started in background! [View live logs on GitHub](https://github.com/{repo}/actions/workflows/news-summary.yml) (about an hour)")
-                else:
-                    st.error(f"Failed to start refresh: {msg}")
-            else:
-                st.error("Missing GITHUB_TOKEN or GITHUB_REPO in secrets.")
-                
-    with col2:
-        search_choices = ["models/gemma-4-31b-it", "models/gemma-4-26b-a4b-it"]
-        new_search = st.selectbox(
-            "Search Model", search_choices,
-            index=search_choices.index(settings_now.get("news_search_model", search_choices[0])) if settings_now.get("news_search_model") in search_choices else 0,
-            key="news_search_model_select"
-        )
-        if new_search != settings_now.get("news_search_model"):
-            settings_now["news_search_model"] = new_search
-            save_settings(settings_now)
-            st.rerun()
-
-    with col3:
-        reason_choices = ["models/gemini-3.5-flash-lite", "models/gemma-4-31b-it", "models/gemma-4-26b-a4b-it"]
-        current_reason = settings_now.get("news_reasoning_model", "models/gemini-3.5-flash-lite")
-        if current_reason == "gemini-3.5-flash-lite":
-            current_reason = "models/gemini-3.5-flash-lite"
-        new_reason = st.selectbox(
-            "Reasoning Model", reason_choices,
-            index=reason_choices.index(current_reason) if current_reason in reason_choices else 0,
-            key="news_reasoning_model_select"
-        )
-        # Normalize comparison
-        saved_reason = settings_now.get("news_reasoning_model", "models/gemini-3.5-flash-lite")
-        if saved_reason == "gemini-3.5-flash-lite":
-            saved_reason = "models/gemini-3.5-flash-lite"
-        if new_reason != saved_reason:
-            settings_now["news_reasoning_model"] = new_reason
-            save_settings(settings_now)
-            st.rerun()
-            
-    with col4:
-        is_gemma = "gemma" in settings_now.get("news_reasoning_model", "")
-        if is_gemma:
-            budget_choices = ["LOW", "MEDIUM", "HIGH"]
-            default_val = "HIGH"
-        else:
-            budget_choices = [1024, 2048, 4096, 8192]
-            default_val = 8192
-
-        current_val = settings_now.get("news_reasoning_budget", default_val)
-        
-        # Type safety for transitioning between models
-        if is_gemma and current_val not in budget_choices:
-            current_val = default_val
-        elif not is_gemma:
-            try:
-                current_val = int(current_val)
-            except (ValueError, TypeError):
-                current_val = default_val
-            if current_val not in budget_choices:
-                current_val = default_val
-                
-        new_budget = st.selectbox(
-            "Thinking Budget / Level", budget_choices,
-            index=budget_choices.index(current_val),
-            key="news_reasoning_budget_select"
-        )
-        if new_budget != current_val:
-            settings_now["news_reasoning_budget"] = new_budget
-            save_settings(settings_now)
-            st.rerun()
-
-    if not news_data:
-        st.info(
-            "No news summary yet. It's generated once a day by the scheduled GitHub Actions "
-            "workflow (`news-summary.yml`) — nothing to do here until the first scheduled run, "
-            "or trigger it manually using the button above."
-        )
+    # Only on the run where the News tab is on screen. Every tab body runs on
+    # every rerun, and this one is the heaviest that nothing else reads: breadth
+    # and performance charts plus the news digest, ~540 lines of plotly work
+    # paid on every click anywhere in the app. Unlike the market tabs (which
+    # feed alert_matches), skipping it changes nothing on the visible tab.
+    # main_tabs reruns on change, so opening News renders it on that same click.
+    if not tab_news.open:
+        # A widget that is not rendered on a run loses its session_state, so
+        # these would reset every time you left the tab. Re-assigning keeps them.
+        for _k in ("time_horizon_filter", "news_scope_select", "news_search_model_select",
+                   "news_reasoning_model_select", "news_reasoning_budget_select"):
+            if _k in st.session_state:
+                st.session_state[_k] = st.session_state[_k]
     else:
-        st.caption(f"As of {news_data.get('as_of', '—')}")
-        for market in market_keys_now:
-            entry = news_data.get("markets", {}).get(market)
-            if not entry:
-                continue
-            st.markdown(f"### {markets_registry_now.get(market, {}).get('label', MARKET_LABELS.get(market, market))}")
-            # `$` escaped: Streamlit renders $...$ as LaTeX, so a bullet quoting
-            # two dollar amounts ("raised $5B ... valued at $60B") came out as
-            # italic math with the text between them run together.
-            st.markdown(_escape_markdown_dollars(entry.get("summary") or "_No summary available._"))
+        st.subheader("Market Breadth & Performance")
+        col_filter, col_refresh = st.columns([3, 1])
+        with col_filter:
+            time_filter = st.radio("Time Horizon", ["3 Years", "5 Years"], horizontal=True, key="time_horizon_filter")
+            years = 3 if time_filter == "3 Years" else 5
+        
+        with col_refresh:
+            if st.button("🔄 Refresh Charts", width="stretch"):
+                st.cache_data.clear()
+                st.rerun()
 
-            # Per-ticker run health. Without this a quiet news day and a run
-            # where every search errored look identical -- both render as one
-            # short "no major news" line. Absent on digests generated before
-            # the counters existed, hence the `if counts`.
-            counts = entry.get("counts") or {}
-            if counts:
-                bits = [f"{counts.get('material', 0)} with news",
-                        f"{counts.get('quiet', 0)} quiet"]
-                if counts.get("degraded"):
-                    bits.append(f"⚠️ {counts['degraded']} unfiltered (AI filter failed)")
-                if counts.get("failed"):
-                    bits.append(f"⚠️ {counts['failed']} search failed")
-                # Tickers Stage 2 judged material but Stage 3 left out of the
-                # digest. Surfaced because "8 with news" over a one-bullet
-                # summary is exactly the discrepancy that hid this bug.
-                # These are no longer lost -- their Stage 2 notes are appended
-                # verbatim to the digest above under "Not folded in by the
-                # editor" -- so the caption says what happened rather than
-                # warning about a disappearance.
-                _dropped = entry.get("collation_dropped") or []
-                if _dropped:
-                    bits.append(f"{len(_dropped)} shown as raw notes ({', '.join(_dropped[:4])}"
-                                + ("…" if len(_dropped) > 4 else "") + ")")
-                st.caption(" · ".join(bits))
+        # Helpers
+        import plotly.graph_objects as go
+        import pandas as pd
 
-            sources = entry.get("sources") or []
-            if sources:
-                with st.expander(f"Sources ({len(sources)})"):
-                    for s in sources:
-                        title = s.get("title") or s.get("url")
-                        st.markdown(f"- [{_escape_markdown_dollars(title)}]({s.get('url')})")
-            st.divider()
+        def plot_performance_plotly(df, portfolio_name, benchmark_name):
+            if df is None or df.empty:
+                return
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=df.index, y=df['Portfolio'], name=portfolio_name, line=dict(color='#3498db', width=2)))
+            fig.add_trace(go.Scatter(x=df.index, y=df['Benchmark'], name=benchmark_name, line=dict(color='#95a5a6', width=1.5, dash='dot')))
+            fig.update_layout(
+                height=250, margin=dict(l=0, r=0, t=10, b=0),
+                hovermode="x unified",
+                xaxis=dict(showspikes=True, spikemode="across", spikesnap="cursor", showline=True, showgrid=False),
+                yaxis=dict(showgrid=True, title="Return (Base 100)"),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
+            st.plotly_chart(fig, width="stretch")
+
+        def plot_breadth_plotly(df, title, y_label, show_50=False):
+            if df is None or df.empty:
+                return
+            fig = go.Figure()
+            colors = ['#2ecc71', '#e74c3c', '#f39c12']
+            for i, col in enumerate([c for c in df.columns if c != 'Date']):
+                fig.add_trace(go.Scatter(x=df['Date'], y=df[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5)))
+            
+            if show_50:
+                fig.add_hline(y=50, line_dash="dash", line_color="rgba(0,0,0,0.3)", annotation_text="50%")
+            
+            fig.update_layout(
+                height=250, margin=dict(l=0, r=0, t=10, b=0),
+                hovermode="x unified",
+                xaxis=dict(showspikes=True, spikemode="across", spikesnap="cursor", showline=True, showgrid=False),
+                yaxis=dict(showgrid=True, title=y_label, range=[0, 100] if show_50 else None),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1) if len(df.columns) > 2 else dict(visible=False)
+            )
+            st.plotly_chart(fig, width="stretch")
+
+        def calculate_portfolio_returns(closes, tickers, benchmark_ticker, weights=None, filter_years=3):
+            if closes is None or closes.empty: return None
+            if closes.index.tzinfo is not None:
+                cutoff = pd.Timestamp.now(tz=closes.index.tz) - pd.DateOffset(years=filter_years)
+            else:
+                cutoff = pd.Timestamp.now().normalize() - pd.DateOffset(years=filter_years)
+            
+            closes = closes[closes.index >= cutoff]
+            if closes.empty: return None
+        
+            valid_tickers = [t for t in tickers if t in closes.columns]
+            if not valid_tickers: return None
+        
+            # Fill interior gaps before taking returns. pandas 3 dropped
+            # pct_change's implicit forward-fill, so a ticker missing one day
+            # (yfinance calendars differ per stock) got a NaN return on the NEXT
+            # day too and its whole move across the gap vanished -- India Invested
+            # lost 44 returns and its 5Y curve read 686 instead of 697. The
+            # .where(bfill) mask keeps the fill inside each ticker's own history,
+            # so a late listing or a delisting isn't padded with fake 0% days.
+            raw = closes[valid_tickers]
+            filled = raw.ffill().where(raw.bfill().notna())
+            returns = filled.pct_change(fill_method=None)
+        
+            w_dict = {}
+            for t in valid_tickers:
+                w_dict[t] = weights.get(t, 1.0) if weights else 1.0
+            w_series = pd.Series(w_dict)
+        
+            valid_weights = returns.notna() * w_series
+            weighted_returns = (returns * valid_weights).sum(axis=1) / valid_weights.sum(axis=1)
+        
+            portfolio = 100 * (1 + weighted_returns).cumprod()
+            portfolio.iloc[0] = 100
+            
+            bench = None
+            if benchmark_ticker in closes.columns and closes[benchmark_ticker].first_valid_index() is not None:
+                first_val = closes[benchmark_ticker].bfill().iloc[0]
+                if first_val > 0:
+                    bench = (closes[benchmark_ticker] / first_val) * 100
+                
+            if portfolio is not None and bench is not None:
+                return pd.DataFrame({"Portfolio": portfolio, "Benchmark": bench})
+            return None
+
+        def format_json_breadth(market_data, filter_years):
+            if not market_data: return None, None
+            cutoff = pd.Timestamp.now().normalize() - pd.DateOffset(years=filter_years)
+        
+            # SMA
+            hist = market_data.get("history", {})
+            df_ema = pd.DataFrame(list(hist.items()), columns=["Date", "% Above 200d SMA"]) if hist else pd.DataFrame()
+            if not df_ema.empty:
+                df_ema["Date"] = pd.to_datetime(df_ema["Date"])
+                df_ema = df_ema[df_ema["Date"] >= cutoff]
+            
+            # HL
+            h_hist = market_data.get("highs_history", {})
+            l_hist = market_data.get("lows_history", {})
+            df_hl = pd.DataFrame()
+            if h_hist and l_hist:
+                df_hl = pd.DataFrame({
+                    "Date": pd.to_datetime(list(h_hist.keys())),
+                    "% New Highs": list(h_hist.values()),
+                    "% New Lows": list(l_hist.values())
+                })
+                df_hl = df_hl[df_hl["Date"] >= cutoff]
+            
+            return df_ema, df_hl
+
+        # Load Data
+        breadth_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "market_breadth.json")
+        breadth_data = {}
+        if os.path.exists(breadth_file):
+            with open(breadth_file) as f:
+                breadth_data = json.load(f)
+
+        # Dashboard portfolio-vs-benchmark curves come from dashboard_perf.json,
+        # built by the same GitHub Actions market-breadth workflow -- NO live
+        # yfinance at render. Each market stores {ticker: {date: close}}, and the
+        # benchmark ticker is included as its own column so calculate_portfolio_returns
+        # works exactly as when the data was fetched live.
+        perf_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard_perf.json")
+        perf_data = {}
+        perf_as_of = None
+        if os.path.exists(perf_file):
+            try:
+                with open(perf_file) as f:
+                    perf_data = json.load(f)
+                perf_as_of = perf_data.get("as_of")
+            except Exception:
+                perf_data = {}
+
+        def _closes_from_perf(market):
+            series_map = perf_data.get("markets", {}).get(market, {})
+            if not series_map:
+                return None
+            df = pd.DataFrame({t: dict(s) for t, s in series_map.items()})
+            df.index = pd.to_datetime(df.index)
+            return df.sort_index()
+            
+        # Each curve is the whole watchlist, equal-weighted, against its own
+        # benchmark: India Invested vs Nifty 500 (^CRSLDX), US Invested vs SPY.
+        # The India side used to be filtered down to whichever of its tickers were
+        # flagged in invested.json and weighted by that file; both are gone with
+        # the flag (every stored weight was 1.0, i.e. equal-weight already, and the
+        # filter matched all 29 tickers -- so the curves are unchanged).
+        #
+        # These are the "US Invested"/"India Invested" WATCHLISTS keyed by their
+        # markets.json registry keys -- not to be confused with market_breadth.json's
+        # "US"/"INDIA" keys below, which represent national S&P 500/Nifty 500
+        # breadth and are unrelated to the watchlist registry (see that lookup's
+        # own comment).
+        us_tickers = watchlists_now.get("us_invested", [])
+        ind_tickers = watchlists_now.get("india_invested", [])
+
+        st.divider()
+
+        from plotly.subplots import make_subplots
+        import plotly.graph_objects as go
+
+        # We will build a single 3x2 subplot figure so hover spikes sync perfectly across all rows.
+        with st.spinner("Loading Dashboards..."):
+            closes_ind = None
+            df_perf_ind = None
+            if ind_tickers:
+                closes_ind = _closes_from_perf("india_invested")
+                if closes_ind is not None and "^CRSLDX" in closes_ind.columns:
+                    df_perf_ind = calculate_portfolio_returns(closes_ind, ind_tickers, "^CRSLDX", weights=None, filter_years=years)
+            
+            closes_us = None
+            df_perf_us = None
+            if us_tickers:
+                closes_us = _closes_from_perf("us_invested")
+                if closes_us is not None and "SPY" in closes_us.columns:
+                    df_perf_us = calculate_portfolio_returns(closes_us, us_tickers, "SPY", weights=None, filter_years=years)
+            
+            if perf_as_of:
+                st.caption(
+                    f"Portfolio & breadth data as of {perf_as_of} — refreshed by the scheduled GitHub Action. "
+                    "Watchlist curves are the CURRENT watchlist, equal-weighted and rebalanced daily, "
+                    "price return (no dividends) — a hindsight view, not your realized P&L."
+                )
+            
+            # market_breadth.json's "INDIA"/"US" keys are fixed national-index
+            # breadth (Nifty 500 / S&P 500), independent of the watchlist
+            # registry -- NOT renamed alongside markets.json/watchlist.json, so
+            # these stay as the literal keys refresh_market_breadth.py writes.
+            df_ema_ind, df_hl_ind = format_json_breadth(breadth_data.get("markets", {}).get("INDIA"), years)
+            df_ema_us, df_hl_us = format_json_breadth(breadth_data.get("markets", {}).get("US"), years)
+
+            def get_val(df, col):
+                if df is not None and not df.empty and col in df.columns:
+                    return f"{df[col].iloc[-1]:.1f}"
+                return "--"
+            
+            # `or {}` is load-bearing: refresh_market_breadth.py's calculate_breadth
+            # returns None when every download batch fails, and a stored None made
+            # .get("US", {}) return None -- .get("total") on it raised AttributeError
+            # and took down this whole tab, not just one chart. The refresh script no
+            # longer writes None, but an older snapshot may still carry one.
+            def _breadth_block(market_key):
+                return (breadth_data.get("markets") or {}).get(market_key) or {}
+
+            # A market whose own as_of differs from the file's is preserved data from
+            # an earlier run -- its leg failed and main() kept the previous block
+            # rather than wiping it. Label it instead of passing it off as current.
+            _breadth_as_of = breadth_data.get("as_of")
+
+            def _stale_suffix(market_key):
+                block_as_of = _breadth_block(market_key).get("as_of")
+                if block_as_of and _breadth_as_of and block_as_of != _breadth_as_of:
+                    return f" [stale: {block_as_of}]"
+                return ""
+
+            total_ind = _breadth_block("INDIA").get("total", "--")
+            total_us = _breadth_block("US").get("total", "--")
+            stale_ind = _stale_suffix("INDIA")
+            stale_us = _stale_suffix("US")
+            
+            title_ema_ind = f"Nifty 500: % Above 200-Day SMA (Current: {get_val(df_ema_ind, '% Above 200d SMA')}%, Captured: {total_ind}){stale_ind}"
+            title_ema_us = f"S&P 500: % Above 200-Day SMA (Current: {get_val(df_ema_us, '% Above 200d SMA')}%, Captured: {total_us}){stale_us}"
+        
+            title_hl_ind = f"Nifty 500: 52-Week Highs vs Lows (Highs: {get_val(df_hl_ind, '% New Highs')}%, Lows: {get_val(df_hl_ind, '% New Lows')}%){stale_ind}"
+            title_hl_us = f"S&P 500: 52-Week Highs vs Lows (Highs: {get_val(df_hl_us, '% New Highs')}%, Lows: {get_val(df_hl_us, '% New Lows')}%){stale_us}"
+        
+            def get_perf(df):
+                if df is not None and not df.empty and 'Portfolio' in df.columns and 'Benchmark' in df.columns:
+                    ret_port = (df['Portfolio'].iloc[-1] / 100 - 1) * 100
+                    bench_valid = df['Benchmark'].dropna()
+                    ret_bench = (bench_valid.iloc[-1] / 100 - 1) * 100 if not bench_valid.empty else float('nan')
+                    return f"Watchlist: {ret_port:+.1f}%, Bench: {ret_bench:+.1f}%"
+                return "--"
+            
+            _ind_display_label = markets_registry_now.get("india_invested", {}).get("label", "India Invested")
+            _us_display_label = markets_registry_now.get("us_invested", {}).get("label", "US Invested")
+            # These used to read markets.json's "benchmark", which holds the TICKER,
+            # so the title said "India Invested vs ^CRSLDX". The panels below
+            # always plot ^CRSLDX / SPY (hardcoded above), so name those directly.
+            _ind_bench_label = "Nifty 500"
+            _us_bench_label = "S&P 500"
+            title_perf_ind = f"{_ind_display_label} vs {_ind_bench_label} ({get_perf(df_perf_ind)})"
+            title_perf_us = f"{_us_display_label} vs {_us_bench_label} ({get_perf(df_perf_us)})"
+
+            fig = make_subplots(
+                rows=3, cols=2,
+                shared_xaxes="all",
+                vertical_spacing=0.08,
+                horizontal_spacing=0.05,
+                subplot_titles=(
+                    title_ema_ind, title_ema_us,
+                    title_hl_ind, title_hl_us,
+                    title_perf_ind, title_perf_us
+                )
+            )
+        
+            colors = ['#2ecc71', '#e74c3c', '#f39c12']
+
+            # An empty panel is indistinguishable from a panel whose data is all
+            # zero. Say why it is blank -- the S&P breadth charts sat empty for 8
+            # days because a refresh leg was failing silently, and nothing on screen
+            # pointed at the refresh job.
+            def _no_data(row, col):
+                fig.add_annotation(
+                    text="No data - last refresh failed",
+                    showarrow=False,
+                    xref="x domain", yref="y domain", x=0.5, y=0.5,
+                    row=row, col=col,
+                    font=dict(color="#95a5a6", size=13),
+                )
+
+            # Row 1: SMA Breadth
+            if df_ema_ind is not None and not df_ema_ind.empty:
+                for i, col in enumerate([c for c in df_ema_ind.columns if c != 'Date']):
+                    fig.add_trace(go.Scatter(x=df_ema_ind['Date'], y=df_ema_ind[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5), showlegend=False), row=1, col=1)
+                fig.add_hline(y=50, line_dash="dash", line_color="rgba(0,0,0,0.3)", row=1, col=1)
+            else:
+                _no_data(1, 1)
+
+            if df_ema_us is not None and not df_ema_us.empty:
+                for i, col in enumerate([c for c in df_ema_us.columns if c != 'Date']):
+                    fig.add_trace(go.Scatter(x=df_ema_us['Date'], y=df_ema_us[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5), showlegend=False), row=1, col=2)
+                fig.add_hline(y=50, line_dash="dash", line_color="rgba(0,0,0,0.3)", row=1, col=2)
+            else:
+                _no_data(1, 2)
+
+            # Row 2: High/Low Extremes
+            if df_hl_ind is not None and not df_hl_ind.empty:
+                for i, col in enumerate([c for c in df_hl_ind.columns if c != 'Date']):
+                    fig.add_trace(go.Scatter(x=df_hl_ind['Date'], y=df_hl_ind[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5), showlegend=False), row=2, col=1)
+            else:
+                _no_data(2, 1)
+
+            if df_hl_us is not None and not df_hl_us.empty:
+                for i, col in enumerate([c for c in df_hl_us.columns if c != 'Date']):
+                    fig.add_trace(go.Scatter(x=df_hl_us['Date'], y=df_hl_us[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5), showlegend=False), row=2, col=2)
+            else:
+                _no_data(2, 2)
+
+            # Row 3: Portfolio Performance
+            _ind_label = markets_registry_now.get("india_invested", {}).get("label", "India Invested")
+            _us_label = markets_registry_now.get("us_invested", {}).get("label", "US Invested")
+            if df_perf_ind is not None and not df_perf_ind.empty:
+                fig.add_trace(go.Scatter(x=df_perf_ind.index, y=df_perf_ind['Portfolio'], name=_ind_label, line=dict(color='#3498db', width=2), showlegend=False), row=3, col=1)
+                fig.add_trace(go.Scatter(x=df_perf_ind.index, y=df_perf_ind['Benchmark'], name=_ind_bench_label, line=dict(color='#95a5a6', width=1.5, dash='dot'), showlegend=False), row=3, col=1)
+            else:
+                _no_data(3, 1)
+
+            if df_perf_us is not None and not df_perf_us.empty:
+                fig.add_trace(go.Scatter(x=df_perf_us.index, y=df_perf_us['Portfolio'], name=_us_label, line=dict(color='#3498db', width=2), showlegend=False), row=3, col=2)
+                fig.add_trace(go.Scatter(x=df_perf_us.index, y=df_perf_us['Benchmark'], name=_us_bench_label, line=dict(color='#95a5a6', width=1.5, dash='dot'), showlegend=False), row=3, col=2)
+            else:
+                _no_data(3, 2)
+
+            fig.update_layout(
+                height=900,
+                hovermode="x unified",
+                # t=30 left the modebar sitting directly on the right column's
+                # subplot title. A vertical modebar parks it against the right edge
+                # and the extra headroom keeps it clear of the titles entirely.
+                margin=dict(l=0, r=0, t=55, b=0),
+                modebar=dict(orientation="v", bgcolor="rgba(0,0,0,0)"),
+                showlegend=False
+            )
+            fig.update_xaxes(showspikes=True, spikemode="across", spikesnap="cursor", showline=True, showgrid=False)
+            fig.update_yaxes(showgrid=True)
+        
+            st.plotly_chart(
+                fig,
+                width="stretch",
+                config={
+                    "displaylogo": False,
+                    "modeBarButtonsToRemove": ["lasso2d", "select2d", "autoScale2d"],
+                },
+            )
+
+        st.divider()
+        st.subheader("Watchlist news digest")
+        st.caption(
+            "Major announcements, developments, and stock moves for your watchlist tickers in the "
+            "last 24-48 hours, summarized via Gemini (Google Search grounding). Runs once a day at "
+            "8:00 PM ET via GitHub Actions and is also sent to Discord — this tab just shows the "
+            "same result."
+        )
+        news_data = load_news_summary()
+
+        # ── News scope selector ─────────────────────────────────────────────────
+        # Controls which watchlists are included when the news pipeline runs.
+        # The selection is persisted in settings.json so GitHub Actions picks it
+        # up on the next scheduled run (after pushing settings to GitHub).
+        # The combined GROUPS come first, then the individual watchlists. Selecting
+        # a group stores the GROUP key ("all_invested"), not today's members, so
+        # editing that group's membership on its combined tab re-scopes news
+        # automatically -- see news_summary.resolve_news_scope, which expands it at
+        # run time.
+        _all_news_market_opts = {}
+        for _gkey, _glabel in COMBINED_TAB_DEFS:
+            _members = combined_markets_by_key.get(_gkey) or []
+            _all_news_market_opts[f"{_glabel} (group of {len(_members)})"] = _gkey
+        for mkt in market_keys_now:
+            _all_news_market_opts[markets_registry_now.get(mkt, {}).get("label", mkt)] = mkt
+        _label_by_scope_key = {v: k for k, v in _all_news_market_opts.items()}
+
+        _saved_scope_keys = settings_now.get("news_watchlist_scope", [])
+        # An empty setting MEANS the default group, so show it selected rather than
+        # showing an empty box that silently behaves like something. The comparison
+        # below is against the raw saved value, so the first render after this
+        # change writes the default out explicitly and the two stop disagreeing.
+        _effective_scope_keys = _saved_scope_keys or [DEFAULT_NEWS_SCOPE_GROUP]
+        _saved_scope_labels = [
+            _label_by_scope_key[k] for k in _effective_scope_keys if k in _label_by_scope_key
+        ]
+        _selected_scope_labels = st.multiselect(
+            "📋 News scope — watchlists included in the digest",
+            options=list(_all_news_market_opts.keys()),
+            default=_saved_scope_labels,
+            key="news_scope_select",
+            help=(
+                "Groups expand to their member watchlists when the digest runs, so changing a "
+                "group's membership re-scopes news automatically. Clearing the box falls back to "
+                "All Invested. Push settings to GitHub (Alert Rules tab) so the scheduled "
+                "GitHub Actions workflow respects this selection."
+            ),
+        )
+        _new_scope_keys = [_all_news_market_opts[lbl] for lbl in _selected_scope_labels]
+        if _new_scope_keys != _saved_scope_keys:
+            settings_now["news_watchlist_scope"] = _new_scope_keys
+            save_settings(settings_now)
+            st.rerun()
+
+        # What that selection actually resolves to, with ticker counts -- a group
+        # name alone doesn't tell you how much the next run will cover.
+        _resolved_markets = resolve_news_scope(_new_scope_keys, watchlists_now, combined_markets_by_key)
+        _resolved_bits = [
+            f"{markets_registry_now.get(m, {}).get('label', m)} ({len(watchlists_now.get(m, []))})"
+            for m in _resolved_markets
+        ]
+        st.caption(
+            f"Next run covers {len(_resolved_markets)} watchlist(s), "
+            f"{sum(len(watchlists_now.get(m, [])) for m in _resolved_markets)} ticker slots: "
+            + ", ".join(_resolved_bits)
+        )
+
+        col1, col2, col3, col4 = st.columns([2, 3, 3, 3])
+        with col1:
+            if st.button("🔄 Refresh News", width="stretch"):
+                token, repo, _ = get_github_config(st.secrets)
+                if token and repo:
+                    ok, msg = trigger_github_workflow(token, repo, "news-summary.yml")
+                    if ok:
+                        st.success(f"News refresh started in background! [View live logs on GitHub](https://github.com/{repo}/actions/workflows/news-summary.yml) (about an hour)")
+                    else:
+                        st.error(f"Failed to start refresh: {msg}")
+                else:
+                    st.error("Missing GITHUB_TOKEN or GITHUB_REPO in secrets.")
+                
+        with col2:
+            search_choices = ["models/gemma-4-31b-it", "models/gemma-4-26b-a4b-it"]
+            new_search = st.selectbox(
+                "Search Model", search_choices,
+                index=search_choices.index(settings_now.get("news_search_model", search_choices[0])) if settings_now.get("news_search_model") in search_choices else 0,
+                key="news_search_model_select"
+            )
+            if new_search != settings_now.get("news_search_model"):
+                settings_now["news_search_model"] = new_search
+                save_settings(settings_now)
+                st.rerun()
+
+        with col3:
+            reason_choices = ["models/gemini-3.5-flash-lite", "models/gemma-4-31b-it", "models/gemma-4-26b-a4b-it"]
+            current_reason = settings_now.get("news_reasoning_model", "models/gemini-3.5-flash-lite")
+            if current_reason == "gemini-3.5-flash-lite":
+                current_reason = "models/gemini-3.5-flash-lite"
+            new_reason = st.selectbox(
+                "Reasoning Model", reason_choices,
+                index=reason_choices.index(current_reason) if current_reason in reason_choices else 0,
+                key="news_reasoning_model_select"
+            )
+            # Normalize comparison
+            saved_reason = settings_now.get("news_reasoning_model", "models/gemini-3.5-flash-lite")
+            if saved_reason == "gemini-3.5-flash-lite":
+                saved_reason = "models/gemini-3.5-flash-lite"
+            if new_reason != saved_reason:
+                settings_now["news_reasoning_model"] = new_reason
+                save_settings(settings_now)
+                st.rerun()
+            
+        with col4:
+            is_gemma = "gemma" in settings_now.get("news_reasoning_model", "")
+            if is_gemma:
+                budget_choices = ["LOW", "MEDIUM", "HIGH"]
+                default_val = "HIGH"
+            else:
+                budget_choices = [1024, 2048, 4096, 8192]
+                default_val = 8192
+
+            current_val = settings_now.get("news_reasoning_budget", default_val)
+        
+            # Type safety for transitioning between models
+            if is_gemma and current_val not in budget_choices:
+                current_val = default_val
+            elif not is_gemma:
+                try:
+                    current_val = int(current_val)
+                except (ValueError, TypeError):
+                    current_val = default_val
+                if current_val not in budget_choices:
+                    current_val = default_val
+                
+            new_budget = st.selectbox(
+                "Thinking Budget / Level", budget_choices,
+                index=budget_choices.index(current_val),
+                key="news_reasoning_budget_select"
+            )
+            if new_budget != current_val:
+                settings_now["news_reasoning_budget"] = new_budget
+                save_settings(settings_now)
+                st.rerun()
+
+        if not news_data:
+            st.info(
+                "No news summary yet. It's generated once a day by the scheduled GitHub Actions "
+                "workflow (`news-summary.yml`) — nothing to do here until the first scheduled run, "
+                "or trigger it manually using the button above."
+            )
+        else:
+            st.caption(f"As of {news_data.get('as_of', '—')}")
+            for market in market_keys_now:
+                entry = news_data.get("markets", {}).get(market)
+                if not entry:
+                    continue
+                st.markdown(f"### {markets_registry_now.get(market, {}).get('label', MARKET_LABELS.get(market, market))}")
+                # `$` escaped: Streamlit renders $...$ as LaTeX, so a bullet quoting
+                # two dollar amounts ("raised $5B ... valued at $60B") came out as
+                # italic math with the text between them run together.
+                st.markdown(_escape_markdown_dollars(entry.get("summary") or "_No summary available._"))
+
+                # Per-ticker run health. Without this a quiet news day and a run
+                # where every search errored look identical -- both render as one
+                # short "no major news" line. Absent on digests generated before
+                # the counters existed, hence the `if counts`.
+                counts = entry.get("counts") or {}
+                if counts:
+                    bits = [f"{counts.get('material', 0)} with news",
+                            f"{counts.get('quiet', 0)} quiet"]
+                    if counts.get("degraded"):
+                        bits.append(f"⚠️ {counts['degraded']} unfiltered (AI filter failed)")
+                    if counts.get("failed"):
+                        bits.append(f"⚠️ {counts['failed']} search failed")
+                    # Tickers Stage 2 judged material but Stage 3 left out of the
+                    # digest. Surfaced because "8 with news" over a one-bullet
+                    # summary is exactly the discrepancy that hid this bug.
+                    # These are no longer lost -- their Stage 2 notes are appended
+                    # verbatim to the digest above under "Not folded in by the
+                    # editor" -- so the caption says what happened rather than
+                    # warning about a disappearance.
+                    _dropped = entry.get("collation_dropped") or []
+                    if _dropped:
+                        bits.append(f"{len(_dropped)} shown as raw notes ({', '.join(_dropped[:4])}"
+                                    + ("…" if len(_dropped) > 4 else "") + ")")
+                    st.caption(" · ".join(bits))
+
+                sources = entry.get("sources") or []
+                if sources:
+                    with st.expander(f"Sources ({len(sources)})"):
+                        for s in sources:
+                            title = s.get("title") or s.get("url")
+                            st.markdown(f"- [{_escape_markdown_dollars(title)}]({s.get('url')})")
+                st.divider()
 
 with tab_alerts:
     st.subheader("Alert rules")

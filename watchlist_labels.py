@@ -1,10 +1,10 @@
 """Tab labels a watchlist may not take, and the check that enforces it.
 
 Its own module, not stock_data.py, on purpose: stock_data._code_fingerprint
-hashes that whole file, and any edit to it marks the stored data snapshot as
-computed by old code -- every visitor then gets a live Yahoo fetch until the
-next scheduled refresh restamps it. None of this is calculation code, so it
-lives where it cannot trigger that.
+hashes that file's code (comments and docstrings excluded), and any code edit
+there marks the stored data snapshot as computed by old code -- every visitor
+then gets a live Yahoo fetch until the next scheduled refresh restamps it. None
+of this is calculation code, so it lives where it cannot trigger that.
 """
 
 # The combined tabs' labels, and the two fixed tabs after them. app.py builds

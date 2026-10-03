@@ -604,6 +604,50 @@ def log_key_usage(client):
         print(summary())
 
 
+# How many tickers in a row may fail before a nightly AI job stops (FailureFuse).
+CONSECUTIVE_FAILURE_LIMIT = 10
+
+
+class FailureFuse:
+    """Stops a nightly AI job early when its calls keep failing.
+
+    A dead key or an exhausted quota fails EVERY ticker, but the jobs ground on
+    for ~2 hours anyway (each failure keeps the ticker's previous view, so
+    nothing is lost the first nights), then reported success -- so the slot gate
+    counted the slot as done, nothing retried, and views quietly aged to Pending
+    with no red run anywhere. Exiting non-zero alone would have made the gate
+    re-run a 2-hour job several times.
+
+    So: after `limit` CONSECUTIVE failed tickers the job skips the rest (their
+    previous views stay as they are) and exits non-zero. The run shows red, and
+    the gate's retry costs minutes, not hours. Isolated failures -- a slow search,
+    one bad answer -- reset the streak and never trip it. Thread-safe: the
+    Sentiment job analyses tickers in parallel."""
+
+    def __init__(self, limit=None):
+        self.limit = limit or CONSECUTIVE_FAILURE_LIMIT
+        self.streak = 0
+        self.tripped = False
+        self._lock = threading.Lock()
+
+    def record(self, failed):
+        """Count one ticker's outcome; returns True once the fuse has tripped."""
+        with self._lock:
+            self.streak = self.streak + 1 if failed else 0
+            if self.streak >= self.limit and not self.tripped:
+                self.tripped = True
+                print(f"[failure fuse] {self.streak} tickers failed in a row -- stopping this run early; "
+                      "the rest keep their previous views.")
+            return self.tripped
+
+    def exit_if_tripped(self):
+        """End the job with an error after a tripped fuse (call after saving)."""
+        if self.tripped:
+            print(f"::error::Stopped early after {self.limit} consecutive failures (likely dead keys or "
+                  "exhausted quota). Previous views were kept; the slot gate will retry.")
+            raise SystemExit(1)
+
+
 def make_client(api_key=None, st_secrets=None):
     """The client every pipeline should use: rotates across all configured keys.
 

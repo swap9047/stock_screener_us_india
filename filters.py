@@ -45,7 +45,7 @@ import json
 import operator as op
 import os
 
-from ticker_notes import FLAG_CHOICES
+from ticker_notes import FLAG_CHOICES, SIGNAL_OUTCOMES
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CUSTOM_FILTERS_FILE = os.path.join(SCRIPT_DIR, "custom_filters.json")
@@ -80,6 +80,8 @@ CATEGORICAL_METRICS = {
     # TheWrap flowchart outcomes -- stock_data.TA_RULES_OUTCOMES, same order.
     "ta_rules": ["Bullish Signal", "Maintain/Add", "Wait/Watch",
                  "Momentum Fading", "Be Cautious", "Exit"],
+    # Chart x News (ticker_notes.compute_signal), best-first.
+    "signal": list(SIGNAL_OUTCOMES),
     "flag": FLAG_CHOICES,  # see ticker_notes.py -- Red/Yellow/Green/Blue
     "expert_take": ["Accumulate", "Hold", "Caution", "Pending"],
     # Did the Expert Take verdict have any news behind it, or is it a

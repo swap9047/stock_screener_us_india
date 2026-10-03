@@ -60,12 +60,12 @@ def cond(metric, value):
 
 
 RULES = [
-    {"id": "green", "name": "green flag", "enabled": True, "conditions": [cond("flag", ["Green"])]},
+    {"id": "green", "name": "expert accumulate", "enabled": True, "conditions": [cond("expert_take", ["Accumulate"])]},
     {"id": "acc", "name": "accumulate", "enabled": True, "conditions": [cond("expert_take", ["Accumulate"])]},
     {"id": "via", "name": "refers to green", "enabled": True,
      "conditions": [{"type": "rule", "rule_id": "green", "logic": "AND"}]},
-    # Enabled rule leaning on a DISABLED flag rule: still built on the verdict.
-    {"id": "off", "name": "disabled flag rule", "enabled": False, "conditions": [cond("flag", ["Green"])]},
+    # Enabled rule leaning on a DISABLED verdict rule: still built on the verdict.
+    {"id": "off", "name": "disabled verdict rule", "enabled": False, "conditions": [cond("expert_news_backed", ["Yes"])]},
     {"id": "via_off", "name": "refers to disabled", "enabled": True,
      "conditions": [{"type": "rule", "rule_id": "off", "logic": "AND"}]},
     {"id": "b_side", "name": "metric b", "enabled": True,
@@ -74,15 +74,20 @@ RULES = [
     {"id": "trend", "name": "uptrend", "enabled": True, "conditions": [cond("trend", ["Uptrend"])]},
     {"id": "trend_ref", "name": "refers to uptrend", "enabled": True,
      "conditions": [{"type": "rule", "rule_id": "trend", "logic": "AND"}]},
+    # Flag is set only by hand since 2026-10-02, so a rule on it is the user's
+    # judgement, not a prior verdict, and may reach the prompt.
+    {"id": "manual", "name": "my green flags", "enabled": True, "conditions": [cond("flag", ["Green"])]},
 ]
 check(alerts.rules_using_prior_verdict(RULES) == {"green", "acc", "via", "off", "via_off", "b_side"},
-      "rules on flag/expert_take are excluded, directly, as Metric B, or through a referenced rule")
+      "rules on expert_take/expert_news_backed are excluded, directly, as Metric B, or through a referenced rule")
+check("manual" not in alerts.rules_using_prior_verdict(RULES),
+      "a rule on the (now manual-only) Flag is not excluded")
 
 alerts.load_rules = lambda: [dict(r) for r in RULES]
-row = {**AUTO, "expert_take": "Accumulate"}
+row = {**AUTO, "expert_take": "Accumulate", "expert_news_backed": "Yes"}
 text = alerts.alerts_text_for(alerts.active_alerts_for_prompt([row], {}), "ACME")
 check("uptrend" in text and "refers to uptrend" in text, "rules on price data still reach the prompt")
-check(not any(n in text for n in ("green flag", "accumulate", "refers to green", "refers to disabled")),
+check(not any(n in text for n in ("expert accumulate", "refers to green", "refers to disabled")),
       "rules that fire because of the last verdict do not")
 
 alerts.load_rules = lambda: [dict(r) for r in RULES[:2]]

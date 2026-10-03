@@ -504,6 +504,7 @@ def get_filterable_metrics(settings=None):
         "1W Ret vs Index": "rel_ret_1w_index",
         "Tech Uptrend": "tech_uptrend",
         "TA Rules": "ta_rules",
+        "Signal": "signal",
         "Flag": "flag",
         "Notes": "note",
         "Expert Take": "expert_take",
@@ -634,17 +635,46 @@ def tradingview_url(ticker):
     return f"https://www.tradingview.com/chart/?symbol={bare}"
 
 
-def validate_ticker(ticker):
+# A symbol Yahoo always has prices for, fetched only to tell "this ticker has
+# no data" apart from "Yahoo is answering nothing right now".
+VALIDATION_CONTROL_TICKER = "SPY"
+
+
+def validate_ticker(ticker, attempts=3, base_delay=2.0, _history=None):
     """Quick check that yfinance actually has recent price data for this
     ticker (catches typos / wrong exchange suffix before saving to the
-    watchlist). Returns True if valid, False otherwise. Best-effort: on
-    network error it returns True (fails open) so a transient outage
-    doesn't block adding a real ticker."""
-    try:
-        hist = yf.Ticker(ticker).history(period="5d")
-        return not hist.empty
-    except Exception:
-        return True
+    watchlist). Returns True (has data), False (no data -- a typo or a
+    delisted symbol), or None (could not tell: Yahoo is throttling or down).
+    None is meant to be ACCEPTED, with a warning: a transient outage must not
+    block adding a real ticker.
+
+    An exception always failed open, but Yahoo usually throttles WITHOUT
+    raising -- it hands back an empty frame, which read exactly like a typo, so
+    a real ticker added during throttling was dropped as "doesn't return any
+    price data" (finding N4). Now an empty answer is retried with backoff, and
+    if it stays empty a control symbol is fetched the same way: empty too means
+    Yahoo is answering nothing (None); data for the control means this ticker
+    really has none (False).
+
+    `_history` replaces the yfinance call, for checks."""
+    fetch = _history or (lambda t: yf.Ticker(t).history(period="5d"))
+
+    def _has_data(t):
+        for attempt in range(attempts):
+            try:
+                hist = fetch(t)
+            except Exception:
+                return None
+            if hist is not None and not hist.empty:
+                return True
+            if attempt < attempts - 1:
+                time.sleep(base_delay * (attempt + 1))
+        return False
+
+    found = _has_data(ticker)
+    if found is not False:
+        return found
+    return False if _has_data(VALIDATION_CONTROL_TICKER) else None
 
 
 def wilder_smooth(raw, period):
@@ -2563,16 +2593,67 @@ def _json_default(o):
     raise TypeError(f"Object of type {o.__class__.__name__} is not JSON serializable")
 
 
+def code_text_fingerprint(source):
+    """Hash of Python source with its comments and docstrings removed and
+    whitespace normalised, so only a change to the CODE changes it.
+
+    Was a hash of the raw file bytes, so a comment-only commit marked the stored
+    snapshot stale and made every running app fetch live from Yahoo until the
+    next scheduled refresh (finding R8). It shaped work, too: changes were
+    routed around this file to avoid exactly that.
+
+    Must give the same answer on every Python the app runs on -- the snapshot is
+    stamped on GitHub Actions (3.11) and compared on Streamlit Cloud and locally
+    (3.14 here). So nothing version-dependent is hashed: comments come from
+    tokenize's COMMENT tokens and docstrings from the AST's node positions, both
+    stable across versions; the hash is of the remaining ORIGINAL text, not of
+    ast.unparse output (which differs between versions). checks/ pins the hash
+    of a fixed sample, so CI on 3.11 enforces the same result as a local run."""
+    import ast
+    import io
+    import tokenize
+
+    lines = source.splitlines(keepends=True)
+    offsets = [0]
+    for line in lines:
+        offsets.append(offsets[-1] + len(line))
+
+    def _pos(row, col):  # 1-based row, 0-based col -> index into `source`
+        return offsets[row - 1] + col
+
+    cut = []
+    for tok in tokenize.generate_tokens(io.StringIO(source).readline):
+        if tok.type == tokenize.COMMENT:
+            cut.append((_pos(*tok.start), _pos(*tok.end)))
+    for node in ast.walk(ast.parse(source)):
+        body = getattr(node, "body", None)
+        if (isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                and body and isinstance(body[0], ast.Expr)
+                and isinstance(getattr(body[0], "value", None), ast.Constant)
+                and isinstance(body[0].value.value, str)):
+            d = body[0]
+            cut.append((_pos(d.lineno, d.col_offset), _pos(d.end_lineno, d.end_col_offset)))
+    kept, last = [], 0
+    for start, end in sorted(cut):
+        if start >= last:
+            kept.append(source[last:start])
+            last = end
+    kept.append(source[last:])
+    text = "".join(kept)
+    norm = "\n".join(ln.rstrip() for ln in text.splitlines() if ln.strip())
+    return hashlib.sha256(norm.encode("utf-8")).hexdigest()[:16]
+
+
 def _code_fingerprint():
-    """Hash of this module's own source, used to detect when a snapshot was
-    computed by a since-replaced version of the calc code (e.g. an EMA/SMA
-    switch or a vstop parameter change) even if settings.json didn't change.
-    Deliberately avoids the `git` CLI/`.git` dir -- not reliably available
-    in every deploy sandbox (e.g. Streamlit Cloud), which silently disabled
-    an earlier version of this guard."""
+    """Fingerprint of this module's CODE (code_text_fingerprint), used to detect
+    when a snapshot was computed by a since-replaced version of the calc code
+    (e.g. an EMA/SMA switch or a vstop parameter change) even if settings.json
+    didn't change. Deliberately avoids the `git` CLI/`.git` dir -- not reliably
+    available in every deploy sandbox (e.g. Streamlit Cloud), which silently
+    disabled an earlier version of this guard."""
     try:
-        with open(__file__, "rb") as f:
-            return hashlib.sha256(f.read()).hexdigest()[:16]
+        with open(__file__, encoding="utf-8") as f:
+            return code_text_fingerprint(f.read())
     except Exception:
         return "unknown"
 

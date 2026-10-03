@@ -327,14 +327,14 @@ except RecursionError:
     check(False, "T9: ...and safe_eval_formula returns None (raised RecursionError)")
 
 
-# --- T10 a missing tech_uptrend abstains -------------------------------------
+# --- T10 retired with the flag vote ------------------------------------------
+# T10 checked that a missing tech_uptrend abstained from the automatic flag
+# vote. That vote was replaced on 2026-10-02 by Signal (Trend x Sentiment,
+# ticker_notes.compute_signal), which Tech Uptrend does not feed; Signal's own
+# checks are in checks/test_signal.py.
 import ticker_notes
 
-flag, reason = ticker_notes.compute_auto_flag({"trend": "Downtrend", "tech_uptrend": None}, expert_verdict="CAUTION")
-check(flag != "Red" and "Tech Uptrend" not in reason,
-      f"T10: a missing tech_uptrend casts no vote ({flag!r}, {reason!r})")
-flag, reason = ticker_notes.compute_auto_flag({"trend": "Downtrend", "tech_uptrend": 0}, expert_verdict="CAUTION")
-check(flag == "Red", f"T10: ...while a real No still votes Red ({flag!r})")
+check(not hasattr(ticker_notes, "compute_auto_flag"), "T10: the automatic flag vote is retired (Flag is manual-only)")
 
 
 # --- T11 booleans render as Yes/No in Discord tables -------------------------
