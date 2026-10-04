@@ -5950,6 +5950,16 @@ with tab_news:
                         bits.append(f"⚠️ {counts['degraded']} unfiltered (AI filter failed)")
                     if counts.get("failed"):
                         bits.append(f"⚠️ {counts['failed']} search failed")
+                    if counts.get("fund_skipped"):
+                        bits.append(f"{counts['fund_skipped']} fund(s) skipped")
+                    # The editor (Stage 3) failing was invisible here. "fallback":
+                    # every model failed and the code formatted the bullets;
+                    # "degraded": an older digest whose raw notes went out.
+                    _collate = entry.get("collate_status", "ok")
+                    if _collate == "fallback":
+                        bits.append("⚠️ editor failed -- notes formatted automatically")
+                    elif _collate == "degraded":
+                        bits.append("⚠️ editor failed -- raw notes shown")
                     # Tickers Stage 2 judged material but Stage 3 left out of the
                     # digest. Surfaced because "8 with news" over a one-bullet
                     # summary is exactly the discrepancy that hid this bug.

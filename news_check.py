@@ -80,6 +80,13 @@ def main():
     save_news_summary(to_save)
     totals = news_data.get("totals", {})
     print(f"Saved news_summary.json (as_of {news_data['as_of']}). Totals: {totals}")
+    # The editor (Stage 3) failing used to show nowhere: on 4 of 18 digests in a
+    # week the raw notes went out and the run stayed green. The bullets are
+    # formatted in code now (news_summary.format_notes_fallback), but say so.
+    for mkt, entry in (news_data.get("markets") or {}).items():
+        if (entry or {}).get("collate_status", "ok") != "ok":
+            print(f"::warning::News editor failed for one watchlist ({entry['collate_status']}); "
+                  "its bullets were formatted automatically.")
 
     # A run where every ticker threw used to be byte-indistinguishable from a
     # genuinely quiet news day: build_news_summary still returned a well-formed

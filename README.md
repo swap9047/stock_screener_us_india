@@ -83,8 +83,13 @@ evidence, forward signals first (e.g. "Upgrade · Outlook ↑ · Profit +22%"), 
 what decided it.
 
 ### Market News (`news_summary.py`)
-A noise-free summary of material catalysts (FDA approvals, earnings surprises, M&A) from
-the last 24 hours, plus events due in the next few days, filtered to strip out fluff.
+A nightly summary of material catalysts (FDA approvals, earnings, M&A, contracts, named-
+brokerage rating changes) from the last 24 hours, plus events due in the next few days, for
+the invested watchlists by default. It is dated by its 8 PM ET slot and skips ETFs. Filler is
+dropped: rating-site notes, law-firm class-action ads, conference attendance, and small
+unexplained price moves. So is anything the previous night's digest already reported. Each
+bullet names the company, and if the editing model fails, the code formats the bullets
+itself.
 
 Both AI columns can be regenerated from the dashboard — for selected tickers, for whatever
 is currently pending, or for a whole watchlist in the background via GitHub Actions scoped

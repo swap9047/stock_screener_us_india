@@ -46,7 +46,7 @@ import json
 import os
 import re
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from google.genai import types
@@ -104,7 +104,28 @@ STATUS_QUIET = "quiet"         # searched cleanly, nothing cleared the bar
 STATUS_DEGRADED = "degraded"   # Stage 2 ladder exhausted; raw text forwarded
 STATUS_FAILED = "failed"       # Stage 1 ladder exhausted; no data at all
 
+STATUS_FUND = "fund_skipped"  # an ETF/fund: not searched (D5)
+
+# Stage 3's own outcomes besides "ok": "fallback" = every editing model failed and
+# the bullets were formatted in code (format_notes_fallback); "degraded" is kept
+# for digests written before that existed.
+COLLATE_FALLBACK = "fallback"
+
 NO_NEWS_SENTENCE = "No major news for this watchlist's tickers in the last 24 hours."
+
+# The digest's slot: 8 PM ET, the news-summary.yml gate's `slots`. A digest is
+# dated and windowed by this slot, not by when GitHub started the run -- it starts
+# the 8 PM job anywhere from 8:17 PM to 2:53 AM ET (2026-09-27..10-04), so dating
+# by the run's own clock gave two digests dated 2026-09-29 and none for 09-28,
+# and moved the search window with it. checks/test_news_digest_100426.py ties
+# this to the workflow.
+NEWS_SLOT_HOUR_ET = 20
+_ET = ZoneInfo("America/New_York")
+
+# Stage 3: the pause before the second pass and before the last-resort model.
+# 2026-09-29..10-04 the editor failed in 4 of 18 digests, every time on 503
+# "high demand" from both models, after ~20 s of retrying (owner, 2026-10-04: 30 s).
+COLLATION_RETRY_WAIT_SECONDS = 30
 
 MARKET_LABELS = {"US": "US Watchlist", "INDIA": "India Watchlist"}
 
@@ -222,6 +243,24 @@ def ticker_window_date(ticker):
     return datetime.now(tz).strftime("%Y-%m-%d")
 
 
+def news_slot_date(now=None):
+    """The date of the 8 PM ET slot a run belongs to: today's if it is past 8 PM
+    ET, else yesterday's (a run that GitHub started after midnight)."""
+    now_et = (now or datetime.now(_ET)).astimezone(_ET)
+    slot_today = now_et.replace(hour=NEWS_SLOT_HOUR_ET, minute=0, second=0, microsecond=0)
+    return now_et.date() if now_et >= slot_today else now_et.date() - timedelta(days=1)
+
+
+def slot_window_date(ticker, slot_date):
+    """The exchange-local date ending a ticker's search window, taken AT the
+    8 PM ET slot -- so a late start no longer moves it. For a US ticker that is
+    the slot date; for an Indian one, the IST date at 8 PM ET: the next morning,
+    after that day's NSE session closed."""
+    slot_dt = datetime(slot_date.year, slot_date.month, slot_date.day, NEWS_SLOT_HOUR_ET, tzinfo=_ET)
+    tz = ZoneInfo("Asia/Kolkata") if ticker.endswith(_INDIA_SUFFIXES) else _ET
+    return slot_dt.astimezone(tz).strftime("%Y-%m-%d")
+
+
 def market_window_date(market, tickers):
     """The exchange-local calendar date that anchors the search window.
 
@@ -241,6 +280,101 @@ def market_window_date(market, tickers):
 
 def _cutoff_date(as_of_date):
     return (datetime.strptime(as_of_date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+
+
+# --- funds, filler and headers (2026-10-04 review) ------------------------------
+# A fund's "news" was gold prices and macro commentary, not company news.
+_FUND_NAME_RE = re.compile(r"\b(ETF|ETN|Fund|Trust|iShares|SPDR|Vanguard|Invesco)\b", re.I)
+
+
+def is_fund(row):
+    """True for an ETF or fund. Yahoo's quoteType decides when the snapshot has
+    it; otherwise a fund-like name that reports no quarters ("... Gold Trust"),
+    so a company that merely has "Trust" in its name (a bank) is not one."""
+    row = row or {}
+    qt = row.get("quote_type")
+    if qt:
+        return str(qt).upper() in ("ETF", "ETN", "MUTUALFUND")
+    return not row.get("reported_qtr") and bool(_FUND_NAME_RE.search(row.get("company_name") or ""))
+
+
+# Lines that are filler however the model judged them: rating-site "analysis"
+# (the sources fundamentals_eval.NON_ANALYST_SOURCES rejects as analyst actions)
+# and law-firm class-action solicitations. On 2026-09-27..10-04, 7 and 8 of 182
+# digest bullets. A company's own legal news ("settled the FTC complaint") stays:
+# these match the ad's signature, not the topic.
+_FILLER_LINE_RE = re.compile(
+    r"simply wall st|marketbeat|zacks|tipranks|stockinvest|marketsmojo|trendlyne|seeking alpha"
+    r"|law firm|lead plaintiff|on behalf of (investors|shareholders)|investors who (purchased|acquired|lost)"
+    r"|shareholder alert|class period|deadline to (file|join)", re.I)
+_HEADER_LINE_RE = re.compile(r"^\s*[*#]*\s*\*\*[^*]+\*\*\s*:?\s*$")
+
+
+def drop_filler_lines(text):
+    """`text` without filler lines; "" when nothing of substance is left."""
+    kept = [line for line in (text or "").splitlines() if not _FILLER_LINE_RE.search(line)]
+    body = "\n".join(kept).strip()
+    has_content = any(line.strip() and not _HEADER_LINE_RE.match(line) for line in body.splitlines())
+    return body if has_content else ""
+
+
+def _strip_header(text):
+    lines = (text or "").strip().splitlines()
+    while lines and (_HEADER_LINE_RE.match(lines[0]) or not lines[0].strip()):
+        lines = lines[1:]
+    return "\n".join(lines).strip()
+
+
+def note_with_header(ticker, text, ticker_names):
+    """A ticker's note under "**Company Name (TICKER)**", set by the code. Stage 2
+    used to write its own "bold ticker header" and dropped the company name, so
+    the editor, told to use exactly the names in the notes, wrote "ACME (ACME)".
+    A header the model wrote anyway is replaced, not doubled."""
+    return f"**{_display_name(ticker, ticker_names)}**\n{_strip_header(text)}"
+
+
+def format_notes_fallback(batch_texts):
+    """The editor's format, built in code: one "* **Company (TICKER)** - item;
+    item" bullet per note. Used when every editing model failed, so the digest
+    never goes out as raw notes joined by "---" (as it did in 4 of 18 digests)."""
+    bullets = []
+    for text in batch_texts:
+        lines = [l.strip() for l in (text or "").strip().splitlines() if l.strip()]
+        if not lines:
+            continue
+        header = lines[0].rstrip(":").strip()
+        if not header.startswith("**"):
+            header, rest = "**News**", lines
+        else:
+            rest = lines[1:]
+        items = [re.sub(r"^[-*•]\s*", "", l) for l in rest]
+        bullets.append(f"* {header} - {'; '.join(i for i in items if i)}")
+    return "\n".join(bullets) or NO_NEWS_SENTENCE
+
+
+def previous_note(prev_digest, ticker, slot_date):
+    """What the previous digest said about `ticker`, for Stage 2's repeat check
+    -- or None. Only a digest from an EARLIER slot counts: one from the same
+    slot is a failed run being retried, whose items were never posted, so
+    dropping them as repeats would lose them. Digests written before notes
+    were stored per ticker are read from the ticker's summary line."""
+    prev = prev_digest or {}
+    try:
+        if date.fromisoformat(str(prev.get("as_of"))[:10]) >= slot_date:
+            return None
+    except ValueError:
+        return None
+    bare = _bare_ticker(ticker).upper()
+    for entry in (prev.get("markets") or {}).values():
+        rec = ((entry or {}).get("tickers") or {}).get(ticker) or {}
+        if rec.get("note"):
+            return rec["note"]
+    for entry in (prev.get("markets") or {}).values():
+        lines = [l for l in ((entry or {}).get("summary") or "").splitlines()
+                 if re.search(rf"\({re.escape(bare)}\)|\*\*{re.escape(bare)}\*\*", l, re.I)]
+        if lines:
+            return "\n".join(lines)
+    return None
 
 
 # Both of these now live in llm_util so expert_views and fundamentals_eval get
@@ -374,7 +508,7 @@ def _run_reasoning(client, prompt, model, budget, label, subject=""):
 
 
 def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date,
-                                ticker_names=None, model=REASONING_MODEL, budget=4096):
+                                ticker_names=None, model=REASONING_MODEL, budget=4096, previous=None):
     """Stage 2: strict recency + materiality filtering for one ticker.
 
     Returns (text, status): status is "ok" when a model answered (an empty
@@ -396,19 +530,39 @@ def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date,
     names = ", ".join(_display_name(t, ticker_names) for t in (tickers or []))
     subject = names or "the ticker below"
 
+    # 2026-10-04 review: ~30% of 182 digest bullets were filler -- price moves with
+    # no reason (32), conference attendance (10), law-firm class-action ads (8),
+    # rating-site "analysts" (7) -- hence the tighter KEEP/DROP lists. And the
+    # output is bullets only: the code adds the "Company (TICKER)" header
+    # (note_with_header), because a model-written "bold ticker header" dropped the
+    # company name. `previous` is what the last digest said about this ticker, so
+    # the overlapping search windows of consecutive nights stop re-posting it.
+    already = ""
+    if previous and previous.strip():
+        already = ("ALREADY REPORTED in the previous digest -- do NOT repeat these. Keep an item that "
+                   "covers the same event only if it adds a genuinely new development:\n"
+                   f"{_strip_header(previous)}\n\n")
     prompt = (
         f"You are a senior financial analyst. Below is raw news text gathered for: {subject}.\n\n"
         f"Today is {as_of_date}. STRICT RECENCY RULE: Evaluate each news item. Keep ONLY items dated "
         f"{cutoff_date} or {as_of_date} (the last 24 hours), OR major upcoming scheduled events in the "
         f"next 3-4 days. Drop anything older or undated.\n\n"
         "STRICT MATERIALITY RULE:\n"
-        "- KEEP ONLY: earnings released in the last 2 days (latest quarter only), upcoming earnings/events in the next 3-4 days (latest quarter only), M&A/acquisitions, FDA/regulatory approvals, "
-        "important board announcements (EXCLUDING dividend and generic day-to-day announcements), analyst coverage and important stock targets, "
-        "major contract wins/losses, big institutional and promoter activity, and significant stock movements (+-3%).\n"
-        "- DROP ENTIRELY: routine scheduled board meetings/AGMs/EGMs with no outcome yet, ordinary "
-        "insider option exercises, routine block trades, minor price fluctuations, dividend announcements, and generic no-news filler.\n\n"
-        "For items that pass both rules, write short, clear bullet points under bold ticker headers. "
-        "If a ticker has no qualifying items, omit it completely. DO NOT write 'no significant news', just skip the ticker entirely.\n\n"
+        "- KEEP ONLY: earnings released in the last 2 days (latest quarter only), upcoming earnings/events in the "
+        "next 3-4 days (latest quarter only), M&A/acquisitions, FDA/regulatory approvals, important board "
+        "announcements (EXCLUDING dividend and generic day-to-day announcements), rating changes and price targets "
+        "from named brokerages, major contract wins/losses, big institutional and promoter activity, and share-price "
+        "moves of 5% or more -- or of 3% or more when the news states a company-specific reason.\n"
+        "- DROP ENTIRELY: routine scheduled board meetings/AGMs/EGMs with no outcome yet, ordinary insider option "
+        "exercises, routine block trades, price moves under 5% with no stated reason, dividend announcements, "
+        "law-firm class-action solicitations and 'investigation' notices, ratings/valuations/notes from rating "
+        "websites or algorithms (Simply Wall St, Zacks, MarketBeat, TipRanks, StockInvest, MarketsMojo, "
+        "Trendlyne) and Seeking Alpha contributor articles, attendance at a conference, trade show or investor "
+        "meet (unless the company launches a product or releases data there), and generic no-news filler.\n\n"
+        f"{already}"
+        "For items that pass both rules, write short, clear bullet points, one per item. Output ONLY the bullets: "
+        "no header, no company or ticker heading. If nothing qualifies, output nothing -- do NOT write "
+        "'no significant news'.\n\n"
         f"RAW TEXT:\n{raw_text}"
     )
 
@@ -428,7 +582,7 @@ def _collation_thinking_budget(budget):
 
 
 def collate_market_summary(client, market, batch_texts, as_of_date=None,
-                           model=None, budget=None, fallback_model=None):
+                           model=None, budget=None, fallback_model=None, last_resort_model=None):
     """Stage 3: collate one market's surviving notes into the daily brief.
 
     Returns (summary, status), same contract as Stage 2. A legitimate empty
@@ -489,9 +643,16 @@ def collate_market_summary(client, market, batch_texts, as_of_date=None,
             kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking)
         return types.GenerateContentConfig(**kwargs)
 
+    # Both editing models, then both again after 30 s, then the filter model after
+    # another 30 s (it answers when the bigger models are "in high demand"). On
+    # 2026-09-29..10-04 every editor failure was a 503 from both models within
+    # ~20 s of retrying, and the raw notes went to Discord.
+    last_resort_model = last_resort_model or REASONING_MODEL
+    tiers = llm_util.retry_pair_tiers(model, fallback_model, backoff=COLLATION_RETRY_WAIT_SECONDS)
+    if last_resort_model not in (model, fallback_model):
+        tiers.append((last_resort_model, COLLATION_RETRY_WAIT_SECONDS))
     text, used = llm_util.run_model_ladder(
-        client, prompt,
-        llm_util.retry_pair_tiers(model, fallback_model),
+        client, prompt, tiers,
         _config_for, label="stage3", subject=market,
         on_success=lambda resp: (resp.text or "").strip(),
     )
@@ -499,9 +660,9 @@ def collate_market_summary(client, market, batch_texts, as_of_date=None,
     if ok:
         print(f"  [stage3 {market}] collated by {used} (thinking={thinking})")
     if not ok:
-        # Honest degradation: forward what we have rather than silently claim a
-        # quiet day, and let the caller mark the market degraded.
-        return combined, STATUS_DEGRADED
+        # Every model failed: format the bullets in code rather than forward raw
+        # notes, and let the caller show that the editor failed.
+        return format_notes_fallback(batch_texts), COLLATE_FALLBACK
     return (text or NO_NEWS_SENTENCE), "ok"
 
 
@@ -525,9 +686,11 @@ def collation_dropped_tickers(summary, material_tickers):
             if not re.search(rf"\b{re.escape(_bare_ticker(t).upper())}\b", haystack)]
 
 
-def build_news_summary(watchlists, api_key):
+def build_news_summary(watchlists, api_key, now=None):
     """Runs the 3-stage pipeline for every market in `watchlists`, respecting
     the ``news_watchlist_scope`` setting (empty = the all_invested group).
+
+    `now` (tests) fixes the clock that picks the 8 PM ET slot.
 
     Returns a dict shaped:
         {"as_of", "generated_at", "totals": {...},
@@ -546,10 +709,11 @@ def build_news_summary(watchlists, api_key):
     selected = resolve_news_scope(scope, watchlists)
     print(f"[news] scope {scope or '(default)'} -> {', '.join(selected)}")
     watchlists = {k: v for k, v in watchlists.items() if k in selected}
+    slot_date = news_slot_date(now)
     if not watchlists:
         print(f"[news] news_watchlist_scope={scope} matched no watchlist with tickers. Nothing to process.")
         return {
-            "as_of": datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d"),
+            "as_of": slot_date.isoformat(),
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "totals": {},
             "markets": {},
@@ -569,9 +733,9 @@ def build_news_summary(watchlists, api_key):
 
     client = llm_util.make_client(api_key)
     result = {
-        # Top-level as_of is for display and is dated in ET, which is when the
-        # scheduled run actually happens (8 PM ET).
-        "as_of": datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d"),
+        # Dated by the 8 PM ET slot this run belongs to, not by when GitHub
+        # started it (news_slot_date).
+        "as_of": slot_date.isoformat(),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "totals": {},
         "markets": {},
@@ -579,11 +743,15 @@ def build_news_summary(watchlists, api_key):
 
     snapshot = load_data_snapshot()
     ticker_names = {}
+    row_by_ticker = {}
     if snapshot and "per_market" in snapshot:
         for mkt_data in snapshot["per_market"].values():
             for row in mkt_data:
+                row_by_ticker.setdefault(row["ticker"], row)
                 if "company_name" in row:
                     ticker_names[row["ticker"]] = row["company_name"]
+    # The last digest, for Stage 2's repeat check (previous_note).
+    previous_digest = load_news_summary()
 
     # Stage 1 and Stage 2 are both purely per-ticker, so memoise them for the
     # whole run. Today 110 watchlist slots are 105 unique tickers -- one sits
@@ -608,7 +776,8 @@ def build_news_summary(watchlists, api_key):
             }
             continue
 
-        window_date = market_window_date(market, tickers)
+        india = next((t for t in tickers if t.endswith(_INDIA_SUFFIXES)), None)
+        window_date = slot_window_date(india or tickers[0], slot_date)
         print(f"\n[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] === {market}: "
               f"{len(tickers)} tickers, window ending {window_date} ===")
 
@@ -620,8 +789,11 @@ def build_news_summary(watchlists, api_key):
         ticker_records = {}
         retry_queue = []
 
-        def record(ticker, status, sources=None):
+        def record(ticker, status, sources=None, note=None):
             ticker_records[ticker] = {"status": status, "sources": sources or []}
+            if note:
+                # Stored for the next digest's repeat check (previous_note).
+                ticker_records[ticker]["note"] = note
 
         def run_stage2(ticker, raw_text, sources, window):
             """Stage 2 for one ticker, memoised. Appends to filtered_texts and
@@ -642,22 +814,34 @@ def build_news_summary(watchlists, api_key):
                 clean, status = filter_batch_with_reasoning(
                     client, header, [ticker], market, window,
                     ticker_names=ticker_names, model=reasoning_model, budget=thinking_budget,
+                    previous=previous_note(previous_digest, ticker, slot_date),
                 )
+                if status != STATUS_DEGRADED:
+                    # Bullets only from here: filler lines out, then the code's
+                    # "**Company (TICKER)**" header on top (note_with_header).
+                    body = drop_filler_lines(_strip_header(clean))
+                    clean = note_with_header(ticker, body, ticker_names) if body else ""
                 filter_cache[key] = (clean, status)
 
             if status == STATUS_DEGRADED:
                 filtered_texts.append(clean)
                 note_by_ticker[ticker] = clean
-                record(ticker, STATUS_DEGRADED, sources)
+                record(ticker, STATUS_DEGRADED, sources, note=clean)
             elif clean:
                 filtered_texts.append(clean)
                 note_by_ticker[ticker] = clean
-                record(ticker, STATUS_MATERIAL, sources)
+                record(ticker, STATUS_MATERIAL, sources, note=clean)
             else:
                 record(ticker, STATUS_QUIET, sources)
 
         for i, ticker in enumerate(tickers):
-            tw = ticker_window_date(ticker)
+            if is_fund(row_by_ticker.get(ticker)):
+                # A fund's "news" is gold prices and macro commentary (D5).
+                print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] [{market}] [{i+1}/{len(tickers)}] "
+                      f"{ticker} - fund, skipped")
+                record(ticker, STATUS_FUND)
+                continue
+            tw = slot_window_date(ticker, slot_date)
             key = (ticker, tw)
             ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
             progress = f"[{ts}] [{market}] [{i+1}/{len(tickers)}] {ticker}"
@@ -719,7 +903,7 @@ def build_news_summary(watchlists, api_key):
             print(f"\n[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] === Retry queue ({len(retry_queue)}) ===")
             for i, ticker in enumerate(retry_queue):
                 time.sleep(RETRY_SECONDS_BETWEEN_CALLS)
-                tw = ticker_window_date(ticker)
+                tw = slot_window_date(ticker, slot_date)
                 key = (ticker, tw)
                 ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
                 print(f"[{ts}] [RETRY] [{market}] [{i+1}/{len(retry_queue)}] {ticker} - Stage1 starting...")
@@ -744,7 +928,10 @@ def build_news_summary(watchlists, api_key):
             status: sum(1 for r in ticker_records.values() if r["status"] == status)
             for status in (STATUS_MATERIAL, STATUS_QUIET, STATUS_DEGRADED, STATUS_FAILED)
         }
-        print(f"\n[{market}] searched={len(ticker_records)} " +
+        # Funds are not searched, so they stay out of the four counts above (and
+        # out of "searched", which news_check's failure rule divides by).
+        counts[STATUS_FUND] = sum(1 for r in ticker_records.values() if r["status"] == STATUS_FUND)
+        print(f"\n[{market}] searched={len(ticker_records) - counts[STATUS_FUND]} " +
               " ".join(f"{k}={v}" for k, v in counts.items()))
 
         print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] [{market}] Stage3 collation "
@@ -753,7 +940,7 @@ def build_news_summary(watchlists, api_key):
         collated, collate_status = collate_market_summary(
             client, market, filtered_texts, as_of_date=window_date,
             model=collation_model, fallback_model=collation_fallback,
-            budget=collation_budget,
+            budget=collation_budget, last_resort_model=reasoning_model,
         )
         print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] [{market}] Stage3 done "
               f"({time.time()-t0:.1f}s, {collate_status})")
@@ -798,7 +985,7 @@ def build_news_summary(watchlists, api_key):
             "tickers": ticker_records,
         }
 
-    totals = {s: 0 for s in (STATUS_MATERIAL, STATUS_QUIET, STATUS_DEGRADED, STATUS_FAILED)}
+    totals = {s: 0 for s in (STATUS_MATERIAL, STATUS_QUIET, STATUS_DEGRADED, STATUS_FAILED, STATUS_FUND)}
     for entry in result["markets"].values():
         for k, v in (entry.get("counts") or {}).items():
             totals[k] = totals.get(k, 0) + v

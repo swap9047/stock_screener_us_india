@@ -1759,6 +1759,9 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
 
     for t in tickers:
         company_name = t
+        # Yahoo's quoteType ("EQUITY", "ETF", ...): the news digest skips funds
+        # (news_summary.is_fund), whose "news" was gold prices and macro talk.
+        quote_type = None
         qtr_profit_growth = None
         qtr_revenue_growth = None
         qtr_eps_growth = None
@@ -1777,6 +1780,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
             yf_t = yf.Ticker(t)
             info = _fetch_info_with_retry(yf_t, t)
             company_name = info.get("longName") or info.get("shortName") or t
+            quote_type = info.get("quoteType")
             # Yahoo's own YoY quarterly growth reads (this quarter vs. the
             # same quarter last year) -- returned as decimals (0.278 = 27.8%).
             earnings_growth = info.get("earningsQuarterlyGrowth")
@@ -2416,6 +2420,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
             results.append({
                 "ticker": t,
                 "company_name": company_name,
+                "quote_type": quote_type,
                 "last_close": round(last_close, 1),
                 "pct_change_1d": pct_change_1d,
                 "perf_1m": perf_1m,

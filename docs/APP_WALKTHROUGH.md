@@ -511,23 +511,47 @@ the future"). A "nothing found" sentence is stored as no news. On 2026-10-04, 21
 **Scope.** The digest covers the watchlists in **News scope** (on the News tab).
 Groups expand to their members; an empty scope means **All Invested**.
 
-**For each ticker**, with a cache so a ticker that sits in two watchlists costs one search:
+**Dated by the slot.** A digest is dated, and its search windows set, by the 8 PM ET slot
+it belongs to, not by when GitHub started it. GitHub starts the job anywhere from 8:17 PM
+to 3 AM ET. A US stock's window ends on the slot date; an Indian stock's ends on the IST
+date at 8 PM ET (the next morning, after that day's NSE session).
+
+**Funds are skipped.** ETFs and other funds are not searched, because their "news" was
+gold prices and macro commentary. The test is Yahoo's `quoteType`; for older rows, a
+fund-like name on a ticker that reports no quarters.
+
+**For each stock**, with a cache so a stock that sits in two watchlists costs one search:
 1. **Stage 1, search.** A grounded search for news in the last 24 hours plus events in
    the next 3-4 days.
 2. **Stage 2, filter.** A strict recency rule (dated today or yesterday, or an upcoming
    event) and a materiality list:
-   - **Keep:** earnings, M&A, regulatory approvals, major contracts, analyst actions,
-     big institutional or promoter activity, ±3% moves.
-   - **Drop:** routine meetings, dividends and filler.
+   - **Keep:** earnings, M&A, regulatory approvals, major contracts, rating changes and
+     targets from **named brokerages**, big institutional or promoter activity, and price
+     moves of **5%+**, or **3%+ with a stated reason**.
+   - **Drop:** routine meetings, dividends, law-firm class-action ads, rating websites
+     (Simply Wall St, Zacks, MarketBeat, ...), Seeking Alpha contributors, conference
+     attendance, unexplained small moves, and filler. Rating-site and law-firm-ad lines are
+     also removed in code.
+   - **No repeats.** The filter sees what the **previous** digest said about the stock,
+     and drops it unless there's a new development. Only an earlier slot's digest counts:
+     a failed run being retried posted nothing, so its items are not repeats.
+   - It writes **bullets only**. The code adds the **"Company Name (TICKER)"** header,
+     because a model-written header used to drop the company name ("ACME (ACME)").
 
 **For each watchlist:**
-3. **Stage 3, collation.** A stronger model edits the notes into one bullet per ticker.
-   It does *not* re-filter them. Any ticker it drops is appended as a raw note, so
+3. **Stage 3, editing.** A stronger model edits the notes into one bullet per company.
+   It does *not* re-filter them. Any company it drops is appended as a raw note, so
    nothing is lost.
+   - **When it fails.** It tries both editing models, then both again after 30 s, then
+     the filter model after another 30 s. If all of them fail (Google's "503: high
+     demand"; 4 of 18 digests in late September), **the code formats the bullets** in the
+     same style, and the News tab shows "⚠️ editor failed -- notes formatted
+     automatically". Before, the raw notes went out.
 
-Each ticker ends up **material**, **quiet**, **degraded** (the filter failed and the raw
-text was forwarded) or **failed** (the search failed). The News tab shows those counts.
-One Discord message (or more, if long) is sent per watchlist.
+Each stock ends up **material**, **quiet**, **degraded** (the filter failed and the raw
+text was forwarded), **failed** (the search failed) or **fund skipped**. The News tab shows
+those counts. Each stock's note is stored in `news_summary.json` for the next night's
+repeat check. One Discord message (or more, if long) is sent per watchlist.
 
 **If half or more of the searches fail**, the run posts **nothing** and fails, so the
 slot gate retries it later; the retry posts the day's only digest. The failed run's file
