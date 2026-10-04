@@ -1391,8 +1391,8 @@ def column_definitions(settings, labels):
             "next to the ticker symbol, where it takes the place of the Signal dot. Never set automatically."
         ),
         "Expert Take": (
-            "ACCUMULATE, HOLD or CAUTION, decided live from the other columns. Accumulate: Trend up, Tech Uptrend "
-            "Yes, TA Rules Maintain/Add or Bullish Signal, and Sentiment not Bearish -- or a TA Bullish Signal "
+            "ACCUMULATE, HOLD or CAUTION, decided live from the other columns. Accumulate: Trend up or Tech "
+            "Uptrend Yes, plus TA Rules Maintain/Add or Bullish Signal and Sentiment not Bearish -- or a TA Bullish Signal "
             "(a breakout from a converging base) with Trend not down and Sentiment not Bearish. Caution: 2+ "
             "points, where TA Exit counts 2 and TA Be Cautious, a Downtrend and a Bearish Sentiment 1 each. "
             "Otherwise Hold. The nightly AI explains it and writes a trade plan, and reads the last "

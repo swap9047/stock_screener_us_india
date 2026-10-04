@@ -4,8 +4,9 @@ The model's verdict matched a rule over the existing columns for ~81% of
 tickers, and most of the rest re-weighed those same columns (or cited a past
 EPS miss the forward-looking Sentiment rule rules out). So:
 
-  ACCUMULATE  Trend Up/Strong Up AND Tech Uptrend Yes AND TA Rules Maintain/Add
-              or Bullish Signal AND Sentiment not Negative
+  ACCUMULATE  (Trend Up/Strong Up OR Tech Uptrend Yes -- owner, same day: one of
+              the two is enough) AND TA Rules Maintain/Add or Bullish Signal AND
+              Sentiment not Negative
           or  TA Rules Bullish Signal (a breakout from a converging base, where
               Trend is usually Mixed) AND Trend not down AND Sentiment not Negative
   CAUTION     2+ points: TA Exit 2 (the flowchart's own exit), TA Be Cautious 1,
@@ -60,7 +61,12 @@ if decide:
         (row(trend="Strong Uptrend", ta="Bullish Signal"), "Neutral", "ACCUMULATE", "Strong Uptrend + breakout"),
         (row(), "Unknown", "ACCUMULATE", "an Unknown Sentiment does not block"),
         (row(), "Negative", "HOLD", "a Bearish Sentiment blocks Accumulate (1 point: Hold)"),
-        (row(tu=0), "Positive", "HOLD", "Tech Uptrend No blocks Accumulate"),
+        (row(tu=0), "Positive", "ACCUMULATE", "Trend up is enough without Tech Uptrend"),
+        (row(trend="Mixed", tu=1), "Positive", "ACCUMULATE", "...and Tech Uptrend is enough without Trend up"),
+        (row(trend="Mixed", tu=0), "Positive", "HOLD", "neither Trend up nor Tech Uptrend: Hold"),
+        (row(trend="Downtrend", tu=0, ta="Maintain/Add"), "Neutral", "HOLD", "a Downtrend without Tech Uptrend: Hold"),
+        (row(trend="Mixed", tu=1, ta="Momentum Fading"), "Positive", "HOLD", "TA still has to agree"),
+        (row(trend="Mixed", tu=1), "Negative", "HOLD", "...and so does Sentiment"),
         (row(ta="Momentum Fading"), "Positive", "HOLD", "TA Momentum Fading blocks Accumulate"),
         (row(ta="Wait/Watch"), "Positive", "HOLD", "TA Wait/Watch blocks Accumulate"),
         (row(trend="Mixed", tu=0, ta="Bullish Signal"), "Neutral", "ACCUMULATE",
@@ -105,12 +111,13 @@ if active:
     check(not active({**RISK, "date": "2026-10-09"}, TODAY), "a future date is not news")
 if lower:
     view = {"verdict": "HOLD", "news_risk": RISK, "as_of": "2026-10-04 05:00", "headline": "x", "model_used": "m"}
-    for r, sent, want in ((row(), "Positive", "HOLD"), (row(trend="Mixed", tu=0), "Neutral", "CAUTION"),
+    for r, sent, want in ((row(), "Positive", "HOLD"), (row(trend="Mixed", tu=0, ta="Wait/Watch"), "Neutral", "CAUTION"),
                           (row(trend="Mixed", tu=0, ta="Exit"), "Neutral", "CAUTION")):
         got = lower(r, view, sentiment=sent, today=TODAY)
         check(got["verdict"] == want and got["news_lowered"] == (got["base"] != want),
               f"news lowers {got['base']} one step -> {want} (got {got['verdict']})")
-    got = lower(row(trend="Mixed", tu=0), {"news_risk": {**RISK, "material_negative": False}}, sentiment="Neutral", today=TODAY)
+    got = lower(row(trend="Mixed", tu=0, ta="Wait/Watch"), {"news_risk": {**RISK, "material_negative": False}},
+                sentiment="Neutral", today=TODAY)
     check(got["verdict"] == "HOLD" and not got["news_lowered"], "no active risk: the columns' verdict stands")
     got = lower(row(), {}, sentiment="Positive", today=TODAY)
     check(got["verdict"] == "ACCUMULATE", "no write-up at all: the columns still decide (no Pending for a missing AI run)")

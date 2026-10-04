@@ -96,8 +96,10 @@ check(tn.SIGNAL_OUTCOMES == ("Confirmed", "Chart only", "Mixed", "News divergenc
                              "Chart up, news negative", "Avoid"), "L1: Signal labels, best-first, include Mixed")
 check(set(tn.SIGNAL_EMOJI) == set(tn.SIGNAL_OUTCOMES), "L1: every Signal label has a dot")
 # Expert Take's verdict is decided in code since 2026-10-04 (decide_expert_verdict).
-check(ev.decide_expert_verdict({"trend": "Mixed", "tech_uptrend": 1, "ta_rules": "Maintain/Add"}, "Positive")[0] == "HOLD",
-      "L1: Expert Take reads a Mixed trend as HOLD")
+# Mixed is not an uptrend; with no Tech Uptrend either (one of the two is enough
+# for Accumulate since 2026-10-04) it holds.
+check(ev.decide_expert_verdict({"trend": "Mixed", "tech_uptrend": 0, "ta_rules": "Maintain/Add"}, "Positive")[0] == "HOLD",
+      "L1: Expert Take reads a Mixed trend without Tech Uptrend as HOLD")
 check("Mixed" in ev.VERDICT_RULES, "L1: the verdict rules tell the model what Mixed means")
 check('["Any", "Strong Uptrend", "Uptrend", "Mixed", "Downtrend", "Strong Downtrend"]' in APP,
       "L1: the table's Trend filter offers Mixed")

@@ -468,7 +468,7 @@ same columns.
 
 | Verdict | Rule |
 |---|---|
-| **Accumulate** | Trend Up/Strong Up **and** Tech Uptrend Yes **and** TA Rules Maintain/Add or Bullish Signal **and** Sentiment not Bearish |
+| **Accumulate** | (Trend Up/Strong Up **or** Tech Uptrend Yes: one is enough) **and** TA Rules Maintain/Add or Bullish Signal **and** Sentiment not Bearish |
 | **Accumulate** (breakout) | TA Rules **Bullish Signal** **and** Trend not down **and** Sentiment not Bearish. The breakout fires off converging EMAs, where Trend is usually Mixed. |
 | **Caution** | **2+ points**: TA Exit **2** (the flowchart's own exit), TA Be Cautious 1, Downtrend/Strong Downtrend 1, Sentiment Bearish 1 |
 | **Hold** | everything else. **Pending** only without a Trend (too little history). |

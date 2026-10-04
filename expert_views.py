@@ -268,8 +268,9 @@ def expert_view_has_news(view):
 # So the columns decide, live (it cannot disagree with the table), and the AI
 # explains it and reads the news for what no column sees:
 #
-#   ACCUMULATE  Trend Up/Strong Up + Tech Uptrend Yes + TA Rules Maintain/Add or
-#               Bullish Signal + Sentiment not Negative;
+#   ACCUMULATE  (Trend Up/Strong Up OR Tech Uptrend Yes) + TA Rules Maintain/Add
+#               or Bullish Signal + Sentiment not Negative. One of the two trend
+#               reads is enough (owner, same day): TA and Sentiment must agree.
 #           or  TA Rules Bullish Signal + Trend not down + Sentiment not Negative.
 #               The breakout fires off CONVERGING EMAs, where Trend is usually
 #               Mixed, so requiring an Uptrend would never act on TA's entry.
@@ -296,7 +297,7 @@ def decide_expert_verdict(row, sentiment):
     sent_txt = f"Sentiment: {sentiment or 'Unknown'}"
     ta_txt = f"TA Rules: {ta or 'n/a'}"
     up_reasons = [f"Trend: {trend}", f"Tech Uptrend: {'Yes' if tu else 'No'}", ta_txt, sent_txt]
-    if trend in _UP_TRENDS and tu and ta in _TA_BULLISH and not negative:
+    if (trend in _UP_TRENDS or tu) and ta in _TA_BULLISH and not negative:
         return "ACCUMULATE", up_reasons
     if ta == "Bullish Signal" and trend not in _DOWN_TRENDS and not negative:
         return "ACCUMULATE", [ta_txt + " (breakout from a converging base)", f"Trend: {trend}", sent_txt]
@@ -313,10 +314,8 @@ def decide_expert_verdict(row, sentiment):
 
     # A Hold: say what kept it from Accumulate (and any single Caution point).
     blockers = []
-    if trend not in _UP_TRENDS:
-        blockers.append(f"Trend: {trend}")
-    if not tu:
-        blockers.append("Tech Uptrend: No")
+    if trend not in _UP_TRENDS and not tu:
+        blockers.append(f"Trend: {trend} and Tech Uptrend: No")
     if ta not in _TA_BULLISH:
         blockers.append(ta_txt)
     if negative:
@@ -427,7 +426,7 @@ def _view_age_days(view):
 # drift the moment the rule is tuned. Kept in step with decide_expert_verdict
 # and news_risk_active (checks/test_expert_take_100426.py).
 VERDICT_RULES = """HOW THE VERDICT IS DECIDED (in code, from the dashboard's columns -- not by the model):
-- ACCUMULATE: Trend is Uptrend or Strong Uptrend, AND Tech Uptrend is Yes, AND TA Rules is "Maintain/Add" or "Bullish Signal", AND Sentiment is not Negative. Or: TA Rules is "Bullish Signal" (a breakout from converging EMAs, where Trend is usually Mixed), Trend is not a Downtrend, and Sentiment is not Negative.
+- ACCUMULATE: Trend is Uptrend or Strong Uptrend, OR Tech Uptrend is Yes (one is enough), AND TA Rules is "Maintain/Add" or "Bullish Signal", AND Sentiment is not Negative. Or: TA Rules is "Bullish Signal" (a breakout from converging EMAs, where Trend is usually Mixed), Trend is not a Downtrend, and Sentiment is not Negative.
 - CAUTION: at least 2 points, where TA Rules "Exit" counts 2 (the flowchart's own exit call), TA Rules "Be Cautious" 1, Trend Downtrend/Strong Downtrend 1, and Sentiment Negative 1.
 - HOLD: everything else. Overbought RSI is not a Caution point: in a trend it is strength."""
 

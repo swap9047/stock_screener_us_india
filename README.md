@@ -52,8 +52,8 @@ evidence rather than model recall.
 ### Expert Views (`expert_views.py`)
 `ACCUMULATE`, `HOLD` or `CAUTION`, **decided in code from the other columns** and
 recomputed live, so it never disagrees with them:
-- **Accumulate:** Trend up, Tech Uptrend Yes, TA Rules Maintain/Add or Bullish Signal, and
-  Sentiment not Bearish. Or a TA Bullish Signal, a breakout from a converging base, with
+- **Accumulate:** Trend up **or** Tech Uptrend Yes, plus TA Rules Maintain/Add or Bullish
+  Signal, and Sentiment not Bearish. Or a TA Bullish Signal, a breakout from a converging base, with
   Trend not down and Sentiment not Bearish.
 - **Caution:** at least 2 points. TA Exit counts 2; TA Be Cautious, a Downtrend and a
   Bearish Sentiment count 1 each.

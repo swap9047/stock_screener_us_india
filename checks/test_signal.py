@@ -87,7 +87,8 @@ import expert_views as ev
 # Since 2026-10-04 the columns decide Expert Take (checks/test_expert_take_100426.py),
 # so the only thing that can differ from them is news: ⚑ marks a news downgrade.
 for row, want in (({"trend": "Uptrend", "tech_uptrend": 1, "ta_rules": "Maintain/Add"}, "ACCUMULATE"),
-                  ({"trend": "Strong Uptrend", "tech_uptrend": 0, "ta_rules": "Maintain/Add"}, "HOLD"),
+                  ({"trend": "Strong Uptrend", "tech_uptrend": 0, "ta_rules": "Maintain/Add"}, "ACCUMULATE"),
+                  ({"trend": "Mixed", "tech_uptrend": 0, "ta_rules": "Maintain/Add"}, "HOLD"),
                   ({"trend": "Downtrend", "tech_uptrend": 1, "ta_rules": "Exit"}, "CAUTION"),
                   ({"trend": None}, "PENDING")):
     check(ev.decide_expert_verdict(row, "Neutral")[0] == want, f"columns' verdict: {row} -> {want}")
