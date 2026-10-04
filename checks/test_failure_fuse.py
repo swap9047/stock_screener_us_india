@@ -47,7 +47,8 @@ check(True, "an untripped fuse exits normally")
 # --- wired into both jobs -------------------------------------------------------
 TICKERS = [f"T{i:02d}" for i in range(25)]
 WL = {"us_invested": TICKERS}
-SNAP = {"per_market": {"us_invested": [{"ticker": t, "company_name": t} for t in TICKERS]}}
+# "trend": the Expert Take job skips a row without one since 2026-10-04.
+SNAP = {"per_market": {"us_invested": [{"ticker": t, "company_name": t, "trend": "Uptrend"} for t in TICKERS]}}
 
 
 def run(mod, gen_name, valid_every):

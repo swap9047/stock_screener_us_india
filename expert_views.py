@@ -182,7 +182,7 @@ def normalize_view(data):
         # The listed name, exact or shortened ("fraud or accounting"): a
         # model that trims a category must not silently lose the risk.
         category = next((c for c in NEWS_RISK_CATEGORIES if c == cat), None) or next(
-            (c for c in NEWS_RISK_CATEGORIES if cat and (c.startswith(cat) or cat.startswith(c))), None)
+            (c for c in NEWS_RISK_CATEGORIES if len(cat) >= 6 and (c.startswith(cat) or cat.startswith(c))), None)
         data["news_risk"] = {
             "material_negative": r.get("material_negative") is True,
             "category": category,
@@ -338,7 +338,7 @@ NEWS_RISK_CATEGORIES = (
     "dilution or a large capital raise",
     "promoter or insider selling or pledging",
     "plant or operations disruption",
-    "debt default or rating downgrade",
+    "debt default or credit-rating downgrade",
 )
 _LOWER = {"ACCUMULATE": "HOLD", "HOLD": "CAUTION", "CAUTION": "CAUTION"}
 
@@ -374,9 +374,13 @@ def expert_take_for_row(row, view, sentiment=None, today=None):
     sentiment = row.get("sentiment") if sentiment is None else sentiment
     base, reasons = decide_expert_verdict(row, sentiment)
     risk = (view or {}).get("news_risk")
-    lowered = base in _LOWER and news_risk_active(risk, today) and _LOWER[base] != base
+    active = base in _LOWER and news_risk_active(risk, today)
+    lowered = active and _LOWER[base] != base
+    # news_noted: an active risk on a verdict that is already Caution -- it
+    # cannot lower it, but the reader should still see it.
     return {"verdict": _LOWER[base] if lowered else base, "base": base, "reasons": reasons,
-            "news_lowered": lowered, "news_risk": risk if lowered else None}
+            "news_lowered": lowered, "news_noted": active and not lowered,
+            "news_risk": risk if active else None}
 
 
 def is_pending_view(view):
@@ -732,6 +736,10 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
     ticker = row_data.get("ticker", "UNKNOWN")
     market = row_data.get("market", "us_invested")
     company_name = row_data.get("company_name", ticker)
+    if not row_data.get("trend"):
+        # No Trend yet (too little price history): the verdict is Pending and
+        # needs no write-up, so spend no model calls on it.
+        return stale_view_fallback("not enough price history for a Trend yet")
 
     if news_text is None:
         try:
@@ -818,7 +826,9 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
         # The verdict is the columns', lowered one step by an active news risk
         # (expert_take_for_row) -- stored with the note so the write-up says
         # which verdict it was written for. The app recomputes it live.
-        if "news_risk" not in data:          # a reply without the field: no risk
+        if "news_risk" not in data or search_found_nothing(news_text):
+            # No field, or no news found: a "risk" with nothing behind it is
+            # the model's imagination, so it never lowers a verdict.
             data["news_risk"] = normalize_view({"news_risk": None})["news_risk"]
         take = expert_take_for_row(row_data, data, sentiment=_row_sentiment(row_data, fundamental_view))
         if take["base"] == "PENDING":
@@ -832,6 +842,21 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
         data["model_used"] = model.split("/")[-1] if used == model else f"{used.split('/')[-1]} (Fallback)"
         return data
     return _pending_fallback("reasoning ladder exhausted")
+
+
+def carry_news_risk(view, old_view, today=None):
+    """Keep last night's still-active news risk when tonight's write-up has
+    none. The search varies a lot night to night (it found anything at all for
+    35 of 124 tickers on 2026-10-04), so without this a downgrade flickered off
+    the first night the search missed the event, though it was still inside
+    the 14-day window. A new active risk replaces the old one; an expired one
+    is dropped. Returns `view`, updated in place."""
+    if news_risk_active((view or {}).get("news_risk"), today):
+        return view
+    old = (old_view or {}).get("news_risk")
+    if news_risk_active(old, today):
+        view["news_risk"] = {**old, "carried_from": old.get("carried_from") or old_view.get("as_of")}
+    return view
 
 
 def resolve_persisted_view(view, old_view):
@@ -860,7 +885,7 @@ def resolve_persisted_view(view, old_view):
     this, so the two features behaved differently on the same click.
     """
     if _is_valid_view(view):
-        return view
+        return carry_news_risk(view, old_view)
     if _is_valid_view(old_view):
         age = _view_age_days(old_view)
         if age is not None and age > EXPERT_STALE_DAYS:

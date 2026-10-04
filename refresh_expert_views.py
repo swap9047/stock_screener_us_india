@@ -20,7 +20,7 @@ from json_store import DataFileError
 from google import genai
 from stock_data import load_data_snapshot, load_watchlists
 from expert_views import (
-    load_expert_views, save_expert_views, generate_expert_view, _is_valid_view,
+    load_expert_views, save_expert_views, generate_expert_view, _is_valid_view, carry_news_risk,
     resolve_persisted_view,
     EXPERT_STALE_DAYS, _view_age_days, stale_view_fallback,
 )
@@ -47,7 +47,7 @@ def _apply_result(expert_views, tk, view, old_view, elapsed):
     # write unconditionally and could overwrite a good verdict with a failure
     # stub. This function keeps ownership of the counters and log text.
     if _is_valid_view(view):
-        expert_views[tk] = view
+        expert_views[tk] = carry_news_risk(view, old_view)
         fallback_inc = 1 if "⚪" in view.get("news_source", "") else 0
         return 0, fallback_inc, f"OK ({elapsed:.1f}s) verdict={view.get('verdict')}"
 
@@ -183,6 +183,12 @@ def main():
                     total_failed += 1
                 continue
 
+            if not row.get("trend"):
+                # Too little history for a Trend: Expert Take is Pending and
+                # needs no write-up. Not a failure -- it used to cost two model
+                # calls a night and count toward the FailureFuse.
+                print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - SKIP (no Trend yet)")
+                continue
             company_name = row.get("company_name", tk)
             analysed += 1
             print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} ({company_name}) - starting...")

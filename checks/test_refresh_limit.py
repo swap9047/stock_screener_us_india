@@ -18,7 +18,10 @@ def check(ok, label):
     global fails; fails += not ok; print("PASS" if ok else "FAIL", label)
 
 WL = {"us_invested": ["A1", "A2", "A3"], "us_watchlist": ["A2", "B1", "B2"], "india_invested": ["C1.NS"]}
-SNAP = {"per_market": {m: [{"ticker": t, "company_name": t} for t in tks if t != "A1"] for m, tks in WL.items()}}
+# "trend": the Expert Take job skips a row without one since 2026-10-04 (no Trend
+# -> Pending, no write-up needed).
+SNAP = {"per_market": {m: [{"ticker": t, "company_name": t, "trend": "Uptrend"} for t in tks if t != "A1"]
+                       for m, tks in WL.items()}}
 time.sleep = lambda s: None
 
 def run_script(mod, env, gen_name, apply_ret):

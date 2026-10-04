@@ -238,6 +238,66 @@ finally:
 check(text == "No recent news found.", f"a 'nothing found' sentence is stored as the no-news marker ({text!r})")
 check("do not refuse" in sp.lower(), "the search prompt says the dates are real and not to refuse")
 
+# --- self-review fixes, 2026-10-04 ----------------------------------------------------
+# R1 a ticker with no Trend yet cost two model calls a night and was then recorded
+#    as a FAILURE (feeding FailureFuse); it needs no write-up at all.
+llm_calls = []
+llm_util.run_model_ladder = lambda *a, **k: (llm_calls.append(1), (None, None))[1]
+try:
+    v = ev.generate_expert_view(None, {"ticker": "ACME", "market": "us_invested", "trend": None}, fundamental_view={})
+finally:
+    llm_util.run_model_ladder = _real
+check(not llm_calls, f"R1: no Trend -> no model call ({len(llm_calls)} made)")
+src_r = (REPO / "refresh_expert_views.py").read_text()
+check('if not row.get("trend"):' in src_r, "R1: the nightly job skips a ticker with no Trend, not as a failure")
+
+# R2 a news risk must survive a night whose search misses it, until it expires.
+if hasattr(ev, "resolve_persisted_view"):
+    recent = (datetime.now(timezone.utc).date() - timedelta(days=3)).isoformat()
+    old = {"verdict": "HOLD", "headline": "old", "model_used": "m", "as_of": "2026-10-03 05:00",
+           "news_used": "x", "news_risk": {**RISK, "date": recent}}
+    new = {"verdict": "ACCUMULATE", "headline": "new", "model_used": "m", "as_of": "2026-10-04 05:00",
+           "news_used": "No recent news found.",
+           "news_risk": {"material_negative": False, "category": None, "date": None, "quote": None}}
+    stored = ev.resolve_persisted_view(dict(new), old)
+    check(stored and stored["news_risk"]["material_negative"] and stored["news_risk"].get("carried_from") == "2026-10-03 05:00",
+          f"R2: a still-active risk is carried into the new write-up ({(stored or {}).get('news_risk')})")
+    expired = {**old, "news_risk": {**RISK, "date": "2026-01-01"}}
+    stored = ev.resolve_persisted_view(dict(new), expired)
+    check(not stored["news_risk"]["material_negative"], "R2: ...but not once it has expired")
+    other = {**new, "news_risk": {**RISK, "date": recent, "category": "fraud or accounting irregularities",
+                                  "quote": "auditor resigns"}}
+    stored = ev.resolve_persisted_view(dict(other), old)
+    check(stored["news_risk"]["quote"] == "auditor resigns", "R2: a new risk replaces the carried one")
+
+# R3 no news found -> no news risk, whatever the model says.
+reply2 = dict(reply)
+llm_util.run_model_ladder = lambda client, prompt, tiers, config_for, label="", subject="", timeout=None, on_success=None: (
+    ev.normalize_view(dict(reply2)), tiers[0][0])
+try:
+    v = ev.generate_expert_view(None, ROW, news_text="No recent news found.", news_source="test", fundamental_view={})
+finally:
+    llm_util.run_model_ladder = _real
+check(v.get("verdict") == "ACCUMULATE" and not v["news_risk"]["material_negative"],
+      f"R3: a risk reported when the search found nothing is dropped ({v.get('verdict')}, {v.get('news_risk')})")
+
+# R4 "rating downgrade" is a CREDIT rating; an analyst's is Sentiment's.
+check(any("credit-rating downgrade" in c for c in ev.NEWS_RISK_CATEGORIES)
+      and not any(c.endswith(" rating downgrade") and "credit" not in c for c in ev.NEWS_RISK_CATEGORIES),
+      "R4: the category says credit-rating downgrade")
+check(ev.normalize_view({"news_risk": {"material_negative": True, "category": "d", "date": "2026-10-01",
+                                       "quote": "q"}})["news_risk"]["category"] is None,
+      "R4: a one-letter category does not match by prefix")
+
+# R5 an active risk on a stock already at Caution still shows in the hover.
+got = ev.expert_take_for_row(row(trend="Mixed", tu=0, ta="Exit"), {"news_risk": RISK, "news_used": "x"},
+                             sentiment="Neutral", today=TODAY)
+check(got["verdict"] == "CAUTION" and not got["news_lowered"] and got.get("news_noted"),
+      "R5: a risk that cannot lower a Caution is still reported (news_noted)")
+check("News risk noted" in (REPO / "app.py").read_text(), "R5: ...and the hover shows it")
+check("⚠️" in (REPO / "app.py").read_text().split("def _expert_take_cell")[1][:2500],
+      "R6: a failed write-up is visible on the badge, not only in the hover")
+
 # --- app wiring ----------------------------------------------------------------------------
 APP = (REPO / "app.py").read_text()
 check("expert_take_for_row(" in APP and "chart_rule_verdict" not in APP and "validate_verdict" not in APP,

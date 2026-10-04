@@ -4587,7 +4587,15 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             # picks the verdict, so the only thing that can differ is news.
             if take["news_lowered"]:
                 badge = f"{badge} ⚑"
+            if is_pending_view(v):
+                # The verdict stands without a write-up, but a failed one
+                # should be visible at a glance, for 'Retry Failed'.
+                badge = f"{badge} ⚠️"
             parts = [f"Decided by the columns: {'; '.join(take['reasons'])}"]
+            if take.get("news_noted"):
+                risk = take["news_risk"]
+                parts.append(f"News risk noted (the verdict is already Caution) -- {risk['category']} "
+                             f"({risk['date']}): {risk['quote']}")
             if take["news_lowered"]:
                 risk = take["news_risk"]
                 parts.insert(0, f"⚑ Lowered from {take['base'].title()} by news -- {risk['category']} "
