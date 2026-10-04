@@ -35,7 +35,7 @@ step names, so each key needs a line in the AI steps' `env:` blocks. Every run l
 `[key rotation] N key(s): ...`; if that number is lower than expected, that line is
 missing.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 767
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 898
 offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
@@ -49,13 +49,13 @@ verified by rendering the app headlessly; recipe at the bottom.
 
 | File | Lines | What it owns |
 |---|---:|---|
-| `app.py` | 6668 | The entire UI: tabs, tables, sidebar, filters, sort, editors, AI control bars, News + Alert Rules tabs |
-| `stock_data.py` | 3083 | yfinance fetching, all indicator maths, watchlist/markets registry IO, `get_filterable_metrics` |
+| `app.py` | 6728 | The entire UI: tabs, tables, sidebar, filters, sort, editors, AI control bars, News + Alert Rules tabs |
+| `stock_data.py` | 3091 | yfinance fetching, all indicator maths, watchlist/markets registry IO, `get_filterable_metrics` |
 | `alerts.py` | 1127 | Alert rule evaluation + Discord message building; every Discord post goes through `send_discord_batch`, which appends the disclaimer |
 | `news_summary.py` | 861 | News gathering + LLM summarisation |
-| `fundamentals_eval.py` | 1122 | Sentiment ("fundamental view") generation + validation. The model only extracts facts; `score_sentiment` decides the label, weighted toward forward signals (guidance ±9, quoted outlook ±3, named-firm action ±3; the quarter's profit >15% YoY or a beat/miss ±1 only breaks ties). The search window is anchored to each company's last results (`search_window_for`) |
+| `fundamentals_eval.py` | 1191 | Sentiment ("fundamental view") generation + validation. The model only extracts facts; `score_sentiment` decides the label, weighted toward forward signals (guidance ±15, quoted outlook ±6, guidance vs consensus ±3, named-firm action ±3; the quarter's profit >15% YoY or a beat/miss ±1 only breaks ties; with no forward signal, profit >+25% / <-20% YoY decides alone). The search window is anchored to each company's last results (`search_window_for`) |
 | `github_sync.py` | 715 | Atomic config push, the end-of-run push of edited config (`unpushed_config_files`) + `workflow_dispatch` trigger |
-| `expert_views.py` | 773 | Expert Take verdict generation; its prompt also gets Sentiment's checked facts for the quarter (section 4), and `chart_rule_verdict` drives the ⚑ marker |
+| `expert_views.py` | 786 | Expert Take verdict generation; its prompt also gets Sentiment's checked facts for the quarter (section 4), and `chart_rule_verdict` drives the ⚑ marker |
 | `filters.py` | 487 | The boolean condition engine — shared by UI filters **and** background alerts |
 | `llm_util.py` | 679 | Shared Gemini-call plumbing (timeout wrapper, retry/model-ladder logic, `FailureFuse`) for the three AI pipelines |
 | `weekly_wrapup.py` | 365 | Weekly Discord digest |

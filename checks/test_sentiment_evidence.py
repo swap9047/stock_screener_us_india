@@ -1,16 +1,20 @@
 """Sentiment: forward-looking signals carry the weight; the reported quarter adds a little.
 
 Owner's rule (2026-10-03):
-  guidance raised / lowered           +-9  outweighs everything else together
-  management's quoted outlook         +-3  improving / cautious
+  guidance raised / lowered           +-15 outweighs everything else together (14)
+  management's quoted outlook         +-6  improving / cautious
+  guidance above / below consensus    +-3  only as the news states it, quoted
   named-firm analyst action           +-3  upgrade / downgrade
   profit (EPS, else PAT) YoY > 15%    +-1  (strictly; sales recorded, not used)
   beat / miss of a STATED consensus   +-1
 
 Positive needs a positive total AND at least one forward signal pointing up;
-Negative the mirror. So the quarter never decides alone, cannot outvote
-management (strong growth + beat + cautious outlook = Negative), but breaks a
-tie between forward signals.
+Negative the mirror. So the quarter cannot outvote management (strong growth +
+beat + cautious outlook = Negative), but breaks a tie between forward signals.
+
+With NO directional forward signal (none at all, or only a steady outlook /
+maintained guidance), the quarter decides on its own, but only at the owner's
+higher bars: profit up MORE than 25% -> Positive, down MORE than 20% -> Negative.
 
 Offline: invented tickers, stubbed model calls, no data files, no network.
 """
@@ -38,11 +42,13 @@ def check(ok, label):
 
 NOW = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
 QUOTE = "Management on 2026-08-10: 'we expect demand to stay strong next quarter'"
+CQUOTE = "Newswire on 2026-08-01: Q3 revenue guided to $54B, above the $52B consensus"
 
 
 def facts(**kw):
     base = {"eps_value": None, "guidance_change": None, "analyst_action": None, "analyst_firm": None,
             "outlook_tone": None, "outlook_quote": None, "profit_yoy_pct": None, "results_vs_estimate": None,
+            "guidance_vs_consensus": None, "guidance_consensus_quote": None,
             "sentiment": "Neutral"}
     base.update(kw)
     return base
@@ -61,7 +67,35 @@ D = dict(profit_yoy_pct=-30.0, revenue_yoy_pct=-12.0, results_vs_estimate="miss"
 UP = dict(outlook_tone="improving", outlook_quote=QUOTE)
 DOWN = dict(outlook_tone="cautious", outlook_quote=QUOTE)
 DOWNGRADE = dict(analyst_action="downgrade", analyst_firm="Kotak")
+UPGRADE = dict(analyst_action="upgrade", analyst_firm="Kotak")
+ABOVE = dict(guidance_vs_consensus="above", guidance_consensus_quote=CQUOTE)
+BELOW = dict(guidance_vs_consensus="below", guidance_consensus_quote=CQUOTE)
 CASES = [
+    # guidance against the consensus (owner, 2026-10-03: +-3)
+    ("guidance above consensus alone", facts(**ABOVE), "Positive"),
+    ("guidance below consensus alone", facts(**BELOW), "Negative"),
+    ("guidance in line with consensus is not a direction", facts(guidance_vs_consensus="inline",
+                                                                 guidance_consensus_quote=CQUOTE), "Neutral"),
+    ("above consensus without the news's own comparison does not count", facts(guidance_vs_consensus="above"), "Neutral"),
+    ("RAISED guidance still below consensus -> Positive (owner's call)", facts(guidance_change="raised", **BELOW), "Positive"),
+    ("LOWERED guidance still above consensus -> Negative", facts(guidance_change="lowered", **ABOVE), "Negative"),
+    ("below consensus outweighs profit +40% (forward first)", facts(**BELOW, profit_yoy_pct=40.0), "Negative"),
+    ("above consensus outweighs profit -50%", facts(**ABOVE, profit_yoy_pct=-50.0), "Positive"),
+    ("a cautious outlook (6) outweighs guidance above consensus (3)", facts(**ABOVE, **DOWN), "Negative"),
+    ("above consensus + an upgrade", facts(**ABOVE, **UPGRADE), "Positive"),
+    ("in-line consensus is no forward signal: profit +30% decides", facts(guidance_vs_consensus="inline",
+                                                                          guidance_consensus_quote=CQUOTE,
+                                                                          profit_yoy_pct=30.0), "Positive"),
+    # the outlook (6) outweighs one analyst action (3)
+    ("an improving outlook outweighs a downgrade", facts(**UP, **DOWNGRADE), "Positive"),
+    ("a cautious outlook outweighs an upgrade", facts(**DOWN, **UPGRADE), "Negative"),
+    ("...but not a downgrade AND guidance below consensus together (a tie)", facts(**UP, **DOWNGRADE, **BELOW), "Neutral"),
+    ("...which a strong quarter tips up", facts(**UP, **DOWNGRADE, **BELOW, **G), "Positive"),
+    ("...and a weak one tips down", facts(**UP, **DOWNGRADE, **BELOW, **D), "Negative"),
+    ("guidance lowered outranks everything else together",
+     facts(guidance_change="lowered", **UP, **UPGRADE, **ABOVE, **G), "Negative"),
+    ("guidance raised outranks everything else together",
+     facts(guidance_change="raised", **DOWN, **DOWNGRADE, **BELOW, **D), "Positive"),
     ("named-firm upgrade alone", facts(analyst_action="upgrade", analyst_firm="Kotak"), "Positive"),
     ("named-firm downgrade alone", facts(**DOWNGRADE), "Negative"),
     ("guidance raised alone", facts(guidance_change="raised"), "Positive"),
@@ -69,13 +103,29 @@ CASES = [
     ("improving outlook alone", facts(**UP), "Positive"),
     ("cautious outlook alone", facts(**DOWN), "Negative"),
     ("a strong quarter alone does not decide", facts(**G), "Neutral"),
-    ("a weak quarter alone does not decide", facts(**D), "Neutral"),
+    ("a weak quarter (profit -30%) with no forward signal -> Negative", facts(**D), "Negative"),
+    ("profit +30% with no forward signal -> Positive", facts(profit_yoy_pct=30.0), "Positive"),
+    ("profit +20% with no forward signal -> Neutral (under 25%)", facts(profit_yoy_pct=20.0), "Neutral"),
+    ("profit exactly +25% -> Neutral (more than 25%)", facts(profit_yoy_pct=25.0), "Neutral"),
+    ("profit +25.1% -> Positive", facts(profit_yoy_pct=25.1), "Positive"),
+    ("profit exactly -20% -> Neutral (more than 20% down)", facts(profit_yoy_pct=-20.0), "Neutral"),
+    ("profit -20.1% -> Negative", facts(profit_yoy_pct=-20.1), "Negative"),
+    ("profit -18% with no forward signal -> Neutral", facts(profit_yoy_pct=-18.0), "Neutral"),
+    ("a steady outlook is neutral: profit +30% still decides", facts(profit_yoy_pct=30.0, outlook_tone="steady",
+                                                                   outlook_quote=QUOTE), "Positive"),
+    ("maintained guidance is neutral: profit -30% still decides", facts(profit_yoy_pct=-30.0,
+                                                                       guidance_change="maintained"), "Negative"),
+    ("profit +40% but management cautious -> outlook takes precedence", facts(profit_yoy_pct=40.0, **DOWN), "Negative"),
+    ("profit -50% but management improving -> outlook takes precedence", facts(profit_yoy_pct=-50.0, **UP), "Positive"),
+    ("profit +30% but a named-firm downgrade -> the downgrade takes precedence",
+     facts(profit_yoy_pct=30.0, **DOWNGRADE), "Negative"),
+    ("a beat alone still does not decide", facts(results_vs_estimate="beat"), "Neutral"),
     ("strong growth + beat, management cautious -> Negative (outlook outweighs both)", facts(**G, **DOWN), "Negative"),
     ("weak quarter + miss, management improving -> Positive", facts(**D, **UP), "Positive"),
     ("strong quarter + upgrade", facts(**G, analyst_action="upgrade", analyst_firm="Kotak"), "Positive"),
-    ("improving outlook + downgrade cancel", facts(**UP, **DOWNGRADE), "Neutral"),
-    ("...a strong quarter breaks that tie upward", facts(**UP, **DOWNGRADE, **G), "Positive"),
-    ("...a weak quarter breaks it downward", facts(**UP, **DOWNGRADE, **D), "Negative"),
+    ("guidance above consensus + a downgrade cancel", facts(**ABOVE, **DOWNGRADE), "Neutral"),
+    ("...a strong quarter breaks that tie upward", facts(**ABOVE, **DOWNGRADE, **G), "Positive"),
+    ("...a weak quarter breaks it downward", facts(**ABOVE, **DOWNGRADE, **D), "Negative"),
     ("guidance raised outranks a downgrade", facts(guidance_change="raised", **DOWNGRADE), "Positive"),
     ("guidance lowered outranks improving outlook + upgrade + a strong quarter",
      facts(guidance_change="lowered", analyst_action="upgrade", analyst_firm="Kotak", **UP, **G), "Negative"),
@@ -89,15 +139,26 @@ CASES = [
      facts(analyst_action="upgrade", analyst_firm="Zacks Research"), "Neutral"),
     ("guidance maintained is a fact, not a direction", facts(guidance_change="maintained"), "Neutral"),
     ("a steady outlook is a fact, not a direction", facts(outlook_tone="steady", outlook_quote=QUOTE), "Neutral"),
-    ("profit exactly +15% does not count (more than 15%)", facts(**UP, **DOWNGRADE, profit_yoy_pct=15.0), "Neutral"),
-    ("profit +15.1% counts", facts(**UP, **DOWNGRADE, profit_yoy_pct=15.1), "Positive"),
-    ("sales growth is not used", facts(**UP, **DOWNGRADE, revenue_yoy_pct=40.0), "Neutral"),
+    ("profit exactly +15% does not count (more than 15%)", facts(**ABOVE, **DOWNGRADE, profit_yoy_pct=15.0), "Neutral"),
+    ("profit +15.1% counts", facts(**ABOVE, **DOWNGRADE, profit_yoy_pct=15.1), "Positive"),
+    ("sales growth is not used", facts(**ABOVE, **DOWNGRADE, revenue_yoy_pct=40.0), "Neutral"),
 ]
 for name, view, want in CASES:
     got = verdict(view)
     check(got == want, f"{name} -> {want} (got {got})")
-check(verdict(facts(**UP, **DOWNGRADE, profit_yoy_pct=22.0), threshold=25.0) == "Neutral",
-      "the profit threshold is a parameter (+22% does not count at 25%)")
+check(verdict(facts(**ABOVE, **DOWNGRADE, profit_yoy_pct=22.0), threshold=25.0) == "Neutral",
+      "the tie-break threshold is a parameter (+22% does not count at 25%)")
+try:
+    check(fe.score_sentiment(facts(profit_yoy_pct=30.0), 15.0, 35.0, 20.0)[0] == "Neutral"
+          and fe.score_sentiment(facts(profit_yoy_pct=-25.0), 15.0, 25.0, 30.0)[0] == "Neutral",
+          "the decide-alone bars are parameters too")
+except TypeError as e:
+    check(False, f"score_sentiment takes the decide-alone bars ({e})")
+try:
+    _, d = fe.score_sentiment(facts(profit_yoy_pct=30.0, profit_metric="PAT"))
+    check(d == ["PAT +30% YoY (no forward signal)"], f"the driver says the quarter decided because nothing forward did: {d}")
+except Exception as e:
+    check(False, f"drivers for a quarter-decided view ({e})")
 check(verdict(facts(sentiment="Unknown")) == "Unknown", "no facts at all and the model said Unknown -> Unknown")
 check(verdict(facts(sentiment="Positive")) == "Neutral", "no facts but the model said Positive -> Neutral")
 try:
@@ -106,6 +167,10 @@ try:
           f"the drivers list the forward signals first, then the quarter: {drivers}")
 except AttributeError as e:
     check(False, f"score_sentiment exists ({e})")
+
+_, d = fe.score_sentiment(facts(guidance_change="raised", **BELOW, **UP, **UPGRADE))
+check(d == ["Guidance raised", "Guidance below consensus", "Outlook improving", "Upgrade by Kotak"],
+      f"drivers: guidance, then guidance vs consensus, outlook, analyst ({d})")
 
 # --- normalising what the model returns -------------------------------------------
 def norm(**kw):
@@ -117,6 +182,13 @@ for raw, want in (("+22.5%", 22.5), ("22", 22.0), (-35, -35.0), ("-35 %", -35.0)
     got = norm(profit_yoy_pct=raw).get("profit_yoy_pct", "absent")
     check(got == want, f"profit_yoy_pct {raw!r} -> {want!r} (got {got!r})")
 check(norm(revenue_yoy_pct="+18 %").get("revenue_yoy_pct") == 18.0, "revenue_yoy_pct is parsed like the profit figure")
+for raw, want in (("Above", "above"), ("BELOW ", "below"), ("in line", "inline"), ("in-line", "inline"),
+                  ("beat", None), ("N/A", None), (None, None)):
+    got = norm(guidance_vs_consensus=raw, guidance_consensus_quote=CQUOTE).get("guidance_vs_consensus", "absent")
+    check(got == want, f"guidance_vs_consensus {raw!r} -> {want!r} (got {got!r})")
+got = norm(guidance_vs_consensus="above", guidance_consensus_quote="N/A")
+check(got.get("guidance_vs_consensus") is None and got.get("guidance_consensus_quote") is None,
+      "a comparison without the news's own words is dropped at normalisation")
 for raw, want in (("Beat ", "beat"), ("in-line", "inline"), ("MISS", "miss"), ("strong", None), (None, None)):
     got = norm(results_vs_estimate=raw).get("results_vs_estimate", "absent")
     check(got == want, f"results_vs_estimate {raw!r} -> {want!r} (got {got!r})")
@@ -136,6 +208,14 @@ else:
     check(yahoo({"reported_qtr": "Q2 2026", "qtr_eps_growth": 12.0}, date(2026, 7, 25))["profit"][2] == "EPS",
           "no profit growth -> EPS growth")
     check(yahoo(india, None) is None, "no report date -> no Yahoo figure (can't tell it's the same quarter)")
+    # Found 2026-10-03: in 5 of 96 tickers Yahoo's net-profit growth and the
+    # statement-based EPS growth pointed opposite ways (one read -36% / +39%).
+    # Once the quarter can decide a label alone, a guess on the direction is a
+    # wrong label, so a contradicted figure is not used.
+    split = {"reported_qtr": "Q1 FY27", "qtr_profit_growth": -35.7, "qtr_eps_growth": 39.3, "qtr_revenue_growth": 9.0}
+    got = yahoo(split, date(2026, 8, 10))
+    check(got is not None and got["profit"] is None and got["revenue"] == (9.0, "Yahoo revenue YoY, Q1 FY27"),
+          f"Yahoo profit and EPS growth disagree in direction -> no profit figure; sales still fills ({got})")
 
 # --- the read-time guard counts the new facts ------------------------------------------
 scored_pos = facts(as_of=NOW, earnings_summary="Q1 PAT Rs 32 cr", future_guidance="N/A", analyst_coverage="N/A",
@@ -148,6 +228,10 @@ check(fe._validate_sentiment(only_outlook) == ("Positive", ""),
 weak = {**scored_pos, "profit_yoy_pct": 5.0, "outlook_tone": None, "outlook_quote": None, "sentiment": "Neutral"}
 check(fe._validate_sentiment(weak) == ("Neutral", ""), "a Neutral WITH a profit figure is plain Neutral, not 'no hard evidence'")
 check(fe._has_hard_evidence(facts(results_vs_estimate="beat")), "a stated beat is hard evidence")
+check(fe._has_hard_evidence(facts(**ABOVE)), "a quoted guidance-vs-consensus comparison is hard evidence")
+only_cons = facts(as_of=NOW, earnings_summary="N/A", future_guidance="Q3 revenue $54B", analyst_coverage="N/A",
+                  **ABOVE, sentiment="Positive")
+check(fe._validate_sentiment(only_cons) == ("Positive", ""), "a Positive resting on guidance above consensus stands")
 
 # --- the tag next to the label ----------------------------------------------------------
 _tag = fe.evidence_tag({"revenue_yoy_pct": 18.0, "profit_yoy_pct": 22.4, "outlook_tone": "improving", "outlook_quote": QUOTE})
@@ -159,6 +243,11 @@ check(fe.evidence_tag({"results_vs_estimate": "miss", "profit_yoy_pct": -30.0}) 
       "the quarter's facts show even when they don't decide")
 check(fe.evidence_tag({"guidance_change": "raised", "outlook_tone": "cautious", "outlook_quote": "q"}) == "Guidance ↑",
       "guidance still wins over the outlook tone")
+_tag = fe.evidence_tag({"guidance_change": "raised", **BELOW})
+check(_tag == "Guidance ↑ · Guide < est.", f"guidance vs consensus shows after the guidance change ({_tag!r})")
+_tag = fe.evidence_tag({**ABOVE, "outlook_tone": "improving", "outlook_quote": QUOTE, "profit_yoy_pct": 30.0})
+check(_tag == "Guide > est. · Outlook ↑ · Profit +30%", f"...and before the outlook ({_tag!r})")
+check(fe.evidence_tag({"guidance_vs_consensus": "above"}) == "", "no quoted comparison, no tag")
 
 # --- end to end: the model extracts, the code decides -----------------------------------
 real_ladder, real_lookup, real_settings = llm_util.run_model_ladder, fe._fetch_last_reported_earnings_date, sd.load_settings
@@ -214,10 +303,15 @@ finally:
 
 # --- prompts, settings, placeholders, consumers -----------------------------------------
 p = fe.build_sentiment_prompt("Acme Corp", "ACME", "news")
-check("FORWARD-LOOKING" in p and "never decides on its own" in p,
-      "the prompt says Sentiment is forward-looking and the reported quarter never decides alone")
+check("FORWARD-LOOKING" in p and "more than 25%" in p and "more than 20%" in p,
+      "the prompt says Sentiment is forward-looking and when the quarter decides alone")
 check("decides the sentiment on its own" in p, "the prompt says a quoted outlook decides on its own")
 check("can only tip" in p, "the prompt says the reported quarter can only tip a balance")
+check("guidance_vs_consensus" in p and "guidance_consensus_quote" in p, "the schema asks for guidance vs consensus")
+check('RAISED guidance that is still below consensus is "Positive"' in p,
+      "the prompt states the owner's call on raised-but-below-consensus")
+_r11 = p.find("\n11. ")
+check(_r11 > p.find("\n10. ") > 0, "guidance vs consensus is a new rule 11, after the numbered rules (they are cited)")
 captured = {}
 llm_util.run_model_ladder = lambda client, prompt, *a, **k: (captured.setdefault("p", prompt), (None, None))[1]
 try:
@@ -225,17 +319,27 @@ try:
 finally:
     llm_util.run_model_ladder = real_ladder
 check("year-ago" in captured.get("p", ""), "the search asks for year-ago figures")
+check("compares with analysts' consensus" in captured.get("p", ""),
+      "the search asks how the guidance compares with analysts' consensus")
 check(sd.DEFAULT_SETTINGS.get("sentiment_profit_yoy_pct") == 15.0, "the profit threshold is a setting, default 15")
 check("sentiment_profit_yoy_pct" not in sd.calc_settings(sd.DEFAULT_SETTINGS), "...not a calculation setting")
 check("set_sentiment_profit_yoy" in (REPO / "app.py").read_text(), "...with a Settings field")
+check(sd.DEFAULT_SETTINGS.get("sentiment_profit_alone_up_pct") == 25.0
+      and sd.DEFAULT_SETTINGS.get("sentiment_profit_alone_down_pct") == 20.0,
+      "the decide-alone bars are settings: up 25, down 20")
+check("set_sentiment_alone_up" in (REPO / "app.py").read_text() and "set_sentiment_alone_down" in (REPO / "app.py").read_text(),
+      "...with Settings fields")
 fb = rf._unknown_fallback("x")
-check(all(k in fb and fb[k] is None for k in ("profit_yoy_pct", "revenue_yoy_pct", "results_vs_estimate")),
+check(all(k in fb and fb[k] is None for k in ("profit_yoy_pct", "revenue_yoy_pct", "results_vs_estimate",
+                                              "guidance_vs_consensus", "guidance_consensus_quote")),
       "the Unknown placeholder carries the new keys")
 
 import expert_views as ev
 txt = ev._quarter_fundamentals_text({**scored_pos, "profit_metric": "PAT", "results_vs_estimate": "beat"})
 check("Profit YoY: +22% (PAT)" in txt and "Sales YoY: +18%" in txt and "beat" in txt,
       "Expert Take section 4 shows the sales and profit changes and the beat")
+txt = ev._quarter_fundamentals_text({**scored_pos, **ABOVE})
+check("Guidance vs consensus: above" in txt and CQUOTE in txt, "...and guidance vs consensus with its source")
 src = (REPO / "app.py").read_text()
 check("sentiment_drivers" in src, "the Sentiment cell's hover text says what decided it")
 

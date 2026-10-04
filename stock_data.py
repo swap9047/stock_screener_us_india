@@ -209,6 +209,10 @@ DEFAULT_SETTINGS = {
     # reported quarter counts as a small signal -- it can tip a balance between
     # forward signals but never decides alone (fundamentals_eval.score_sentiment).
     "sentiment_profit_yoy_pct": 15.0,
+    # ...and when no forward signal points a direction, the quarter decides at
+    # these higher bars: profit up more than / down more than (percent).
+    "sentiment_profit_alone_up_pct": 25.0,
+    "sentiment_profit_alone_down_pct": 20.0,
 
     "note_dropdown_options": "",
 

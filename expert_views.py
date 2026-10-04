@@ -426,6 +426,9 @@ def _quarter_fundamentals_text(view):
         lines.append(f"- Profit YoY: {yoy:+.0f}% ({v.get('profit_metric') or 'profit'}){source}")
     if v.get("results_vs_estimate") in ("beat", "miss", "inline"):
         lines.append(f"- Results vs consensus estimates: {v['results_vs_estimate']}")
+    if v.get("guidance_vs_consensus") in ("above", "below", "inline"):
+        source = f" ({v['guidance_consensus_quote']})" if v.get("guidance_consensus_quote") else ""
+        lines.append(f"- Guidance vs consensus: {v['guidance_vs_consensus']}{source}")
     if v.get("guidance_change") or not _field_is_placeholder(v.get("future_guidance")):
         change = f"{v['guidance_change'].upper()} -- " if v.get("guidance_change") else ""
         lines.append(f"- Company guidance: {change}{v.get('future_guidance') or ''}".rstrip(" -"))

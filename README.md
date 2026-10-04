@@ -63,11 +63,16 @@ retrying the primary model before conceding to a weaker one.
 A forward-looking `Positive` / `Neutral` / `Negative` read. The model extracts the facts and
 a fixed rule decides. Forward signals carry the weight, and each decides on its own: guidance
 raised or lowered (which outweighs everything), management's quoted outlook (improving or
-cautious), and upgrades or downgrades by named brokerages (not algorithmic rating sites). The
-quarter just reported weighs much less: profit up or down more than 15% year on year, or a
-beat or miss against a stated consensus. It only breaks a tie between forward signals; it never
-decides alone, and it never outvotes management, so strong growth with a cautious outlook reads
-Negative. The search reaches back to each company's last reported results, and Yahoo's
+cautious), guidance above or below analysts' consensus (only when the news states the
+comparison), and upgrades or downgrades by named brokerages (not algorithmic rating sites).
+They weigh 15, 6, 3 and 3: guidance outweighs the rest together, and the outlook outweighs an
+analyst action or a consensus comparison on its own. Guidance raised but still below consensus
+is Positive. The
+quarter just reported weighs much less. When a forward signal is present, the quarter only
+breaks a tie (profit up or down more than 15% year on year, or a beat or miss against a stated
+consensus) and never outvotes it, so strong growth with a cautious outlook reads Negative. When
+no forward signal is found, the quarter decides: profit up more than 25% reads Positive, down
+more than 20% Negative. A beat or miss alone never decides. The search reaches back to each company's last reported results, and Yahoo's
 year-on-year growth fills in when the news only gave absolute figures. The cell shows the
 evidence, forward signals first (e.g. "Upgrade · Outlook ↑ · Profit +22%"), and the hover says
 what decided it.

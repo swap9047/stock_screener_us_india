@@ -50,6 +50,8 @@ def _unknown_fallback(reason):
         "profit_yoy_pct": None,
         "revenue_yoy_pct": None,
         "results_vs_estimate": None,
+        "guidance_vs_consensus": None,
+        "guidance_consensus_quote": None,
         "sentiment": "Unknown",
         "reasoning": f"Analysis unavailable -- {reason}",
         "targeted_retry": None,

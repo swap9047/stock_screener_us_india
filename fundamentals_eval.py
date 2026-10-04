@@ -158,6 +158,11 @@ def fetch_fundamental_news(client, ticker, market, company_name, is_retry=False,
         "For the results, give the year-ago quarter's figures or the year-on-year % change for "
         "revenue and for EPS (or net profit/PAT if EPS is not reported), and say whether they beat "
         "or missed analyst estimates if estimates were published. "
+        # US guidance is usually a number ("Q3 revenue $54B"), not "raised" or
+        # "lowered"; what it says is how it sits against the Street. Asked for
+        # as the news reports it -- the reasoning stage must not compute it.
+        "If the company issued guidance, say how it compares with analysts' consensus (above, below "
+        "or in line), as the news reports it, with the consensus figure and the date. "
         # Most companies (India especially) give no formal guidance, and on
         # 2026-09-26 only 12 of 124 views recorded a guidance change. Ask for
         # what management DID say about the coming quarters, in its own words,
@@ -223,6 +228,7 @@ def normalize_view(data):
         data["sentiment"] = data["sentiment"].strip().capitalize()
     if isinstance(data, dict):
         _normalize_outlook(data)
+        _normalize_consensus(data)
         _normalize_analyst(data)
         _normalize_results(data)
     return data
@@ -244,6 +250,25 @@ def _normalize_outlook(data):
     if tone not in OUTLOOK_TONES or not quote or _field_is_placeholder(quote):
         tone, quote = None, None
     data["outlook_tone"], data["outlook_quote"] = tone, quote
+    return data
+
+
+CONSENSUS_COMPARISONS = ("above", "below", "inline")
+
+
+def _normalize_consensus(data):
+    """Guidance vs consensus (rule 11): "above"/"below"/"inline", kept only
+    with the news's own comparison in guidance_consensus_quote -- the same
+    guard as the outlook. A comparison the model worked out itself (against a
+    consensus it may have half-remembered) is exactly what must not decide a
+    label. Always leaves both keys present (None when absent)."""
+    c = data.get("guidance_vs_consensus")
+    c = c.strip().lower().replace("-", "").replace(" ", "") if isinstance(c, str) else None
+    quote = data.get("guidance_consensus_quote")
+    quote = quote.strip() if isinstance(quote, str) else None
+    if c not in CONSENSUS_COMPARISONS or not quote or _field_is_placeholder(quote):
+        c, quote = None, None
+    data["guidance_vs_consensus"], data["guidance_consensus_quote"] = c, quote
     return data
 
 
@@ -319,25 +344,38 @@ def _normalize_results(data):
 # company is going, so what looks ahead carries the weight, and the quarter only
 # adds a little --
 #
-#   guidance raised / lowered            +-9  outweighs everything else together
-#   management's quoted outlook          +-3  improving / cautious (needs the quote)
+#   guidance raised / lowered            +-15 outweighs everything else together (14)
+#   management's quoted outlook          +-6  improving / cautious (needs the quote)
+#   guidance above / below consensus     +-3  only as the news states it, quoted
 #   named-firm analyst action            +-3  upgrade / downgrade
 #   profit (EPS, else PAT) YoY change    +-1  only beyond the threshold, strictly
 #   beat / miss of a STATED consensus    +-1
 #
+# Weights are the owner's (2026-10-03). Guidance went 9 -> 15 when the outlook
+# went 3 -> 6: at 9, lowered guidance against an improving outlook plus an
+# upgrade (6 + 3) tied, and the quarter then decided -- breaking "guidance
+# outweighs everything". Raised guidance still below consensus is therefore
+# Positive, as the owner ruled. The outlook outweighs one analyst action or
+# consensus comparison, but not both together.
+#
 # Positive needs a positive total AND at least one forward signal pointing up;
-# Negative the mirror. So the quarter never decides alone, cannot outvote
-# management (strong growth + a beat + a cautious outlook = Negative), but does
-# break a tie between forward signals (improving outlook vs a downgrade). Sales
-# growth is extracted and shown to Expert Take but is not a signal. One caveat to
+# Negative the mirror. So the quarter cannot outvote management (strong growth +
+# a beat + a cautious outlook = Negative), but does break a tie between forward
+# signals (improving outlook vs a downgrade). With NO directional forward signal
+# -- none found, or only a steady outlook / maintained guidance -- the quarter
+# decides on its own, at higher bars: profit up more than 25% is Positive, down
+# more than 20% Negative (owner's rule, same day). A beat or miss alone never
+# decides. Sales growth is extracted and shown to Expert Take but is not a signal. One caveat to
 # keep watching: management commentary reads "improving" about 4x as often as
 # "cautious", so outlook-led Positives are the label most exposed to an upbeat
 # press release -- requiring management's own quoted words is the guard.
 PROFIT_YOY_THRESHOLD_PCT = 15.0
-_GUIDANCE_POINTS, _FORWARD_POINTS, _QUARTER_POINTS = 9, 3, 1
+PROFIT_ALONE_UP_PCT, PROFIT_ALONE_DOWN_PCT = 25.0, 20.0
+_GUIDANCE_POINTS, _OUTLOOK_POINTS, _CONSENSUS_POINTS, _ANALYST_POINTS, _QUARTER_POINTS = 15, 6, 3, 3, 1
 
 
-def score_sentiment(view, threshold=PROFIT_YOY_THRESHOLD_PCT):
+def score_sentiment(view, threshold=PROFIT_YOY_THRESHOLD_PCT,
+                    alone_up=PROFIT_ALONE_UP_PCT, alone_down=PROFIT_ALONE_DOWN_PCT):
     """(sentiment, drivers) from a view's extracted facts -- see above. Drivers
     list the forward signals first, then the quarter's."""
     v = view or {}
@@ -355,19 +393,24 @@ def score_sentiment(view, threshold=PROFIT_YOY_THRESHOLD_PCT):
         add(_GUIDANCE_POINTS, "Guidance raised", True)
     elif guidance == "lowered":
         add(-_GUIDANCE_POINTS, "Guidance lowered", True)
+    cons = (v.get("guidance_vs_consensus") or "").strip().lower() if v.get("guidance_consensus_quote") else ""
+    if cons == "above":
+        add(_CONSENSUS_POINTS, "Guidance above consensus", True)
+    elif cons == "below":
+        add(-_CONSENSUS_POINTS, "Guidance below consensus", True)
     tone = (v.get("outlook_tone") or "").strip().lower() if v.get("outlook_quote") else ""
     if tone == "improving":
-        add(_FORWARD_POINTS, "Outlook improving", True)
+        add(_OUTLOOK_POINTS, "Outlook improving", True)
     elif tone == "cautious":
-        add(-_FORWARD_POINTS, "Outlook cautious", True)
+        add(-_OUTLOOK_POINTS, "Outlook cautious", True)
     firm = v.get("analyst_firm")
     named = (isinstance(firm, str) and not _field_is_placeholder(firm)
              and not any(src in firm.lower() for src in NON_ANALYST_SOURCES))
     action = (v.get("analyst_action") or "").strip().lower() if named else ""
     if action == "upgrade":
-        add(_FORWARD_POINTS, f"Upgrade by {firm.strip()}", True)
+        add(_ANALYST_POINTS, f"Upgrade by {firm.strip()}", True)
     elif action == "downgrade":
-        add(-_FORWARD_POINTS, f"Downgrade by {firm.strip()}", True)
+        add(-_ANALYST_POINTS, f"Downgrade by {firm.strip()}", True)
 
     results = v.get("results_vs_estimate")
     if results == "beat":
@@ -390,7 +433,11 @@ def score_sentiment(view, threshold=PROFIT_YOY_THRESHOLD_PCT):
         return "Positive", drivers
     if points < 0 and -1 in forward:
         return "Negative", drivers
-    has_facts = bool(drivers or guidance == "maintained" or tone == "steady" or yoy is not None
+    if not forward and yoy is not None and (yoy > alone_up or yoy < -alone_down):
+        # Nothing looks ahead, so the quarter decides -- at the higher bars.
+        # The drivers name only what decided, not a beat that did not.
+        return ("Positive" if yoy > 0 else "Negative"), [f"{metric} {yoy:+.0f}% YoY (no forward signal)"]
+    has_facts = bool(drivers or guidance == "maintained" or tone == "steady" or cons == "inline" or yoy is not None
                      or _num("revenue_yoy_pct") is not None or results
                      or _structured_field_is_set(v.get("eps_value")))
     if not has_facts and v.get("sentiment") == "Unknown":
@@ -445,10 +492,15 @@ def _yahoo_results_yoy(row, report_date):
         return float(x) if isinstance(x, (int, float)) and not isinstance(x, bool) else None
 
     profit = None
-    for key, metric in (("qtr_profit_growth", "PAT"), ("qtr_eps_growth", "EPS")):
-        if _num(key) is not None:
-            profit = (_num(key), f"Yahoo {metric} YoY, {label}", metric)
-            break
+    pat, eps = _num("qtr_profit_growth"), _num("qtr_eps_growth")
+    # Opposite directions mean one of them is wrong, and nothing says which: on
+    # 2026-10-03 five of 96 tickers read like that (one -36% profit, +39% EPS).
+    # The quarter can decide a label alone now, so no figure beats a guess.
+    if not (pat is not None and eps is not None and (pat > 0) != (eps > 0)):
+        for x, metric in ((pat, "PAT"), (eps, "EPS")):
+            if x is not None:
+                profit = (x, f"Yahoo {metric} YoY, {label}", metric)
+                break
     revenue = (_num("qtr_revenue_growth"), f"Yahoo revenue YoY, {label}") if _num("qtr_revenue_growth") is not None else None
     if profit is None and revenue is None:
         return None
@@ -473,6 +525,9 @@ def evidence_tag(view):
     g = (view.get("guidance_change") or "").strip().lower()
     if g in _GUIDANCE_ARROWS:
         parts.append(f"Guidance {_GUIDANCE_ARROWS[g]}")
+    c = view.get("guidance_vs_consensus")
+    if c in ("above", "below") and view.get("guidance_consensus_quote"):
+        parts.append("Guide > est." if c == "above" else "Guide < est.")
     a = (view.get("analyst_action") or "").strip().lower()
     if a in ("upgrade", "downgrade") and view.get("analyst_firm"):
         parts.append(a.title())
@@ -564,7 +619,7 @@ def _has_hard_evidence(view):
     free-text check only for cached views generated before this schema.
     """
     if any(k in view for k in ("eps_value", "guidance_change", "analyst_action",
-                               "profit_yoy_pct", "results_vs_estimate")):
+                               "profit_yoy_pct", "results_vs_estimate", "guidance_vs_consensus")):
         yoy = view.get("profit_yoy_pct")
         return (
             _structured_field_is_set(view.get("eps_value"))
@@ -576,6 +631,8 @@ def _has_hard_evidence(view):
             # verdict resting on one is supported, not "partial".
             or (bool(view.get("outlook_quote"))
                 and (view.get("outlook_tone") or "").strip().lower() in ("improving", "cautious"))
+            or (bool(view.get("guidance_consensus_quote"))
+                and view.get("guidance_vs_consensus") in CONSENSUS_COMPARISONS)
         )
     if _field_has_data(view.get("future_guidance")) or _field_has_data(view.get("analyst_coverage")):
         return True
@@ -718,7 +775,8 @@ def _validate_sentiment(view):
         return "Neutral", "NO_EVIDENCE"
     return sentiment, ""
 
-def build_sentiment_prompt(company_name, ticker, news_text, threshold=PROFIT_YOY_THRESHOLD_PCT):
+def build_sentiment_prompt(company_name, ticker, news_text, threshold=PROFIT_YOY_THRESHOLD_PCT,
+                           alone_up=PROFIT_ALONE_UP_PCT, alone_down=PROFIT_ALONE_DOWN_PCT):
     """The reasoning-stage prompt. Extracted from generate_fundamental_view so
     the targeted follow-up pass (see needs_targeted_retry) can rebuild it with
     the extra search output appended, instead of keeping a second copy that
@@ -734,15 +792,16 @@ RECENT FUNDAMENTAL NEWS & ANNOUNCEMENTS
 
 CRITICAL RULES (these override everything else):
 1. If the news text says "No recent fundamental news found" or is empty, set "sentiment" to "Unknown" and all other fields (including the structured ones below) to "N/A"/null. Never guess or hallucinate a sentiment based on the company's past history, sector trends, or general knowledge.
-2. Sentiment is FORWARD-LOOKING. It is decided mainly by: (a) guidance RAISED or LOWERED (rule 7; outweighs everything else); (b) management's own quoted outlook for the coming quarters, improving or cautious (rule 8); (c) an upgrade or downgrade by a named firm (rule 9). Each of these decides on its own; opposite ones cancel. The quarter just reported -- profit up or down more than {threshold:g}% year on year, a beat or miss of a stated consensus -- is backward-looking and weighs much less: it can only tip a balance between (a)-(c), never decides on its own, and never outweighs management's outlook or an analyst action. Revenue growth is recorded but does not count.
-3. A directional verdict ("Positive"/"Negative") REQUIRES one of (a)-(c) to be recorded in guidance_change, in outlook_tone with outlook_quote, or in analyst_action with analyst_firm -- not a vague or partial mention. With none of them the sentiment is "Neutral" (or "Unknown" under rule 1), however strong or weak the reported results. Do not infer sentiment from company reputation, sector trends, or past performance.
+2. Sentiment is FORWARD-LOOKING. It is decided mainly by: (a) guidance RAISED or LOWERED (rule 7; outweighs all the rest together); (b) management's own quoted outlook for the coming quarters, improving or cautious (rule 8; outweighs (c) or (d) on its own); (c) an upgrade or downgrade by a named firm (rule 9); (d) guidance ABOVE or BELOW analysts' consensus, as the news itself states it (rule 11). Each of these decides on its own; opposite ones weigh against each other. The quarter just reported is backward-looking. When any of (a)-(d) points a direction, the quarter can only tip a balance between them -- profit up or down more than {threshold:g}% year on year, or a beat or miss of a stated consensus -- and never outweighs them. When none of (a)-(d) points a direction, the quarter decides: profit up more than {alone_up:g}% year on year is "Positive", down more than {alone_down:g}% is "Negative", anything less is "Neutral". A beat or miss alone never decides. Revenue growth is recorded but does not count.
+3. A directional verdict ("Positive"/"Negative") REQUIRES one of (a)-(d) to be recorded -- in guidance_change, in outlook_tone with outlook_quote, in analyst_action with analyst_firm, or in guidance_vs_consensus with guidance_consensus_quote -- not a vague or partial mention; or, with none of them, a profit change beyond the rule-2 bars recorded in profit_yoy_pct. Otherwise the sentiment is "Neutral" (or "Unknown" under rule 1). Do not infer sentiment from company reputation, sector trends, or past performance.
 4. "earnings_report_date" is the date the results were ANNOUNCED (YYYY-MM-DD), not the date the quarter ended. For example, an Indian company reporting Q1 FY27 (quarter ending 2026-06-30) in late July announces on roughly 2026-07-24 — use the announcement date. If the news does not state one, set it to null; do NOT guess, and do NOT substitute the quarter-end date.
 5. Setting "earnings_report_date" to null does not invalidate the rest of your answer. Judge "sentiment" from the facts you actually found, using rules 1-3 above. Report only what the news supports.
 6. The news above is ordered newest first and each item carries its date. Where several items bear on the same thing, judge on the MOST RECENT one: an older item never overrides a newer one. A downgrade last week outranks an upgrade a month ago, and the latest guidance is the guidance. Prefer the newest EPS figure for the current quarter over any earlier restatement of it.
-7. Forward guidance outranks everything else, the reported quarter included: an EPS beat with LOWERED guidance is "Negative", and an EPS miss with RAISED guidance can be "Positive"; a guidance change also outweighs an opposite outlook tone or analyst action. "Maintained" guidance is neutral on its own, so the outlook and analyst actions decide. Rule 6 still applies across dates.
-8. If there is no explicit guidance change, record management's own stated outlook for the coming quarters as "outlook_tone" ("improving" | "steady" | "cautious"), with "outlook_quote" holding management's exact words and the date. Only management's statements about the next few quarters count -- not analyst opinion, not past results, and not multi-year aspirations such as a 5-year CAGR target. With no such statement, set both to null. A quoted outlook decides the sentiment on its own (rule 2): "improving" is "Positive" and "cautious" is "Negative", unless an opposite analyst action cancels it or a guidance change outweighs it; "steady" is neutral. A tone without management's own words is not an outlook.
+7. Forward guidance outranks everything else, the reported quarter included: an EPS beat with LOWERED guidance is "Negative", and an EPS miss with RAISED guidance can be "Positive"; a guidance change also outweighs an opposite outlook tone, analyst action or consensus comparison, so RAISED guidance that is still below consensus is "Positive" and LOWERED guidance still above consensus is "Negative". "Maintained" guidance is neutral on its own, so the outlook and analyst actions decide (or, with neither, the quarter at rule 2's bars). Rule 6 still applies across dates.
+8. If there is no explicit guidance change, record management's own stated outlook for the coming quarters as "outlook_tone" ("improving" | "steady" | "cautious"), with "outlook_quote" holding management's exact words and the date. Only management's statements about the next few quarters count -- not analyst opinion, not past results, and not multi-year aspirations such as a 5-year CAGR target. With no such statement, set both to null. A quoted outlook decides the sentiment on its own (rule 2): "improving" is "Positive" and "cautious" is "Negative", unless a guidance change outweighs it, or an opposite analyst action and consensus comparison together cancel it; "steady" is neutral. A tone without management's own words is not an outlook.
 9. "analyst_action" is an upgrade or downgrade by a named brokerage, investment bank or research-house analyst, and "analyst_firm" must name that firm. A rating produced by an algorithm or a website -- quant scores, star or "smart" ratings, stock-screening sites (e.g. StockInvest.us, MarketsMojo, Zacks Rank, TipRanks, Simply Wall St, Trendlyne), or a contributor article on Seeking Alpha -- is NOT an analyst action: set "analyst_action" and "analyst_firm" to null. Price-target changes and reiterated ratings are not upgrades or downgrades either.
 10. The reported quarter is recorded in these fields (it weighs little, rule 2). "profit_yoy_pct" is the latest quarter's year-on-year % change in diluted EPS, or in net profit/PAT when EPS is not reported -- say which in "profit_metric" ("EPS" or "PAT"). Use the change the news states, or compute it from the current and year-ago quarter's figures when both are given. Set it to null when neither is given, or when the year-ago quarter was a loss. "revenue_yoy_pct" is the same quarter's year-on-year % change in revenue/sales, on the same basis (stated, or computed from both quarters' figures; else null). "results_vs_estimate" is "beat", "miss" or "inline" ONLY when the news states a consensus/analyst estimate for those results; otherwise null.
+11. "guidance_vs_consensus" is "above", "below" or "inline" ONLY when the news itself compares the company's new guidance with analysts' consensus or Street estimates (e.g. "Q3 revenue guided to $54B, above the $52B consensus"); "guidance_consensus_quote" holds that comparison in the news's words, with its date. Do not work out the consensus yourself, and do not use estimates for the quarter just reported (that is results_vs_estimate). With no such comparison, set both to null.
 
 Return ONLY a valid JSON object matching this schema:
 {{
@@ -758,6 +817,8 @@ Return ONLY a valid JSON object matching this schema:
   "profit_yoy_pct": 22.5 or null,
   "revenue_yoy_pct": 18.0 or null,
   "results_vs_estimate": "beat" | "miss" | "inline" | null,
+  "guidance_vs_consensus": "above" | "below" | "inline" | null,
+  "guidance_consensus_quote": "Newswire on 2026-07-24: 'Q3 revenue guidance of $54B tops the $52B consensus'" or null,
   "outlook_tone": "improving" | "steady" | "cautious" | null,
   "outlook_quote": "Management on 2026-07-24: 'we expect demand to stay strong next quarter'" or null,
   "sentiment": "Positive" | "Neutral" | "Negative" | "Unknown",
@@ -914,7 +975,10 @@ def generate_fundamental_view(client, row_data, news_text=None, news_source=None
     # The profit change that counts as the quarter's (small) signal; the prompt
     # states the same number score_sentiment applies.
     threshold = float(settings.get("sentiment_profit_yoy_pct", PROFIT_YOY_THRESHOLD_PCT))
-    prompt = build_sentiment_prompt(company_name, ticker, news_text, threshold)
+    # ...and the bars at which the quarter decides when nothing looks ahead.
+    alone_up = float(settings.get("sentiment_profit_alone_up_pct", PROFIT_ALONE_UP_PCT))
+    alone_down = float(settings.get("sentiment_profit_alone_down_pct", PROFIT_ALONE_DOWN_PCT))
+    prompt = build_sentiment_prompt(company_name, ticker, news_text, threshold, alone_up, alone_down)
 
     def _pending_fallback(reason, used_model="Error"):
         return {
@@ -932,6 +996,8 @@ def generate_fundamental_view(client, row_data, news_text=None, news_source=None
             "profit_yoy_pct": None,
             "revenue_yoy_pct": None,
             "results_vs_estimate": None,
+            "guidance_vs_consensus": None,
+            "guidance_consensus_quote": None,
             "sentiment": "Unknown",
             "reasoning": f"Analysis pending -- {reason}",
             "targeted_retry": None,
@@ -954,6 +1020,7 @@ def generate_fundamental_view(client, row_data, news_text=None, news_source=None
         for key in ("earnings_report_date", "eps_value", "guidance_change", "analyst_action"):
             data.setdefault(key, None)
         _normalize_outlook(data)
+        _normalize_consensus(data)
         _normalize_analyst(data)
         _normalize_results(data)
         data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
@@ -985,7 +1052,7 @@ def generate_fundamental_view(client, row_data, news_text=None, news_source=None
                 data["profit_yoy_pct"], data["profit_yoy_source"], data["profit_metric"] = yahoo["profit"]
             if data["revenue_yoy_source"] is None and yahoo.get("revenue"):
                 data["revenue_yoy_pct"], data["revenue_yoy_source"] = yahoo["revenue"]
-        data["sentiment"], data["sentiment_drivers"] = score_sentiment(data, threshold)
+        data["sentiment"], data["sentiment_drivers"] = score_sentiment(data, threshold, alone_up, alone_down)
         return data
 
     model = settings.get("sentiment_reasoning_model", "models/gemini-3.5-flash-lite")
@@ -1035,7 +1102,7 @@ def generate_fundamental_view(client, row_data, news_text=None, news_source=None
         if extra:
             combined = f"{news_text}\n\n--- TARGETED FOLLOW-UP SEARCH ({anchor} results) ---\n{extra}"
             data2, used2 = llm_util.run_model_ladder(
-                client, build_sentiment_prompt(company_name, ticker, combined, threshold),
+                client, build_sentiment_prompt(company_name, ticker, combined, threshold, alone_up, alone_down),
                 llm_util.standard_tiers(model, REASONING_FALLBACK_MODEL),
                 _config_for, label="sentiment-retry", subject=ticker,
                 on_success=lambda resp: normalize_view(llm_util.json_object(_clean_json_text(resp.text))),

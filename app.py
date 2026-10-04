@@ -919,10 +919,11 @@ def sentiment_flag_note(flag, as_of):
 # model wrote. Spelled out for the AI-review payload so the reader knows the
 # displayed Sentiment isn't raw model output.
 SENTIMENT_GUARD_RULES = f"""The label is forward-looking, decided by a fixed rule from the facts the model extracts:
-guidance raised/lowered (which outweighs everything), management's quoted outlook improving/
-cautious, or an upgrade/downgrade by a named firm -- each decides on its own, opposite ones
-cancel. The quarter just reported (profit up/down >15% YoY, a beat/miss) weighs much less: it
-only breaks a tie between those and never decides alone.
+guidance raised/lowered (15, outweighs everything), management's quoted outlook improving/
+cautious (6), guidance above/below consensus as the news states it (3), or a named-firm
+upgrade/downgrade (3) -- each decides on its own, opposite ones weigh against each other.
+The quarter just reported weighs much less: with forward signals it only breaks a tie
+(profit up/down >15% YoY, a beat/miss); with none, profit up >25% or down >20% YoY decides.
 A deterministic guard then runs and can override it:
 - View older than {SENTIMENT_STALE_DAYS} days -> Unknown (STALE)
 - Earnings, guidance and analyst coverage all missing/N/A -> Unknown (NO_DATA)
@@ -1394,12 +1395,13 @@ def column_definitions(settings, labels):
         "Interested": "Whether you ticked this ticker as Interested in the watchlist editor.",
         "Sentiment": (
             "Forward-looking fundamental sentiment (Positive / Neutral / Negative), decided by a fixed rule from "
-            "facts the AI extracts. Mainly: guidance raised/lowered (which outweighs everything), management's "
-            "quoted outlook improving/cautious, and upgrades/downgrades by named firms -- each decides on its own. "
-            "The quarter just reported (profit up/down more than 15% YoY, a beat/miss of a stated consensus) weighs "
-            "much less: it only breaks a tie between those, never decides alone, and never outvotes management -- "
-            "strong growth with a cautious outlook reads Negative. The search reaches back to each company's last "
-            "results. The tag shows the evidence, forward signals first (e.g. Upgrade · Outlook ↑ · Profit +22%); "
+            "facts the AI extracts. Mainly, by weight: guidance raised/lowered (15, outweighs everything), "
+            "management's quoted outlook improving/cautious (6), guidance above/below analysts' consensus as the "
+            "news states it (3), and upgrades/downgrades by named firms (3) -- each decides on its own. "
+            "The quarter just reported weighs much less: with forward signals present it only breaks a tie "
+            "(profit up/down more than 15% YoY, a beat/miss) and never outvotes them -- strong growth with a "
+            "cautious outlook reads Negative. With no forward signal, profit up more than 25% YoY reads Positive "
+            "and down more than 20% Negative. The search reaches back to each company's last results. The tag shows the evidence, forward signals first (e.g. Upgrade · Outlook ↑ · Profit +22%); "
             "hover for what decided it. "
             "'Unknown' means the view is stale, predates a confirmed earnings report, or had no hard evidence to "
             "stand on -- not that sentiment is neutral."
@@ -1780,22 +1782,38 @@ def settings_dialog():
              "weeks. Stops a level broken years ago from reading as \"broken support\" today.",
     )
 
-    st.markdown("**Sentiment column**")
-    sentiment_profit_yoy = st.number_input(
-        "32. Profit change that counts for the reported quarter (YoY %, more than, either way)",
-        min_value=1.0, step=1.0, format="%.0f",
-        value=float(settings.get("sentiment_profit_yoy_pct", 15.0)), key="set_sentiment_profit_yoy",
-        help="Sentiment is decided mainly by guidance, management's quoted outlook and named-firm analyst "
-             "actions. The quarter's profit (EPS, else PAT) up or down more than this much, like a beat or miss, "
-             "only tips a balance between those -- it never decides on its own. Applies from the next run.",
-    )
-
     st.markdown("**Ticker Notes**")
     note_dropdown_options = st.text_input(
         "31. Dropdown Options (comma-separated)",
         value=settings.get("note_dropdown_options", ""),
         key="set_note_opts",
         help="If provided, the Ticker Notes field in the sidebar will become a dropdown menu with these specific values (along with a 'Custom...' option for free text)."
+    )
+
+    st.markdown("**Sentiment column**")
+    st.caption("Decided mainly by guidance, management's quoted outlook, guidance vs consensus and named-firm "
+               "analyst actions. "
+               "These settings say how much the reported quarter's profit (EPS, else PAT) counts. "
+               "They apply from the next Sentiment run.")
+    sentiment_profit_yoy = st.number_input(
+        "32. Profit change that tips a balance (YoY %, more than, either way)",
+        min_value=1.0, step=1.0, format="%.0f",
+        value=float(settings.get("sentiment_profit_yoy_pct", 15.0)), key="set_sentiment_profit_yoy",
+        help="When forward signals balance out (say guidance above consensus and a downgrade), profit up or "
+             "down more than this much -- like a beat or miss -- tips the balance. It never outweighs them.",
+    )
+    sentiment_alone_up = st.number_input(
+        "33. With no forward signal: profit up more than (YoY %) is Bullish",
+        min_value=1.0, step=1.0, format="%.0f",
+        value=float(settings.get("sentiment_profit_alone_up_pct", 25.0)), key="set_sentiment_alone_up",
+        help="Applies only when no guidance change, quoted improving/cautious outlook or named-firm "
+             "upgrade/downgrade was found. A steady outlook or maintained guidance counts as none.",
+    )
+    sentiment_alone_down = st.number_input(
+        "34. With no forward signal: profit down more than (YoY %) is Bearish",
+        min_value=1.0, step=1.0, format="%.0f",
+        value=float(settings.get("sentiment_profit_alone_down_pct", 20.0)), key="set_sentiment_alone_down",
+        help="The mirror of 33: e.g. 20 means a fall of more than 20% year on year reads Bearish.",
     )
 
     st.divider()
@@ -1837,6 +1855,8 @@ def settings_dialog():
                 "ta_sr_recent_weeks": int(ta_sr_recent),
                 "note_dropdown_options": note_dropdown_options.strip(),
                 "sentiment_profit_yoy_pct": float(sentiment_profit_yoy),
+                "sentiment_profit_alone_up_pct": float(sentiment_alone_up),
+                "sentiment_profit_alone_down_pct": float(sentiment_alone_down),
             })
             st.success("Settings saved. Click **Refresh Data** to recompute with the new settings.")
             st.rerun()
