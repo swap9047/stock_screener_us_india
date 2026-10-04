@@ -281,6 +281,9 @@ def expert_view_has_news(view):
 # Overbought RSI is deliberately not a point: in a trend-following read it is
 # strength, and "extended, add on a pullback" belongs in the trade plan.
 _UP_TRENDS = ("Uptrend", "Strong Uptrend")
+# The dot beside the ticker when you have not set a Flag (app._ticker_cell),
+# keyed by the row's expert_take value. It replaced the Signal dot, 2026-10-04.
+EXPERT_TAKE_EMOJI = {"Accumulate": "🟢", "Hold": "🟡", "Caution": "🔴", "Pending": "⚪"}
 _DOWN_TRENDS = ("Downtrend", "Strong Downtrend")
 _TA_BULLISH = ("Maintain/Add", "Bullish Signal")
 _CAUTION_POINTS = {"Exit": 2, "Be Cautious": 1}

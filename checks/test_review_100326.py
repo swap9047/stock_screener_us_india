@@ -87,14 +87,7 @@ check(lbl == "Mixed", f"L1: 2 bullish / 2 bearish -> Mixed (got {lbl})")
 
 check(filters.CATEGORICAL_METRICS["trend"] == ["Strong Uptrend", "Uptrend", "Mixed", "Downtrend", "Strong Downtrend"],
       "L1: the Trend dropdown offers Mixed, best-first")
-for (t, s), want in {("Mixed", "Neutral"): "Mixed", ("Mixed", "Unknown"): "Mixed",
-                     ("Mixed", "Positive"): "News divergence", ("Mixed", "Negative"): "Avoid",
-                     ("Downtrend", "Neutral"): "Avoid", ("Uptrend", "Neutral"): "Chart only"}.items():
-    got = tn.compute_signal(t, s)[0]
-    check(got == want, f"L1: Signal {t} + {s} -> {want} (got {got})")
-check(tn.SIGNAL_OUTCOMES == ("Confirmed", "Chart only", "Mixed", "News divergence",
-                             "Chart up, news negative", "Avoid"), "L1: Signal labels, best-first, include Mixed")
-check(set(tn.SIGNAL_EMOJI) == set(tn.SIGNAL_OUTCOMES), "L1: every Signal label has a dot")
+# Signal, which L1 also changed, was retired on 2026-10-04 (checks/test_ticker_dot.py).
 # Expert Take's verdict is decided in code since 2026-10-04 (decide_expert_verdict).
 # Mixed is not an uptrend; with no Tech Uptrend either (one of the two is enough
 # for Accumulate since 2026-10-04) it holds.

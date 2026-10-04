@@ -26,14 +26,14 @@ It needs no secrets, so it works from a fork.
 | `test_ta_rules.py` | TA Rules follows the weekly EMA flowchart node for node; support/resistance zones; only completed weeks are judged; the label stays on one line; the flowchart image is read from the private data repo, never stored here |
 | `test_expert_take_100426.py` | Expert Take decided in code from Trend, Tech Uptrend, TA Rules and Sentiment; the news step (14 days, one step down, never up, expiry); refusals and "nothing found" prose are not news |
 | `test_trend_volume_100426.py` | Median-day volume tests, Trend neutral bands, Tech Uptrend on unrounded prices with VStop Up |
-| `test_signal.py` | Signal = Trend × guarded Sentiment (all five labels); Flag is manual-only; Signal is registered as a column, filter and alert metric; the Expert Take ⚑ marks only a news downgrade of the columns' verdict |
+| `test_ticker_dot.py` | Signal is retired everywhere (no column, filter, alert metric, colours or row field); the ticker dot is Expert Take's colour unless you set a Flag; Flag is manual-only; ⚑ marks only a news downgrade |
 | `test_expert_prompt_inputs.py` | Expert Take never sees its own previous verdict (no auto flag, no notes, no verdict-based alert rules); section 4 carries the quarter's checked facts, not Sentiment's label; an unreadable `fundamentals.json` does not stop the run |
 | `test_sentiment_guidance.py`, `test_sentiment_window.py` | Sentiment rules 7-9 (guidance outranks the quarter, quoted outlook never decides alone, only named-firm analyst actions); the search window reaches back to the last reported results |
 | `test_failure_fuse.py` | 10 consecutive failed tickers stop the Sentiment / Expert Take job and exit 1; scattered failures never do |
 | `test_disclaimer.py` | Every Discord batch ends with the disclaimer without breaking the length limit; the sidebar shows it |
 | `test_code_fingerprint.py` | The snapshot fingerprint ignores comments and docstrings, changes on any code edit, and is the same on every Python (a pinned sample) |
 | `test_validate_ticker.py` | A ticker added while Yahoo throttles is kept with a warning, not dropped as a typo |
-| `test_review_100326.py` | The 2026-10-03 review: Trend's Mixed state and its Signal; edited config is pushed at the end of the run (never a file with no baseline, never under `SKIP_GITHUB_PULL`); a mostly-failed news run posts nothing; a partial manual run never counts as the slot's work; Data Thru counts missed sessions; Reset resets calculation settings only; the benchmark shown is the one RS used; one setting drawn by several widgets can't be reverted by a stale copy |
+| `test_review_100326.py` | The 2026-10-03 review: Trend's Mixed state; edited config is pushed at the end of the run (never a file with no baseline, never under `SKIP_GITHUB_PULL`); a mostly-failed news run posts nothing; a partial manual run never counts as the slot's work; Data Thru counts missed sessions; Reset resets calculation settings only; the benchmark shown is the one RS used; one setting drawn by several widgets can't be reverted by a stale copy |
 
 Fixtures are invented (`ACME`, `ZED.NS`, "Newsletter Picks"). Nothing here reads
 or writes the real JSON: every path is redirected to a temp directory. Keep it

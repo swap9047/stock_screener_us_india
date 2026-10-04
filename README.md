@@ -24,17 +24,15 @@ automated alerts to Discord.
     ★ next to the symbol and are filterable and sortable like any other column.
 *   **Custom columns:** User-defined formula columns, usable in filters and alerts the
     moment they're created.
-*   **Signal (Chart × News):** One automatic label per ticker from the two independent
-    inputs — the chart (Trend) and the news (Sentiment): *Confirmed*, *Chart only*,
-    *Mixed*, *News divergence*, *Chart up, news negative*, or *Avoid*. Trend itself is
-    *Uptrend* only when all four of its conditions agree, *Downtrend* when all four
-    disagree, and *Mixed* in between. Its colour is the dot next to
-    the ticker symbol, and it is filterable, sortable and usable in alert rules.
+*   **The ticker dot:** Expert Take's colour (🟢 Accumulate, 🟡 Hold, 🔴 Caution, ⚪ Pending)
+    sits next to every ticker symbol, with the reasons on hover — one verdict, one colour.
+    (A separate Signal label, Trend × Sentiment, was retired in October 2026: Expert Take
+    covers both of its inputs and more.)
 *   **TA Rules:** A trader's weekly EMA flowchart (EMA convergence, support/resistance
     breaks, 10/20/40-week EMA breaks) applied node for node to the last completed week;
     the flowchart itself can be viewed from the sidebar.
 *   **Ticker notes & flags:** Per-ticker free-text notes plus a colour flag that only you
-    set — it takes the place of the Signal dot next to the ticker.
+    set — it takes the place of the Expert Take dot next to the ticker.
 *   **Discord integrations:** GitHub Actions cron jobs evaluate your rules and ping a
     Discord webhook when they trigger, plus a weekly wrap-up digest. Every post ends with
     a short "not investment advice" footer.
@@ -104,7 +102,7 @@ to just the tab you clicked from.
     pipelines, including the fuse that stops a nightly job early when its calls keep
     failing.
 *   `alerts.py` / `alert_check.py` — rule evaluation and the Discord cron job.
-*   `ticker_notes.py` — notes, manual flags, and the Signal (Chart × News) label.
+*   `ticker_notes.py` — notes and manual flags.
 *   `github_sync.py` — atomic commits via the GitHub API, and workflow dispatch.
 *   `refresh_*.py` — background entry points run by GitHub Actions.
 

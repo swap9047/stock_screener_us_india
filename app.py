@@ -94,7 +94,7 @@ from news_summary import (load_news_summary, MARKET_LABELS, get_gemini_api_key,
 from expert_views import (load_expert_views, save_expert_views, analyze_single_ticker,
                           generate_expert_view, _is_valid_view, is_pending_view, apply_regenerated_view,
                           VERDICT_RULES, NEWS_RISK_RULES, EXPERT_NEWS_WINDOW_DAYS, EXPERT_STALE_DAYS,
-                          expert_take_for_row, _view_age_days,
+                          expert_take_for_row, _view_age_days, EXPERT_TAKE_EMOJI,
                           expert_view_has_news as _expert_view_has_news)
 from fundamentals_eval import (
     load_fundamentals, save_fundamentals, _validate_sentiment, SENTIMENT_STALE_DAYS,
@@ -108,7 +108,6 @@ from custom_columns import (
 from ticker_notes import (
     load_ticker_notes, save_ticker_notes, set_ticker_note, get_ticker_note, get_ticker_flag,
     apply_notes_to_rows, flag_marker_html, FLAG_CHOICES, FLAG_EMOJI, TICKER_NOTES_FILE,
-    SIGNAL_EMOJI,
 )
 import json
 import os
@@ -553,14 +552,6 @@ TA_RULES_COLORS = {
 }
 
 
-# Signal cell colours: real shades, best to worst (the ticker dot can only use
-# ticker_notes.SIGNAL_EMOJI, which has no light green).
-SIGNAL_COLORS = {
-    "Confirmed": "#1e8449", "Chart only": "#52be80", "Mixed": "#7d3c98", "News divergence": "#b7950b",
-    "Chart up, news negative": "#d35400", "Avoid": "#c0392b",
-}
-
-
 def style_row(row, ema_labels):
     styles = [""] * len(row)
     # If there are duplicate 'Last' columns, row["Last"] might be a Series.
@@ -574,7 +565,7 @@ def style_row(row, ema_labels):
         # Access by index rather than label to avoid returning a Series
         # when duplicate column names exist in the DataFrame.
         val = row.iloc[i]
-        if col in ("Trend", "Vol Trend", "Tech Uptrend", "Net Vol 10D", "TA Rules", "Signal"):
+        if col in ("Trend", "Vol Trend", "Tech Uptrend", "Net Vol 10D", "TA Rules"):
             val = _plain_text(val)
         if col in ema_cols and pd.notna(val):
             styles[i] = "color:#c0392b;font-weight:600" if last < val else "color:#1e8449;font-weight:600"
@@ -605,10 +596,6 @@ def style_row(row, ema_labels):
         elif col == "TA Rules" and isinstance(val, str):
             # The colours of TheWrap flowchart's own outcome boxes.
             color = TA_RULES_COLORS.get(val)
-            if color:
-                styles[i] = f"color:{color};font-weight:700"
-        elif col == "Signal" and isinstance(val, str):
-            color = SIGNAL_COLORS.get(val)
             if color:
                 styles[i] = f"color:{color};font-weight:700"
         elif col == "Vol Trend" and isinstance(val, str):
@@ -1378,17 +1365,9 @@ def column_definitions(settings, labels):
         ),
         "Vol 10D": "Average daily share volume over the last 10 trading days.",
         "Vol 100D": "Average daily share volume over the last 100 trading days.",
-        "Signal": (
-            "The automatic read, from two independent inputs: the chart (Trend) and the news (Sentiment). "
-            "Confirmed = Uptrend + Bullish news; Chart only = Uptrend, news Neutral/Unknown; Mixed = Trend "
-            "Mixed, news Neutral/Unknown; News divergence = not an Uptrend but Bullish news (a possible "
-            "turnaround -- or a trap); Chart up, news negative = Uptrend + Bearish news; Avoid = Downtrend "
-            "without Bullish news, or Mixed with Bearish news. Its colour is the dot next to the ticker when "
-            "you haven't set a Flag. Hover a cell for both inputs."
-        ),
         "Flag": (
             "Your own marker, set via the sidebar 'Ticker Notes' panel (Red/Yellow/Green/Blue), also shown "
-            "next to the ticker symbol, where it takes the place of the Signal dot. Never set automatically."
+            "next to the ticker symbol, where it takes the place of the Expert Take dot. Never set automatically."
         ),
         "Expert Take": (
             "ACCUMULATE, HOLD or CAUTION, decided live from the other columns. Accumulate: Trend up or Tech "
@@ -1398,7 +1377,8 @@ def column_definitions(settings, labels):
             "Otherwise Hold. The nightly AI explains it and writes a trade plan, and reads the last "
             f"{EXPERT_NEWS_WINDOW_DAYS} days of material news: a dated negative event (fraud, a regulator's "
             "action, a lost contract, dilution...) lowers the verdict one step, marked ⚑. News never raises it. "
-            "Hover a cell for what decided it and the trade plan."
+            "Its colour is the dot next to the ticker (🟢 Accumulate, 🟡 Hold, 🔴 Caution, ⚪ Pending) when you "
+            "haven't set a Flag. Hover a cell for what decided it and the trade plan."
         ),
         "Expert News?": (
             f"Whether the Expert Take write-up had any news behind it: the last {EXPERT_NEWS_WINDOW_DAYS} days' "
@@ -2605,7 +2585,6 @@ def build_column_defs(labels, custom_columns=None):
         ("expert_news_backed", "Expert News?"),
         ("trend", "Trend"),
         ("ta_rules", "TA Rules"),
-        ("signal", "Signal"),
         ("flag", "Flag"),
         ("note", "Notes"),
         ("interested_label", "Interested"),
@@ -3318,7 +3297,7 @@ def render_category_order_manager(label_by_key):
     label_for = {
         "trend": "Trend", "volume_trend": "Vol Trend", "sentiment": "Sentiment",
         "expert_take": "Expert Take", "expert_news_backed": "Expert News?",
-        "flag": "Flag", "tech_uptrend": "Tech Uptrend", "ta_rules": "TA Rules", "signal": "Signal",
+        "flag": "Flag", "tech_uptrend": "Tech Uptrend", "ta_rules": "TA Rules",
         "vstop_weekly_direction": "VStop Dir", "interested": "Interested",
     }
 
@@ -4456,10 +4435,6 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             )
             for r in filtered
         ]
-        raw_df["signal"] = [
-            with_tooltip(r.get("signal") or "—", r.get("signal_reason", ""), nowrap=True)
-            for r in filtered
-        ]
         raw_df["net_volume_10d_dir"] = [
             with_tooltip(r.get("net_volume_10d_dir", "—") or "—",
                          f"Ratio: {r.get('net_volume_10d_ratio', 0)}% of total 10d vol" if r.get("net_volume_10d_dir") else "")
@@ -4485,8 +4460,9 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         # Two markers ride on the ticker symbol itself, so both are readable
         # while scanning without their own columns being shown or scrolled
         # into view (each also has a plain column of its own):
-        #   - Your Flag colour if you set one, otherwise the Signal colour,
-        #     carrying a tooltip saying which it is and why.
+        #   - Your Flag colour if you set one, otherwise Expert Take's colour,
+        #     carrying a tooltip saying which it is and why. (It was Signal's
+        #     until 2026-10-04: one verdict, one colour.)
         #   - Interested, a ★ -- deliberately not a colored ⭐, since the cell
         #     already spends color on the flag dot and a second colored glyph
         #     would read as another status.
@@ -4497,18 +4473,23 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         # ragged. Keeping the two markers glued to each other means the cell
         # wraps at most once, in the same place, on every row.
         STAR_HTML = '<span title="Interested" style="font-size:15px;">★</span>'
+        # Loaded here, before the ticker cell: its dot explains the Expert Take
+        # verdict, and the Expert Take column below reuses the same dict.
+        expert_views = load_expert_views()
 
         def _ticker_cell(r):
             link = (f'<a href="{tradingview_url(r["ticker"])}" '
                     f'target="_blank" rel="noopener noreferrer">{r["ticker"]}</a>')
-            # Your manual flag wins the dot; otherwise it shows the Signal.
+            # Your manual flag wins the dot; otherwise it shows Expert Take.
             flag = r.get("flag", "")
             if flag in FLAG_EMOJI:
                 emoji, reason = FLAG_EMOJI[flag], html.escape(f"Flag: {flag} (set by you)")
             else:
-                sig = r.get("signal") or ""
-                emoji = SIGNAL_EMOJI.get(sig)
-                reason = html.escape(f"Signal: {sig} — {r.get('signal_reason', '')}") if emoji else ""
+                take = r.get("expert_take") or "Pending"
+                emoji = EXPERT_TAKE_EMOJI.get(take)
+                why = expert_take_for_row(r, expert_views.get(r["ticker"], {}))
+                reason = html.escape(f"Expert Take: {take} — {'; '.join(why['reasons'])}"
+                                     + (" (lowered by news ⚑)" if why["news_lowered"] else "")) if emoji else ""
             markers = []
             if emoji and reason:
                 markers.append(f'<span title="{reason}">{emoji}</span>')
@@ -4569,7 +4550,6 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
 
         raw_df["matched_alerts"] = [_colored_alert_cell(r["ticker"]) for r in filtered]
 
-        expert_views = load_expert_views()
         _row_by_ticker = {r["ticker"]: r for r in filtered}
 
         def _expert_take_cell(ticker):

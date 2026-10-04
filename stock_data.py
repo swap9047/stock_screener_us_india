@@ -537,7 +537,6 @@ def get_filterable_metrics(settings=None):
         "1W Ret vs Index": "rel_ret_1w_index",
         "Tech Uptrend": "tech_uptrend",
         "TA Rules": "ta_rules",
-        "Signal": "signal",
         "Flag": "flag",
         "Notes": "note",
         "Expert Take": "expert_take",

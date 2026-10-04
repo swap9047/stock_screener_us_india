@@ -35,7 +35,7 @@ step names, so each key needs a line in the AI steps' `env:` blocks. Every run l
 `[key rotation] N key(s): ...`; if that number is lower than expected, that line is
 missing.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1014
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1012
 offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
@@ -49,18 +49,18 @@ verified by rendering the app headlessly; recipe at the bottom.
 
 | File | Lines | What it owns |
 |---|---:|---|
-| `app.py` | 6746 | The entire UI: tabs, tables, sidebar, filters, sort, editors, AI control bars, News + Alert Rules tabs |
-| `stock_data.py` | 3178 | yfinance fetching, all indicator maths, watchlist/markets registry IO, `get_filterable_metrics` |
+| `app.py` | 6734 | The entire UI: tabs, tables, sidebar, filters, sort, editors, AI control bars, News + Alert Rules tabs |
+| `stock_data.py` | 3177 | yfinance fetching, all indicator maths, watchlist/markets registry IO, `get_filterable_metrics` |
 | `alerts.py` | 1127 | Alert rule evaluation + Discord message building; every Discord post goes through `send_discord_batch`, which appends the disclaimer |
 | `news_summary.py` | 861 | News gathering + LLM summarisation |
 | `fundamentals_eval.py` | 1191 | Sentiment ("fundamental view") generation + validation. The model only extracts facts; `score_sentiment` decides the label, weighted toward forward signals (guidance ±15, quoted outlook ±6, guidance vs consensus ±3, named-firm action ±3; the quarter's profit >15% YoY or a beat/miss ±1 only breaks ties; with no forward signal, profit >+25% / <-20% YoY decides alone). The search window is anchored to each company's last results (`search_window_for`) |
 | `github_sync.py` | 715 | Atomic config push, the end-of-run push of edited config (`unpushed_config_files`) + `workflow_dispatch` trigger |
-| `expert_views.py` | 909 | Expert Take. The verdict is decided in code, live, from Trend, Tech Uptrend, TA Rules and Sentiment (`decide_expert_verdict`, `expert_take_for_row`); the nightly model writes the explanation and trade plan, and may lower the verdict one step for a dated material negative event in the last 14 days (`news_risk_active`). Its prompt also gets Sentiment's checked facts for the quarter (section 4) |
-| `filters.py` | 487 | The boolean condition engine — shared by UI filters **and** background alerts |
+| `expert_views.py` | 936 | Expert Take. The verdict is decided in code, live, from Trend, Tech Uptrend, TA Rules and Sentiment (`decide_expert_verdict`, `expert_take_for_row`); the nightly model writes the explanation and trade plan, and may lower the verdict one step for a dated material negative event in the last 14 days (`news_risk_active`). Its prompt also gets Sentiment's checked facts for the quarter (section 4) |
+| `filters.py` | 485 | The boolean condition engine — shared by UI filters **and** background alerts |
 | `llm_util.py` | 679 | Shared Gemini-call plumbing (timeout wrapper, retry/model-ladder logic, `FailureFuse`) for the three AI pipelines |
 | `weekly_wrapup.py` | 365 | Weekly Discord digest |
 | `custom_columns.py` | 294 | User-defined formula columns |
-| `ticker_notes.py` | 176 | Per-ticker notes and manual flags, plus `signal` (Chart × News: Trend × Sentiment) |
+| `ticker_notes.py` | 117 | Per-ticker notes and manual flags. (`signal` was retired on 2026-10-04; the ticker dot is Expert Take's colour) |
 | `watchlist_labels.py` | 46 | Tab labels a watchlist may not take. Kept out of `stock_data.py`, whose code fingerprint (comments and docstrings excluded) marks the snapshot stale on any code edit |
 
 `refresh_*.py` and `*_check.py` are thin entry points that exist only to be run by GitHub
@@ -142,7 +142,7 @@ spine, in order:
 1. Auth gate.
 2. **Data load** — `data_snapshot.json` if fresh, else a live `fetch_all_markets`.
    Produces `per_market = {market_key: [row dicts]}`.
-3. **Enrichment loop** over `per_market` — custom columns, notes/flags and `signal`, then
+3. **Enrichment loop** over `per_market` — custom columns, notes/flags, then
    `interested`, `sentiment`, `expert_take` attached to every row.
 4. **`st.tabs(...)`** with `key="main_tabs"`.
 5. **Sidebar** — column picker, sort control, category order, glossary, custom columns,
@@ -180,8 +180,8 @@ ticker, and *when* a field lands on it decides what you can do with it.
 
 | Stage | Fields | Usable for |
 |---|---|---|
-| From the snapshot | prices, all indicators, `index_name`, `company_name`, `data_end`, `reported_qtr`, valuation metrics (`trailing_pe`, `roce`, …), `trend`, `volume_trend`, `tech_uptrend`, `flag`, `note`, `signal` | filter, sort, display |
-| Attached in the enrichment loop (module level, before tabs **and** before the sidebar) | custom columns, notes/flags and `signal`, `interested`, `sentiment`, `expert_take` | filter, sort, display |
+| From the snapshot | prices, all indicators, `index_name`, `company_name`, `data_end`, `reported_qtr`, valuation metrics (`trailing_pe`, `roce`, …), `trend`, `volume_trend`, `tech_uptrend`, `flag`, `note` | filter, sort, display |
+| Attached in the enrichment loop (module level, before tabs **and** before the sidebar) | custom columns, notes/flags, `interested`, `sentiment`, `expert_take` (live, from the columns) | filter, sort, display |
 | Built inside `render_market_tab`, **after** filtering | `matched_alerts`, the `fundamentals` display cell, `tech_uptrend_label` | display only |
 
 **The rule: if you want a field filterable or sortable, attach it in the enrichment loop.**
@@ -314,8 +314,7 @@ Each of these has actually bitten this codebase.
   decide the verdict, so this now guards the write-up and the news step. It used to, twice over: the
   prompt showed the row's flag as a "user flag" while the flag was an auto-vote that counted
   the last verdict, and it listed alert rules that fire on that flag. Now Flag is set only by
-  hand (the automatic read is `signal`, from Trend + Sentiment, which never reads Expert
-  Take), the prompt shows a flag only when `flag_reason == MANUAL_FLAG_REASON`, and
+  hand, the prompt shows a flag only when `flag_reason == MANUAL_FLAG_REASON`, and
   `alerts.PRIOR_VERDICT_METRICS` keeps rules on `expert_take`/`expert_news_backed` out of
   it. A new field derived from the verdict belongs in that set.
 - **Post to Discord only through `alerts.send_discord_batch`.** It appends the disclaimer

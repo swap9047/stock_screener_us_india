@@ -647,8 +647,9 @@ def active_alerts_by_ticker(rules, snapshot_results, metric_labels=None):
 # news-backed marker. A rule on either must not reach the Expert Take prompt, or
 # the model is shown its own last answer. `flag` was on this list while it was
 # an auto-vote that counted the verdict; since 2026-10-02 it is set only by
-# hand (the automatic read is `signal`, from Trend + Sentiment, which never
-# reads Expert Take), so a rule on it is the user's own judgement and may go in.
+# hand, so a rule on it is the user's own judgement and may go in. (The
+# automatic read is Expert Take itself, which since 2026-10-04 the columns
+# decide in code.)
 PRIOR_VERDICT_METRICS = {"expert_take", "expert_news_backed"}
 
 

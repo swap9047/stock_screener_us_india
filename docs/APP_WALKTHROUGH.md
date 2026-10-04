@@ -18,7 +18,7 @@ It is a personal stock screener with three main parts.
   wide table of technical indicators and fundamentals. Two AI columns sit beside them:
   **Expert Take** (a buy, hold or caution verdict) and **Sentiment** (a read of the
   latest earnings). Then come a few rule-based reads: **Trend**, **Tech Uptrend**,
-  **TA Rules** and **Signal**. You can filter, sort, annotate and export the table, and
+  **TA Rules** and **Expert Take**. You can filter, sort, annotate and export the table, and
   build alert rules on any column.
 - **The background jobs** (GitHub Actions) refresh prices every hour and run three AI
   pipelines each night. They evaluate your alert rules, post results to Discord, and
@@ -76,7 +76,7 @@ work, up to 22 hours late (10 h for breadth). See §10.
 | `filters.py` | The condition engine shared by table filters **and** alerts, so the two always agree |
 | `alerts.py` / `alert_check.py` | Rule normalisation, scheduling, edge-trigger state, Discord message building and sending / the nightly job |
 | `weekly_wrapup.py` / `weekly_wrapup_check.py` | The Sunday digest: pure logic / the job |
-| `ticker_notes.py` | Notes, manual flags, and the **Signal** label |
+| `ticker_notes.py` | Notes and manual flags |
 | `custom_columns.py` | Your formula columns, with a safe arithmetic evaluator (no `eval`) |
 | `fundamentals_eval.py` / `refresh_fundamentals.py` | The Sentiment pipeline / its nightly job |
 | `expert_views.py` / `refresh_expert_views.py` | The Expert Take pipeline / its nightly job |
@@ -148,13 +148,13 @@ ticker, you see a warning that names the reason, plus last-known data.
 
 After loading, every row gets these fields, in this order:
 1. **Custom columns**, evaluated from their current formula.
-2. **Note, Flag and Signal**, from `ticker_notes.json` and the guarded Sentiment.
+2. **Note and Flag**, from `ticker_notes.json`.
 3. **Interested, Sentiment, Expert Take and Expert News?**, from `interested.json` and
    the two AI files, using the guarded values.
 4. **Data age**, recomputed for the "haven't updated" caption.
 
 The same functions run in the background jobs (`stock_data.enrich_rows`). That is what
-guarantees an alert on Signal, Sentiment or a custom column evaluates the same way at
+guarantees an alert on Expert Take, Sentiment or a custom column evaluates the same way at
 night as in the app's preview.
 
 ---
@@ -325,22 +325,17 @@ last 156 weeks (3 years) of weekly **wicks**:
 Every threshold is a setting (`ta_*`). The flowchart image is in the private data repo
 and opens from the sidebar ("TA Rules flowchart").
 
-### 5.4 Signal: Chart × News (`ticker_notes.compute_signal`)
+### 5.4 The ticker dot (Signal retired)
 
-Signal combines the two independent inputs: **Trend** (the chart) and the **guarded
-Sentiment** (the news).
+The dot next to every ticker is **Expert Take's colour**: 🟢 Accumulate, 🟡 Hold,
+🔴 Caution, ⚪ Pending. Hovering it shows what decided the verdict. A manual Flag takes
+its place.
 
-| | Sentiment Positive | Neutral / Unknown | Negative |
-|---|---|---|---|
-| **Trend up** (Uptrend or Strong Uptrend) | **Confirmed** 🟢 | **Chart only** ⚪ | **Chart up, news negative** 🟠 |
-| **Trend Mixed** | **News divergence** 🟡 | **Mixed** 🟣 | **Avoid** 🔴 |
-| **Trend down** (Downtrend or Strong Downtrend) | **News divergence** 🟡 | **Avoid** 🔴 | **Avoid** 🔴 |
-
-- **Blank Signal.** Signal is blank when Trend isn't computable yet.
-- **The dot by the ticker.** The ticker shows the Signal's dot unless you've set a
-  manual Flag, which takes its place.
-- **What Signal ignores.** Expert Take and Tech Uptrend are deliberately **not** inputs,
-  because both mostly restate the chart.
+It used to show **Signal**, a Trend × Sentiment label. The owner retired Signal on
+2026-10-04, along with its two alert rules. Expert Take now covers both of Signal's
+inputs, plus Tech Uptrend, TA Rules and the news step. The two also told different
+stories: 15 tickers read Signal "News divergence" (yellow) while Expert Take said Caution
+(red), because TA said Exit.
 
 ### 5.5 Flag and notes
 
@@ -564,7 +559,7 @@ as that evening's digest.
   also **Copy sort from** another tab. The default sort is Index ↑, then Data Thru ↓,
   then % Chg ↓.
 - **Columns to show / reorder.** Shared by every tab. Drag to reorder.
-- **Category sort order.** Drag to rank each categorical column's values: Trend, Signal,
+- **Category sort order.** Drag to rank each categorical column's values: Trend,
   Sentiment and so on. Every category list starts best-first.
 - **Metric glossary.** Searchable. It also says when a metric can be filtered but isn't
   a table column.
@@ -598,8 +593,8 @@ A **Show fundamental columns** toggle and an **➕ Add Watchlist** popover.
 - *Re-analyze All* starts the background workflow for just this tab's watchlists.
 
 **The table** (raw HTML, so the header and Ticker column stay pinned while you scroll):
-- **Ticker cell.** The flag or Signal dot, ★ if Interested, and a TradingView link.
-- **Tooltips.** Hover or tap any Trend, TA Rules, Vol Trend, Tech Uptrend, Signal,
+- **Ticker cell.** The flag or Expert Take dot, ★ if Interested, and a TradingView link.
+- **Tooltips.** Hover or tap any Trend, TA Rules, Vol Trend, Tech Uptrend,
   Expert Take or Sentiment cell for the full reasoning.
 - **Alerts column.** The numbers of the enabled rules currently true for that ticker,
   coloured by each rule's colour, with a legend under the table.
