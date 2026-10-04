@@ -706,13 +706,22 @@ def trend_tooltip(row, labels):
         return "Not enough weekly history yet to compute Trend."
     w_slow = labels["w_slow"]
     w_fast = labels["w_fast"]
-    lines = ["All ✓ → Uptrend · all ✗ → Downtrend · otherwise Mixed:"]
+    # "–" marks a condition inside its neutral band: too close to call, so it
+    # does not vote (stock_data.compute_trend). Older snapshots lack the keys.
+    def _vote(ok, neutral):
+        return "–" if neutral else _mark(ok)
+
+    lines = ["All voting ✓ → Uptrend · all ✗ → Downtrend · otherwise Mixed",
+             "(– = too close to call, doesn't vote; needs 3 votes):"]
     lines.append(f"{_mark(detail['price_above_ma'])} Price > {w_slow} ({detail['last_close']:.1f} vs {detail['last_ma']:.1f})")
-    lines.append(f"{_mark(detail['slope_rising'])} {w_slow} slope rising ({detail['slope']:+.3f}/wk)")
+    lines.append(f"{_vote(detail['slope_rising'], detail.get('slope_neutral'))} {w_slow} slope rising "
+                 f"({detail['slope']:+.3f}/wk)")
     if detail.get("ema_aligned") is not None:
-        lines.append(f"{_mark(detail['ema_aligned'])} {w_fast} > {w_slow} ({detail['ema_fast']:.1f} vs {detail['last_ma']:.1f})")
+        lines.append(f"{_vote(detail['ema_aligned'], detail.get('ma_neutral'))} {w_fast} > {w_slow} "
+                     f"({detail['ema_fast']:.1f} vs {detail['last_ma']:.1f})")
     if detail.get("rs_positive") is not None:
-        lines.append(f"{_mark(detail['rs_positive'])} Weekly RS positive ({detail['rs_weekly']:+.1f})")
+        lines.append(f"{_vote(detail['rs_positive'], detail.get('rs_neutral'))} Weekly RS positive "
+                     f"({detail['rs_weekly']:+.1f})")
     lines.append(f"→ {detail['direction']}")
     if detail["direction"] == "Mixed":
         lines.append("")
@@ -727,12 +736,15 @@ def trend_tooltip(row, labels):
         lines.append(f"{_mark(detail['near_high_low_pass'])} Within {pct_label} of {ref_label} ({detail['last_close']:.1f} vs {ref_price:.1f})")
     else:
         lines.append(f"n/a Within {pct_label} of {ref_label} (no 52W data)")
-    if detail.get("avg_volume_10d") is not None and detail.get("avg_volume_100d") is not None:
-        ratio = detail["avg_volume_10d"] / detail["avg_volume_100d"] if detail["avg_volume_100d"] else None
+    v10 = detail.get("volume_10d", detail.get("avg_volume_10d"))
+    v100 = detail.get("volume_100d", detail.get("avg_volume_100d"))
+    basis = "median" if detail.get("volume_basis") == "median" else "avg"
+    if v10 is not None and v100 is not None:
+        ratio = v10 / v100 if v100 else None
         ratio_str = f"{ratio:.2f}×" if ratio is not None else "n/a"
-        lines.append(f"{_mark(detail['volume_rising'])} Vol 10D ≥ {detail['volume_ratio']}× Vol 100D ({ratio_str})")
+        lines.append(f"{_mark(detail['volume_rising'])} 10D {basis} volume ≥ {detail['volume_ratio']}× 100D ({ratio_str})")
     else:
-        lines.append(f"n/a Vol 10D ≥ {detail['volume_ratio']}× Vol 100D (no volume data)")
+        lines.append(f"n/a 10D {basis} volume ≥ {detail['volume_ratio']}× 100D (no volume data)")
     lines.append(f"→ {'Strong' if detail['strong'] else 'Not Strong'}")
     return "\n".join(lines)
 
@@ -811,15 +823,21 @@ def ta_rules_tooltip(row):
 
 def vol_trend_tooltip(row, settings):
     """Builds the hover-tooltip text for a Vol Trend cell: the actual 10D/100D
-    ratio against both thresholds."""
-    v10, v100 = row.get("avg_volume_10d"), row.get("avg_volume_100d")
+    MEDIAN-volume ratio against both thresholds (stock_data.volume_stats)."""
+    # A row from a snapshot made before the medians existed (the app shows the
+    # old snapshot until the next refresh) was classified on the averages.
+    basis = "Median" if "median_volume_10d" in row else "Average"
+    if basis == "Median":
+        v10, v100 = row.get("median_volume_10d"), row.get("median_volume_100d")
+    else:
+        v10, v100 = row.get("avg_volume_10d"), row.get("avg_volume_100d")
     explode = settings.get("volume_explode_ratio", 1.4)
     decline = settings.get("volume_decline_ratio", 0.7)
     if v10 is None or v100 is None or not v100:
         return "Not enough volume history yet to compute Vol Trend."
     ratio = v10 / v100
     lines = [
-        f"Vol 10D ÷ Vol 100D = {v10:,.0f} ÷ {v100:,.0f} = {ratio:.2f}×",
+        f"{basis} day, 10D ÷ 100D = {v10:,.0f} ÷ {v100:,.0f} = {ratio:.2f}×",
         f"Exploding needs ≥ {explode}×",
         f"Declining needs ≤ {decline}×",
         f"→ {row.get('volume_trend') or '—'}",
@@ -828,32 +846,28 @@ def vol_trend_tooltip(row, settings):
 
 
 def tech_uptrend_tooltip(row, settings, labels):
-    """Builds the hover-tooltip text for a Tech Uptrend cell: each of the 4
-    requirements and whether it passed."""
-    vstop = row.get("vstop_weekly")
-    weeks_since = row.get("vstop_weekly_weeks_since_change")
-    ema40 = row.get("ema40")
-    last_close = row.get("last_close")
-    v10, v100 = row.get("avg_volume_10d"), row.get("avg_volume_100d")
-    min_weeks = settings.get("tech_uptrend_min_vstop_weeks", 3)
-    vol_ratio = settings.get("tech_uptrend_volume_ratio", 1.4)
-    w_slow = labels["w_slow"]
-
-    if vstop is None or weeks_since is None or ema40 is None or v10 is None or v100 is None:
+    """Builds the hover-tooltip text for a Tech Uptrend cell: each requirement
+    and whether it passed, read from the detail stock_data stored. It used to
+    re-test the row's ROUNDED VStop and slow WEMA, which could disagree with the
+    label it explained (stock_data.compute_tech_uptrend compares unrounded)."""
+    if "tech_uptrend_detail" not in row:
+        # A row from a snapshot made before the detail existed: the app keeps
+        # showing it until the next hourly refresh after a code change.
+        return "The per-condition breakdown appears after the next data refresh."
+    d = row.get("tech_uptrend_detail") or {}
+    passed = d.get("passed")
+    if not passed:
         return "Not enough data yet to compute Tech Uptrend."
-
-    close_above_vstop = last_close > vstop
-    held_long_enough = weeks_since > min_weeks
-    close_above_wema = last_close > ema40
-    vol_surging = v10 > vol_ratio * v100
-    ratio = v10 / v100 if v100 else None
-
+    w_slow = labels["w_slow"]
+    ratio = d["vol_10d"] / d["vol_100d"] if d.get("vol_100d") else None
     lines = [
         "Tech Uptrend requires ALL of:",
-        f"{_mark(close_above_vstop)} Close > Weekly VStop ({last_close:.1f} vs {vstop:.1f})",
-        f"{_mark(held_long_enough)} Held > {min_weeks} weeks since VStop flip ({weeks_since} weeks)",
-        f"{_mark(close_above_wema)} Close > {w_slow} ({last_close:.1f} vs {ema40:.1f})",
-        f"{_mark(vol_surging)} Vol 10D > {vol_ratio}× Vol 100D ({ratio:.2f}× )" if ratio is not None else f"{_mark(vol_surging)} Vol 10D > {vol_ratio}× Vol 100D",
+        f"{_mark(passed['above_vstop'])} Close > Weekly VStop ({d['close']:.2f} vs {d['vstop']:.2f})",
+        f"{_mark(passed['vstop_up'])} VStop pointing Up ({d['vstop_direction']})",
+        f"{_mark(passed['held'])} Held > {d['min_weeks']} weeks since VStop flip ({d['weeks_since']} weeks)",
+        f"{_mark(passed['above_slow'])} Close > {w_slow} ({d['close']:.2f} vs {d['ema_slow']:.2f})",
+        f"{_mark(passed['volume'])} 10D median volume > {d['vol_ratio']}× 100D"
+        + (f" ({ratio:.2f}×)" if ratio is not None else ""),
         f"→ {'Yes' if row.get('tech_uptrend') else 'No'}",
     ]
     return "\n".join(lines)
@@ -1279,9 +1293,13 @@ def column_definitions(settings, labels):
             "Strong Uptrend / Uptrend / Mixed / Downtrend / Strong Downtrend. Uptrend requires ALL of: price "
             f"above slow WEMA, slow WEMA slope rising over {settings.get('trend_slope_lookback', 3)} weeks, fast "
             "WEMA above slow WEMA, and weekly RS positive (when available); Downtrend requires all four bearish; "
-            "anything in between is Mixed (never Strong). Strong additionally needs price within "
-            f"{settings.get('trend_near_high_low_pct', 0.10) * 100:.0f}% of the 52W high/low AND 10D avg "
-            f"volume ≥ {settings.get('trend_volume_ratio', 1.0)}× the 100D avg. Hover a cell for the "
+            "anything in between is Mixed (never Strong). A condition too close to call doesn't vote (RS "
+            f"within ±{settings.get('trend_rs_neutral', 1.0):g}, 10W within "
+            f"{settings.get('trend_ma_neutral_pct', 0.5):g}% of 40W, 40W slope within "
+            f"{settings.get('trend_slope_neutral_pct', 0.05):g}%/week); Uptrend/Downtrend still need 3 votes. "
+            "Strong additionally needs price within "
+            f"{settings.get('trend_near_high_low_pct', 0.10) * 100:.0f}% of the 52W high/low AND the 10D median "
+            f"volume ≥ {settings.get('trend_volume_ratio', 1.0)}× the 100D median. Hover a cell for the "
             "per-condition breakdown."
         ),
         "Alerts": "Numbers of the enabled alert/scan rules currently matching this ticker -- see the legend below the table.",
@@ -1343,9 +1361,9 @@ def column_definitions(settings, labels):
             "exact net/total ratio."
         ),
         "Vol Trend": (
-            f"Exploding: 10D avg volume ≥ {settings.get('volume_explode_ratio', 1.4)}× the 100D avg. "
-            f"Declining: ≤ {settings.get('volume_decline_ratio', 0.7)}× the 100D avg. Otherwise In-line. "
-            "Hover a cell for the actual ratio."
+            f"Exploding: the 10D median daily volume ≥ {settings.get('volume_explode_ratio', 1.4)}× the 100D "
+            f"median. Declining: ≤ {settings.get('volume_decline_ratio', 0.7)}×. Otherwise In-line. Medians, so "
+            "a results-day spike doesn't skew the baseline for months. Hover a cell for the actual ratio."
         ),
         "TA Rules": (
             "TheWrap flowchart, on the last completed weekly close. If the three WEMAs are within "
@@ -1358,9 +1376,9 @@ def column_definitions(settings, labels):
             "the flowchart itself is under \"TA Rules flowchart\" in the sidebar."
         ),
         "Tech Uptrend": (
-            "Yes only if ALL of: close > weekly VStop, VStop held its direction for more than "
-            f"{settings.get('tech_uptrend_min_vstop_weeks', 3)} weeks, close > slow WEMA, and 10D avg volume "
-            f"> {settings.get('tech_uptrend_volume_ratio', 1.4)}× the 100D avg. Hover a cell for the "
+            "Yes only if ALL of: close > weekly VStop, VStop pointing Up for more than "
+            f"{settings.get('tech_uptrend_min_vstop_weeks', 3)} weeks, close > slow WEMA, and the 10D median "
+            f"volume > {settings.get('tech_uptrend_volume_ratio', 0.3)}× the 100D median. Hover a cell for the "
             "per-condition breakdown."
         ),
         "Vol 10D": "Average daily share volume over the last 10 trading days.",
@@ -1664,7 +1682,8 @@ def settings_dialog():
     st.caption(
         "Uptrend requires ALL of: price above slow WEMA, the WEMA's own slope rising, fast WEMA above "
         "slow WEMA (e.g. 10 WEMA > 40 WEMA), and Mansfield RS positive (when available) — no partial "
-        "credit. Downtrend requires all four bearish; anything in between is Mixed. "
+        "credit. Downtrend requires all four bearish; anything in between is Mixed. A condition inside "
+        "its neutral band (17a-17c) doesn't vote, and Uptrend/Downtrend still need 3 votes. "
         "\"Strong\" additionally needs BOTH of the two thresholds below — parameters here only affect "
         "this column, independent of Vol Trend or Tech Uptrend."
     )
@@ -1686,23 +1705,40 @@ def settings_dialog():
     trend_vol_ratio = tr3.number_input(
         "17. \"Strong\": min 10D ÷ 100D vol ratio", min_value=0.0, step=0.1, format="%.2f",
         value=float(settings.get("trend_volume_ratio", 1.0)), key="set_trend_vol_ratio",
-        help="\"Strong\" also requires 10-day average volume ≥ this many times the 100-day average. "
-             "Default 1.0 = just needs to be higher, no minimum multiple. This column's own "
+        help="\"Strong\" also requires the 10-day median daily volume ≥ this many times the 100-day "
+             "median. Default 1.0 = just needs to be higher, no minimum multiple. This column's own "
              "parameter, separate from Vol Trend's and Tech Uptrend's ratios.",
+    )
+    tb1, tb2, tb3 = st.columns(3)
+    trend_rs_neutral = tb1.number_input(
+        "17a. Neutral band: RS within ±", min_value=0.0, step=0.5, format="%.1f",
+        value=float(settings.get("trend_rs_neutral", 1.0)), key="set_trend_rs_neutral",
+        help="A weekly RS this close to 0 doesn't vote for or against a trend. 0 turns the band off.",
+    )
+    trend_ma_neutral_pct = tb2.number_input(
+        "17b. Neutral band: 10W within % of 40W", min_value=0.0, step=0.1, format="%.2f",
+        value=float(settings.get("trend_ma_neutral_pct", 0.5)), key="set_trend_ma_neutral",
+        help="Fast and slow WEMAs this close together don't vote on alignment. 0 turns the band off.",
+    )
+    trend_slope_neutral_pct = tb3.number_input(
+        "17c. Neutral band: 40W slope within %/week", min_value=0.0, step=0.01, format="%.2f",
+        value=float(settings.get("trend_slope_neutral_pct", 0.05)), key="set_trend_slope_neutral",
+        help="A slow WEMA moving less than this % of its value per week counts as flat and doesn't vote. "
+             "0 turns the band off.",
     )
 
     st.markdown("**Vol Trend column** (Exploding / In-line / Declining)")
     vt1, vt2 = st.columns(2)
     volume_explode_ratio = vt1.number_input(
-        "18. 'Exploding' ratio (10D ÷ 100D avg ≥)", min_value=1.0, step=0.1, format="%.2f",
+        "18. 'Exploding' ratio (10D ÷ 100D median ≥)", min_value=1.0, step=0.1, format="%.2f",
         value=float(settings.get("volume_explode_ratio", 1.4)), key="set_vol_explode",
-        help="Vol Trend shows 'Exploding' when 10-day average volume is at least this many times the "
-             "100-day average. Independent of Trend's and Tech Uptrend's volume ratios above/below.",
+        help="Vol Trend shows 'Exploding' when the 10-day median daily volume is at least this many times "
+             "the 100-day median. Independent of Trend's and Tech Uptrend's volume ratios above/below.",
     )
     volume_decline_ratio = vt2.number_input(
-        "19. 'Declining' ratio (10D ÷ 100D avg ≤)", min_value=0.0, step=0.1, format="%.2f",
+        "19. 'Declining' ratio (10D ÷ 100D median ≤)", min_value=0.0, step=0.1, format="%.2f",
         value=float(settings.get("volume_decline_ratio", 0.7)), key="set_vol_decline",
-        help="Vol Trend shows 'Declining' when 10-day average volume is at or below this fraction of the 100-day average.",
+        help="Vol Trend shows 'Declining' when the 10-day median daily volume is at or below this fraction of the 100-day median.",
     )
 
     st.markdown("**Tech Uptrend column** (boolean)")
@@ -1714,11 +1750,11 @@ def settings_dialog():
              "many weeks (in addition to close > VStop, close > slow WEMA, and the volume ratio below).",
     )
     tech_uptrend_vol_ratio = tu2.number_input(
-        "21. Min 10D ÷ 100D vol ratio", min_value=0.0, step=0.1, format="%.2f",
-        value=float(settings.get("tech_uptrend_volume_ratio", 1.4)), key="set_tech_vol_ratio",
-        help="Tech Uptrend also requires 10-day average volume above this many times the 100-day average. "
-             "This column's own parameter — independent of Vol Trend's 'Exploding' ratio above, even "
-             "though both default to the same value.",
+        "21. Min 10D ÷ 100D median vol ratio", min_value=0.0, step=0.1, format="%.2f",
+        value=float(settings.get("tech_uptrend_volume_ratio", 0.3)), key="set_tech_vol_ratio",
+        help="Tech Uptrend also requires the 10-day median daily volume above this many times the "
+             "100-day median. Default 0.3: it asks whether volume has dried up, not whether it is "
+             "surging. This column's own parameter, independent of Vol Trend's ratios.",
     )
 
     st.markdown("**TA Rules column** (TheWrap flowchart)")
@@ -1840,6 +1876,9 @@ def settings_dialog():
                 "trend_slope_lookback": int(trend_slope_lookback),
                 "trend_near_high_low_pct": float(trend_near_pct),
                 "trend_volume_ratio": float(trend_vol_ratio),
+                "trend_rs_neutral": float(trend_rs_neutral),
+                "trend_ma_neutral_pct": float(trend_ma_neutral_pct),
+                "trend_slope_neutral_pct": float(trend_slope_neutral_pct),
                 "volume_explode_ratio": float(volume_explode_ratio),
                 "volume_decline_ratio": float(volume_decline_ratio),
                 "tech_uptrend_min_vstop_weeks": int(tech_uptrend_min_vstop_weeks),
@@ -4916,19 +4955,21 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         "Uptrend requires ALL of: price above the slow WEMA, that WEMA's "
         f"{settings.get('trend_slope_lookback', 3)}-week slope rising, fast WEMA above slow WEMA (e.g. 10 "
         "WEMA > 40 WEMA), and weekly RS positive (when available); Downtrend requires all four bearish, and "
-        "anything in between is Mixed. 'Strong' additionally requires price within "
-        f"{settings.get('trend_near_high_low_pct', 0.10) * 100:.0f}% of its 52-week high/low AND 10D avg "
-        f"volume ≥ {settings.get('trend_volume_ratio', 1.0)}× the 100D avg — its own parameters, "
+        "anything in between is Mixed; a condition too close to call doesn't vote (neutral bands in "
+        "Settings). 'Strong' additionally requires price within "
+        f"{settings.get('trend_near_high_low_pct', 0.10) * 100:.0f}% of its 52-week high/low AND 10D median "
+        f"volume ≥ {settings.get('trend_volume_ratio', 1.0)}× the 100D median — its own parameters, "
         "editable in Settings, independent of Vol Trend/Tech Uptrend below — a sort/filter aid, not a "
         "precise signal. "
         "52W High/Low = trailing 12-month intraday extremes. Vol 10D/100D = average daily share volume "
         "over the last 10 / 100 trading days. % Chg = 1-day close-to-close change. Vol Trend classifies "
-        f"10D-vs-100D average volume as Exploding (≥{settings.get('volume_explode_ratio', 1.4)}×), "
+        f"10D-vs-100D MEDIAN daily volume as Exploding (≥{settings.get('volume_explode_ratio', 1.4)}×), "
         f"Declining (≤{settings.get('volume_decline_ratio', 0.7)}×), or In-line — thresholds editable in "
-        "Settings. Tech Uptrend = close above the weekly VStop (held for more than "
+        "Settings. Tech Uptrend = close above the weekly VStop (pointing Up for more than "
         f"{settings.get('tech_uptrend_min_vstop_weeks', 3)} weeks) AND close above the slow WEMA AND 10D "
-        f"volume > {settings.get('tech_uptrend_volume_ratio', 1.4)}× the 100D avg — its own volume ratio, "
-        "independent of Vol Trend's Exploding ratio even though they default to the same value. All "
+        f"median volume > {settings.get('tech_uptrend_volume_ratio', 0.3)}× the 100D median — its own volume "
+        "ratio, independent of Vol Trend's. Volume tests use median days so a results-day spike doesn't "
+        "skew them. All "
         "values shown to 1 decimal. Use 'Columns to show' above the table to hide/show columns. Edit any "
         "of these parameters via Settings in the sidebar."
     )

@@ -285,7 +285,7 @@ try:
     Path(sd.SETTINGS_FILE).write_text(json.dumps(mine))
     sd.save_settings(sd.calc_settings(sd.DEFAULT_SETTINGS))
     back = sd.load_settings()
-    check(back["rsi_period"] == 14 and back["tech_uptrend_volume_ratio"] == 1.4, "F7: calculation settings go back to defaults")
+    check(back["rsi_period"] == 14 and back["tech_uptrend_volume_ratio"] == 0.3, "F7: calculation settings go back to defaults")
     check(back["note_dropdown_options"] == "a, b" and back["news_watchlist_scope"] == ["x"]
           and back["expert_reasoning_model"] == "m", "F7: note options, news scope and AI models are kept")
 finally:
@@ -304,7 +304,8 @@ try:
 finally:
     sd.load_settings = _ls
 check("DEMA" not in p and "Daily SMAs" in p and "10 DSMA=" in p, "D1: the prompt calls the daily averages SMAs")
-check("VStop uptrend > 3 wks" in p and "Vol 10D > 1.4x" in p, "D2: the prompt states Tech Uptrend's strict thresholds")
+# 0.3 and "median" since 2026-10-04 (checks/test_trend_volume_100426.py V1/V2).
+check("VStop uptrend > 3 wks" in p and "median Vol 10D > 0.3x" in p, "D2: the prompt states Tech Uptrend's strict thresholds")
 check("~50 days" not in p and "~50 days" not in ev._quarter_fundamentals_text({"as_of": "x"}),
       "D3: section 4 no longer claims a fixed ~50-day window")
 check("DSMA = daily SMA" in APP and "DSMA = daily EMA" not in APP, "D4: the footer says DSMA is a daily SMA")

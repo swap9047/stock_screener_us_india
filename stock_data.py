@@ -160,16 +160,25 @@ DEFAULT_SETTINGS = {
     "vstop_include_incomplete_week": True,
     "benchmark_us": BENCHMARKS["US"],
     "benchmark_india": BENCHMARKS["INDIA"],
-    # -- Trend column (Strong Uptrend/Uptrend/Downtrend/Strong Downtrend) --
+    # -- Trend column (Strong Uptrend/Uptrend/Mixed/Downtrend/Strong Downtrend) --
+    # Every volume ratio below compares MEDIAN days (median_volume_10d /
+    # median_volume_100d), not means -- see volume_stats.
     "trend_slope_lookback": 3,   # weeks used for the slow WEMA's regression slope
     "trend_near_high_low_pct": 0.10,   # "Strong" requires price within this % of the 52w high/low
-    "trend_volume_ratio": 1.0,   # "Strong" requires avg_volume_10d / avg_volume_100d >= this
+    "trend_volume_ratio": 1.0,   # "Strong" requires the 10D / 100D median volume >= this
+    # Neutral bands (owner, 2026-10-04): a condition this close to its line does
+    # not vote -- see compute_trend. Price vs the slow WEMA always votes.
+    "trend_rs_neutral": 1.0,         # weekly RS within +- this
+    "trend_ma_neutral_pct": 0.5,     # fast WEMA within this % of the slow one
+    "trend_slope_neutral_pct": 0.05,  # slow WEMA slope within this % of its value per week
     # -- Vol Trend column (Exploding/In-line/Declining) -- independent of Trend/Tech Uptrend --
-    "volume_explode_ratio": 1.4,   # avg_volume_10d / avg_volume_100d >= this => "Exploding"
-    "volume_decline_ratio": 0.7,   # avg_volume_10d / avg_volume_100d <= this => "Declining"
+    "volume_explode_ratio": 1.4,   # 10D / 100D median volume >= this => "Exploding"
+    "volume_decline_ratio": 0.7,   # 10D / 100D median volume <= this => "Declining"
     # -- Tech Uptrend column (boolean) -- independent of Vol Trend's ratio above --
-    "tech_uptrend_min_vstop_weeks": 3,   # weeks since last VStop flip required for Tech Uptrend
-    "tech_uptrend_volume_ratio": 1.4,   # avg_volume_10d / avg_volume_100d must be >= this
+    "tech_uptrend_min_vstop_weeks": 3,   # weeks since last VStop flip required (more than this)
+    # 10D / 100D median volume must be MORE than this. 0.3 is the owner's
+    # (2026-10-04): the test now asks "has volume dried up?", not "is it surging?".
+    "tech_uptrend_volume_ratio": 0.3,
     # -- TA Rules column (TheWrap flowchart, see compute_ta_rules) --
     "ta_converge_pct": 3.0,        # EMAs "converging" when (max - min) of the 3 WEMAs <= this % of the slow one
     "ta_break_pct": 3.0,           # a weekly close must be this % past an EMA / S-R zone to count as broken
@@ -1001,9 +1010,79 @@ def compute_vstop_tv(ohlc_df, length=VSTOP_LENGTH, factor=VSTOP_FACTOR):
     return pd.Series(vstop, index=ohlc_df.index), pd.Series(direction, index=ohlc_df.index)
 
 
+def volume_stats(daily_volume):
+    """Average and MEDIAN daily volume over the last 10, 20 and 100 sessions
+    (None where there is not enough history).
+
+    The averages are the "Vol 10D/20D/100D" columns. Every volume TEST (Trend's
+    Strong, Tech Uptrend, Vol Trend) compares the medians instead: a results-day
+    spike lifts a 100-day mean for five months. On 2026-10-04 one ticker's last
+    10 sessions traded a normal ~30k a day against a 100-day mean of 288k and a
+    median of 93k, and 15 of 31 Uptrends failed Tech Uptrend on volume alone,
+    nearly all small Indian names, whose volume is the spikiest. A median also
+    shrugs off today's half-finished session during market hours."""
+    v = daily_volume.dropna()
+    n = len(v)
+
+    def _stat(days, how):
+        if n < days:
+            return None
+        tail = v.tail(days)
+        return round(float(tail.median() if how == "median" else tail.mean()))
+
+    return {
+        "avg_volume_10d": _stat(10, "mean"), "avg_volume_20d": _stat(20, "mean"),
+        "avg_volume_100d": _stat(100, "mean"),
+        "median_volume_10d": _stat(10, "median"), "median_volume_100d": _stat(100, "median"),
+    }
+
+
+def classify_volume_trend(volume_10d, volume_100d, explode_ratio, decline_ratio):
+    """Vol Trend: "Exploding" / "In-line" / "Declining" from the 10D-vs-100D
+    median volume ratio, or None without data."""
+    if volume_10d is None or not volume_100d:
+        return None
+    ratio = volume_10d / volume_100d
+    if ratio >= explode_ratio:
+        return "Exploding"
+    if ratio <= decline_ratio:
+        return "Declining"
+    return "In-line"
+
+
+def compute_tech_uptrend(close, vstop, vstop_direction, weeks_since, ema_slow,
+                         vol_10d, vol_100d, min_weeks, vol_ratio):
+    """Tech Uptrend: (1 or 0, detail). Yes only if ALL of: the close is above
+    the weekly VStop, the VStop points Up and has held for MORE than
+    `min_weeks` weeks, the close is above the slow WEMA, and the 10D median
+    volume is MORE than `vol_ratio` times the 100D median.
+
+    Takes UNROUNDED prices. The row's vstop_weekly and ema40 are rounded to 0.1
+    for display, and comparing against those was up to 1% off on a 5-unit
+    stock. The VStop direction is tested in its own right: "close above the
+    stop" implies Up only while the stop includes the forming week
+    (vstop_include_incomplete_week) -- with completed weeks only, this week's
+    close can sit above last week's DOWN stop."""
+    detail = {"close": close, "vstop": vstop, "vstop_direction": vstop_direction,
+              "weeks_since": weeks_since, "ema_slow": ema_slow, "vol_10d": vol_10d,
+              "vol_100d": vol_100d, "min_weeks": min_weeks, "vol_ratio": vol_ratio}
+    if None in (close, vstop, vstop_direction, weeks_since, ema_slow, vol_10d, vol_100d):
+        detail["passed"] = None
+        return 0, detail
+    detail["passed"] = passed = {
+        "above_vstop": close > vstop,
+        "vstop_up": vstop_direction == "Up",
+        "held": weeks_since > min_weeks,
+        "above_slow": close > ema_slow,
+        "volume": vol_10d > vol_ratio * vol_100d,
+    }
+    return int(all(passed.values())), detail
+
+
 def compute_trend(last_close, ema_slow_series, rs_weekly, week52_high, week52_low,
-                   avg_volume_10d, avg_volume_100d, slope_lookback,
-                   near_high_low_pct=0.10, volume_ratio=1.0, ema_fast=None):
+                   volume_10d, volume_100d, slope_lookback,
+                   near_high_low_pct=0.10, volume_ratio=1.0, ema_fast=None,
+                   rs_neutral=1.0, ma_neutral_pct=0.5, slope_neutral_pct=0.05):
     """Returns (trend_label, trend_rank) -- a 5-level trend read:
     "Strong Uptrend" / "Uptrend" / "Mixed" / "Downtrend" / "Strong Downtrend"
     (trend_rank: 5/4/3/2/1, for numeric sort/filter use).
@@ -1029,11 +1108,20 @@ def compute_trend(last_close, ema_slow_series, rs_weekly, week52_high, week52_lo
     lookback) -- when skipped, only the remaining 3 need to unanimously agree.
     Mixed is never "Strong".
 
+    Neutral bands (owner, 2026-10-04): a condition too close to call does not
+    vote -- RS within +-`rs_neutral`, the fast WEMA within `ma_neutral_pct`% of
+    the slow one, the slow WEMA's slope within `slope_neutral_pct`% of its value
+    per week. Uptrend/Downtrend still need at least 3 voting conditions, all
+    agreeing, so a stock whose averages are flat AND converged (only 2 votes) is
+    Mixed. Price vs the slow WEMA always votes: it is the anchor, read at the
+    current price. Before this, an RS of -0.1 turned an otherwise clear Uptrend
+    Mixed, and a 10W 0.07% under the 40W counted as bearish alignment.
+
     Strength ("Strong" prefix) requires BOTH of:
       - price within `near_high_low_pct` of its trailing 52-week high (for an
         uptrend) or 52-week low (for a downtrend) -- i.e. the move has real
         extension. Default 0.10 = within 10%.
-      - 10-day average volume >= `volume_ratio` times the 100-day average --
+      - 10-day MEDIAN volume >= `volume_ratio` times the 100-day median --
         i.e. recent activity is elevated, not drying up. Default 1.0 = just
         needs to be higher, no minimum multiple.
     Both must agree for "Strong"; otherwise it's just Uptrend/Downtrend.
@@ -1070,19 +1158,21 @@ def compute_trend(last_close, ema_slow_series, rs_weekly, week52_high, week52_lo
     slope_rising = slope > 0
     ema_aligned = (ema_fast > last_ma) if ema_fast is not None else None
     rs_positive = (rs_weekly > 0) if rs_weekly is not None else None
+    slope_neutral = bool(last_ma and abs(slope / last_ma * 100) < slope_neutral_pct)
+    ma_neutral = bool(ema_fast is not None and last_ma and abs(ema_fast / last_ma - 1) * 100 < ma_neutral_pct)
+    rs_neutral_now = bool(rs_weekly is not None and abs(rs_weekly) < rs_neutral)
 
-    bullish = [price_above_ma, slope_rising]
-    bearish = [not price_above_ma, not slope_rising]
-    if ema_aligned is not None:
-        bullish.append(ema_aligned)
-        bearish.append(not ema_aligned)
-    if rs_positive is not None:
-        bullish.append(rs_positive)
-        bearish.append(not rs_positive)
+    votes = [price_above_ma]
+    if not slope_neutral:
+        votes.append(slope_rising)
+    if ema_aligned is not None and not ma_neutral:
+        votes.append(ema_aligned)
+    if rs_positive is not None and not rs_neutral_now:
+        votes.append(rs_positive)
 
-    if all(bullish):
+    if len(votes) >= 3 and all(votes):
         direction = "Uptrend"
-    elif all(bearish):
+    elif len(votes) >= 3 and not any(votes):
         direction = "Downtrend"
     else:
         # Not unanimous either way -- see the docstring for why this is its
@@ -1092,7 +1182,7 @@ def compute_trend(last_close, ema_slow_series, rs_weekly, week52_high, week52_lo
     near_high = week52_high is not None and week52_high > 0 and last_close >= week52_high * (1 - near_high_low_pct)
     near_low = week52_low is not None and week52_low > 0 and last_close <= week52_low * (1 + near_high_low_pct)
     volume_rising = (
-        avg_volume_10d is not None and avg_volume_100d is not None and avg_volume_10d >= volume_ratio * avg_volume_100d
+        volume_10d is not None and volume_100d is not None and volume_10d >= volume_ratio * volume_100d
     )
     near_high_low_relevant = {"Uptrend": near_high, "Downtrend": near_low}.get(direction)
 
@@ -1122,10 +1212,15 @@ def compute_trend(last_close, ema_slow_series, rs_weekly, week52_high, week52_lo
         "week52_low": week52_low,
         "near_high_low_pass": near_high_low_relevant,
         "near_high_low_pct": near_high_low_pct,
-        "avg_volume_10d": avg_volume_10d,
-        "avg_volume_100d": avg_volume_100d,
+        "volume_10d": volume_10d,
+        "volume_100d": volume_100d,
+        "volume_basis": "median",
         "volume_rising": volume_rising,
         "volume_ratio": volume_ratio,
+        "slope_neutral": slope_neutral,
+        "ma_neutral": ma_neutral,
+        "rs_neutral": rs_neutral_now,
+        "votes": len(votes),
     }
     return label, rank, detail
 
@@ -1627,7 +1722,10 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
     volume_explode_ratio = settings.get("volume_explode_ratio", 1.4)
     volume_decline_ratio = settings.get("volume_decline_ratio", 0.7)
     tech_uptrend_min_vstop_weeks = settings.get("tech_uptrend_min_vstop_weeks", 3)
-    tech_uptrend_volume_ratio = settings.get("tech_uptrend_volume_ratio", 1.4)
+    tech_uptrend_volume_ratio = settings.get("tech_uptrend_volume_ratio", 0.3)
+    trend_rs_neutral = float(settings.get("trend_rs_neutral", 1.0))
+    trend_ma_neutral_pct = float(settings.get("trend_ma_neutral_pct", 0.5))
+    trend_slope_neutral_pct = float(settings.get("trend_slope_neutral_pct", 0.05))
     ta_converge_pct = float(settings.get("ta_converge_pct", 3.0))
     ta_break_pct = float(settings.get("ta_break_pct", 3.0))
     ta_sr_lookback_weeks = int(settings.get("ta_sr_lookback_weeks", 156))
@@ -1945,7 +2043,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
             rs_monthly = mansfield_rs(monthly_close, bench_monthly, rs_lb_monthly)
 
             # Weekly VStop (Volatility Stop)
-            vstop_weekly = None
+            vstop_weekly = vstop_weekly_raw = None
             vstop_weekly_direction = None
             vstop_weekly_last_change = None
             vstop_weekly_weeks_since_change = None
@@ -1974,7 +2072,8 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
                     vstop_series, dir_series = compute_vstop_tv(weekly_complete, length=vstop_length, factor=vstop_factor)
                 valid_dir = dir_series.dropna()
                 if not valid_dir.empty:
-                    vstop_weekly = round(float(vstop_series.iloc[-1]), 1)
+                    vstop_weekly_raw = float(vstop_series.iloc[-1])
+                    vstop_weekly = round(vstop_weekly_raw, 1)
                     vstop_weekly_direction = "Up" if valid_dir.iloc[-1] == 1 else "Down"
 
                     flips = valid_dir[valid_dir.diff().fillna(0) != 0]
@@ -2021,14 +2120,17 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
             data_end_age_days = (datetime.now().date() - daily_close.index[-1].date()).days
 
             daily_volume = df["Volume"].dropna()
-            avg_volume_10d = round(float(daily_volume.tail(10).mean())) if len(daily_volume) >= 10 else None
-            avg_volume_100d = round(float(daily_volume.tail(100).mean())) if len(daily_volume) >= 100 else None
-            # 20-session average volume, the denominator of the Volume Rocketing
-            # surge test (10D >= 1.3x 20D). Deliberately a separate short-window
-            # baseline from avg_volume_100d: against 100 days a stock that has
-            # been busy for a month already looks normal, which is exactly the
-            # move that scan is trying to catch.
-            avg_volume_20d = round(float(daily_volume.tail(20).mean())) if len(daily_volume) >= 20 else None
+            # The averages are the Vol 10D/20D/100D columns; the volume TESTS
+            # (Trend's Strong, Tech Uptrend, Vol Trend) use the medians -- see
+            # volume_stats. avg_volume_20d is the denominator of the Volume
+            # Rocketing surge test (10D >= 1.3x 20D), deliberately a separate
+            # short-window baseline: against 100 days a stock that has been
+            # busy for a month already looks normal, which is exactly the move
+            # that scan is trying to catch.
+            _vs = volume_stats(daily_volume)
+            avg_volume_10d, avg_volume_20d, avg_volume_100d = (
+                _vs["avg_volume_10d"], _vs["avg_volume_20d"], _vs["avg_volume_100d"])
+            median_volume_10d, median_volume_100d = _vs["median_volume_10d"], _vs["median_volume_100d"]
 
             # Share of the last year's VOLUME that changed hands above today's
             # close -- how much stock is underwater and liable to sell into a
@@ -2055,15 +2157,8 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
                     is_above = close_vol["Close"].to_numpy() > last_close
                     overhead_supply = round(float(vols[is_above].sum() / total_vol_window * 100), 1)
 
-            volume_trend = None
-            if avg_volume_10d is not None and avg_volume_100d is not None and avg_volume_100d > 0:
-                vol_ratio = avg_volume_10d / avg_volume_100d
-                if vol_ratio >= volume_explode_ratio:
-                    volume_trend = "Exploding"
-                elif vol_ratio <= volume_decline_ratio:
-                    volume_trend = "Declining"
-                else:
-                    volume_trend = "In-line"
+            volume_trend = classify_volume_trend(median_volume_10d, median_volume_100d,
+                                                 volume_explode_ratio, volume_decline_ratio)
 
             net_volume_10d_dir = None
             net_volume_10d_ratio = None
@@ -2246,30 +2341,23 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
             if ema40_series is not None:
                 trend, trend_rank, trend_detail = compute_trend(
                     last_close, ema40_series, rs_weekly, week52_high, week52_low,
-                    avg_volume_10d, avg_volume_100d, trend_slope_lookback,
+                    median_volume_10d, median_volume_100d, trend_slope_lookback,
                     near_high_low_pct=trend_near_high_low_pct, volume_ratio=trend_volume_ratio,
-                    ema_fast=ema10,
+                    # Unrounded: the row's ema10 is rounded to 0.1 for display.
+                    ema_fast=float(ema10_series.iloc[-1]),
+                    rs_neutral=trend_rs_neutral, ma_neutral_pct=trend_ma_neutral_pct,
+                    slope_neutral_pct=trend_slope_neutral_pct,
                 )
 
-            # Tech Uptrend: close > weekly VStop (in an uptrend that's held for
-            # a while) + close above the slow weekly WEMA + volume surging.
-            # Uses its OWN volume ratio (tech_uptrend_volume_ratio) -- independent
-            # of Vol Trend's "Exploding" ratio above, even though both default to
-            # the same 1.4x, so tuning one column never moves the other.
-            tech_uptrend = 0
-            if (
-                vstop_weekly is not None
-                and vstop_weekly_weeks_since_change is not None
-                and ema40 is not None
-                and avg_volume_10d is not None
-                and avg_volume_100d is not None
-            ):
-                tech_uptrend = int(
-                    last_close > vstop_weekly
-                    and vstop_weekly_weeks_since_change > tech_uptrend_min_vstop_weeks
-                    and last_close > ema40
-                    and avg_volume_10d > tech_uptrend_volume_ratio * avg_volume_100d
-                )
+            # Tech Uptrend (compute_tech_uptrend): close above an Up weekly VStop
+            # that has held a while, above the slow WEMA, on volume that has not
+            # dried up. Its OWN volume ratio, independent of Vol Trend's.
+            tech_uptrend, tech_uptrend_detail = compute_tech_uptrend(
+                last_close, vstop_weekly_raw, vstop_weekly_direction, vstop_weekly_weeks_since_change,
+                float(ema40_series.iloc[-1]) if ema40_series is not None else None,
+                median_volume_10d, median_volume_100d,
+                tech_uptrend_min_vstop_weeks, tech_uptrend_volume_ratio,
+            )
 
             # Weeks since the last 10w/30w WEEKLY golden cross (EMA10 crossing
             # UP through EMA30). None while EMA10 is not currently above EMA30
@@ -2357,6 +2445,8 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
                 "avg_volume_10d": avg_volume_10d,
                 "avg_volume_20d": avg_volume_20d,
                 "avg_volume_100d": avg_volume_100d,
+                "median_volume_10d": median_volume_10d,
+                "median_volume_100d": median_volume_100d,
                 "volume_trend": volume_trend,
                 "net_volume_10d_dir": net_volume_10d_dir,
                 "net_volume_10d_ratio": net_volume_10d_ratio,
@@ -2373,6 +2463,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
                 "trend_rank": trend_rank,
                 "trend_detail": trend_detail,
                 "tech_uptrend": tech_uptrend,
+                "tech_uptrend_detail": tech_uptrend_detail,
                 "ta_rules": ta_rules,
                 "ta_rules_detail": ta_rules_detail,
                 "ema10": ema10,

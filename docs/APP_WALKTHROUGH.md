@@ -192,8 +192,12 @@ except for TA Rules, **include the current, still-forming week**.
 
 ### Volume
 - **Vol 10D / 20D / 100D**: average daily volume over those windows.
-- **Vol Trend**: Vol 10D ÷ Vol 100D. ≥1.4 is **Exploding**, ≤0.7 is **Declining**,
-  anything else is **In-line**.
+- **Vol Trend**: the **median** day over 10 sessions ÷ the median day over 100. ≥1.4 is
+  **Exploding**, ≤0.7 is **Declining**, anything else is **In-line**.
+- **Why medians for the volume tests.** One results-day spike can lift a 100-day
+  *average* for five months, making normal trading look like volume "dried up". All three
+  volume tests (Vol Trend, Trend's Strong, Tech Uptrend) compare median days; the Vol
+  columns themselves still show averages.
 - **Net Vol 10D**: the last 10 sessions' volume, counted positive on up-closes and
   negative on down-closes. The label is **Positive** or **Negative**, and the tooltip
   shows net as a % of total.
@@ -254,10 +258,23 @@ has to be fully earned, but a split is not reported as a Downtrend either. A sto
 a rising 40-week EMA that merely lags its index is Mixed, not Downtrend. Hovering a Trend
 cell shows a ✓/✗ for each condition.
 
+**Neutral bands.** A condition too close to call doesn't vote either way:
+- weekly RS within ±1;
+- the 10-week EMA within 0.5% of the 40-week;
+- the 40-week EMA moving less than 0.05% of its value per week.
+
+Uptrend and Downtrend still need **at least 3 voting conditions, all agreeing**. So a
+stock whose averages are flat *and* converged is Mixed. Price vs the 40-week EMA always
+votes. Before the bands, an RS of −0.1 turned an otherwise clear Uptrend Mixed. The hover
+marks a condition that sat out with "–".
+
+**Live price.** Trend and Tech Uptrend use the current price and the forming week, by the
+owner's choice. TA Rules uses the last completed weekly close.
+
 **Strength.** A label becomes **Strong** only if **both** hold:
 - the close is within 10% of the 52-week **high** (for an uptrend) or **low** (for a
   downtrend), **and**
-- Vol 10D is at least 1.0 × Vol 100D.
+- the 10-day median volume is at least 1.0 × the 100-day median.
 
 Mixed is never Strong. That gives 5 labels: Strong Uptrend, Uptrend, Mixed, Downtrend,
 Strong Downtrend.
@@ -265,11 +282,14 @@ Strong Downtrend.
 ### 5.2 Tech Uptrend (Yes/No)
 
 **Yes** only if **all** of these hold:
-- the close is above VStop-W;
-- VStop has held its direction for **more than** 3 weeks;
+- the close is above VStop-W, and VStop points **Up**;
+- VStop has held that direction for **more than** 3 weeks;
 - the close is above the 40-week EMA;
-- Vol 10D is above *ratio* × Vol 100D. The default ratio is 1.4; this install's
-  `settings.json` uses 0.5, so the volume leg rarely fails.
+- the 10-day median volume is more than **0.3 ×** the 100-day median. 0.3 is the owner's
+  choice: the leg asks whether volume has dried up, not whether it is surging.
+
+The prices are compared **unrounded**. The VStop-W and 40W columns show values rounded
+to 0.1, which is up to 1% on a low-priced stock.
 
 ### 5.3 TA Rules (a trader's weekly EMA flowchart)
 
@@ -765,10 +785,11 @@ because the Actions logs are public.
 | `vstop_include_incomplete_week` | true | whether the forming week is included |
 | `trend_slope_lookback` | 3 | weeks used for the 40W EMA slope |
 | `trend_near_high_low_pct` | 0.10 | "Strong": within 10% of the 52W high or low |
-| `trend_volume_ratio` | 1.0 | "Strong": minimum 10D/100D volume |
-| `volume_explode_ratio` / `volume_decline_ratio` | 1.4 / 0.7 | Vol Trend |
+| `trend_volume_ratio` | 1.0 | "Strong": minimum 10D/100D median volume |
+| `trend_rs_neutral` / `trend_ma_neutral_pct` / `trend_slope_neutral_pct` | 1.0 / 0.5 / 0.05 | Trend's neutral bands |
+| `volume_explode_ratio` / `volume_decline_ratio` | 1.4 / 0.7 | Vol Trend (median days) |
 | `tech_uptrend_min_vstop_weeks` | 3 | Tech Uptrend: weeks VStop held (strictly more than this) |
-| `tech_uptrend_volume_ratio` | 1.4 | Tech Uptrend volume leg |
+| `tech_uptrend_volume_ratio` | 0.3 | Tech Uptrend volume leg (median days) |
 | `ta_converge_pct`, `ta_break_pct` | 3, 3 | TA Rules: converging spread and break buffer |
 | `ta_sr_lookback_weeks`, `ta_sr_pivot_weeks`, `ta_sr_reaction_pct`, `ta_sr_reaction_weeks`, `ta_sr_zone_pct`, `ta_sr_min_touches`, `ta_sr_recent_weeks` | 156, 3, 8, 8, 3, 2, 13 | support and resistance zones |
 | `news_search_model`, `news_reasoning_model`, `news_reasoning_budget` | 26b, 3.5-flash-lite, 8192 | news stages 1-2 |

@@ -452,7 +452,7 @@ def build_expert_prompt(row_data, news_text, active_alerts_text=None, fundamenta
     from stock_data import load_settings as _ls
     _s = _ls()
     tu_weeks = _s.get("tech_uptrend_min_vstop_weeks", 3)
-    tu_vol = _s.get("tech_uptrend_volume_ratio", 1.4)
+    tu_vol = _s.get("tech_uptrend_volume_ratio", 0.3)
     # Periods from Settings, like the table's column labels. The daily averages
     # are SIMPLE moving averages (stock_data: rolling().mean()); the prompt
     # used to call them "Daily EMAs ... DEMA" with the periods hard-coded.
@@ -483,6 +483,8 @@ def build_expert_prompt(row_data, news_text, active_alerts_text=None, fundamenta
     tech_uptrend = "YES" if row_data.get("tech_uptrend") else "NO"
     vol_10d = row_data.get("avg_volume_10d", "N/A")
     vol_100d = row_data.get("avg_volume_100d", "N/A")
+    med_10d = row_data.get("median_volume_10d", "N/A")
+    med_100d = row_data.get("median_volume_100d", "N/A")
     vol_trend = row_data.get("volume_trend", "N/A")
     net_vol_dir = row_data.get("net_volume_10d_dir", "N/A")
     net_vol_ratio = row_data.get("net_volume_10d_ratio", "N/A")
@@ -552,8 +554,8 @@ quarter's checked fundamentals and recent web news provided below.
 - Trend Status: {trend} (Rank: {trend_rank})
   └ Trend Detail: Price > {w_slow} WEMA: {trend_detail.get('price_above_ma')}, {w_slow} WEMA Slope Rising: {trend_detail.get('slope_rising')}, Fast > Slow WEMA: {trend_detail.get('ema_aligned')}, RS Positive: {trend_detail.get('rs_positive')}, Near 52W High/Low: {trend_detail.get('near_high_low_pass')}
 - Volatility Stop (VStop-W): Direction={vstop_dir}, Stop Level={vstop_weekly}, Weeks Held={vstop_wks}
-- Tech Uptrend: {tech_uptrend} (Requires VStop uptrend > {tu_weeks} wks, Price > {w_slow} WEMA, Vol 10D > {tu_vol}x Vol 100D)
-- Volume Analysis: Vol 10D={vol_10d}, Vol 100D={vol_100d}, Vol Trend={vol_trend}
+- Tech Uptrend: {tech_uptrend} (Requires VStop uptrend > {tu_weeks} wks, Price > {w_slow} WEMA, median Vol 10D > {tu_vol}x median Vol 100D)
+- Volume Analysis: average Vol 10D={vol_10d}, Vol 100D={vol_100d}; median day 10D={med_10d}, 100D={med_100d}; Vol Trend (median-based)={vol_trend}
 - Net Volume 10D (Accumulation vs Distribution): Direction={net_vol_dir}, Ratio={net_vol_ratio}%
 - 52-Week Range: High={h52}, Low={l52}
 - TA Rules (TheWrap weekly EMA flowchart): {_ta_rules_text(row_data)}
