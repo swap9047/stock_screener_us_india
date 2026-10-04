@@ -93,8 +93,8 @@ from news_summary import (load_news_summary, MARKET_LABELS, get_gemini_api_key,
                           get_gemini_api_keys, resolve_news_scope, DEFAULT_NEWS_SCOPE_GROUP)
 from expert_views import (load_expert_views, save_expert_views, analyze_single_ticker,
                           generate_expert_view, _is_valid_view, is_pending_view, apply_regenerated_view,
-                          VERDICT_RULES, VERDICT_GUARD_RULES,
-                          validate_verdict, verdict_flag_note, chart_rule_verdict,
+                          VERDICT_RULES, NEWS_RISK_RULES, EXPERT_NEWS_WINDOW_DAYS, EXPERT_STALE_DAYS,
+                          expert_take_for_row, _view_age_days,
                           expert_view_has_news as _expert_view_has_news)
 from fundamentals_eval import (
     load_fundamentals, save_fundamentals, _validate_sentiment, SENTIMENT_STALE_DAYS,
@@ -1062,28 +1062,24 @@ def build_ai_review_payload(
 
         if show_expert:
             v = expert_views.get(t) or {}
+            take = expert_take_for_row(r, v)
             out.append("\n### Expert Take")
-            if is_pending_view(v):
-                # A placeholder record stores verdict "HOLD", so the old
-                # `if v.get("verdict")` branch reported a failed generation to
-                # the reader as a real Hold verdict.
-                out.append("No usable analysis stored -- the last generation failed "
-                           f"({v.get('headline', '')}).")
-            elif v.get("verdict"):
-                # Guarded verdict, not the raw stored one, so the payload agrees
-                # with the table -- same reasoning as the Sentiment block below.
-                verdict, vflag = validate_verdict(v, r)
-                out.append(f"Verdict: {verdict} — {v.get('headline', '')}"
-                           + (f" ({vflag})" if vflag else ""))
-                note = verdict_flag_note(vflag, v.get("as_of", "unknown"))
-                if note:
-                    out.append(note)
+            # The live verdict, the same one the table shows and filters on.
+            out.append(f"Verdict: {take['verdict']} — decided by the columns: {'; '.join(take['reasons'])}")
+            if take["news_lowered"]:
+                risk = take["news_risk"]
+                out.append(f"Lowered from {take['base']} by news: {risk['category']} ({risk['date']}): {risk['quote']}")
+            if is_pending_view(v) or not v:
+                out.append("No AI write-up stored -- the last generation failed or has not run.")
+            else:
+                if v.get("headline"):
+                    out.append(f"- Headline: {v['headline']}")
                 for fld in ("technical_summary", "catalyst_summary", "actionable_take"):
                     if v.get(fld):
                         out.append(f"- {fld.replace('_', ' ').title()}: {v[fld]}")
-                out.append(f"(model: {v.get('model_used', '?')}, as of {v.get('as_of', '?')})")
-            else:
-                out.append("No AI analysis stored for this ticker yet.")
+                out.append(f"(write-up by {v.get('model_used', '?')}, as of {v.get('as_of', '?')}"
+                           + (f", written for {v['verdict']}" if v.get("verdict") and v["verdict"] != take["verdict"] else "")
+                           + ")")
 
         if show_sentiment:
             v = fundamentals.get(t) or {}
@@ -1116,10 +1112,9 @@ def build_ai_review_payload(
             out.append(f"- **{lbl}**: {d}")
     if show_expert:
         out.append('\n## How "Expert Take" is decided')
-        out.append("An LLM assigns the verdict under these rules:\n")
         out.append(VERDICT_RULES)
         out.append("")
-        out.append(VERDICT_GUARD_RULES)
+        out.append(NEWS_RISK_RULES)
     if show_sentiment:
         out.append('\n## How "Sentiment" is decided')
         out.append("An LLM reads recent earnings/guidance/analyst news and returns "
@@ -1396,17 +1391,19 @@ def column_definitions(settings, labels):
             "next to the ticker symbol, where it takes the place of the Signal dot. Never set automatically."
         ),
         "Expert Take": (
-            "AI verdict -- ACCUMULATE, HOLD or CAUTION -- from the technical indicators, TA Rules, valuation, "
-            "this quarter's checked results, guidance and analyst actions (from Sentiment) and the last 24 hours' "
-            "news. ⚑ marks a verdict that differs from what the chart alone says (Accumulate when Trend is up and "
-            "Tech Uptrend is Yes, Caution when Trend is down, otherwise Hold) -- the ones where the model added a "
-            "view of its own. Hover a cell for the reasoning and the trade plan."
+            "ACCUMULATE, HOLD or CAUTION, decided live from the other columns. Accumulate: Trend up, Tech Uptrend "
+            "Yes, TA Rules Maintain/Add or Bullish Signal, and Sentiment not Bearish -- or a TA Bullish Signal "
+            "(a breakout from a converging base) with Trend not down and Sentiment not Bearish. Caution: 2+ "
+            "points, where TA Exit counts 2 and TA Be Cautious, a Downtrend and a Bearish Sentiment 1 each. "
+            "Otherwise Hold. The nightly AI explains it and writes a trade plan, and reads the last "
+            f"{EXPERT_NEWS_WINDOW_DAYS} days of material news: a dated negative event (fraud, a regulator's "
+            "action, a lost contract, dilution...) lowers the verdict one step, marked ⚑. News never raises it. "
+            "Hover a cell for what decided it and the trade plan."
         ),
         "Expert News?": (
-            "Whether the Expert Take verdict had any news behind it: either the last 24 hours' web news, "
-            "or this quarter's checked results, guidance and analyst actions from the Sentiment job. "
-            "\"No\" means neither was found, so the verdict is a technicals-only read -- still valid "
-            "(the rules say absent news leans Hold), but not news-informed."
+            f"Whether the Expert Take write-up had any news behind it: the last {EXPERT_NEWS_WINDOW_DAYS} days' "
+            "material news, or this quarter's checked results, guidance and analyst actions from the Sentiment "
+            "job. \"No\" means neither was found: the verdict is the columns' alone."
         ),
         "10/30 W Golden Cross (weeks ago)": "Weeks since the 10-week EMA crossed above the 30-week EMA. Lower numbers mean a more recent bullish cross.",
         "Notes": "Your free-text note for this ticker, set via the sidebar 'Ticker Notes' panel. Hover/tap a truncated note to see the full text.",
@@ -4577,67 +4574,47 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
 
         def _expert_take_cell(ticker):
             v = expert_views.get(ticker, {})
-            # Guarded verdict, matching the filterable/sortable expert_take
-            # field attached in the enrichment loop -- the badge must not
-            # disagree with what you can filter on.
-            verdict, vflag = validate_verdict(v, _row_by_ticker.get(ticker))
-            headline = v.get("headline", "")
-            actionable = v.get("actionable_take", "")
-            as_of = v.get("as_of", "unknown")
-            news_source = v.get("news_source", "⚪ Unknown")
-            model_used = v.get("model_used", "⚪ Unknown")
-            # Pending FIRST. A failed/stale placeholder stores verdict "HOLD"
-            # with an "Analysis pending -- ..." headline, so the verdict ladder
-            # caught it in its HOLD branch and rendered a broken pipeline as a
-            # confident 🟡 Hold -- making this "Failed (Retry)" badge
-            # unreachable for exactly the records it was written for.
-            if is_pending_view(v):
-                badge = "⚠️ Failed (Retry)"
-            elif verdict == "ACCUMULATE":
-                badge = "🟢 Accumulate"
-            elif verdict == "HOLD":
-                badge = "🟡 Hold"
-            elif verdict == "CAUTION":
-                badge = "🔴 Caution"
-            else:
-                # Never analysed, or aged past EXPERT_STALE_DAYS -- validate_verdict
-                # returns the non-verdict sentinel "PENDING" for the latter.
-                badge = "⚪ Pending"
-            # ⚑ where the model's verdict differs from what the chart alone says
-            # (chart_rule_verdict): those are the verdicts carrying a view of the
-            # model's own, so they are the ones worth reading.
-            chart_says = chart_rule_verdict(_row_by_ticker.get(ticker))
-            disagrees = (not is_pending_view(v) and verdict in ("ACCUMULATE", "HOLD", "CAUTION")
-                         and verdict != chart_says)
-            if disagrees:
+            row_now = _row_by_ticker.get(ticker) or {}
+            # The live verdict -- the same expert_take_for_row the filterable
+            # row field uses, so the badge cannot disagree with the filter or
+            # with the columns beside it.
+            take = expert_take_for_row(row_now, v)
+            verdict = take["verdict"]
+            badge = {"ACCUMULATE": "🟢 Accumulate", "HOLD": "🟡 Hold",
+                     "CAUTION": "🔴 Caution"}.get(verdict, "⚪ Pending")
+            # ⚑: news lowered the columns' verdict. It used to mark a model
+            # verdict that differed from a chart rule; the model no longer
+            # picks the verdict, so the only thing that can differ is news.
+            if take["news_lowered"]:
                 badge = f"{badge} ⚑"
-            if headline:
-                parts = [headline, actionable]
-                if disagrees:
-                    parts.insert(0, f"⚑ Differs from the chart: the chart alone says {chart_says.title()}, "
-                                    f"the model says {verdict.title()}. (Chart rule: Accumulate when Trend is up "
-                                    "and Tech Uptrend is Yes, Caution when Trend is down, otherwise Hold.)")
-                note = verdict_flag_note(vflag, as_of)
-                if note:
-                    parts.append(note)
-                # What the verdict rests on: the last 24 hours' news and/or this
-                # quarter's checked results and guidance (prompt section 4). A
-                # technicals-only verdict used to look identical to a
-                # news-informed one.
+            parts = [f"Decided by the columns: {'; '.join(take['reasons'])}"]
+            if take["news_lowered"]:
+                risk = take["news_risk"]
+                parts.insert(0, f"⚑ Lowered from {take['base'].title()} by news -- {risk['category']} "
+                                f"({risk['date']}): {risk['quote']}")
+            if is_pending_view(v) or not v:
+                parts.append("No AI write-up yet -- use 'Retry Failed' or 'Re-analyze' above.")
+            else:
+                parts += [v.get("headline", ""), v.get("actionable_take", "")]
+                age = _view_age_days(v)
+                if age is not None and age > EXPERT_STALE_DAYS:
+                    parts.append(f"[The write-up is {age:.0f} days old: the nightly job has not refreshed it.]")
+                if v.get("verdict") and v["verdict"] != verdict:
+                    parts.append(f"[Written for {v['verdict'].title()}; the columns now say {verdict.title()}.]")
+                # What the write-up rests on: the material news window and/or
+                # this quarter's checked results and guidance (prompt section 4).
                 news_text = str(v.get("news_used") or "").strip()
-                has_24h = _expert_view_has_news({"news_used": news_text})
-                if has_24h:
-                    parts.append(f"News used (last 24 hours):\n{news_text}")
+                has_news = _expert_view_has_news({"news_used": news_text})
+                if has_news:
+                    parts.append(f"News used (last {EXPERT_NEWS_WINDOW_DAYS} days):\n{news_text}")
                 if v.get("quarter_facts_used"):
                     parts.append("Also used: this quarter's results, guidance and analyst actions "
                                  "(see the Sentiment cell).")
-                if not has_24h and not v.get("quarter_facts_used"):
-                    parts.append("News used: none found — this verdict is a technicals-only read.")
-                parts.append(f"As of: {as_of}  |  Source: {news_source}  |  Model: {model_used}")
-                tooltip = "\n\n".join(p for p in parts if p)
-            else:
-                tooltip = "Click 'Retry Failed' in controls above to analyze."
-            return with_tooltip(badge, tooltip)
+                if not has_news and not v.get("quarter_facts_used"):
+                    parts.append("News used: none found.")
+                parts.append(f"As of: {v.get('as_of', 'unknown')}  |  Source: {v.get('news_source', '⚪ Unknown')}"
+                             f"  |  Model: {v.get('model_used', '⚪ Unknown')}")
+            return with_tooltip(badge, "\n\n".join(p for p in parts if p))
 
         raw_df["expert_take"] = [_expert_take_cell(r["ticker"]) for r in filtered]
 

@@ -460,46 +460,56 @@ earlier view is more than 4 days old it is replaced by an honest Unknown.
 
 ### 6.2 Expert Take (`expert_views.py`, nightly 1 AM, serial)
 
-**What the model is given:**
-1. **Metrics.** Last close, the EMAs and SMAs, RSI, RS, Trend with its four conditions,
-   VStop, Tech Uptrend, the volume figures, the 52-week range, TA Rules with the node
-   that decided it, valuation, and the latest quarter's growth figures. The data date
-   and currency are included.
-2. **Alert rules currently true for the ticker.** Rules that read `expert_take` or
-   `expert_news_backed` are left out, including rules that reference such a rule. The
-   model must not see its own previous verdict.
-3. **The user flag**, and only one you set by hand. Notes are not sent.
-4. **This quarter's checked fundamentals** from the Sentiment view: report date, EPS,
-   guidance, outlook quote and named-firm analyst action. These are the facts, not
-   Sentiment's label. They are withheld when that view is STALE, STALE_QUARTER or NO_DATA.
-5. **The last 24 hours of web news**, plus events scheduled in the next 3-4 days, from
-   a grounded search.
+**The verdict is decided in code**, from the other columns, and recomputed live
+(`expert_views.decide_expert_verdict`, used by the table, its filter and the alerts), so
+it never disagrees with them. The owner made this change on 2026-10-04: the model's own
+verdict matched this rule for about 80% of tickers, and most of the rest re-weighed the
+same columns.
 
-**The verdict rules it is told to follow:**
-- **HOLD is the default.**
-- **ACCUMULATE** needs *all* of:
-  - Trend is Uptrend or Strong Uptrend;
-  - VStop is Up and has held for at least 3 weeks;
-  - RS-W is at least 0, or not yet computable;
-  - there is no negative catalyst.
-- **CAUTION** needs at least 2 of these 5:
-  - Downtrend;
-  - VStop flipped Down;
-  - RSI above 80 weekly or monthly;
-  - heavy distribution;
-  - a clearly negative catalyst.
+| Verdict | Rule |
+|---|---|
+| **Accumulate** | Trend Up/Strong Up **and** Tech Uptrend Yes **and** TA Rules Maintain/Add or Bullish Signal **and** Sentiment not Bearish |
+| **Accumulate** (breakout) | TA Rules **Bullish Signal** **and** Trend not down **and** Sentiment not Bearish. The breakout fires off converging EMAs, where Trend is usually Mixed. |
+| **Caution** | **2+ points**: TA Exit **2** (the flowchart's own exit), TA Be Cautious 1, Downtrend/Strong Downtrend 1, Sentiment Bearish 1 |
+| **Hold** | everything else. **Pending** only without a Trend (too little history). |
 
-**The guard applied at every read** (`validate_verdict`):
-- a view more than 4 days old shows as **Pending**;
-- an ACCUMULATE that fails the trend, VStop or RS preconditions is demoted to **HOLD**.
+Overbought RSI is **not** a Caution point. In a trend it is strength; "add on a pullback"
+goes in the trade plan.
+
+**The news step.** The nightly AI reads the last **14 days** of material company news and
+the events in the next 7 days. Results, guidance and ratings are left out, because
+Sentiment decides those. It may report **one** negative event in a named category:
+- fraud or accounting irregularities;
+- regulatory or legal action;
+- a lost major contract or customer;
+- a management or auditor exit;
+- dilution or a large capital raise;
+- promoter or insider selling or pledging;
+- a plant or operations disruption;
+- a debt default or rating downgrade.
+
+The event needs a date and the news's own words. It **lowers the verdict one step** until
+it is more than 14 days old. News **never raises** the verdict: bad news can hit before
+the chart reacts, while good news gets confirmed by the chart.
+
+**What the AI writes** for the final verdict: a headline, a technical and volume note, a
+catalyst note (this quarter's facts from Sentiment, plus the news), and a trade plan with
+entry zone and stops. It is given the columns, key levels (EMAs, VStop, RSI, RS, volume,
+52-week range, valuation, the quarter's growth as context), the alert rules currently
+true (excluding rules on Expert Take itself), and the flag only if you set it by hand.
+
+**The search** retries on another key when the model refuses ("I cannot access news from
+the future"). A "nothing found" sentence is stored as no news. On 2026-10-04, 21 of 56
+"news found" write-ups were really one or the other.
 
 **What the cell shows:**
-- **⚑** marks a verdict that differs from the chart-only rule. That rule says Accumulate
-  when Trend is up and Tech Uptrend is Yes, Caution when Trend is down, and Hold
-  otherwise. These are the verdicts where the model added a view of its own.
-- **Expert News?** is "Yes" when the verdict had either 24-hour news or the quarter's
-  facts behind it.
-- **⚠️ Failed (Retry)** marks a stored failure placeholder.
+- **The badge** is the live verdict.
+- **⚑** means news lowered it.
+- **The hover** says what decided the verdict, then gives the write-up. It notes when the
+  write-up is more than 4 days old, or was written for a different verdict than the
+  columns now give.
+- **Expert News?** is "Yes" when the write-up had material news or this quarter's facts
+  behind it.
 
 ### 6.3 News digest (`news_summary.py`, nightly 8 PM)
 

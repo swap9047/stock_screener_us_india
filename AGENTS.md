@@ -35,7 +35,7 @@ step names, so each key needs a line in the AI steps' `env:` blocks. Every run l
 `[key rotation] N key(s): ...`; if that number is lower than expected, that line is
 missing.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 939
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1014
 offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
@@ -49,13 +49,13 @@ verified by rendering the app headlessly; recipe at the bottom.
 
 | File | Lines | What it owns |
 |---|---:|---|
-| `app.py` | 6769 | The entire UI: tabs, tables, sidebar, filters, sort, editors, AI control bars, News + Alert Rules tabs |
-| `stock_data.py` | 3182 | yfinance fetching, all indicator maths, watchlist/markets registry IO, `get_filterable_metrics` |
+| `app.py` | 6746 | The entire UI: tabs, tables, sidebar, filters, sort, editors, AI control bars, News + Alert Rules tabs |
+| `stock_data.py` | 3178 | yfinance fetching, all indicator maths, watchlist/markets registry IO, `get_filterable_metrics` |
 | `alerts.py` | 1127 | Alert rule evaluation + Discord message building; every Discord post goes through `send_discord_batch`, which appends the disclaimer |
 | `news_summary.py` | 861 | News gathering + LLM summarisation |
 | `fundamentals_eval.py` | 1191 | Sentiment ("fundamental view") generation + validation. The model only extracts facts; `score_sentiment` decides the label, weighted toward forward signals (guidance ±15, quoted outlook ±6, guidance vs consensus ±3, named-firm action ±3; the quarter's profit >15% YoY or a beat/miss ±1 only breaks ties; with no forward signal, profit >+25% / <-20% YoY decides alone). The search window is anchored to each company's last results (`search_window_for`) |
 | `github_sync.py` | 715 | Atomic config push, the end-of-run push of edited config (`unpushed_config_files`) + `workflow_dispatch` trigger |
-| `expert_views.py` | 788 | Expert Take verdict generation; its prompt also gets Sentiment's checked facts for the quarter (section 4), and `chart_rule_verdict` drives the ⚑ marker |
+| `expert_views.py` | 909 | Expert Take. The verdict is decided in code, live, from Trend, Tech Uptrend, TA Rules and Sentiment (`decide_expert_verdict`, `expert_take_for_row`); the nightly model writes the explanation and trade plan, and may lower the verdict one step for a dated material negative event in the last 14 days (`news_risk_active`). Its prompt also gets Sentiment's checked facts for the quarter (section 4) |
 | `filters.py` | 487 | The boolean condition engine — shared by UI filters **and** background alerts |
 | `llm_util.py` | 679 | Shared Gemini-call plumbing (timeout wrapper, retry/model-ladder logic, `FailureFuse`) for the three AI pipelines |
 | `weekly_wrapup.py` | 365 | Weekly Discord digest |
@@ -310,7 +310,8 @@ Each of these has actually bitten this codebase.
 - **A `workflow_dispatch` input must be on `main` before it can be dispatched.** GitHub
   reads the input definition from the branch, so dispatching before pushing fails with
   "unexpected input".
-- **Expert Take must never see its own previous verdict.** It used to, twice over: the
+- **Expert Take must never see its own previous verdict.** Since 2026-10-04 the columns
+  decide the verdict, so this now guards the write-up and the news step. It used to, twice over: the
   prompt showed the row's flag as a "user flag" while the flag was an auto-vote that counted
   the last verdict, and it listed alert rules that fire on that flag. Now Flag is set only by
   hand (the automatic read is `signal`, from Trend + Sentiment, which never reads Expert

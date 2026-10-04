@@ -50,14 +50,21 @@ Search and reasoning are deliberately separated, to keep verdicts grounded in re
 evidence rather than model recall.
 
 ### Expert Views (`expert_views.py`)
-Actionable verdicts — `ACCUMULATE`, `HOLD`, `CAUTION` — synthesising the pre-computed
-technical indicators, the TA Rules verdict, valuation, this quarter's checked results,
-guidance and analyst actions (from the Sentiment pipeline), and a search for the last 24
-hours' news. It never sees its own previous verdict or the notes. A deterministic guard
-demotes an `ACCUMULATE` the chart doesn't support, and the table marks with ⚑ the
-verdicts that differ from what the chart alone says — the ones where the model added a
-view of its own. Falls back through a shared model ladder (`llm_util.py`) on rate limits —
-retrying the primary model before conceding to a weaker one.
+`ACCUMULATE`, `HOLD` or `CAUTION`, **decided in code from the other columns** and
+recomputed live, so it never disagrees with them:
+- **Accumulate:** Trend up, Tech Uptrend Yes, TA Rules Maintain/Add or Bullish Signal, and
+  Sentiment not Bearish. Or a TA Bullish Signal, a breakout from a converging base, with
+  Trend not down and Sentiment not Bearish.
+- **Caution:** at least 2 points. TA Exit counts 2; TA Be Cautious, a Downtrend and a
+  Bearish Sentiment count 1 each.
+- **Hold:** everything else.
+
+The nightly AI writes the explanation and a trade plan. It also reads the last 14 days of
+material news, leaving results, guidance and ratings to Sentiment. A dated, quoted
+negative event lowers the verdict **one step**, marked ⚑; examples are fraud, a
+regulator's action, a lost contract, or dilution. News never raises the verdict. Search
+refusals and "nothing found" sentences count as no news. Falls back through a shared
+model ladder (`llm_util.py`) on rate limits.
 
 ### Fundamental Sentiment (`fundamentals_eval.py`)
 A forward-looking `Positive` / `Neutral` / `Negative` read. The model extracts the facts and

@@ -8,7 +8,8 @@ and free web news catalysts to produce actionable investor takes.
 """
 
 import os
-from datetime import datetime, timedelta, timezone
+import re
+from datetime import date, datetime, timedelta, timezone
 
 import llm_util
 from news_summary import market_window_date
@@ -68,31 +69,53 @@ def fetch_gemma_expert_news(client, ticker, market, company_name, is_retry=False
     # news_used from that run contains items dated August 15. India was fine
     # either way (03:00 UTC = 08:30 IST), which is why only US tickers drifted.
     as_of_date = market_window_date(market, [ticker])
-    cutoff_date = (datetime.strptime(as_of_date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+    cutoff_date = (datetime.strptime(as_of_date, "%Y-%m-%d")
+                   - timedelta(days=EXPERT_NEWS_WINDOW_DAYS)).strftime("%Y-%m-%d")
     exchange = get_exchange_label(market, ticker)
 
     bare = ticker.rsplit(".", 1)[0] if ticker.endswith(".NS") or ticker.endswith(".BO") else ticker
     name = f"{company_name} ({bare})" if company_name and company_name != ticker else bare
 
+    # 14 days, not 24 hours (owner, 2026-10-04): the job runs nightly, so a
+    # 24-hour window dropped a regulator's action the night after it happened,
+    # and on 2026-10-04 it found anything at all for 56 of 124 tickers, mostly
+    # upcoming dates. Results, guidance and analyst ratings are left out: the
+    # Sentiment job searches back to each company's last results for those, and
+    # counting them here too would count them twice.
+    categories = "; ".join(NEWS_RISK_CATEGORIES)
     prompt = (
-        f"You are a financial news researcher. For the {exchange} stock {name} -- "
-        f"search for recent institutional analyst ratings, upgrades/downgrades, press releases, "
-        f"and major upcoming catalysts (e.g., earnings (latest quarter only), product launches). "
-        f"Today is {as_of_date}. Report NEWS published between {cutoff_date} and {as_of_date} (the last 24 hours), "
-        f"AND separately any scheduled EVENTS in the next 3-4 days. "
-        "Report any material items you find, specifying the exact date of each item. Be extremely concise. "
-        "If there is no material news, output nothing."
+        f"You are a financial news researcher. For the {exchange} stock {name}, today is {as_of_date}. "
+        f"Report MATERIAL company news published in the last {EXPERT_NEWS_WINDOW_DAYS} days "
+        f"(between {cutoff_date} and {as_of_date}): orders and contracts won or lost, mergers and "
+        f"acquisitions, product launches or approvals, and especially negative events -- {categories}. "
+        "Do not report quarterly results, guidance or analyst ratings; those are covered elsewhere. "
+        f"Separately, list scheduled EVENTS in the next 7 days (results date, AGM, record dates). "
+        "List items NEWEST FIRST with the exact date of each, and be extremely concise. "
+        # The search model refused ~1 in 60 runs because the dates lie past
+        # its training data. They are real; it is meant to search, not recall.
+        "These dates are real and current: search the web for them, and do not refuse because of "
+        "a training cutoff. If there is no material news, output nothing."
     )
     
     grounding_tool = types.Tool(google_search=types.GoogleSearch())
     config = types.GenerateContentConfig(tools=[grounding_tool])
 
+    def _searched(resp):
+        # A refusal is not an answer: raise, and the ladder retries on the next
+        # attempt (another key). An ordinary error is retryable (is_retryable).
+        if search_refused(getattr(resp, "text", "")):
+            raise ValueError("search refused: answered from its training cutoff instead of searching")
+        return resp
+
     resp, used = llm_util.run_model_ladder(
         client, prompt, llm_util.same_model_tiers(SEARCH_MODEL),
         lambda m: config, label="expert-search", subject=ticker, timeout=llm_util.SEARCH_TIMEOUT_SECONDS,
+        on_success=_searched,
     )
     if used is not None:
         text = (resp.text or "").strip()
+        if search_found_nothing(text):
+            text = ""
         return (text or "No recent news found."), SEARCH_SOURCE_LABELS.get(used, f"🔍 {used} (Google Search)")
     if not is_retry:
         raise TimeoutError("Search timed out. Add to retry queue.")
@@ -153,6 +176,19 @@ def normalize_view(data):
     untouched -- the ladder rejects that shape (llm_util.json_object)."""
     if isinstance(data, dict) and isinstance(data.get("verdict"), str):
         data["verdict"] = data["verdict"].strip().upper()
+    if isinstance(data, dict) and "news_risk" in data:
+        r = data.get("news_risk") if isinstance(data.get("news_risk"), dict) else {}
+        cat = str(r.get("category") or "").strip().lower()
+        # The listed name, exact or shortened ("fraud or accounting"): a
+        # model that trims a category must not silently lose the risk.
+        category = next((c for c in NEWS_RISK_CATEGORIES if c == cat), None) or next(
+            (c for c in NEWS_RISK_CATEGORIES if cat and (c.startswith(cat) or cat.startswith(c))), None)
+        data["news_risk"] = {
+            "material_negative": r.get("material_negative") is True,
+            "category": category,
+            "date": str(r.get("date"))[:10] if _parse_day(r.get("date")) else None,
+            "quote": str(r.get("quote") or "").strip() or None,
+        }
     return data
 
 
@@ -181,6 +217,35 @@ def _is_valid_view(view):
 # tooltip and the headless alert rows agree on "no news behind this verdict".
 EXPERT_NO_NEWS_MARKERS = ("no recent news found", "no news found", "no material news found", "nothing")
 
+# The search model often says "nothing" in a sentence, or refuses outright
+# because the requested dates lie past its training data ("I cannot access news
+# from the future (October 2026)"). On 2026-10-04, 21 of the 56 stored write-ups
+# counted as "news found" were one or the other, so Expert News? said Yes for
+# about 60% more tickers than had any news. Matched near the start only: real
+# news can mention "no impact" further in.
+_REFUSAL_RE = re.compile(
+    r"(do not|don't|cannot|can't|unable to) (have )?(access|provide|browse|retrieve|search)"
+    r"|from the future|future dates?\b|knowledge cutoff|training data", re.I)
+_NOTHING_RE = re.compile(
+    r"\bno (material|recent|relevant|significant|new) (news|updates|announcements|items)"
+    r"|nothing (is |was )?(reported|found|to report)|outputting nothing"
+    r"|there (is|was|were|are) no (material |recent )?news", re.I)
+
+
+def search_refused(text):
+    """True when the search reply is a refusal, not a search: worth a retry."""
+    return bool(_REFUSAL_RE.search(str(text or "")[:400]))
+
+
+def search_found_nothing(text):
+    """True when a search reply carries no news: empty, a no-news marker, a
+    refusal, or "nothing found" said in a sentence."""
+    t = str(text or "").strip()
+    low = t.lower().lstrip("<!-* ").rstrip(".")
+    if not low or any(low.startswith(m) for m in EXPERT_NO_NEWS_MARKERS):
+        return True
+    return search_refused(t) or bool(_NOTHING_RE.search(t[:300]))
+
 
 def expert_view_has_news(view):
     """The "Expert News?" column: did the verdict have any news behind it --
@@ -192,28 +257,127 @@ def expert_view_has_news(view):
     view = view or {}
     if view.get("quarter_facts_used"):
         return True
-    text = str(view.get("news_used") or "").strip().lower().rstrip(".")
-    if not text:
-        return False
-    return not any(text.startswith(m) for m in EXPERT_NO_NEWS_MARKERS)
+    return not search_found_nothing(view.get("news_used"))
 
 
-def chart_rule_verdict(row):
-    """What the chart alone says, in Expert Take's words: ACCUMULATE when Trend
-    is up and Tech Uptrend is Yes, CAUTION when Trend is down, HOLD otherwise.
+# --- The verdict: decided in code from the columns (owner, 2026-10-04) ------------
+#
+# The model's own verdict matched a rule over the existing columns for 97-100
+# of 124 tickers, and most of the rest re-weighed those same columns or cited a
+# past EPS miss that the forward-looking Sentiment rule deliberately ignores.
+# So the columns decide, live (it cannot disagree with the table), and the AI
+# explains it and reads the news for what no column sees:
+#
+#   ACCUMULATE  Trend Up/Strong Up + Tech Uptrend Yes + TA Rules Maintain/Add or
+#               Bullish Signal + Sentiment not Negative;
+#           or  TA Rules Bullish Signal + Trend not down + Sentiment not Negative.
+#               The breakout fires off CONVERGING EMAs, where Trend is usually
+#               Mixed, so requiring an Uptrend would never act on TA's entry.
+#   CAUTION     2+ points: TA Exit 2 (the flowchart's own exit call), TA Be
+#               Cautious 1, Trend Down/Strong Down 1, Sentiment Negative 1.
+#   HOLD        otherwise; PENDING when there is no Trend yet.
+#
+# Overbought RSI is deliberately not a point: in a trend-following read it is
+# strength, and "extended, add on a pullback" belongs in the trade plan.
+_UP_TRENDS = ("Uptrend", "Strong Uptrend")
+_DOWN_TRENDS = ("Downtrend", "Strong Downtrend")
+_TA_BULLISH = ("Maintain/Add", "Bullish Signal")
+_CAUTION_POINTS = {"Exit": 2, "Be Cautious": 1}
 
-    The app marks an Expert Take verdict that DIFFERS from this with ⚑. On
-    2026-09-26 the model agreed with it for 93 of 124 tickers, so the verdict
-    was mostly the chart restated; the ⚑ points at the ~30 where the model
-    added a view of its own (news, earnings, guidance), which are the ones
-    worth reading."""
+
+def decide_expert_verdict(row, sentiment):
+    """(verdict, reasons) from the row's columns and the guarded Sentiment
+    label -- see the rule above. Reasons are short phrases for the hover."""
     row = row or {}
-    trend = row.get("trend")
-    if trend in ("Uptrend", "Strong Uptrend") and row.get("tech_uptrend"):
-        return "ACCUMULATE"
-    if trend in ("Downtrend", "Strong Downtrend"):
-        return "CAUTION"
-    return "HOLD"
+    trend, ta, tu = row.get("trend"), row.get("ta_rules"), row.get("tech_uptrend")
+    if not trend:
+        return "PENDING", ["Not enough price history for a Trend yet"]
+    negative = sentiment == "Negative"
+    sent_txt = f"Sentiment: {sentiment or 'Unknown'}"
+    ta_txt = f"TA Rules: {ta or 'n/a'}"
+    up_reasons = [f"Trend: {trend}", f"Tech Uptrend: {'Yes' if tu else 'No'}", ta_txt, sent_txt]
+    if trend in _UP_TRENDS and tu and ta in _TA_BULLISH and not negative:
+        return "ACCUMULATE", up_reasons
+    if ta == "Bullish Signal" and trend not in _DOWN_TRENDS and not negative:
+        return "ACCUMULATE", [ta_txt + " (breakout from a converging base)", f"Trend: {trend}", sent_txt]
+
+    caution = []
+    if _CAUTION_POINTS.get(ta):
+        caution.append((ta_txt, _CAUTION_POINTS[ta]))
+    if trend in _DOWN_TRENDS:
+        caution.append((f"Trend: {trend}", 1))
+    if negative:
+        caution.append((sent_txt, 1))
+    if sum(n for _, n in caution) >= 2:
+        return "CAUTION", [t for t, _ in caution]
+
+    # A Hold: say what kept it from Accumulate (and any single Caution point).
+    blockers = []
+    if trend not in _UP_TRENDS:
+        blockers.append(f"Trend: {trend}")
+    if not tu:
+        blockers.append("Tech Uptrend: No")
+    if ta not in _TA_BULLISH:
+        blockers.append(ta_txt)
+    if negative:
+        blockers.append(sent_txt)
+    return "HOLD", blockers or up_reasons
+
+
+# --- The news step: a material negative event lowers one step, never raises ------
+# Owner, 2026-10-04. Bad news can hit before the chart reacts, good news is
+# confirmed by the chart anyway, and the model reads tone upbeat (outlook
+# "improving" ~11x as often as "cautious" on 2026-10-03), so letting news RAISE a
+# verdict would amplify that bias. Results, guidance and ratings are not here:
+# Sentiment decides those.
+EXPERT_NEWS_WINDOW_DAYS = 14
+NEWS_RISK_CATEGORIES = (
+    "fraud or accounting irregularities",
+    "regulatory or legal action",
+    "lost major contract or customer",
+    "management or auditor exit",
+    "dilution or a large capital raise",
+    "promoter or insider selling or pledging",
+    "plant or operations disruption",
+    "debt default or rating downgrade",
+)
+_LOWER = {"ACCUMULATE": "HOLD", "HOLD": "CAUTION", "CAUTION": "CAUTION"}
+
+
+def _parse_day(value):
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except (TypeError, ValueError):
+        return None
+
+
+def news_risk_active(news_risk, today=None, window=EXPERT_NEWS_WINDOW_DAYS):
+    """True when news_risk records a material negative event that can still
+    lower the verdict: flagged, in one of NEWS_RISK_CATEGORIES, quoted, and
+    dated within the last `window` days (it expires once it would drop out of
+    the search window anyway)."""
+    r = news_risk or {}
+    if r.get("material_negative") is not True or r.get("category") not in NEWS_RISK_CATEGORIES:
+        return False
+    if not str(r.get("quote") or "").strip():
+        return False
+    day = _parse_day(r.get("date"))
+    today = today or datetime.now(timezone.utc).date()
+    return day is not None and 0 <= (today - day).days <= window
+
+
+def expert_take_for_row(row, view, sentiment=None, today=None):
+    """The Expert Take shown and filtered on: the columns' verdict, lowered one
+    step by an active news risk from the stored write-up. Computed LIVE, so it
+    follows the columns on screen; the write-up only contributes news_risk.
+    Returns {"verdict", "base", "reasons", "news_lowered", "news_risk"}."""
+    row = row or {}
+    sentiment = row.get("sentiment") if sentiment is None else sentiment
+    base, reasons = decide_expert_verdict(row, sentiment)
+    risk = (view or {}).get("news_risk")
+    lowered = base in _LOWER and news_risk_active(risk, today) and _LOWER[base] != base
+    return {"verdict": _LOWER[base] if lowered else base, "base": base, "reasons": reasons,
+            "news_lowered": lowered, "news_risk": risk if lowered else None}
 
 
 def is_pending_view(view):
@@ -235,81 +399,6 @@ def is_pending_view(view):
 
 
 EXPERT_STALE_DAYS = 4
-
-# Minimum weeks the weekly VStop must have held UP for an ACCUMULATE, per
-# VERDICT_RULES clause (b). Kept next to the guard that enforces it.
-ACCUMULATE_MIN_VSTOP_WEEKS = 3
-
-
-def validate_verdict(view, row):
-    """Deterministic post-hoc guard on the model's verdict, mirroring
-    fundamentals_eval._validate_sentiment.
-
-    Returns (verdict, flag) -- flag is "" when the verdict stands, or
-    "UNSUPPORTED_ACCUMULATE" when ACCUMULATE was returned without the
-    technical preconditions VERDICT_RULES makes mandatory -- clauses (a) trend,
-    (b) VStop up >= 3 weeks and (c) RS positive, i.e. every one of the four
-    that is reconstructible from the row; (d) "no negative news catalyst" is a
-    judgement about the news text and is not -- in which case the verdict is
-    demoted to the rules' own stated default, HOLD.
-
-    VERDICT_RULES was enforced by prompt compliance alone, even though every
-    input it names is already a structured field on the snapshot row. Replaying
-    the guard over the 49 stored ACCUMULATE verdicts caught two: a US
-    ticker with trend=Downtrend and an India ticker with VStop up only 1 week. 4% is a low
-    rate, but it was unbounded and unmonitored, and it moves with any model
-    swap in the ladder.
-
-    Only ACCUMULATE is checked for support. HOLD is the rules' default and
-    needs no evidence, and CAUTION's "at least two of five signals" includes
-    news judgement that isn't reconstructible from the row.
-
-    Staleness is checked first and applies to every verdict, returning the
-    non-verdict sentinel "PENDING" so consumers fall through to their existing
-    pending branch. resolve_persisted_view already ages out a view while the
-    nightly refresh is RUNNING and failing; this covers the case it cannot --
-    the workflow not running at all (disabled schedule, GitHub's 60-day
-    inactivity auto-disable, an expired key), where nothing writes and a
-    month-old ACCUMULATE would otherwise keep displaying as current. Sentiment
-    has had this at read time all along; Expert Take had it only at write time.
-    """
-    if not view:
-        return None, ""
-    age = _view_age_days(view)
-    if age is not None and age > EXPERT_STALE_DAYS:
-        return "PENDING", "STALE"
-    if not row:
-        return view.get("verdict"), ""
-    if view.get("verdict") != "ACCUMULATE":
-        return view.get("verdict"), ""
-
-    if row.get("trend") not in ("Uptrend", "Strong Uptrend"):
-        return "HOLD", "UNSUPPORTED_ACCUMULATE"
-    if row.get("vstop_weekly_direction") != "Up":
-        return "HOLD", "UNSUPPORTED_ACCUMULATE"
-    weeks = row.get("vstop_weekly_weeks_since_change")
-    if isinstance(weeks, (int, float)) and weeks < ACCUMULATE_MIN_VSTOP_WEEKS:
-        return "HOLD", "UNSUPPORTED_ACCUMULATE"
-    # Clause (c). Both this and the weeks test above fail OPEN on a missing or
-    # non-numeric value, which is the rule's own wording -- "RS is positive or
-    # N/A for very new data" -- not an oversight: a ticker with too little
-    # history to compute Mansfield RS must not be demoted for it.
-    rs = row.get("rs_weekly")
-    if isinstance(rs, (int, float)) and rs < 0:
-        return "HOLD", "UNSUPPORTED_ACCUMULATE"
-    return "ACCUMULATE", ""
-
-
-def verdict_flag_note(flag, as_of="unknown"):
-    """Plain-English note for a validate_verdict flag, for the cell tooltip."""
-    if flag == "UNSUPPORTED_ACCUMULATE":
-        return ("[Downgraded to Hold: the model returned Accumulate, but the "
-                "trend/VStop/RS preconditions in its own rules were not met]")
-    if flag == "STALE":
-        return (f"[STALE: as_of {as_of} is older than {EXPERT_STALE_DAYS} days -- "
-                "the refresh pipeline has not updated this verdict, so it is no "
-                "longer shown as current]")
-    return ""
 
 def _view_age_days(view):
     """Age of a view in days, or None if as_of is missing/unparseable.
@@ -333,29 +422,16 @@ def _view_age_days(view):
         return None
 
 
-# The decision rules the model must follow when picking a verdict. Kept as a
-# module constant rather than inline in build_expert_prompt because the
-# copy-for-AI payload in app.py quotes these same rules back to the user --
-# two copies would silently drift the moment the prompt is tuned, and the
-# payload would then be describing a decision rule the model never saw.
-VERDICT_RULES = """MANDATORY VERDICT RULES — apply these strictly before choosing a verdict:
-- HOLD is the DEFAULT. Use it whenever the picture is mixed, data is thin, or confidence is low.
-- Trend "Mixed" means its four conditions disagree (see Trend Detail): it is neither an uptrend for ACCUMULATE nor a Downtrend signal for CAUTION.
-- ACCUMULATE requires ALL of: (a) Trend is "Uptrend" or "Strong Uptrend", (b) VStop direction is UP held ≥ 3 weeks, (c) RS is positive or N/A for very new data, (d) No negative news catalyst. If news is ABSENT, you may still give ACCUMULATE ONLY if ALL technical conditions above are clearly met — never give ACCUMULATE just because news is absent.
-- CAUTION requires AT LEAST TWO of the following five signals to agree — a single isolated signal (e.g. trend just not yet confirmed as an uptrend, with everything else neutral or positive) is NOT enough on its own and must fall through to HOLD instead: (1) Trend is Downtrend or Strong Downtrend (not Mixed), (2) VStop flipped DOWN, (3) RSI > 80 on weekly or monthly (severely overbought), (4) heavy distribution (Net Volume 10D Negative with large ratio), (5) a clearly negative news catalyst.
-- NEVER give ACCUMULATE when news shows a negative catalyst (earnings miss, downgrade, regulatory issue, fraud, etc.).
-- NEVER give ACCUMULATE solely because news is absent or minimal — absent news → lean HOLD unless technicals fully satisfy the ACCUMULATE criteria above.
-- "News" in these rules means BOTH section 4 (this quarter's fundamentals) and section 5 (the last 24 hours). LOWERED guidance, an EPS miss, or a named-firm downgrade in section 4 is a negative catalyst; RAISED guidance or a named-firm upgrade is a positive one."""
+# The verdict rule and the news step, in words. Module constants because the
+# prompt AND the copy-for-AI payload in app.py quote them -- two copies would
+# drift the moment the rule is tuned. Kept in step with decide_expert_verdict
+# and news_risk_active (checks/test_expert_take_100426.py).
+VERDICT_RULES = """HOW THE VERDICT IS DECIDED (in code, from the dashboard's columns -- not by the model):
+- ACCUMULATE: Trend is Uptrend or Strong Uptrend, AND Tech Uptrend is Yes, AND TA Rules is "Maintain/Add" or "Bullish Signal", AND Sentiment is not Negative. Or: TA Rules is "Bullish Signal" (a breakout from converging EMAs, where Trend is usually Mixed), Trend is not a Downtrend, and Sentiment is not Negative.
+- CAUTION: at least 2 points, where TA Rules "Exit" counts 2 (the flowchart's own exit call), TA Rules "Be Cautious" 1, Trend Downtrend/Strong Downtrend 1, and Sentiment Negative 1.
+- HOLD: everything else. Overbought RSI is not a Caution point: in a trend it is strength."""
 
-
-# The deterministic guard validate_verdict applies on top of whatever the model
-# wrote. Spelled out for the copy-for-AI payload for the same reason
-# VERDICT_RULES is -- the reader is told these rules produced the verdict, so
-# they must also be told the verdict is not raw model output.
-VERDICT_GUARD_RULES = f"""A deterministic guard runs after the model answers and can override it:
-- View older than {EXPERT_STALE_DAYS} days -> shown as Pending (STALE): the refresh pipeline has stopped updating this verdict, so it is no longer presented as current.
-- ACCUMULATE without the mandatory technical preconditions -- trend not Uptrend/Strong Uptrend, VStop not UP, VStop held < {ACCUMULATE_MIN_VSTOP_WEEKS} weeks, or weekly RS negative -> demoted to HOLD (UNSUPPORTED_ACCUMULATE).
-- HOLD and CAUTION are not re-checked: HOLD is the rules' own default, and CAUTION's five-signal test includes news judgement that cannot be reconstructed from the metrics."""
+NEWS_RISK_RULES = f"""THE NEWS STEP: the model reads the last {EXPERT_NEWS_WINDOW_DAYS} days of material company news. A dated, quoted NEGATIVE event in one of these categories lowers the verdict ONE step (Accumulate -> Hold, Hold -> Caution) until the item is more than {EXPERT_NEWS_WINDOW_DAYS} days old: {"; ".join(NEWS_RISK_CATEGORIES)}. News never raises the verdict, and quarterly results, guidance and analyst ratings are not news here -- Sentiment decides those."""
 
 
 def _fmt(v, suffix="", digits=1):
@@ -446,9 +522,7 @@ def build_expert_prompt(row_data, news_text, active_alerts_text=None, fundamenta
     # text below, but both are settings-driven -- and this repo has run
     # tech_uptrend_volume_ratio well below 1.4, so the model was being told Tech
     # Uptrend implied a 1.4x volume expansion when it did not. Both are stated
-    # the way stock_data tests them: strictly greater. (VERDICT_RULES' ">= 3
-    # weeks" is a different rule -- ACCUMULATE's own precondition, enforced by
-    # validate_verdict -- not Tech Uptrend's.)
+    # the way stock_data tests them: strictly greater.
     from stock_data import load_settings as _ls
     _s = _ls()
     tu_weeks = _s.get("tech_uptrend_min_vstop_weeks", 3)
@@ -509,17 +583,29 @@ def build_expert_prompt(row_data, news_text, active_alerts_text=None, fundamenta
     fundamentals_text = _quarter_fundamentals_text(fundamental_view)
     has_fundamentals = fundamentals_text.startswith("- ")
 
+    # The verdict is decided in code from the columns (decide_expert_verdict);
+    # the model only explains it and reports news risk. Sentiment is the row's
+    # guarded label when the caller attached it, else guarded here.
+    sentiment = _row_sentiment(row_data, fundamental_view)
+    base_verdict, verdict_reasons = decide_expert_verdict(row_data, sentiment)
+    lowered_verdict = _LOWER.get(base_verdict, base_verdict)
+    tu_detail = (row_data.get("tech_uptrend_detail") or {}).get("passed") or {}
+    tu_failed = [k.replace("_", " ") for k, ok in tu_detail.items() if not ok]
+    neutral = [name for key, name in (("slope_neutral", "slope"), ("ma_neutral", "10W vs 40W"),
+                                      ("rs_neutral", "RS")) if trend_detail.get(key)]
+
     # Flag whether news is genuinely absent
     news_absent = not news_text or news_text.strip().lower() in (
         "no recent news found.", "no recent news found", "", "none"
     )
     if news_absent and not has_fundamentals:
         news_quality_note = (
-            "⚠️ NEWS DATA: ABSENT — no material news was found for this ticker, in the last 24 hours "
-            "or in this quarter's fundamentals. This MUST constrain the verdict (see rules below)."
+            f"⚠️ NEWS DATA: ABSENT — no material news was found for this ticker in the last "
+            f"{EXPERT_NEWS_WINDOW_DAYS} days, nor fundamentals for this quarter. Say so in the catalyst summary."
         )
     elif news_absent:
-        news_quality_note = "No news in the last 24 hours. This quarter's fundamentals are in section 4."
+        news_quality_note = (f"No material news in the last {EXPERT_NEWS_WINDOW_DAYS} days. "
+                             "This quarter's fundamentals are in section 4.")
     else:
         news_quality_note = ""
 
@@ -536,31 +622,33 @@ def build_expert_prompt(row_data, news_text, active_alerts_text=None, fundamenta
     else:
         alerts_section = str(active_alerts_text)
 
-    prompt = f"""You are an elite equity portfolio manager combining Stan Weinstein stage analysis, trend momentum,
-volume accumulation/distribution analysis, and fundamental catalyst evaluation.
-
-Analyze the stock {company_name} (Ticker: {ticker}) ({market} market) using the structured quantitative metrics, this
-quarter's checked fundamentals and recent web news provided below.
+    prompt = f"""You are an equity analyst writing a short, disciplined note on {company_name} (Ticker: {ticker}) ({market} market)
+for a growth-and-momentum investor, from the dashboard's columns, the key levels, this quarter's checked
+fundamentals and the last {EXPERT_NEWS_WINDOW_DAYS} days of material news below.
 
 ======================================================================
-1. QUANTITATIVE & TECHNICAL METRICS
+1. THE COLUMNS AND THE VERDICT THEY GIVE
 ======================================================================
-- Data as of: {data_end} (last daily close; prices in {currency})
-- Last Close: {last_close}
-- Weekly EMAs (Fast/Mid/Slow): {w_fast} WEMA={ema10}, {w_mid} WEMA={ema20}, {w_slow} WEMA={ema40}
-- Daily SMAs (Fast/Mid/Slow): {d_fast} DSMA={ema10_daily}, {d_mid} DSMA={ema50}, {d_slow} DSMA={ema200}
-- Momentum RSI: Daily={rsi_d}, Weekly={rsi_w}, Monthly={rsi_m}
-- Mansfield Relative Strength (vs {bench}): Daily={rs_d}, Weekly={rs_w}, Monthly={rs_m}
-- Trend Status: {trend} (Rank: {trend_rank})
-  └ Trend Detail: Price > {w_slow} WEMA: {trend_detail.get('price_above_ma')}, {w_slow} WEMA Slope Rising: {trend_detail.get('slope_rising')}, Fast > Slow WEMA: {trend_detail.get('ema_aligned')}, RS Positive: {trend_detail.get('rs_positive')}, Near 52W High/Low: {trend_detail.get('near_high_low_pass')}
-- Volatility Stop (VStop-W): Direction={vstop_dir}, Stop Level={vstop_weekly}, Weeks Held={vstop_wks}
-- Tech Uptrend: {tech_uptrend} (Requires VStop uptrend > {tu_weeks} wks, Price > {w_slow} WEMA, median Vol 10D > {tu_vol}x median Vol 100D)
-- Volume Analysis: average Vol 10D={vol_10d}, Vol 100D={vol_100d}; median day 10D={med_10d}, 100D={med_100d}; Vol Trend (median-based)={vol_trend}
-- Net Volume 10D (Accumulation vs Distribution): Direction={net_vol_dir}, Ratio={net_vol_ratio}%
-- 52-Week Range: High={h52}, Low={l52}
+- Trend: {trend} (Rank: {trend_rank}). Price > {w_slow} WEMA: {trend_detail.get('price_above_ma')}, {w_slow} WEMA slope rising: {trend_detail.get('slope_rising')}, {w_fast} > {w_slow} WEMA: {trend_detail.get('ema_aligned')}, RS positive: {trend_detail.get('rs_positive')}{f"; too close to call, not voting: {', '.join(neutral)}" if neutral else ""}
+- Tech Uptrend: {tech_uptrend} (Requires VStop uptrend > {tu_weeks} wks, Price > {w_slow} WEMA, median Vol 10D > {tu_vol}x median Vol 100D){f"; failing: {', '.join(tu_failed)}" if tu_failed else ""}
 - TA Rules (TheWrap weekly EMA flowchart): {_ta_rules_text(row_data)}
+- Sentiment (forward-looking, from section 4): {sentiment}
+- VERDICT FROM THE COLUMNS: {base_verdict} -- {"; ".join(verdict_reasons)}
+
+{VERDICT_RULES}
+
+======================================================================
+1b. KEY LEVELS (for the technical note and the trade plan)
+======================================================================
+- Data as of: {data_end} (last daily close; prices in {currency}); Last Close: {last_close}
+- Weekly EMAs: {w_fast} WEMA={ema10}, {w_mid} WEMA={ema20}, {w_slow} WEMA={ema40}
+- Daily SMAs (Fast/Mid/Slow): {d_fast} DSMA={ema10_daily}, {d_mid} DSMA={ema50}, {d_slow} DSMA={ema200}
+- VStop-W: Direction={vstop_dir}, Stop Level={vstop_weekly}, Weeks Held={vstop_wks}
+- RSI: Daily={rsi_d}, Weekly={rsi_w}, Monthly={rsi_m}; Mansfield RS (vs {bench}): Daily={rs_d}, Weekly={rs_w}, Monthly={rs_m}
+- Volume: median day 10D={med_10d}, 100D={med_100d} (averages {vol_10d} / {vol_100d}); Vol Trend={vol_trend}; Net Volume 10D: {net_vol_dir}, {net_vol_ratio}%
+- 52-Week Range: High={h52}, Low={l52}
 - Valuation: Trailing P/E={_fmt(row_data.get('trailing_pe'))}, Forward P/E={_fmt(row_data.get('forward_pe'))}, P/B={_fmt(row_data.get('pb_ratio'))}, EV/EBITDA={_fmt(row_data.get('ev_ebitda'))}, ROE={_fmt(row_data.get('roe'), '%')}, ROCE={_fmt(row_data.get('roce'), '%')}
-- Latest quarter ({row_data.get('reported_qtr') or 'N/A'}) YoY growth: EPS={_fmt(row_data.get('qtr_eps_growth'), '%')}, Net profit={_fmt(row_data.get('qtr_profit_growth'), '%')}, Revenue={_fmt(row_data.get('qtr_revenue_growth'), '%')}
+- Latest quarter ({row_data.get('reported_qtr') or 'N/A'}) YoY growth: EPS={_fmt(row_data.get('qtr_eps_growth'), '%')}, Net profit={_fmt(row_data.get('qtr_profit_growth'), '%')}, Revenue={_fmt(row_data.get('qtr_revenue_growth'), '%')} (context only: Sentiment judges the fundamentals)
 
 ======================================================================
 2. ACTIVE ALERT RULES TRIGGERED
@@ -578,32 +666,44 @@ quarter's checked fundamentals and recent web news provided below.
 {fundamentals_text}
 
 ======================================================================
-5. RECENT WEB NEWS & ANNOUNCEMENTS (Last 24 hours via Grounded Search)
+5. MATERIAL NEWS, LAST {EXPERT_NEWS_WINDOW_DAYS} DAYS, AND EVENTS IN THE NEXT 7 (via Grounded Search)
 ======================================================================
 {news_quality_note}
 {news_text}
 
 ======================================================================
-EXPERT INSTRUCTIONS:
+INSTRUCTIONS
 ======================================================================
-Evaluate this stock from a disciplined growth-and-momentum investor perspective.
+You do not choose the verdict: the columns give {base_verdict}. Your two jobs:
 
-{VERDICT_RULES}
+A. NEWS RISK. {NEWS_RISK_RULES}
+   Report one in "news_risk" ONLY if section 5 shows a specific, dated negative event of one of those
+   categories, and copy the news's own words into "quote". If you report one, the verdict will be
+   lowered one step to {lowered_verdict}. Anything else (no such event, or a general worry) is
+   "material_negative": false with the other fields null.
 
-Then:
-1. State the Verdict (ACCUMULATE / HOLD / CAUTION).
-2. Provide a 1-line headline summarizing the key reason.
-3. Concise Technical & Volume Assessment (2-3 sentences).
-4. Concise Catalyst Assessment covering sections 4 and 5 — if BOTH are empty, explicitly state "No material news found; verdict based on technicals only."
-5. Actionable Take (2-3 sentences): entry/add zones, trailing stop levels, or exit triggers. Write it as analysis for the reader's own research, not as personal investment advice, and do not state certainty about future prices.
+B. THE NOTE, for the final verdict ({base_verdict}, or {lowered_verdict} if you reported a news risk):
+1. A 1-line headline with the key reason.
+2. Technical & volume assessment (2-3 sentences), from sections 1 and 1b.
+3. Catalyst assessment covering sections 4 and 5 -- if both are empty, say "No material news found;
+   verdict based on the columns only."
+4. Actionable take (2-3 sentences): entry/add zones, trailing stop levels, or exit triggers from the key
+   levels. If RSI is overbought, say to add on a pullback rather than chase. Write it as analysis for the
+   reader's own research, not as personal investment advice, and do not state certainty about future prices.
+Do not argue against the verdict; explain it.
 
 Return ONLY a valid JSON object matching this schema:
 {{
-  "verdict": "ACCUMULATE" | "HOLD" | "CAUTION",
   "headline": "Short 1-line summary statement",
   "technical_summary": "Concise technical/volume takeaway",
   "catalyst_summary": "Concise news/catalyst takeaway",
-  "actionable_take": "Clear actionable advice for an investor"
+  "actionable_take": "Clear actionable plan for the reader's research",
+  "news_risk": {{
+    "material_negative": true | false,
+    "category": one of the categories listed above, or null,
+    "date": "YYYY-MM-DD" or null,
+    "quote": "the news's own words, with the source and date" or null
+  }}
 }}"""
     return prompt
 
@@ -612,6 +712,17 @@ Return ONLY a valid JSON object matching this schema:
 # from fundamentals.json. None is a different, deliberate value -- "not
 # available for this run" -- which section 4 renders as NO INFORMATION.
 _LOAD_FUNDAMENTALS = object()
+
+
+def _row_sentiment(row_data, fundamental_view):
+    """The guarded Sentiment label for the verdict: the row's own when the
+    caller attached it (the dashboard), else guarded from the view."""
+    if (row_data or {}).get("sentiment") is not None:
+        return row_data["sentiment"]
+    if not fundamental_view:
+        return "Unknown"
+    from fundamentals_eval import _validate_sentiment
+    return _validate_sentiment(fundamental_view)[0]
 
 
 def generate_expert_view(client, row_data, news_text=None, news_source=None, active_alerts_text=None, is_retry=False,
@@ -705,6 +816,16 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
         on_success=lambda resp: normalize_view(llm_util.json_object(_clean_json_text(resp.text))),
     )
     if used is not None:
+        # The verdict is the columns', lowered one step by an active news risk
+        # (expert_take_for_row) -- stored with the note so the write-up says
+        # which verdict it was written for. The app recomputes it live.
+        if "news_risk" not in data:          # a reply without the field: no risk
+            data["news_risk"] = normalize_view({"news_risk": None})["news_risk"]
+        take = expert_take_for_row(row_data, data, sentiment=_row_sentiment(row_data, fundamental_view))
+        if take["base"] == "PENDING":
+            return _pending_fallback("not enough price history for a Trend yet")
+        data["base_verdict"], data["verdict"] = take["base"], take["verdict"]
+        data["verdict_reasons"] = take["reasons"]
         data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         data["news_used"] = news_text
         data["quarter_facts_used"] = _quarter_fundamentals_text(fundamental_view).startswith("- ")

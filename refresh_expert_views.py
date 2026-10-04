@@ -5,7 +5,10 @@ EDT / 06:00 UTC EST), as the step AFTER that workflow's own refresh_data.py --
 so data_snapshot.json is same-day by construction, not by timing luck.
 
 News is fetched per ticker by expert_views.fetch_gemma_expert_news (a grounded
-search over the last 24 hours), not read from news_summary.json.
+search over the last 14 days of material non-earnings news), not read from
+news_summary.json. The verdict itself is decided in code from the columns
+(expert_views.decide_expert_verdict); the model writes the explanation and may
+report a news risk that lowers it one step.
 """
 
 import os

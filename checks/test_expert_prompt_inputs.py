@@ -114,16 +114,20 @@ ROW = {**BASE, "data_end": "2026-09-25", "trailing_pe": 31.24, "roce": 18.5, "re
                            "converging": False, "break_pct": 3.0}}
 
 p4 = expert_views.build_expert_prompt(ROW, "No recent news found.", "", FACTS)
-sec4 = p4[p4.find("4. THIS QUARTER'S FUNDAMENTALS"):p4.find("5. RECENT WEB NEWS")]
+sec4 = p4[p4.find("4. THIS QUARTER'S FUNDAMENTALS"):p4.find("5. MATERIAL NEWS")]
 check(all(x in sec4 for x in ("Results announced: 2026-08-07", "EPS: $1.10", "Company guidance: RAISED",
                                "Management outlook (improving)", "Analyst action: upgrade by Morgan Stanley")),
       "section 4 carries the quarter's results, guidance, outlook and named-firm analyst action")
 check("Positive" not in sec4 and "Sentiment" not in sec4, "section 4 gives the facts, not Sentiment's label")
-check("No news in the last 24 hours. This quarter's fundamentals are in section 4." in p4
-      and "NEWS DATA: ABSENT" not in p4, "24h silence with quarter facts is not reported as 'news absent'")
+# 14 days, not 24 hours, since 2026-10-04 (checks/test_expert_take_100426.py).
+check("No material news in the last 14 days. This quarter's fundamentals are in section 4." in p4
+      and "NEWS DATA: ABSENT" not in p4, "news silence with quarter facts is not reported as 'news absent'")
 check("NEWS DATA: ABSENT" in expert_views.build_expert_prompt(ROW, "No recent news found.", "", {}),
       "with no 24h news AND no quarter facts, the absent-news warning still fires")
-check('"News" in these rules means BOTH section 4' in p4, "the verdict rules count section 4 as news")
+# The model no longer picks the verdict (2026-10-04): section 4 reaches it
+# through Sentiment, which section 1 states and the rule uses.
+check("Sentiment (forward-looking, from section 4): Positive" in p4 and expert_views.VERDICT_RULES in p4,
+      "the prompt carries the Sentiment label from section 4 and the rule that uses it")
 
 site = {**FACTS, "analyst_action": "upgrade", "analyst_firm": "StockInvest.us"}
 check("StockInvest" not in expert_views._quarter_fundamentals_text(site),

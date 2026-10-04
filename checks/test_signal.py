@@ -84,13 +84,15 @@ check('("signal", "Signal")' in src and '"Signal": (' in src and "SIGNAL_COLORS"
 # --- ⚑ on Expert Take where it differs from the chart -------------------------
 import expert_views as ev
 
-for row, want in (({"trend": "Uptrend", "tech_uptrend": 1}, "ACCUMULATE"),
-                  ({"trend": "Strong Uptrend", "tech_uptrend": 0}, "HOLD"),
-                  ({"trend": "Downtrend", "tech_uptrend": 1}, "CAUTION"),
-                  ({"trend": None}, "HOLD")):
-    check(ev.chart_rule_verdict(row) == want, f"chart rule: {row} -> {want}")
-check('badge = f"{badge} ⚑"' in src and "verdict != chart_says" in src and "not is_pending_view(v)" in src,
-      "the Expert Take cell adds ⚑ only for a real verdict that differs from the chart rule")
+# Since 2026-10-04 the columns decide Expert Take (checks/test_expert_take_100426.py),
+# so the only thing that can differ from them is news: ⚑ marks a news downgrade.
+for row, want in (({"trend": "Uptrend", "tech_uptrend": 1, "ta_rules": "Maintain/Add"}, "ACCUMULATE"),
+                  ({"trend": "Strong Uptrend", "tech_uptrend": 0, "ta_rules": "Maintain/Add"}, "HOLD"),
+                  ({"trend": "Downtrend", "tech_uptrend": 1, "ta_rules": "Exit"}, "CAUTION"),
+                  ({"trend": None}, "PENDING")):
+    check(ev.decide_expert_verdict(row, "Neutral")[0] == want, f"columns' verdict: {row} -> {want}")
+check('badge = f"{badge} ⚑"' in src and 'if take["news_lowered"]:' in src,
+      "the Expert Take cell adds ⚑ only when news lowered the columns' verdict")
 check('"Also used: this quarter' in src, "the hover text says when this quarter's facts were used")
 
 print("TOTAL", "all passed" if not fails else "")

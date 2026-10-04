@@ -95,10 +95,9 @@ for (t, s), want in {("Mixed", "Neutral"): "Mixed", ("Mixed", "Unknown"): "Mixed
 check(tn.SIGNAL_OUTCOMES == ("Confirmed", "Chart only", "Mixed", "News divergence",
                              "Chart up, news negative", "Avoid"), "L1: Signal labels, best-first, include Mixed")
 check(set(tn.SIGNAL_EMOJI) == set(tn.SIGNAL_OUTCOMES), "L1: every Signal label has a dot")
-check(ev.chart_rule_verdict({"trend": "Mixed", "tech_uptrend": 1}) == "HOLD", "L1: the chart rule reads Mixed as HOLD")
-v, flag = ev.validate_verdict({"verdict": "ACCUMULATE", "as_of": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")},
-                              {"trend": "Mixed", "vstop_weekly_direction": "Up", "vstop_weekly_weeks_since_change": 9})
-check((v, flag) == ("HOLD", "UNSUPPORTED_ACCUMULATE"), "L1: ACCUMULATE on a Mixed trend is demoted to HOLD")
+# Expert Take's verdict is decided in code since 2026-10-04 (decide_expert_verdict).
+check(ev.decide_expert_verdict({"trend": "Mixed", "tech_uptrend": 1, "ta_rules": "Maintain/Add"}, "Positive")[0] == "HOLD",
+      "L1: Expert Take reads a Mixed trend as HOLD")
 check("Mixed" in ev.VERDICT_RULES, "L1: the verdict rules tell the model what Mixed means")
 check('["Any", "Strong Uptrend", "Uptrend", "Mixed", "Downtrend", "Strong Downtrend"]' in APP,
       "L1: the table's Trend filter offers Mixed")

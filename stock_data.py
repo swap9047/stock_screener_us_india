@@ -2709,13 +2709,13 @@ def apply_view_fields_to_rows(rows, fundamentals=None, expert_views=None, intere
 
     Semantics, unchanged from the app loop they came from:
       - sentiment is the GUARDED value (_validate_sentiment), not the raw one;
-      - expert_take checks is_pending_view first -- a failed-generation
-        placeholder stores verdict "HOLD", and keying off the verdict alone
-        made a broken analysis filterable as a genuine Hold -- then the guarded
-        validate_verdict, which demotes an unsupported ACCUMULATE and ages out a
-        stale view;
+      - expert_take is LIVE (expert_views.expert_take_for_row): the verdict the
+        row's own columns give -- Trend, Tech Uptrend, TA Rules and the guarded
+        Sentiment set just above -- lowered one step by an active news risk from
+        the stored write-up. It needs no write-up at all, so a failed or missing
+        AI run no longer turns it Pending; only a row without a Trend is;
       - expert_news_backed is "Yes"/"No" from expert_view_has_news."""
-    from expert_views import load_expert_views, is_pending_view, validate_verdict, expert_view_has_news
+    from expert_views import load_expert_views, expert_take_for_row, expert_view_has_news
     from fundamentals_eval import load_fundamentals, _validate_sentiment
     fundamentals = load_fundamentals() if fundamentals is None else fundamentals
     expert_views = load_expert_views() if expert_views is None else expert_views
@@ -2725,11 +2725,7 @@ def apply_view_fields_to_rows(rows, fundamentals=None, expert_views=None, intere
         row["interested"] = ticker in interested
         row["sentiment"] = _validate_sentiment(fundamentals.get(ticker, {}))[0]
         view = expert_views.get(ticker, {})
-        if is_pending_view(view):
-            row["expert_take"] = "Pending"
-        else:
-            verdict, _flag = validate_verdict(view, row)
-            row["expert_take"] = verdict.title() if verdict in ("ACCUMULATE", "HOLD", "CAUTION") else "Pending"
+        row["expert_take"] = expert_take_for_row(row, view)["verdict"].title()
         row["expert_news_backed"] = "Yes" if expert_view_has_news(view) else "No"
     return rows
 
