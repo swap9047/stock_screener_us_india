@@ -215,5 +215,78 @@ check(us["collate_status"] == "fallback" and us["summary"].startswith("* **Acme 
 check(us["tickers"]["ACME"].get("note", "").startswith("**Acme Corp (ACME)**"),
       "E2E: each ticker's note is stored for tomorrow's repeat check")
 
+# --- P1 three stocks at a time, same output ---------------------------------------
+# The digest ran one stock at a time (~40-55 min for 51). Stages 1-2 now run on
+# NEWS_CONCURRENT_TICKERS workers (the Sentiment job's 3), and the digest is
+# assembled in watchlist order afterwards, so the result does not depend on
+# which worker finished first.
+import threading
+
+check(getattr(ns, "NEWS_CONCURRENT_TICKERS", None) == 3, "P1: three workers, like the Sentiment job")
+live = {"now": 0, "max": 0}
+lock = threading.Lock()
+calls_by_ticker = {}
+DELAY = {"T1": 0.30, "T2": 0.05, "T3": 0.20, "T4": 0.01, "T5": 0.15, "T6": 0.02}
+
+
+class Throttled(Exception):
+    pass
+
+
+def slow_search(client, ticker, market, as_of_date, ticker_names=None, model=None):
+    with lock:
+        live["now"] += 1
+        live["max"] = max(live["max"], live["now"])
+        calls_by_ticker[ticker] = calls_by_ticker.get(ticker, 0) + 1
+        n = calls_by_ticker[ticker]
+    try:
+        # Not time.sleep: the run below stubs that out (it is the same module
+        # object), which would make every search instant and never overlap.
+        threading.Event().wait(DELAY.get(ticker, 0.01))
+        if ticker == "T5" and n == 1:
+            raise Throttled("429 once")              # retryable: comes back in the retry pass
+        if ticker == "T6":
+            raise ValueError("400 bad request")      # terminal: failed
+        return f"2026-10-03: {ticker} won a contract.", []
+    finally:
+        with lock:
+            live["now"] -= 1
+
+
+def stage2(client, prompt, tiers, config_for, label="", subject="", timeout=None, on_success=None):
+    if label == "stage2":
+        return "- Won a contract.", tiers[0][0]
+    return None, None
+
+
+_saved = (ns.fetch_single_raw_news, llm_util.run_model_ladder, llm_util.make_client, ns.time.sleep,
+          sd.load_settings, sd.load_data_snapshot, ns.load_news_summary, ns._is_retryable)
+ns.fetch_single_raw_news = slow_search
+llm_util.run_model_ladder = stage2
+llm_util.make_client = lambda *a, **k: object()
+ns.time.sleep = lambda s: None
+ns._is_retryable = lambda e: isinstance(e, Throttled)
+sd.load_settings = lambda: {**sd.DEFAULT_SETTINGS, "news_watchlist_scope": ["us_a", "us_b"]}
+sd.load_data_snapshot = lambda: {"per_market": {}}
+ns.load_news_summary = lambda: None
+try:
+    out = ns.build_news_summary({"us_a": ["T1", "T2", "T3", "T5", "T6"], "us_b": ["T4", "T2", "T1"]}, "k",
+                                now=datetime(2026, 10, 3, 21, 0, tzinfo=ET))
+finally:
+    (ns.fetch_single_raw_news, llm_util.run_model_ladder, llm_util.make_client, ns.time.sleep,
+     sd.load_settings, sd.load_data_snapshot, ns.load_news_summary, ns._is_retryable) = _saved
+check(live["max"] == 3, f"P1: three searches ran at once ({live['max']})")
+check(calls_by_ticker == {"T1": 1, "T2": 1, "T3": 1, "T4": 1, "T5": 2, "T6": 1},
+      f"P1: each stock searched once across watchlists; the throttled one retried once ({calls_by_ticker})")
+a = out["markets"]["us_a"]
+check(list(a["tickers"]) == ["T1", "T2", "T3", "T5", "T6"],
+      f"P1: records follow the watchlist order, not finishing order ({list(a['tickers'])})")
+check([a["tickers"][t]["status"] for t in ("T1", "T5", "T6")] == ["material", "material", "failed"],
+      "P1: a retryable failure recovers in the retry pass; a terminal one is failed")
+check([l.split("**")[1] for l in a["summary"].splitlines()] == ["T1", "T2", "T3", "T5"],
+      f"P1: the digest lists stocks in watchlist order ({a['summary']!r})")
+check(list(out["markets"]["us_b"]["tickers"]) == ["T4", "T2", "T1"] and out["totals"]["cache_hits"] == 2,
+      f"P1: the second watchlist reuses the shared stocks ({out['totals']['cache_hits']} cache hits)")
+
 print(f"FAILURES: {fails}")
 sys.exit(1 if fails else 0)

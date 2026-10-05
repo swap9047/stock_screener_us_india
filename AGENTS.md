@@ -35,7 +35,7 @@ step names, so each key needs a line in the AI steps' `env:` blocks. Every run l
 `[key rotation] N key(s): ...`; if that number is lower than expected, that line is
 missing.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1064
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1071
 offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
@@ -52,7 +52,7 @@ verified by rendering the app headlessly; recipe at the bottom.
 | `app.py` | 6746 | The entire UI: tabs, tables, sidebar, filters, sort, editors, AI control bars, News + Alert Rules tabs |
 | `stock_data.py` | 3182 | yfinance fetching, all indicator maths, watchlist/markets registry IO, `get_filterable_metrics` |
 | `alerts.py` | 1127 | Alert rule evaluation + Discord message building; every Discord post goes through `send_discord_batch`, which appends the disclaimer |
-| `news_summary.py` | 1048 | The nightly news digest: search, filter, edit. Dated by its 8 PM ET slot (`news_slot_date`), funds skipped (`is_fund`), the code sets each company header and drops filler lines, the filter drops repeats of the previous digest, and a failed editor falls back to code-formatted bullets |
+| `news_summary.py` | 1022 | The nightly news digest: search and filter (3 stocks at a time, `NEWS_CONCURRENT_TICKERS`), then edit. Dated by its 8 PM ET slot (`news_slot_date`), funds skipped (`is_fund`), the code sets each company header and drops filler lines, the filter drops repeats of the previous digest, and a failed editor falls back to code-formatted bullets |
 | `fundamentals_eval.py` | 1191 | Sentiment ("fundamental view") generation + validation. The model only extracts facts; `score_sentiment` decides the label, weighted toward forward signals (guidance ±15, quoted outlook ±6, guidance vs consensus ±3, named-firm action ±3; the quarter's profit >15% YoY or a beat/miss ±1 only breaks ties; with no forward signal, profit >+25% / <-20% YoY decides alone). The search window is anchored to each company's last results (`search_window_for`) |
 | `github_sync.py` | 715 | Atomic config push, the end-of-run push of edited config (`unpushed_config_files`) + `workflow_dispatch` trigger |
 | `expert_views.py` | 936 | Expert Take. The verdict is decided in code, live, from Trend, Tech Uptrend, TA Rules and Sentiment (`decide_expert_verdict`, `expert_take_for_row`); the nightly model writes the explanation and trade plan, and may lower the verdict one step for a dated material negative event in the last 14 days (`news_risk_active`). Its prompt also gets Sentiment's checked facts for the quarter (section 4) |

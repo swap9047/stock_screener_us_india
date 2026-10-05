@@ -520,7 +520,7 @@ date at 8 PM ET (the next morning, after that day's NSE session).
 gold prices and macro commentary. The test is Yahoo's `quoteType`; for older rows, a
 fund-like name on a ticker that reports no quarters.
 
-**For each stock**, with a cache so a stock that sits in two watchlists costs one search:
+**For each stock**, 3 at a time (one per Gemini key, as in the Sentiment job), and once only even if it sits in two watchlists; each digest is then assembled in its watchlist's order:
 1. **Stage 1, search.** A grounded search for news in the last 24 hours plus events in
    the next 3-4 days.
 2. **Stage 2, filter.** A strict recency rule (dated today or yesterday, or an upcoming

@@ -22,8 +22,9 @@ Perplexity-Finance-style digest built with a 3-stage per-ticker architecture:
 
 Roughly one search + one reasoning call per ticker in scope plus one
 collation call per watchlist -- about 50 + 50 + 2 with the default scope (the
-two invested lists), or ~105 + 105 + 7 across every watchlist. Stages 1 and 2 are memoised per (ticker, window date), so a
-ticker in three watchlists costs one search, not three, while still
+two invested lists), or ~105 + 105 + 7 across every watchlist. Stages 1 and 2
+run once per unique (ticker, window date), NEWS_CONCURRENT_TICKERS at a time,
+so a ticker in three watchlists costs one search, not three, while still
 appearing in all three digests -- only Stage 3 is genuinely per-market.
 
 News is generated once/day at 8:00 PM ET via GitHub Actions (news-summary.yml).
@@ -42,6 +43,7 @@ whose search ladder is exhausted is now recorded as `failed` instead, which the
 output schema actually reports.
 """
 
+import concurrent.futures
 import json
 import os
 import re
@@ -85,7 +87,13 @@ COLLATION_FALLBACK_MODEL = "models/gemini-3.6-flash"
 COLLATION_MIN_THINKING = 4096
 COLLATION_MAX_THINKING = 8192
 
-SECONDS_BETWEEN_CALLS = 2
+# Stocks searched and filtered at once (Stages 1-2), one per Gemini key -- the
+# Sentiment job's MAX_CONCURRENT_TICKERS. One at a time took 40-55 minutes for
+# 51 stocks. Watch the run's [key rotation] line: the 503s are model-side, so if
+# failures climb, come back down rather than add keys.
+NEWS_CONCURRENT_TICKERS = 3
+
+SECONDS_BETWEEN_CALLS = 2   # pause after each stock, per worker
 # Longer backoff between retry-queue attempts, to give a transient
 # rate-limit/network issue more time to clear before hitting the same API again
 RETRY_SECONDS_BETWEEN_CALLS = 30
@@ -753,20 +761,91 @@ def build_news_summary(watchlists, api_key, now=None):
     # The last digest, for Stage 2's repeat check (previous_note).
     previous_digest = load_news_summary()
 
-    # Stage 1 and Stage 2 are both purely per-ticker, so memoise them for the
-    # whole run. Today 110 watchlist slots are 105 unique tickers -- one sits
-    # in three watchlists and three more in two -- and every repeat
-    # used to cost a fresh grounded search plus a fresh reasoning call, and
-    # produced independently-worded text so the same news read differently in
-    # each digest. Keyed on the WINDOW DATE as well as the ticker so a ticker
-    # that ever spans a US and an Indian watchlist can't reuse the wrong day's
-    # window; and on the FULL ticker, since _bare_ticker would collide across
-    # exchanges.
-    search_cache = {}   # (ticker, window_date) -> (text, sources) | Exception
-    filter_cache = {}   # (ticker, window_date) -> (text, status)
-    counters = {"cache_hits": 0}
-    first_call = [True]
+    # Stages 1 and 2 are purely per-ticker, so they run ONCE per unique (ticker,
+    # window) for the whole run -- a ticker in three watchlists costs one search
+    # and one filter call, and reads the same in every digest. Keyed on the
+    # window date as well as the ticker, so a ticker spanning a US and an Indian
+    # watchlist can't reuse the wrong day's window; and on the FULL ticker,
+    # since _bare_ticker would collide across exchanges.
+    #
+    # They run NEWS_CONCURRENT_TICKERS at a time (2026-10-04, owner): one stock
+    # at a time took 40-55 minutes for 51. Each digest is then assembled in its
+    # watchlist's order, so the output does not depend on which worker
+    # finished first. (A retried stock used to land at the END of its watchlist.)
+    plan, planned = [], set()      # [((ticker, window), market)]; market labels the exchange
+    for market, tickers in watchlists.items():
+        for ticker in tickers or []:
+            if is_fund(row_by_ticker.get(ticker)):
+                continue
+            key = (ticker, slot_window_date(ticker, slot_date))
+            if key not in planned:
+                planned.add(key)
+                plan.append((key, market))
 
+    def _ts():
+        return datetime.now(timezone.utc).strftime("%H:%M:%S")
+
+    def process(entry, is_retry=False):
+        """Stages 1-2 for one stock -> (key, outcome): ("ok", sources, note,
+        status) | ("retry", exc) | ("failed", exc). A worker; the pause after
+        each stock is per worker, as in the Sentiment job."""
+        (ticker, window), market = entry
+        tag = f"[{'RETRY ' if is_retry else ''}{ticker}]"
+        t0 = time.time()
+        try:
+            raw_text, sources = fetch_single_raw_news(
+                client, ticker, market, window, ticker_names=ticker_names, model=search_model,
+            )
+        except Exception as e:
+            if not is_retry and _is_retryable(e):
+                print(f"[{_ts()}] {tag} Stage1 exhausted ({e}). Queued for retry.")
+                outcome = ("retry", e)
+            else:
+                print(f"[{_ts()}] {tag} Stage1 {'FAILED' if is_retry else 'TERMINAL'} ({e}).")
+                outcome = ("failed", e)
+            if not is_retry:
+                time.sleep(SECONDS_BETWEEN_CALLS)
+            return (ticker, window), outcome
+        if not raw_text:
+            # Search succeeded but found nothing -- no reasoning call to prove it.
+            clean, status = "", "ok"
+        else:
+            header = f"**{_display_name(ticker, ticker_names)}**:\n{raw_text}"
+            clean, status = filter_batch_with_reasoning(
+                client, header, [ticker], market, window,
+                ticker_names=ticker_names, model=reasoning_model, budget=thinking_budget,
+                previous=previous_note(previous_digest, ticker, slot_date),
+            )
+            if status != STATUS_DEGRADED:
+                # Bullets only from here: filler lines out, then the code's
+                # "**Company (TICKER)**" header on top (note_with_header).
+                body = drop_filler_lines(_strip_header(clean))
+                clean = note_with_header(ticker, body, ticker_names) if body else ""
+        label = STATUS_DEGRADED if status == STATUS_DEGRADED else (STATUS_MATERIAL if clean else STATUS_QUIET)
+        print(f"[{_ts()}] {tag} {label} ({time.time() - t0:.1f}s)")
+        if not is_retry:
+            time.sleep(SECONDS_BETWEEN_CALLS)
+        return (ticker, window), ("ok", sources, clean, status)
+
+    # Every Gemini call inside a worker is bounded by llm_util's call timeout, so
+    # the workers always finish and `with` joins them (see refresh_fundamentals'
+    # _run_all for why a ThreadPoolExecutor is safe here).
+    print(f"[news] {len(plan)} unique stocks, {NEWS_CONCURRENT_TICKERS} at a time")
+    outcomes = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=NEWS_CONCURRENT_TICKERS) as pool:
+        for key, outcome in pool.map(process, plan):
+            outcomes[key] = outcome
+    retries = [entry for entry in plan if outcomes[entry[0]][0] == "retry"]
+    if retries:
+        # One at a time, after a longer pause: these failed on a transient error.
+        print(f"\n[{_ts()}] === Retry queue ({len(retries)}) ===")
+        for entry in retries:
+            time.sleep(RETRY_SECONDS_BETWEEN_CALLS)
+            key, outcome = process(entry, is_retry=True)
+            outcomes[key] = outcome
+
+    counters = {"cache_hits": 0}
+    used = set()
     for market in watchlists.keys():
         tickers = watchlists.get(market, [])
         if not tickers:
@@ -778,8 +857,7 @@ def build_news_summary(watchlists, api_key, now=None):
 
         india = next((t for t in tickers if t.endswith(_INDIA_SUFFIXES)), None)
         window_date = slot_window_date(india or tickers[0], slot_date)
-        print(f"\n[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] === {market}: "
-              f"{len(tickers)} tickers, window ending {window_date} ===")
+        print(f"\n[{_ts()}] === {market}: {len(tickers)} tickers, window ending {window_date} ===")
 
         filtered_texts = []
         # Stage 2's note per ticker, so a ticker Stage 3 drops can be recovered
@@ -787,7 +865,6 @@ def build_news_summary(watchlists, api_key, now=None):
         note_by_ticker = {}
         all_sources = []
         ticker_records = {}
-        retry_queue = []
 
         def record(ticker, status, sources=None, note=None):
             ticker_records[ticker] = {"status": status, "sources": sources or []}
@@ -795,34 +872,21 @@ def build_news_summary(watchlists, api_key, now=None):
                 # Stored for the next digest's repeat check (previous_note).
                 ticker_records[ticker]["note"] = note
 
-        def run_stage2(ticker, raw_text, sources, window):
-            """Stage 2 for one ticker, memoised. Appends to filtered_texts and
-            writes the ticker's record. `window` is the TICKER's window date,
-            which equals the market's for a single-region watchlist and differs
-            for a mixed one -- see ticker_window_date."""
-            key = (ticker, window)
-            if key in filter_cache:
+        for ticker in tickers:
+            if is_fund(row_by_ticker.get(ticker)):
+                # A fund's "news" is gold prices and macro commentary (D5).
+                record(ticker, STATUS_FUND)
+                continue
+            key = (ticker, slot_window_date(ticker, slot_date))
+            if key in used:
                 counters["cache_hits"] += 1
-                clean, status = filter_cache[key]
-            elif not raw_text:
-                # Search succeeded but found nothing -- don't spend a reasoning
-                # call proving that.
-                clean, status = "", "ok"
-                filter_cache[key] = (clean, status)
-            else:
-                header = f"**{_display_name(ticker, ticker_names)}**:\n{raw_text}"
-                clean, status = filter_batch_with_reasoning(
-                    client, header, [ticker], market, window,
-                    ticker_names=ticker_names, model=reasoning_model, budget=thinking_budget,
-                    previous=previous_note(previous_digest, ticker, slot_date),
-                )
-                if status != STATUS_DEGRADED:
-                    # Bullets only from here: filler lines out, then the code's
-                    # "**Company (TICKER)**" header on top (note_with_header).
-                    body = drop_filler_lines(_strip_header(clean))
-                    clean = note_with_header(ticker, body, ticker_names) if body else ""
-                filter_cache[key] = (clean, status)
-
+            used.add(key)
+            outcome = outcomes.get(key, ("failed", None))
+            if outcome[0] != "ok":
+                record(ticker, STATUS_FAILED)
+                continue
+            _, sources, clean, status = outcome
+            all_sources.extend(sources)
             if status == STATUS_DEGRADED:
                 filtered_texts.append(clean)
                 note_by_ticker[ticker] = clean
@@ -833,96 +897,6 @@ def build_news_summary(watchlists, api_key, now=None):
                 record(ticker, STATUS_MATERIAL, sources, note=clean)
             else:
                 record(ticker, STATUS_QUIET, sources)
-
-        for i, ticker in enumerate(tickers):
-            if is_fund(row_by_ticker.get(ticker)):
-                # A fund's "news" is gold prices and macro commentary (D5).
-                print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] [{market}] [{i+1}/{len(tickers)}] "
-                      f"{ticker} - fund, skipped")
-                record(ticker, STATUS_FUND)
-                continue
-            tw = slot_window_date(ticker, slot_date)
-            key = (ticker, tw)
-            ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-            progress = f"[{ts}] [{market}] [{i+1}/{len(tickers)}] {ticker}"
-
-            if key in search_cache:
-                cached = search_cache[key]
-                counters["cache_hits"] += 1
-                if isinstance(cached, Exception):
-                    print(f"{progress} - cached FAILURE, skipping")
-                    record(ticker, STATUS_FAILED)
-                    continue
-                raw_text, sources = cached
-                print(f"{progress} - Stage1 cache hit")
-                all_sources.extend(sources)
-                run_stage2(ticker, raw_text, sources, tw)
-                continue
-
-            if not first_call[0]:
-                time.sleep(SECONDS_BETWEEN_CALLS)
-            first_call[0] = False
-
-            print(f"{progress} - Stage1 search starting...")
-            t0 = time.time()
-            try:
-                raw_text, sources = fetch_single_raw_news(
-                    client, ticker, market, tw,
-                    ticker_names=ticker_names, model=search_model,
-                )
-            except Exception as e:
-                # Timestamp fresh here -- the old handlers reused `ts` captured
-                # before the search started, so failures logged up to 4 minutes
-                # early.
-                ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-                if _is_retryable(e):
-                    print(f"[{ts}] [{market}] {ticker} - Stage1 exhausted ({e}). Queued for retry.")
-                    retry_queue.append(ticker)
-                else:
-                    print(f"[{ts}] [{market}] {ticker} - Stage1 TERMINAL ({e}). Not retrying.")
-                    search_cache[key] = e
-                    record(ticker, STATUS_FAILED)
-                continue
-
-            elapsed1 = time.time() - t0
-            search_cache[key] = (raw_text, sources)
-            all_sources.extend(sources)
-            ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-            if not raw_text:
-                print(f"[{ts}] [{market}] {ticker} - Stage1 found nothing ({elapsed1:.1f}s)")
-                run_stage2(ticker, raw_text, sources, tw)
-                continue
-            print(f"[{ts}] [{market}] {ticker} - Stage1 done ({elapsed1:.1f}s), Stage2 starting...")
-            t0_2 = time.time()
-            run_stage2(ticker, raw_text, sources, tw)
-            ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-            print(f"[{ts}] [{market}] {ticker} - {ticker_records[ticker]['status']} "
-                  f"(search {elapsed1:.1f}s + filter {time.time()-t0_2:.1f}s)")
-
-        if retry_queue:
-            print(f"\n[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] === Retry queue ({len(retry_queue)}) ===")
-            for i, ticker in enumerate(retry_queue):
-                time.sleep(RETRY_SECONDS_BETWEEN_CALLS)
-                tw = slot_window_date(ticker, slot_date)
-                key = (ticker, tw)
-                ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-                print(f"[{ts}] [RETRY] [{market}] [{i+1}/{len(retry_queue)}] {ticker} - Stage1 starting...")
-                try:
-                    raw_text, sources = fetch_single_raw_news(
-                        client, ticker, market, tw,
-                        ticker_names=ticker_names, model=search_model,
-                    )
-                except Exception as e:
-                    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-                    print(f"[{ts}] [RETRY] [{market}] {ticker} - FAILED: {e}")
-                    search_cache[key] = e
-                    record(ticker, STATUS_FAILED)
-                    continue
-                search_cache[key] = (raw_text, sources)
-                all_sources.extend(sources)
-                run_stage2(ticker, raw_text, sources, tw)
-                ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-                print(f"[{ts}] [RETRY] [{market}] {ticker} - {ticker_records[ticker]['status']}")
 
         counts = {
             status: sum(1 for r in ticker_records.values() if r["status"] == status)
