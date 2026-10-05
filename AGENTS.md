@@ -35,7 +35,7 @@ step names, so each key needs a line in the AI steps' `env:` blocks. Every run l
 `[key rotation] N key(s): ...`; if that number is lower than expected, that line is
 missing.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1047
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1064
 offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
@@ -49,7 +49,7 @@ verified by rendering the app headlessly; recipe at the bottom.
 
 | File | Lines | What it owns |
 |---|---:|---|
-| `app.py` | 6744 | The entire UI: tabs, tables, sidebar, filters, sort, editors, AI control bars, News + Alert Rules tabs |
+| `app.py` | 6746 | The entire UI: tabs, tables, sidebar, filters, sort, editors, AI control bars, News + Alert Rules tabs |
 | `stock_data.py` | 3182 | yfinance fetching, all indicator maths, watchlist/markets registry IO, `get_filterable_metrics` |
 | `alerts.py` | 1127 | Alert rule evaluation + Discord message building; every Discord post goes through `send_discord_batch`, which appends the disclaimer |
 | `news_summary.py` | 1048 | The nightly news digest: search, filter, edit. Dated by its 8 PM ET slot (`news_slot_date`), funds skipped (`is_fund`), the code sets each company header and drops filler lines, the filter drops repeats of the previous digest, and a failed editor falls back to code-formatted bullets |
@@ -333,7 +333,7 @@ Each of these has actually bitten this codebase.
 | `fundamentals.yml` | `refresh_fundamentals.py` | `fundamentals.json` | 9:00 PM | 22 h |
 | `daily-alerts.yml` | `alert_check.py` | `alert_state.json` | 9:00 PM | 22 h |
 | `expert-views.yml` | `refresh_data.py`, `refresh_expert_views.py` | `data_snapshot.json`, `expert_views.json` | 1:00 AM | 22 h |
-| `market-breadth.yml` | `refresh_market_breadth.py`, `refresh_dashboard_perf.py` | `market_breadth.json`, `dashboard_perf.json` | 10:00 AM + 10:00 PM | 10 h |
+| `market-breadth.yml` | `refresh_market_breadth.py`, `refresh_dashboard_perf.py` | `market_breadth.json`, `dashboard_perf.json` | 10:00 AM + 10:00 PM, Mon-Fri (a market with no new session is skipped) | 10 h |
 | `weekly-wrapup.yml` | `weekly_wrapup_check.py` | `weekly_wrapup_state.json` | Sunday 9:00 PM | 22 h |
 
 `checks.yml` is not in this table: it runs `checks/run_all.py` on every push, touches no

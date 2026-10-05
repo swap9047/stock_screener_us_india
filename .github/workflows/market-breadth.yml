@@ -16,8 +16,9 @@ permissions:
   actions: read    # the slot gate reads this workflow's own run history
 
 jobs:
-  # Once per 10 AM / 10 PM ET slot, Mon-Sat. 10 h window: it must stay below the
-  # 12 h between slots, or a late run could no longer tell which slot it owns.
+  # Once per 10 AM / 10 PM ET slot, Mon-Fri: Saturday's slots had no new session
+  # to fetch. 10 h window: it must stay below the 12 h between slots, or a late
+  # run could no longer tell which slot it owns.
   gate:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -31,7 +32,7 @@ jobs:
         with:
           slots: "10,22"
           grace-hours: "10"
-          days: "MON,TUE,WED,THU,FRI,SAT"
+          days: "MON,TUE,WED,THU,FRI"
           work-job: update_breadth
           workflow-file: market-breadth.yml
           token: ${{ github.token }}
@@ -88,7 +89,8 @@ jobs:
           with open("market_breadth.json") as f:
               data = json.load(f)
           status = data.get("status") or {}
-          failed = sorted(k for k, v in status.items() if v != "ok")
+          # "unchanged": no new session since the stored block, so it was kept.
+          failed = sorted(k for k, v in status.items() if v not in ("ok", "unchanged"))
           missing = sorted({"US", "INDIA"} - set(status))
           if failed or missing:
               print(f"::error::Market breadth incomplete -- failed: {failed or 'none'}, "

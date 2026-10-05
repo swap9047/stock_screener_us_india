@@ -56,7 +56,7 @@ commit their output.
 | 9:00 PM | Sentiment (fundamentals) | `fundamentals.json`: the AI earnings and guidance read per ticker |
 | 9:00 PM | Alert check | Discord alerts for rules due that day; `alert_state.json` |
 | 1:00 AM | Expert Take | A fresh snapshot, then `expert_views.json`: the AI verdict per ticker |
-| 10:00 AM and 10:00 PM, Mon-Sat | Market breadth + performance | `market_breadth.json`, `dashboard_perf.json` |
+| 10:00 AM and 10:00 PM, Mon-Fri | Market breadth + performance | `market_breadth.json`, `dashboard_perf.json` |
 | Sunday 9:00 PM | Weekly wrap-up | A Discord digest of every enabled rule; `weekly_wrapup_state.json` |
 
 GitHub starts scheduled runs late, often by 2-5 hours, so the times above are when a
@@ -640,6 +640,10 @@ tickers de-duplicated. You edit tickers on the real tabs.
 This tab is rendered only while it is open.
 - **Market breadth (3 or 5 years).** For the Nifty 500 and S&P 500: % of stocks above
   their 200-day SMA, and % at 52-week highs and lows.
+  The history uses **today's** index members, so earlier years read somewhat stronger
+  than they were (survivorship bias); the chart caption says so. Each slot refreshes only
+  a market with a new completed session: India's lands by the 10 AM ET slot, the US's by
+  10 PM. A quick index check decides, and a market with nothing new is kept as is.
 - **Your two invested watchlists.** Each as an equal-weight, price-return curve against
   its index.
 - **The news digest**, with the scope picker, model pickers, and **🔄 Refresh News**,
@@ -792,7 +796,7 @@ GitHub drops or delays no longer costs a day.
 | `fundamentals.yml` | `refresh_fundamentals.py` | 21:00 | `markets` and `limit` inputs |
 | `daily-alerts.yml` | `alert_check.py` | 21:00 | the gate also asks whether any rule is due that day |
 | `expert-views.yml` | `refresh_data.py`, then `refresh_expert_views.py` | 01:00 | `markets` and `limit` inputs |
-| `market-breadth.yml` | breadth + dashboard performance | 10:00, 22:00, Mon-Sat | fails loudly if a market's breadth didn't refresh |
+| `market-breadth.yml` | breadth + dashboard performance | 10:00, 22:00, Mon-Fri | refreshes only a market with a new completed session ("unchanged" otherwise); retries failed downloads only when over 1% of an index failed; fails loudly if a market's breadth didn't refresh |
 | `weekly-wrapup.yml` | `weekly_wrapup_check.py` | Sunday 21:00 | |
 | `checks.yml` | `checks/run_all.py` (offline) | every push | needs no secrets or data |
 

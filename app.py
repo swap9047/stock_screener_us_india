@@ -5621,7 +5621,9 @@ with tab_news:
                 st.caption(
                     f"Portfolio & breadth data as of {perf_as_of} — refreshed by the scheduled GitHub Action. "
                     "Watchlist curves are the CURRENT watchlist, equal-weighted and rebalanced daily, "
-                    "price return (no dividends) — a hindsight view, not your realized P&L."
+                    "price return (no dividends) — a hindsight view, not your realized P&L. Breadth history "
+                    "uses TODAY's index members, so earlier years read somewhat stronger than they were "
+                    "(survivorship bias)."
                 )
             
             # market_breadth.json's "INDIA"/"US" keys are fixed national-index

@@ -14,6 +14,20 @@ BREADTH_FILE = os.path.join(SCRIPT_DIR, "market_breadth.json")
 # its numbers are believed. See the check in main() for why this exists.
 MIN_COVERAGE_FRACTION = 0.5
 
+# Phase 2/3 retries (3 + 5 minutes of waiting) only when MORE than this share of
+# an index failed. The same 2 Nifty symbols failed every run in late September
+# 2026 -- coverage 99.6% either way -- and cost ~8 minutes a run.
+RETRY_MIN_FRACTION = 0.01
+
+# One index series per market, to see whether a new session has closed since the
+# stored block (needs_refresh) before downloading ~500 constituents.
+SESSION_PROBES = {"US": "SPY", "INDIA": "^CRSLDX"}
+
+
+def worth_retrying(n_failed, n_total):
+    """True when enough of an index failed to be worth the retry waits."""
+    return n_failed > RETRY_MIN_FRACTION * max(n_total, 1)
+
 def get_sp500_tickers():
     url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -30,7 +44,7 @@ def get_nifty500_tickers():
     df = pd.read_csv(io.StringIO(r.text))
     return [f"{sym}.NS" for sym in df['Symbol'].tolist()]
 
-def trim_to_completed_session(closes, tz, close_hhmm):
+def trim_to_completed_session(closes, tz, close_hhmm, now=None):
     """Drop the trailing row when it is today's still-forming bar.
 
     The job is scheduled for the US close, but the throttled downloads push the
@@ -41,13 +55,45 @@ def trim_to_completed_session(closes, tz, close_hhmm):
     """
     if closes.empty:
         return closes
-    now = pd.Timestamp.now(tz=tz)
+    now = now.tz_convert(tz) if now is not None else pd.Timestamp.now(tz=tz)
     close_h, close_m = close_hhmm
     # +30m of slack so Yahoo has settled the closing print before we trust it.
     cutoff = now.normalize() + pd.Timedelta(hours=close_h, minutes=close_m + 30)
     if closes.index[-1].date() == now.date() and now < cutoff:
         return closes.iloc[:-1]
     return closes
+
+def latest_completed_session(ticker, tz, close_hhmm, download=None, now=None):
+    """The date ("YYYY-MM-DD") of the latest COMPLETED session for `ticker`, or
+    None when it can't be told -- in which case the market is refreshed, never
+    skipped blind. One small download instead of ~500."""
+    download = download or (lambda t: yf.download(t, period="10d", interval="1d",
+                                                  auto_adjust=False, progress=False))
+    try:
+        data = download(ticker)
+        closes = data["Close"]
+        if isinstance(closes, pd.DataFrame):
+            closes = closes.iloc[:, 0]
+        closes = closes.dropna()
+        if closes.empty:
+            return None
+        closes = trim_to_completed_session(closes, tz, close_hhmm, now=now)
+        return None if closes.empty else closes.index[-1].strftime("%Y-%m-%d")
+    except Exception as e:
+        print(f"  session check for {ticker} failed ({e}); refreshing anyway")
+        return None
+
+
+def needs_refresh(block, latest_session):
+    """False only when the stored block already holds the latest completed
+    session: each slot has one new close (India's by 10 AM ET, the US's by
+    10 PM ET), and re-downloading the other market's ~500 tickers x 6 years
+    bought nothing but Yahoo throttling risk and ~25 minutes."""
+    history = (block or {}).get("history") or {}
+    if not history or not latest_session:
+        return True
+    return max(history) < latest_session
+
 
 def calculate_breadth(tickers, label, tz, close_hhmm):
     import io
@@ -99,6 +145,11 @@ def calculate_breadth(tickers, label, tz, close_hhmm):
         if i + batch_size < len(tickers):
             time.sleep(120) # 2 minute wait between batches
             
+    if failed_tickers and not worth_retrying(len(failed_tickers), len(tickers)):
+        print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {len(failed_tickers)} failed "
+              f"(<= {RETRY_MIN_FRACTION:.0%} of the index) -- not worth the retry waits")
+        failed_tickers = set()
+
     # Phase 2: Retry failures with 3 minute wait
     if failed_tickers:
         print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Phase 1 complete. {len(failed_tickers)} failed tickers. Waiting 3 minutes before Phase 2 retry...")
@@ -272,6 +323,16 @@ def main():
     ]
 
     for key, get_tickers, label, tz, close_hhmm in legs:
+        kept = results["markets"].get(key)
+        latest = latest_completed_session(SESSION_PROBES[key], tz, close_hhmm)
+        if not needs_refresh(kept, latest):
+            # Nothing new since the stored block. Mark it current (as_of = now)
+            # so the app doesn't label it stale -- "as_of" means "current as of",
+            # and with no newer session it is.
+            print(f"{label}: latest completed session {latest} already stored -- skipped")
+            kept["as_of"] = now
+            results["status"][key] = "unchanged"
+            continue
         try:
             tickers = get_tickers()
             block = calculate_breadth(tickers, label, tz, close_hhmm)
