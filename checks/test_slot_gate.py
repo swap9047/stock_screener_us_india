@@ -61,18 +61,32 @@ for label, day in (("spring forward", (2026, 3, 8)), ("fall back", (2026, 11, 1)
     slot = slot_gate.latest_slot(et(day[0], day[1], day[2], 21, 30), (21,))
     check(slot.hour == 21 and slot.date() == datetime(*day).date(), f"{label}: slot is 21:00 ET that day ({slot})")
 
-# --- market breadth: two slots a day, 10h window
-B = dict(slots=(10, 22), grace=10)
-run, why = decide(et(2026, 9, 15, 11, 0), **B)
-check(run and slot_gate.latest_slot(et(2026, 9, 15, 11, 0), (10, 22)).hour == 10, f"11:00 ET -> the 10:00 slot ({why})")
+# --- market breadth: two slots a day (7:00 / 19:00), 23h window, Mon-Fri
+B = dict(slots=(7, 19), grace=23, days=["MON", "TUE", "WED", "THU", "FRI"])
+run, why = decide(et(2026, 9, 15, 8, 0), **B)
+check(run and slot_gate.latest_slot(et(2026, 9, 15, 8, 0), (7, 19)).hour == 7, f"08:00 ET -> the 07:00 slot ({why})")
 run, why = decide(et(2026, 9, 16, 3, 0), **B)
-check(run and slot_gate.latest_slot(et(2026, 9, 16, 3, 0), (10, 22)).hour == 22, f"03:00 ET -> yesterday's 22:00 slot, 5h old ({why})")
-run, why = decide(et(2026, 9, 16, 9, 0), **B)
-check(not run, f"09:00 ET -> 22:00 slot is 11h old, past the 10h window ({why})")
-run, why = decide(et(2026, 9, 15, 23, 0), worked=[et(2026, 9, 15, 22, 10).astimezone(timezone.utc)], **B)
-check(not run, f"second fire inside the 22:00 slot -> skip ({why})")
-run, why = decide(et(2026, 9, 15, 23, 0), worked=[et(2026, 9, 15, 11, 0).astimezone(timezone.utc)], **B)
-check(run, f"the 10:00 slot's run does not satisfy the 22:00 slot ({why})")
+check(run and slot_gate.latest_slot(et(2026, 9, 16, 3, 0), (7, 19)).hour == 19, f"03:00 ET -> yesterday's 19:00 slot, 8h old ({why})")
+run, why = decide(et(2026, 9, 15, 18, 59), **B)
+check(run, f"18:59 ET -> the 07:00 slot, ~12h late, is still inside the window ({why})")
+# A window longer than the 12h gap ends at the next slot: the latest slot is the
+# one worked, and the run that works it refreshes whatever the missed one would have.
+check(slot_gate.latest_slot(et(2026, 9, 15, 19, 30), (7, 19)).hour == 19, "19:30 ET -> the 19:00 slot has taken over")
+run, why = decide(et(2026, 9, 19, 6, 0), **B)
+check(run, f"Saturday 06:00 ET -> Friday's 19:00 slot still runs ({why})")
+run, why = decide(et(2026, 9, 19, 8, 0), **B)
+check(not run, f"Saturday 08:00 ET -> Saturday's 07:00 slot is not a weekday slot ({why})")
+run, why = decide(et(2026, 9, 15, 20, 0), worked=[et(2026, 9, 15, 19, 10).astimezone(timezone.utc)], **B)
+check(not run, f"second fire inside the 19:00 slot -> skip ({why})")
+run, why = decide(et(2026, 9, 15, 20, 0), worked=[et(2026, 9, 15, 8, 0).astimezone(timezone.utc)], **B)
+check(run, f"the 07:00 slot's run does not satisfy the 19:00 slot ({why})")
+
+# --- news digest: one 06:00 slot a day, 23h window
+N = dict(slots=(6,), grace=23)
+run, why = decide(et(2026, 9, 16, 4, 59), **N)
+check(run, f"04:59 ET -> yesterday's 06:00 slot, 22.98h late, still runs ({why})")
+run, why = decide(et(2026, 9, 16, 5, 0), **N)
+check(not run, f"05:00 ET -> yesterday's 06:00 slot is 23h old, past the window ({why})")
 
 # --- runs whose work job did NOT run must not count (the Sunday bug)
 run, why = decide(et(2026, 9, 15, 23, 0), worked=[])

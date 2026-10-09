@@ -52,16 +52,16 @@ commit their output.
 | When (slot) | Job | What it produces |
 |---|---|---|
 | Every hour, around the clock | Data refresh | `data_snapshot.json`: prices plus every indicator, for every ticker |
-| 8:00 PM | News digest | `news_summary.json` + one Discord digest per watchlist in scope |
+| 6:00 AM | News digest | `news_summary.json` + one Discord digest per watchlist in scope |
+| 7:00 AM and 7:00 PM, Mon-Fri | Market breadth + performance | `market_breadth.json`, `dashboard_perf.json` |
 | 9:00 PM | Sentiment (fundamentals) | `fundamentals.json`: the AI earnings and guidance read per ticker |
 | 9:00 PM | Alert check | Discord alerts for rules due that day; `alert_state.json` |
 | 1:00 AM | Expert Take | A fresh snapshot, then `expert_views.json`: the AI verdict per ticker |
-| 10:00 AM and 10:00 PM, Mon-Fri | Market breadth + performance | `market_breadth.json`, `dashboard_perf.json` |
 | Sunday 9:00 PM | Weekly wrap-up | A Discord digest of every enabled rule; `weekly_wrapup_state.json` |
 
 GitHub starts scheduled runs late, often by 2-5 hours, so the times above are when a
 job *becomes due*. A shared "slot gate" lets the first wake-up after that time do the
-work, up to 22 hours late (10 h for breadth). See §10.
+work, up to 22 hours late (23 h for news; for breadth, until the next slot). See §10.
 
 ---
 
@@ -506,15 +506,15 @@ the future"). A "nothing found" sentence is stored as no news. On 2026-10-04, 21
 - **Expert News?** is "Yes" when the write-up had material news or this quarter's facts
   behind it.
 
-### 6.3 News digest (`news_summary.py`, nightly 8 PM)
+### 6.3 News digest (`news_summary.py`, daily 6 AM)
 
 **Scope.** The digest covers the watchlists in **News scope** (on the News tab).
 Groups expand to their members; an empty scope means **All Invested**.
 
-**Dated by the slot.** A digest is dated, and its search windows set, by the 8 PM ET slot
-it belongs to, not by when GitHub started it. GitHub starts the job anywhere from 8:17 PM
-to 3 AM ET. A US stock's window ends on the slot date; an Indian stock's ends on the IST
-date at 8 PM ET (the next morning, after that day's NSE session).
+**Dated by the slot.** A digest is dated, and its search windows set, by the 6 AM ET slot
+it belongs to, not by when GitHub started it, which is often hours later. A US stock's
+window ends on the slot date; so does an Indian stock's, since 6 AM ET is 3:30-4:30 PM IST,
+as that day's NSE session closes.
 
 **Funds are skipped.** ETFs and other funds are not searched, because their "news" was
 gold prices and macro commentary. The test is Yahoo's `quoteType`; for older rows, a
@@ -642,8 +642,8 @@ This tab is rendered only while it is open.
   their 200-day SMA, and % at 52-week highs and lows.
   The history uses **today's** index members, so earlier years read somewhat stronger
   than they were (survivorship bias); the chart caption says so. Each slot refreshes only
-  a market with a new completed session: India's lands by the 10 AM ET slot, the US's by
-  10 PM. A quick index check decides, and a market with nothing new is kept as is.
+  a market with a new completed session: India's lands by the 7 AM ET slot, the US's by
+  7 PM. A quick index check decides, and a market with nothing new is kept as is.
 - **Your two invested watchlists.** Each as an equal-weight, price-return curve against
   its index.
 - **The news digest**, with the scope picker, model pickers, and **🔄 Refresh News**,
@@ -775,8 +775,9 @@ the two AI files wholesale.
 **How a job decides to run.** Every workflow wakes **hourly**, and a cheap `gate` job
 decides whether this wake-up does the work:
 1. It finds the most recent slot in New York time.
-2. It skips the slot if the slot is older than the grace period: 22 h, or 10 h for
-   breadth.
+2. It skips the slot if the slot is older than the grace period: 22 h, or 23 h for news
+   and breadth. Only the latest slot is ever worked, so breadth's window really ends when
+   its next slot starts.
 3. It skips the slot if it falls on a day the workflow doesn't run, such as the wrap-up
    on any day but Sunday.
 4. It skips the slot if an earlier run already **completed the work job successfully**
@@ -792,11 +793,11 @@ GitHub drops or delays no longer costs a day.
 | Workflow | Work | Slot | Notes |
 |---|---|---|---|
 | `data-refresh.yml` | `refresh_data.py` | every wake-up | no gate |
-| `news-summary.yml` | `news_check.py` | 20:00 | `markets` and `limit` inputs make a partial, silent run |
+| `news-summary.yml` | `news_check.py` | 06:00 | `markets` and `limit` inputs make a partial, silent run |
 | `fundamentals.yml` | `refresh_fundamentals.py` | 21:00 | `markets` and `limit` inputs |
 | `daily-alerts.yml` | `alert_check.py` | 21:00 | the gate also asks whether any rule is due that day |
 | `expert-views.yml` | `refresh_data.py`, then `refresh_expert_views.py` | 01:00 | `markets` and `limit` inputs |
-| `market-breadth.yml` | breadth + dashboard performance | 10:00, 22:00, Mon-Fri | refreshes only a market with a new completed session ("unchanged" otherwise); retries failed downloads only when over 1% of an index failed; fails loudly if a market's breadth didn't refresh |
+| `market-breadth.yml` | breadth + dashboard performance | 07:00, 19:00, Mon-Fri | refreshes only a market with a new completed session ("unchanged" otherwise); retries failed downloads only when over 1% of an index failed; fails loudly if a market's breadth didn't refresh |
 | `weekly-wrapup.yml` | `weekly_wrapup_check.py` | Sunday 21:00 | |
 | `checks.yml` | `checks/run_all.py` (offline) | every push | needs no secrets or data |
 

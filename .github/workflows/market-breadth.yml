@@ -2,7 +2,7 @@ name: Market Breadth Updater
 
 on:
   # ONE hourly wake-up, not four cron lines across two DST seasons. The gate job
-  # decides which of the two daily slots (10 AM / 10 PM ET) this run owns.
+  # decides which of the two daily slots (7 AM / 7 PM ET) this run owns.
   schedule:
     - cron: "0 * * * *"
   workflow_dispatch:
@@ -16,9 +16,12 @@ permissions:
   actions: read    # the slot gate reads this workflow's own run history
 
 jobs:
-  # Once per 10 AM / 10 PM ET slot, Mon-Fri: Saturday's slots had no new session
-  # to fetch. 10 h window: it must stay below the 12 h between slots, or a late
-  # run could no longer tell which slot it owns.
+  # Once per 7 AM / 7 PM ET slot, Mon-Fri: Saturday's slots had no new session
+  # to fetch. 7 AM is after NSE's close (5-6 AM ET), 7 PM after the US close.
+  # 23 h window (owner, 2026-10-08), though with slots 12 h apart a slot never
+  # gets more than 12: the gate always works the LATEST slot, so once the next
+  # one starts it takes over -- and nothing is lost, because that run refreshes
+  # every market with a new session, the missed slot's included.
   gate:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -30,8 +33,8 @@ jobs:
       - id: slot
         uses: ./.github/actions/slot-gate
         with:
-          slots: "10,22"
-          grace-hours: "10"
+          slots: "7,19"
+          grace-hours: "23"
           days: "MON,TUE,WED,THU,FRI"
           work-job: update_breadth
           workflow-file: market-breadth.yml

@@ -27,7 +27,7 @@ run once per unique (ticker, window date), NEWS_CONCURRENT_TICKERS at a time,
 so a ticker in three watchlists costs one search, not three, while still
 appearing in all three digests -- only Stage 3 is genuinely per-market.
 
-News is generated once/day at 8:00 PM ET via GitHub Actions (news-summary.yml).
+News is generated once/day at 6:00 AM ET via GitHub Actions (news-summary.yml).
 The watchlist scope (which markets to include) is controlled by the
 ``news_watchlist_scope`` key in settings.json (empty list = all markets).
 
@@ -121,13 +121,14 @@ COLLATE_FALLBACK = "fallback"
 
 NO_NEWS_SENTENCE = "No major news for this watchlist's tickers in the last 24 hours."
 
-# The digest's slot: 8 PM ET, the news-summary.yml gate's `slots`. A digest is
-# dated and windowed by this slot, not by when GitHub started the run -- it starts
-# the 8 PM job anywhere from 8:17 PM to 2:53 AM ET (2026-09-27..10-04), so dating
+# The digest's slot: 6 AM ET (8 PM until 2026-10-08), the news-summary.yml gate's
+# `slots`. A digest is dated and windowed by this slot, not by when GitHub started
+# the run -- it started the 8 PM job anywhere from 8:17 PM to 2:53 AM ET
+# (2026-09-27..10-04), so dating
 # by the run's own clock gave two digests dated 2026-09-29 and none for 09-28,
 # and moved the search window with it. checks/test_news_digest_100426.py ties
 # this to the workflow.
-NEWS_SLOT_HOUR_ET = 20
+NEWS_SLOT_HOUR_ET = 6
 _ET = ZoneInfo("America/New_York")
 
 # Stage 3: the pause before the second pass and before the last-resort model.
@@ -238,7 +239,7 @@ def ticker_window_date(ticker):
 
     market_window_date below resolves this per MARKET, from whether ANY ticker
     in the list is Indian -- which is right for today's watchlists (each is
-    single-region) and wrong the moment one mixes them: at the 8 PM ET run,
+    single-region) and wrong the moment one mixes them: at an 8 PM ET run,
     Kolkata is already on the next calendar day, so every US ticker in a mixed
     list would be asked for a New York date that has not happened yet. That is
     the same bug the market_window_date docstring describes fixing for UTC.
@@ -252,8 +253,8 @@ def ticker_window_date(ticker):
 
 
 def news_slot_date(now=None):
-    """The date of the 8 PM ET slot a run belongs to: today's if it is past 8 PM
-    ET, else yesterday's (a run that GitHub started after midnight)."""
+    """The date of the 6 AM ET slot a run belongs to: today's if it is past 6 AM
+    ET, else yesterday's (a late run that GitHub started after midnight)."""
     now_et = (now or datetime.now(_ET)).astimezone(_ET)
     slot_today = now_et.replace(hour=NEWS_SLOT_HOUR_ET, minute=0, second=0, microsecond=0)
     return now_et.date() if now_et >= slot_today else now_et.date() - timedelta(days=1)
@@ -261,9 +262,9 @@ def news_slot_date(now=None):
 
 def slot_window_date(ticker, slot_date):
     """The exchange-local date ending a ticker's search window, taken AT the
-    8 PM ET slot -- so a late start no longer moves it. For a US ticker that is
-    the slot date; for an Indian one, the IST date at 8 PM ET: the next morning,
-    after that day's NSE session closed."""
+    6 AM ET slot -- so a late start no longer moves it. For a US ticker that is
+    the slot date; for an Indian one, the IST date at 6 AM ET, which is the same
+    date (3:30-4:30 PM IST, as that day's NSE session closes)."""
     slot_dt = datetime(slot_date.year, slot_date.month, slot_date.day, NEWS_SLOT_HOUR_ET, tzinfo=_ET)
     tz = ZoneInfo("Asia/Kolkata") if ticker.endswith(_INDIA_SUFFIXES) else _ET
     return slot_dt.astimezone(tz).strftime("%Y-%m-%d")
@@ -273,7 +274,7 @@ def market_window_date(market, tickers):
     """The exchange-local calendar date that anchors the search window.
 
     Was datetime.now(timezone.utc).strftime(...), which is wrong for US
-    markets: the workflow fires at 00:00 UTC, which is 8 PM ET the PREVIOUS
+    markets: the workflow fired at 00:00 UTC, which is 8 PM ET the PREVIOUS
     calendar day. The shipped 2026-08-16 file is the proof -- generated_at
     2026-08-16T01:21Z (Aug 15, 9:21 PM ET) but labelled as_of 2026-08-16, so a
     digest covering Aug 15's US session was dated Aug 16 and the model was told
@@ -698,7 +699,7 @@ def build_news_summary(watchlists, api_key, now=None):
     """Runs the 3-stage pipeline for every market in `watchlists`, respecting
     the ``news_watchlist_scope`` setting (empty = the all_invested group).
 
-    `now` (tests) fixes the clock that picks the 8 PM ET slot.
+    `now` (tests) fixes the clock that picks the 6 AM ET slot.
 
     Returns a dict shaped:
         {"as_of", "generated_at", "totals": {...},
@@ -741,7 +742,7 @@ def build_news_summary(watchlists, api_key, now=None):
 
     client = llm_util.make_client(api_key)
     result = {
-        # Dated by the 8 PM ET slot this run belongs to, not by when GitHub
+        # Dated by the 6 AM ET slot this run belongs to, not by when GitHub
         # started it (news_slot_date).
         "as_of": slot_date.isoformat(),
         "generated_at": datetime.now(timezone.utc).isoformat(),

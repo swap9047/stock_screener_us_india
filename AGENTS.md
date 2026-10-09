@@ -35,7 +35,7 @@ step names, so each key needs a line in the AI steps' `env:` blocks. Every run l
 `[key rotation] N key(s): ...`; if that number is lower than expected, that line is
 missing.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1071
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1077
 offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
@@ -52,7 +52,7 @@ verified by rendering the app headlessly; recipe at the bottom.
 | `app.py` | 6746 | The entire UI: tabs, tables, sidebar, filters, sort, editors, AI control bars, News + Alert Rules tabs |
 | `stock_data.py` | 3182 | yfinance fetching, all indicator maths, watchlist/markets registry IO, `get_filterable_metrics` |
 | `alerts.py` | 1127 | Alert rule evaluation + Discord message building; every Discord post goes through `send_discord_batch`, which appends the disclaimer |
-| `news_summary.py` | 1022 | The nightly news digest: search and filter (3 stocks at a time, `NEWS_CONCURRENT_TICKERS`), then edit. Dated by its 8 PM ET slot (`news_slot_date`), funds skipped (`is_fund`), the code sets each company header and drops filler lines, the filter drops repeats of the previous digest, and a failed editor falls back to code-formatted bullets |
+| `news_summary.py` | 1022 | The daily news digest (6 AM ET): search and filter (3 stocks at a time, `NEWS_CONCURRENT_TICKERS`), then edit. Dated by its 6 AM ET slot (`news_slot_date`), funds skipped (`is_fund`), the code sets each company header and drops filler lines, the filter drops repeats of the previous digest, and a failed editor falls back to code-formatted bullets |
 | `fundamentals_eval.py` | 1191 | Sentiment ("fundamental view") generation + validation. The model only extracts facts; `score_sentiment` decides the label, weighted toward forward signals (guidance ±15, quoted outlook ±6, guidance vs consensus ±3, named-firm action ±3; the quarter's profit >15% YoY or a beat/miss ±1 only breaks ties; with no forward signal, profit >+25% / <-20% YoY decides alone). The search window is anchored to each company's last results (`search_window_for`) |
 | `github_sync.py` | 715 | Atomic config push, the end-of-run push of edited config (`unpushed_config_files`) + `workflow_dispatch` trigger |
 | `expert_views.py` | 936 | Expert Take. The verdict is decided in code, live, from Trend, Tech Uptrend, TA Rules and Sentiment (`decide_expert_verdict`, `expert_take_for_row`); the nightly model writes the explanation and trade plan, and may lower the verdict one step for a dated material negative event in the last 14 days (`news_risk_active`). Its prompt also gets Sentiment's checked facts for the quarter (section 4) |
@@ -329,11 +329,11 @@ Each of these has actually bitten this codebase.
 | Workflow | Runs | Commits (to the data repo) | Slot (ET) | Stale after |
 |---|---|---|---|---|
 | `data-refresh.yml` | `refresh_data.py` | `data_snapshot.json` | every hour, no gate | n/a |
-| `news-summary.yml` | `news_check.py` | `news_summary.json` | 8:00 PM | 22 h |
+| `news-summary.yml` | `news_check.py` | `news_summary.json` | 6:00 AM | 23 h |
 | `fundamentals.yml` | `refresh_fundamentals.py` | `fundamentals.json` | 9:00 PM | 22 h |
 | `daily-alerts.yml` | `alert_check.py` | `alert_state.json` | 9:00 PM | 22 h |
 | `expert-views.yml` | `refresh_data.py`, `refresh_expert_views.py` | `data_snapshot.json`, `expert_views.json` | 1:00 AM | 22 h |
-| `market-breadth.yml` | `refresh_market_breadth.py`, `refresh_dashboard_perf.py` | `market_breadth.json`, `dashboard_perf.json` | 10:00 AM + 10:00 PM, Mon-Fri (a market with no new session is skipped) | 10 h |
+| `market-breadth.yml` | `refresh_market_breadth.py`, `refresh_dashboard_perf.py` | `market_breadth.json`, `dashboard_perf.json` | 7:00 AM + 7:00 PM, Mon-Fri (a market with no new session is skipped) | 23 h (in effect 12 h: the next slot takes over) |
 | `weekly-wrapup.yml` | `weekly_wrapup_check.py` | `weekly_wrapup_state.json` | Sunday 9:00 PM | 22 h |
 
 `checks.yml` is not in this table: it runs `checks/run_all.py` on every push, touches no
@@ -355,15 +355,18 @@ Three things about it you cannot guess:
   given) is titled "partial run" by the workflow's `run-name` and never counts -- one tab's
   "Re-analyze All" must not stand in for the nightly full run. Runs are listed without
   `?status=completed`, a filter that lagged and let the alerts slot be worked twice.
-- **`grace-hours` must stay below the gap between slots.** Breadth has two slots 12 h
-  apart, so it keeps 10 h; the others have one slot a day and use 22 h.
+- **The gate always works the LATEST slot**, so a `grace-hours` longer than the gap
+  between slots never lets a run do an older one -- the window just ends when the next
+  slot starts. Breadth's 23 h therefore means "until the next slot" (they are 12 h apart),
+  which loses nothing: the next slot's run refreshes every market with a new session. For
+  a one-slot-a-day workflow, keep the window under 24 h (news uses 23, the rest 22).
 - **`days` filters the SLOT's weekday, not the run's.** The Sunday wrap-up slot is still
   Sunday's when the run starts on Monday morning.
 
 **An "hourly" cron is not hourly.** GitHub throttles it to 4-6 runs a day, 2-5 hours
 apart (measured on `data-refresh.yml`, 2026-09-07..10). That is still several chances per
 slot, which is the point, but it means a slot's work can start hours after the slot -- so
-`grace-hours` has to be generous (22 h, or 10 h where slots are 12 h apart) and
+`grace-hours` has to be generous (22-23 h) and
 `SNAPSHOT_STALE_WARN_HOURS = 6` sits close to the real gap between data refreshes.
 
 This replaced a cron pair per workflow (one line per DST season) plus a gate that rejected

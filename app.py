@@ -5783,7 +5783,7 @@ with tab_news:
         st.caption(
             "Major announcements, developments, and stock moves for your watchlist tickers in the "
             "last 24-48 hours, summarized via Gemini (Google Search grounding). Runs once a day at "
-            "8:00 PM ET via GitHub Actions and is also sent to Discord — this tab just shows the "
+            "6:00 AM ET via GitHub Actions and is also sent to Discord — this tab just shows the "
             "same result."
         )
         news_data = load_news_summary()

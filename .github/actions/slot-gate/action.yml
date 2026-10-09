@@ -5,10 +5,10 @@ description: >
   no longer costs a slot. See slot_gate.py for why.
 inputs:
   slots:
-    description: Slot start hours in ET, comma-separated (e.g. "21", or "10,22")
+    description: Slot start hours in ET, comma-separated (e.g. "21", or "7,19")
     required: true
   grace-hours:
-    description: How late a run may still do the slot's work. Must stay below the gap between slots.
+    description: How late a run may still do the slot's work. The latest slot is always the one worked, so a window longer than the gap between slots just runs until the next slot starts.
     required: true
   days:
     description: 'Weekday codes the slot applies to (e.g. "SUN"); blank = every day'

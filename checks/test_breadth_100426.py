@@ -1,8 +1,8 @@
 """Market breadth fixes from the 2026-10-04 review.
 
 B1 Every slot re-downloaded both markets (~1000 tickers x 6 years, ~53 min),
-   though each slot has only one new close: India's by the 10 AM ET slot, the
-   US's by 10 PM. A market whose latest completed session is already stored is
+   though each slot has only one new close: India's by the 7 AM ET slot, the
+   US's by 7 PM (10 AM / 10 PM until 2026-10-08). A market whose latest completed session is already stored is
    now skipped (status "unchanged"), checked with one index download.
 B2 Saturday's two slots fetched nothing new: the gate runs MON-FRI.
 B3 The same 2 Nifty symbols failed every run and cost ~8 min of retry waits.

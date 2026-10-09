@@ -10,9 +10,12 @@ run-name: ${{ (github.event.inputs.markets || github.event.inputs.limit) && 'par
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
-# Does its work once per 8:00 PM ET slot, building a Gemini grounded-search news
+# Does its work once per 6:00 AM ET slot, building a Gemini grounded-search news
 # digest (major announcements/developments/stock moves in the last 24h) for each
 # watchlist and sending it to Discord. The slot gate keeps that to one run a day.
+# 6 AM ET: the previous US session and the night's news are in, and NSE is at or
+# just past its close (owner, 2026-10-08; it was 8 PM ET). 23 h grace: a late
+# start still does the slot, up to 5 AM the next day.
 on:
   # ONE hourly wake-up, not a cron per DST season. The slot gate below decides
   # whether this run does the work, so a line GitHub never fires (it dropped the
@@ -54,8 +57,8 @@ jobs:
       - id: slot
         uses: ./.github/actions/slot-gate
         with:
-          slots: "20"
-          grace-hours: "22"
+          slots: "6"
+          grace-hours: "23"
           work-job: build
           workflow-file: news-summary.yml
           token: ${{ github.token }}

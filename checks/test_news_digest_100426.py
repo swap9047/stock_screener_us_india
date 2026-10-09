@@ -11,7 +11,8 @@ D4 ~30% of bullets were filler: price moves with no reason, conferences, law-fir
    class-action ads, rating-site "analysts".
 D5 ETFs produced gold/macro commentary, not company news: they are skipped.
 D6 The digest was dated by GitHub's start time (anywhere 8 PM-3 AM ET), so some
-   dates appeared twice and others never. It is dated by its 8 PM ET slot.
+   dates appeared twice and others never. It is dated by its slot (6 AM ET since
+   2026-10-08, 8 PM before).
 D7 1-4 bullets a night repeated the previous digest: Stage 2 now sees what the
    previous digest said about the ticker and drops repeats.
 
@@ -128,20 +129,22 @@ if is_fund:
 SRC = (REPO / "stock_data.py").read_text()
 check('"quote_type": quote_type' in SRC, "D5: the snapshot stores Yahoo's quoteType")
 
-# --- D6 dated by the 8 PM ET slot ---------------------------------------------------------
+# --- D6 dated by the 6 AM ET slot ---------------------------------------------------------
 slot = fn("news_slot_date")
 if slot:
-    for now, want in ((datetime(2026, 10, 3, 22, 25, tzinfo=ET), date(2026, 10, 3)),
-                      (datetime(2026, 10, 4, 0, 2, tzinfo=ET), date(2026, 10, 3)),
-                      (datetime(2026, 10, 4, 2, 53, tzinfo=ET), date(2026, 10, 3)),
-                      (datetime(2026, 10, 3, 19, 59, tzinfo=ET), date(2026, 10, 2)),
-                      (datetime(2026, 10, 3, 20, 0, tzinfo=ET), date(2026, 10, 3))):
+    for now, want in ((datetime(2026, 10, 3, 8, 25, tzinfo=ET), date(2026, 10, 3)),
+                      (datetime(2026, 10, 3, 22, 2, tzinfo=ET), date(2026, 10, 3)),
+                      (datetime(2026, 10, 4, 4, 53, tzinfo=ET), date(2026, 10, 3)),
+                      (datetime(2026, 10, 3, 5, 59, tzinfo=ET), date(2026, 10, 2)),
+                      (datetime(2026, 10, 3, 6, 0, tzinfo=ET), date(2026, 10, 3))):
         check(slot(now) == want, f"D6: a run at {now:%a %H:%M} ET belongs to the {want} slot (got {slot(now)})")
 win = fn("slot_window_date")
 if win:
     check(win("ACME", date(2026, 10, 3)) == "2026-10-03", "D6: a US ticker's window ends on the slot date")
-    check(win("ZED.NS", date(2026, 10, 3)) == "2026-10-04",
-          "D6: an Indian ticker's ends on the IST date at 8 PM ET (the next morning)")
+    check(win("ZED.NS", date(2026, 10, 3)) == "2026-10-03",
+          "D6: an Indian ticker's ends on the IST date at 6 AM ET (the same date, at NSE's close)")
+    check(win("ZED.NS", date(2026, 12, 3)) == "2026-12-03",
+          "D6: ...in winter too (6 AM EST is 4:30 PM IST)")
 WF = (REPO / ".github/workflows/news-summary.yml").read_text()
 check(f'slots: "{ns.NEWS_SLOT_HOUR_ET}"' in WF, "D6: NEWS_SLOT_HOUR_ET matches the workflow's slot")
 
@@ -205,7 +208,7 @@ finally:
      sd.load_settings, sd.load_data_snapshot, ns.load_news_summary) = _saved
 us = out["markets"]["us_invested"]
 check(out["as_of"] == "2026-10-03", f"E2E: a 1:30 AM run is dated by its slot ({out['as_of']})")
-check(("ACME", "2026-10-03") in searched and ("ZED.NS", "2026-10-04") in searched,
+check(("ACME", "2026-10-03") in searched and ("ZED.NS", "2026-10-03") in searched,
       f"E2E: search windows come from the slot ({searched})")
 check("FUNDX" not in [t for t, _ in searched] and us["tickers"]["FUNDX"]["status"] == "fund_skipped",
       "E2E: the fund is not searched, and is recorded as skipped")

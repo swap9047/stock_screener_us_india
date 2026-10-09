@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Scheduled news digest checker. Meant to run once daily (GitHub Actions,
-8:00 PM ET, after market close) -- independent of the alert checker.
+6:00 AM ET, after the previous US session and NSE's close) -- independent of the
+alert checker.
 
 Uses Gemini (Google Search grounding) to build a single collated summary
 of important news/announcements/major stock moves in the last 24 hours for

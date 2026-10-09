@@ -86,8 +86,8 @@ def latest_completed_session(ticker, tz, close_hhmm, download=None, now=None):
 
 def needs_refresh(block, latest_session):
     """False only when the stored block already holds the latest completed
-    session: each slot has one new close (India's by 10 AM ET, the US's by
-    10 PM ET), and re-downloading the other market's ~500 tickers x 6 years
+    session: each slot has one new close (India's by 7 AM ET, the US's by
+    7 PM ET), and re-downloading the other market's ~500 tickers x 6 years
     bought nothing but Yahoo throttling risk and ~25 minutes."""
     history = (block or {}).get("history") or {}
     if not history or not latest_session:
