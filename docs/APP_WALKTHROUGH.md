@@ -797,7 +797,7 @@ GitHub drops or delays no longer costs a day.
 | `fundamentals.yml` | `refresh_fundamentals.py` | 21:00 | `markets` and `limit` inputs |
 | `daily-alerts.yml` | `alert_check.py` | 21:00 | the gate also asks whether any rule is due that day |
 | `expert-views.yml` | `refresh_data.py`, then `refresh_expert_views.py` | 01:00 | `markets` and `limit` inputs |
-| `market-breadth.yml` | breadth + dashboard performance | 07:00, 19:00, Mon-Fri | refreshes only a market with a new completed session ("unchanged" otherwise); retries failed downloads only when over 1% of an index failed; fails loudly if a market's breadth didn't refresh |
+| `market-breadth.yml` | breadth + dashboard performance | 07:00, 19:00, Mon-Fri | refreshes only a market with a new completed session ("unchanged" otherwise); downloads 50 stocks at a time, 5 s apart, then retries each failure on its own, 5 s apart, up to 3 rounds; fails loudly if a market's breadth didn't refresh |
 | `weekly-wrapup.yml` | `weekly_wrapup_check.py` | Sunday 21:00 | |
 | `checks.yml` | `checks/run_all.py` (offline) | every push | needs no secrets or data |
 

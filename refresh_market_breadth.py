@@ -14,19 +14,71 @@ BREADTH_FILE = os.path.join(SCRIPT_DIR, "market_breadth.json")
 # its numbers are believed. See the check in main() for why this exists.
 MIN_COVERAGE_FRACTION = 0.5
 
-# Phase 2/3 retries (3 + 5 minutes of waiting) only when MORE than this share of
-# an index failed. The same 2 Nifty symbols failed every run in late September
-# 2026 -- coverage 99.6% either way -- and cost ~8 minutes a run.
-RETRY_MIN_FRACTION = 0.01
+# Pause after each 50-ticker download. It was 120 s, which made the wait alone
+# ~20 minutes per market (11 batches); the owner cut it to 5 s on 2026-10-09. If
+# Yahoo starts throttling (the 2026-08-29 run got 1 of 503 US tickers), this is
+# the knob -- MIN_COVERAGE_FRACTION above keeps the previous block meanwhile.
+BATCH_PAUSE_SECONDS = 5
+
+# Tickers that failed their batch are retried one at a time, this far apart, for
+# up to MAX_RETRY_PASSES rounds. It replaced a 3-minute and a 5-minute wait
+# before two retry rounds, which is also why every failure is now retried: the
+# old rounds were skipped when <= 1% failed, because they cost ~8 minutes for
+# the same 2 Nifty symbols every run.
+RETRY_PAUSE_SECONDS = 5
+MAX_RETRY_PASSES = 3
 
 # One index series per market, to see whether a new session has closed since the
 # stored block (needs_refresh) before downloading ~500 constituents.
 SESSION_PROBES = {"US": "SPY", "INDIA": "^CRSLDX"}
 
 
-def worth_retrying(n_failed, n_total):
-    """True when enough of an index failed to be worth the retry waits."""
-    return n_failed > RETRY_MIN_FRACTION * max(n_total, 1)
+def _download_one(ticker):
+    from contextlib import redirect_stderr
+    with redirect_stderr(io.StringIO()):
+        return yf.download(ticker, period="6y", interval="1d", auto_adjust=False, progress=False)
+
+
+def retry_failed(failed, download=None, sleep=None, label=""):
+    """Retry each failed ticker on its own, RETRY_PAUSE_SECONDS apart, for up to
+    MAX_RETRY_PASSES rounds. Returns (close frames recovered, still failed).
+
+    A round that recovers nothing ends the loop: a delisted symbol fails every
+    time, and so does everything while Yahoo is blocking the runner, and neither
+    gets better by asking again 5 s later."""
+    download = download or _download_one
+    sleep = sleep or time.sleep
+    recovered, failed = [], list(failed)
+    for n in range(1, MAX_RETRY_PASSES + 1):
+        if not failed:
+            break
+        print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {label}: retry round {n}/{MAX_RETRY_PASSES} "
+              f"for {len(failed)} failed ticker(s), {RETRY_PAUSE_SECONDS}s apart")
+        still = []
+        for t in failed:
+            sleep(RETRY_PAUSE_SECONDS)
+            try:
+                data = download(t)
+                s = data["Close"] if not data.empty and "Close" in data.columns else pd.Series(dtype=float)
+            except Exception:
+                s = pd.Series(dtype=float)
+            # yfinance 1.5 returns a one-column FRAME for a single ticker
+            # (MultiIndex columns), so take the column before testing it. The
+            # retry code this replaced tested the frame directly --
+            # `not frame.isna().all()` raises "truth value of a Series is
+            # ambiguous" -- and took the whole market leg down whenever its
+            # retries actually ran.
+            if isinstance(s, pd.DataFrame):
+                s = s.iloc[:, 0] if s.shape[1] else pd.Series(dtype=float)
+            if not s.isna().all():
+                recovered.append(s.rename(t).to_frame())
+            else:
+                still.append(t)
+        if len(still) == len(failed):
+            failed = still
+            break
+        failed = still
+    return recovered, failed
 
 def get_sp500_tickers():
     url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
@@ -47,11 +99,12 @@ def get_nifty500_tickers():
 def trim_to_completed_session(closes, tz, close_hhmm, now=None):
     """Drop the trailing row when it is today's still-forming bar.
 
-    The job is scheduled for the US close, but the throttled downloads push the
-    India leg to roughly 11:30 IST -- mid-NSE-session -- so yfinance hands back a
-    live intraday bar for today. Dropping it only when the exchange has not yet
-    closed in its own timezone keeps the US leg (which runs ~22:00 ET, well after
-    the 16:00 close) on its freshest settled bar.
+    A slot is after its market's close (7 AM ET for India, 7 PM ET for the US),
+    but a leg can still run while its exchange is open -- the job used to push
+    the India leg to ~11:30 IST, mid-session, and a manual dispatch can land
+    anywhere -- and then yfinance hands back a live intraday bar for today.
+    Dropping it only when the exchange has not yet closed in its own timezone
+    keeps a leg run after the close on its freshest settled bar.
     """
     if closes.empty:
         return closes
@@ -104,7 +157,7 @@ def calculate_breadth(tickers, label, tz, close_hhmm):
     all_data = []
     failed_tickers = set(tickers)
     
-    # Phase 1: Batches with 1 minute delay
+    # Phase 1: batches of 50, BATCH_PAUSE_SECONDS apart
     for i in range(0, len(tickers), batch_size):
         batch = tickers[i:i+batch_size]
         f = io.StringIO()
@@ -143,43 +196,14 @@ def calculate_breadth(tickers, label, tz, close_hhmm):
             print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Failed tickers in this batch: {len(missing)}")
             
         if i + batch_size < len(tickers):
-            time.sleep(120) # 2 minute wait between batches
+            time.sleep(BATCH_PAUSE_SECONDS)
             
-    if failed_tickers and not worth_retrying(len(failed_tickers), len(tickers)):
-        print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {len(failed_tickers)} failed "
-              f"(<= {RETRY_MIN_FRACTION:.0%} of the index) -- not worth the retry waits")
-        failed_tickers = set()
+    # Phase 2: each failed ticker on its own, RETRY_PAUSE_SECONDS apart
+    if failed_tickers:
+        recovered, still = retry_failed(sorted(failed_tickers), label=label)
+        all_data.extend(recovered)
+        failed_tickers = set(still)
 
-    # Phase 2: Retry failures with 3 minute wait
-    if failed_tickers:
-        print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Phase 1 complete. {len(failed_tickers)} failed tickers. Waiting 3 minutes before Phase 2 retry...")
-        time.sleep(180)
-        
-        for t in list(failed_tickers):
-            with redirect_stderr(io.StringIO()):
-                retry_data = yf.download(t, period="6y", interval="1d", auto_adjust=False, progress=False)
-            if not retry_data.empty and 'Close' in retry_data.columns and not retry_data['Close'].isna().all():
-                s = retry_data['Close']
-                s.name = t
-                all_data.append(s.to_frame())
-                failed_tickers.remove(t)
-            time.sleep(3) # Small delay between individual retries
-            
-    # Phase 3: Retry remaining failures with 5 minute wait
-    if failed_tickers:
-        print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Phase 2 complete. {len(failed_tickers)} still failed. Waiting 5 minutes before Phase 3 (Final) retry...")
-        time.sleep(300)
-        
-        for t in list(failed_tickers):
-            with redirect_stderr(io.StringIO()):
-                retry_data = yf.download(t, period="6y", interval="1d", auto_adjust=False, progress=False)
-            if not retry_data.empty and 'Close' in retry_data.columns and not retry_data['Close'].isna().all():
-                s = retry_data['Close']
-                s.name = t
-                all_data.append(s.to_frame())
-                failed_tickers.remove(t)
-            time.sleep(3)
-            
     if failed_tickers:
         # Count only -- see log_redact.py: this list is public index members, and
         # masking just the held ones among them would reveal which are held.
