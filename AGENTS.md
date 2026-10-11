@@ -35,7 +35,7 @@ step names, so each key needs a line in the AI steps' `env:` blocks. Every run l
 `[key rotation] N key(s): ...`; if that number is lower than expected, that line is
 missing.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1083
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1108
 offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
@@ -333,7 +333,7 @@ Each of these has actually bitten this codebase.
 | `fundamentals.yml` | `refresh_fundamentals.py` | `fundamentals.json` | 9:00 PM | 22 h |
 | `daily-alerts.yml` | `alert_check.py` | `alert_state.json` | 9:00 PM | 22 h |
 | `expert-views.yml` | `refresh_data.py`, `refresh_expert_views.py` | `data_snapshot.json`, `expert_views.json` | 1:00 AM | 22 h |
-| `market-breadth.yml` | `refresh_market_breadth.py`, `refresh_dashboard_perf.py` | `market_breadth.json`, `dashboard_perf.json` | 7:00 AM + 7:00 PM, Mon-Fri (a market with no new session is skipped) | 23 h (in effect 12 h: the next slot takes over) |
+| `market-breadth.yml` | `refresh_market_breadth.py`, `refresh_dashboard_perf.py` | `market_breadth.json`, `dashboard_perf.json` | 7:00 AM + 7:00 PM, Mon-Fri (a market with no new session is skipped; a latest day Yahoo has only part-published is "partial"/"awaiting" and fails the run, so the gate retries) | 23 h (in effect 12 h: the next slot takes over) |
 | `weekly-wrapup.yml` | `weekly_wrapup_check.py` | `weekly_wrapup_state.json` | Sunday 9:00 PM | 22 h |
 
 `checks.yml` is not in this table: it runs `checks/run_all.py` on every push, touches no

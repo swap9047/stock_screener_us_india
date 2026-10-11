@@ -28,9 +28,22 @@ BATCH_PAUSE_SECONDS = 5
 RETRY_PAUSE_SECONDS = 5
 MAX_RETRY_PASSES = 3
 
-# One index series per market, to see whether a new session has closed since the
-# stored block (needs_refresh) before downloading ~500 constituents.
-SESSION_PROBES = {"US": "SPY", "INDIA": "^CRSLDX"}
+# Minutes after the close before a session counts as done, so Yahoo has settled
+# the closing print (trim_to_completed_session, expected_session).
+SETTLE_MINUTES = 30
+
+# Yahoo publishes a day's daily bars with a lag and not all at once. Before it
+# does, it serves the day as a row of NaN -- on 2026-10-09 at 9:15 PM ET every US
+# name still had an empty Friday close, though the session's hourly bars were all
+# there -- and part-way through, as a row only some names have (25 of 50 Nifty
+# names at 9:20 PM). A part-published latest day is still used, computed from the
+# names that have it (owner, 2026-10-09: always show the latest date), but when
+# fewer than this share of the names that had a close over the five days before
+# have one, the block is marked "partial" and recomputed at the next wake-up --
+# otherwise that reading would stand for good, since its date satisfies
+# needs_refresh. Under MIN_COVERAGE_FRACTION the day is too thin to compute and
+# is held back as unpublished (calculate_breadth).
+PUBLISHED_MIN_SHARE = 0.9
 
 
 def _download_one(ticker):
@@ -110,42 +123,67 @@ def trim_to_completed_session(closes, tz, close_hhmm, now=None):
         return closes
     now = now.tz_convert(tz) if now is not None else pd.Timestamp.now(tz=tz)
     close_h, close_m = close_hhmm
-    # +30m of slack so Yahoo has settled the closing print before we trust it.
-    cutoff = now.normalize() + pd.Timedelta(hours=close_h, minutes=close_m + 30)
+    cutoff = now.normalize() + pd.Timedelta(hours=close_h, minutes=close_m + SETTLE_MINUTES)
     if closes.index[-1].date() == now.date() and now < cutoff:
         return closes.iloc[:-1]
     return closes
 
-def latest_completed_session(ticker, tz, close_hhmm, download=None, now=None):
-    """The date ("YYYY-MM-DD") of the latest COMPLETED session for `ticker`, or
-    None when it can't be told -- in which case the market is refreshed, never
-    skipped blind. One small download instead of ~500."""
-    download = download or (lambda t: yf.download(t, period="10d", interval="1d",
-                                                  auto_adjust=False, progress=False))
-    try:
-        data = download(ticker)
-        closes = data["Close"]
-        if isinstance(closes, pd.DataFrame):
-            closes = closes.iloc[:, 0]
-        closes = closes.dropna()
-        if closes.empty:
-            return None
-        closes = trim_to_completed_session(closes, tz, close_hhmm, now=now)
-        return None if closes.empty else closes.index[-1].strftime("%Y-%m-%d")
-    except Exception as e:
-        print(f"  session check for {ticker} failed ({e}); refreshing anyway")
-        return None
+
+def expected_session(tz, close_hhmm, now=None):
+    """The latest session that should have closed by now, from the exchange's
+    own clock: today in `tz` once it is SETTLE_MINUTES past the close, else the
+    day before, stepping back over weekends. "YYYY-MM-DD".
+
+    Replaced asking Yahoo, which answered from one index series (SPY, ^CRSLDX)
+    and lagged: on 2026-10-09 it still gave Thursday at 8:35 PM and 9:12 PM ET,
+    so both markets were skipped as "already stored" -- ^CRSLDX had even lost a
+    Friday close it served that morning, while its constituents kept theirs.
+
+    Exchange holidays are not known here. On one the stored block is a day short
+    of this, the market is downloaded, and calculate_breadth finds no row at all
+    for the day -- which is how a holiday is told from a day Yahoo has not
+    published any close for yet (a row of NaN, see unpublished_tail).
+    """
+    now = now.tz_convert(tz) if now is not None else pd.Timestamp.now(tz=tz)
+    close_h, close_m = close_hhmm
+    day = now.normalize()
+    if now < day + pd.Timedelta(hours=close_h, minutes=close_m + SETTLE_MINUTES):
+        day -= pd.Timedelta(days=1)
+    while day.weekday() >= 5:
+        day -= pd.Timedelta(days=1)
+    return day.strftime("%Y-%m-%d")
 
 
-def needs_refresh(block, latest_session):
-    """False only when the stored block already holds the latest completed
-    session: each slot has one new close (India's by 7 AM ET, the US's by
-    7 PM ET), and re-downloading the other market's ~500 tickers x 6 years
-    bought nothing but Yahoo throttling risk and ~25 minutes."""
+def unpublished_tail(closes):
+    """Dates ("YYYY-MM-DD") of the trailing rows with no close at all: sessions
+    Yahoo lists but has published nothing for yet. Nothing can be computed for
+    them; a holiday, by contrast, has no row."""
+    counts = closes.notna().sum(axis=1)
+    n = 0
+    while n < len(counts) and counts.iloc[-1 - n] == 0:
+        n += 1
+    return [d.strftime("%Y-%m-%d") for d in counts.index[len(counts) - n:]]
+
+
+def latest_day_share(closes):
+    """How many names have a close on the last day, as a share of the median
+    count over the five days before (1.0 when there is too little to compare)."""
+    counts = closes.notna().sum(axis=1)
+    if len(counts) < 6:
+        return 1.0
+    reference = counts.iloc[-6:-1].median()
+    return float(counts.iloc[-1] / reference) if reference else 1.0
+
+
+def needs_refresh(block, expected):
+    """False only when the stored block already holds the session that should
+    have closed by now (expected_session): each slot has one new close (India's
+    by 7 AM ET, the US's by 7 PM ET), and re-downloading the other market's ~500
+    tickers x 6 years bought nothing but Yahoo throttling risk."""
     history = (block or {}).get("history") or {}
-    if not history or not latest_session:
+    if not history or not expected or block.get("partial"):
         return True
-    return max(history) < latest_session
+    return max(history) < expected
 
 
 def calculate_breadth(tickers, label, tz, close_hhmm):
@@ -210,11 +248,33 @@ def calculate_breadth(tickers, label, tz, close_hhmm):
         print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Final failures that could not be downloaded: {len(failed_tickers)}")
         
     print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Calculating Historical Metrics...")
-    closes = pd.concat(all_data, axis=1)
-    closes = closes.dropna(how="all")
+    closes = pd.concat(all_data, axis=1).sort_index()
     closes = trim_to_completed_session(closes, tz, close_hhmm)
+    # Before dropna(how="all"): an unpublished day is a row of NaN, and dropping
+    # it first would make it look like a holiday (no row at all).
+    unpublished = unpublished_tail(closes)
+    if unpublished:
+        print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {label}: Yahoo has no close "
+              f"for {', '.join(unpublished)} yet -- nothing to compute it from")
+    closes = closes.dropna(how="all")
+    # A latest day fewer than MIN_COVERAGE_FRACTION of the index has a close for
+    # is not published yet either. At 9:28 PM ET on 2026-10-09 exactly 1 of 503
+    # US names had a Friday close: computed from it, the day read 0.0% -- the
+    # 2026-08-29 incident's shape -- and main()'s coverage check would have
+    # thrown the whole block away as a failed fetch. Hold the day back instead.
+    while len(closes) > 6 and latest_day_share(closes) < MIN_COVERAGE_FRACTION:
+        unpublished.append(closes.index[-1].strftime("%Y-%m-%d"))
+        print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {label}: {closes.index[-1].date()} is "
+              f"{latest_day_share(closes):.0%} published -- too few names to compute it from yet")
+        closes = closes.iloc[:-1]
+    unpublished.sort()
     if closes.empty:
         return None
+    share = latest_day_share(closes)
+    partial = share < PUBLISHED_MIN_SHARE
+    if partial:
+        print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {label}: {closes.index[-1].date()} is only "
+              f"{share:.0%} published -- computed from the names that have it, marked partial")
 
     # Calculate 200d SMA. This is the simple 200-day average -- the "200 DSMA"
     # convention used everywhere else in the app (stock_data.py) and by public
@@ -308,7 +368,11 @@ def calculate_breadth(tickers, label, tz, close_hhmm):
         "pct_above": round(pct_above_now, 1),
         "history": history_dict,
         "highs_history": highs_dict,
-        "lows_history": lows_dict
+        "lows_history": lows_dict,
+        # Stored, so the next run recomputes the day (needs_refresh).
+        "partial": partial,
+        # Not stored: main() pops it to tell "Yahoo is late" from a holiday.
+        "unpublished": unpublished,
     }
 
 def main():
@@ -348,12 +412,12 @@ def main():
 
     for key, get_tickers, label, tz, close_hhmm in legs:
         kept = results["markets"].get(key)
-        latest = latest_completed_session(SESSION_PROBES[key], tz, close_hhmm)
-        if not needs_refresh(kept, latest):
+        expected = expected_session(tz, close_hhmm)
+        if not needs_refresh(kept, expected):
             # Nothing new since the stored block. Mark it current (as_of = now)
             # so the app doesn't label it stale -- "as_of" means "current as of",
             # and with no newer session it is.
-            print(f"{label}: latest completed session {latest} already stored -- skipped")
+            print(f"{label}: expected session {expected} already stored -- skipped")
             kept["as_of"] = now
             results["status"][key] = "unchanged"
             continue
@@ -394,8 +458,35 @@ def main():
         # Per-market as_of, because a preserved block is stale and the top-level
         # as_of no longer describes it. The UI reads this to label the chart.
         block["as_of"] = now
+        unpublished = block.pop("unpublished", [])
+        # Never trade a stored reading for a staler one: a block ending on an
+        # earlier day, or the same day computed from fewer names. Yahoo's latest
+        # day is not stable -- at 9:20 PM ET on 2026-10-09 only half the Nifty
+        # names still had the Friday close 488 had when the 11:55 AM run stored it.
+        if kept:
+            kept_key = (max(kept.get("history") or {"": 0}), kept.get("total") or 0)
+            new_key = (max(block.get("history") or {"": 0}), block.get("total") or 0)
+            if kept_key > new_key:
+                print(f"{label}: the stored block is more current ({kept_key[0]}, {kept_key[1]} names) "
+                      f"than this download ({new_key[0]}, {new_key[1]}) -- keeping it")
+                block = kept
+                block["as_of"] = now
         results["markets"][key] = block
-        results["status"][key] = "ok"
+        # "awaiting": the expected session traded but Yahoo has no close for it
+        # yet. "partial": the latest day is computed from part of the index.
+        # Either way the block is saved (it is as current as Yahoo allows), and
+        # the verify step fails the run so the slot gate tries again at the next
+        # wake-up instead of counting the slot as done until the next one.
+        # Short of the expected day with NO unpublished row is a holiday: "ok".
+        last = max(block.get("history") or {"": 0})
+        if last < expected and unpublished:
+            print(f"{label}: Yahoo has no close for {expected} yet -- latest is {last}; will retry")
+            results["status"][key] = "awaiting"
+        elif block.get("partial"):
+            print(f"{label}: {last} computed from {block.get('total')} names (partly published); will retry")
+            results["status"][key] = "partial"
+        else:
+            results["status"][key] = "ok"
 
     # Atomic: this file is committed to the data repo, and a run cancelled
     # mid-dump would push a truncated one.

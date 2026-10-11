@@ -3,7 +3,11 @@
 B1 Every slot re-downloaded both markets (~1000 tickers x 6 years, ~53 min),
    though each slot has only one new close: India's by the 7 AM ET slot, the
    US's by 7 PM (10 AM / 10 PM until 2026-10-08). A market whose latest completed session is already stored is
-   now skipped (status "unchanged"), checked with one index download.
+   now skipped (status "unchanged"). Since 2026-10-09 "the latest session" is
+   computed from each exchange's clock (expected_session) rather than asked of
+   one Yahoo index series, which lagged. A latest day only part of the index has
+   a close for is computed from those names and marked "partial"; one with no
+   close at all (a row of NaN) is "awaiting". Both make the gate retry.
 B2 Saturday's two slots fetched nothing new: the gate runs MON-FRI.
 B3 The same 2 Nifty symbols failed every run and cost ~8 min of retry waits.
    Since 2026-10-09 the batches are 5 s apart (was 120 s) and every failure is
@@ -54,57 +58,175 @@ if needs:
     check(not needs(block, "2026-10-01"), "B1: the latest session is already stored -> skip")
     check(needs({"history": {}}, "2026-10-01"), "B1: an empty history -> refresh")
 
-latest = fn("latest_completed_session")
-if latest:
-    idx = pd.to_datetime(["2026-09-30", "2026-10-01", "2026-10-02"]).tz_localize("America/New_York")
-    closes = pd.Series([1.0, 2.0, 3.0], index=idx, name="SPY")
-    got = latest("SPY", "America/New_York", (16, 0),
-                 download=lambda t: pd.DataFrame({"Close": closes}),
-                 now=pd.Timestamp("2026-10-02 22:00", tz="America/New_York"))
-    check(got == "2026-10-02", f"B1: after the US close, today's session is complete ({got})")
-    got = latest("SPY", "America/New_York", (16, 0),
-                 download=lambda t: pd.DataFrame({"Close": closes}),
-                 now=pd.Timestamp("2026-10-02 11:00", tz="America/New_York"))
-    check(got == "2026-10-01", f"B1: mid-session, today's bar is still forming ({got})")
+exp = fn("expected_session")
+if exp:
+    NY, IN = "America/New_York", "Asia/Kolkata"
+    def at(ts, tz):
+        return pd.Timestamp(ts, tz=tz)
+    check(exp(NY, (16, 0), now=at("2026-10-09 20:35", NY)) == "2026-10-09",
+          "B1: Friday 8:35 PM ET -> the US expects Friday (the 2026-10-09 miss)")
+    check(exp(NY, (16, 0), now=at("2026-10-09 16:29", NY)) == "2026-10-08",
+          "B1: inside the 30-minute settle window -> still Thursday")
+    check(exp(NY, (16, 0), now=at("2026-10-09 16:30", NY)) == "2026-10-09",
+          "B1: 30 minutes after the close -> Friday")
+    check(exp(NY, (16, 0), now=at("2026-10-12 07:00", NY)) == "2026-10-09",
+          "B1: Monday 7 AM ET -> back over the weekend to Friday")
+    check(exp(NY, (16, 0), now=at("2026-10-10 12:00", NY)) == "2026-10-09",
+          "B1: Saturday -> Friday")
+    # India, from the ET slot times: 7 AM ET is 4:30 PM IST in summer, 5:30 PM in winter.
+    check(exp(IN, (15, 30), now=at("2026-10-09 07:00", NY)) == "2026-10-09",
+          "B1: the 7 AM ET slot -> India expects that day (4:30 PM IST)")
+    check(exp(IN, (15, 30), now=at("2026-12-04 07:00", NY)) == "2026-12-04",
+          "B1: ...and in winter (5:30 PM IST)")
+    check(exp(IN, (15, 30), now=at("2026-10-09 05:59", NY)) == "2026-10-08",
+          "B1: before NSE's close + 30 min (6:00 AM ET) -> the day before")
+    check(exp(IN, (15, 30), now=at("2026-10-09 19:00", NY)) == "2026-10-09",
+          "B1: the 7 PM ET slot (Saturday 4:30 AM IST) -> India expects Friday")
 
-    def boom(t):
-        raise RuntimeError("throttled")
-    check(latest("SPY", "America/New_York", (16, 0), download=boom) is None,
-          "B1: a failed check returns None (and the market is refreshed)")
+tail = fn("unpublished_tail")
+share = fn("latest_day_share")
+if tail and share:
+    idx = pd.bdate_range("2026-09-28", periods=10)
+    full = pd.DataFrame(1.0, index=idx, columns=[f"T{i}" for i in range(20)])
+    check(tail(full) == [] and share(full) == 1.0, "B1: a fully published panel: nothing unpublished, share 1.0")
+    nan_tail = full.copy(); nan_tail.iloc[-1] = float("nan")
+    check(tail(nan_tail) == [str(idx[-1].date())],
+          f"B1: a trailing row of NaN is a session with no close yet ({tail(nan_tail)})")
+    check(tail(full.iloc[:-1]) == [], "B1: a holiday has no row at all -> nothing unpublished")
+    thin = full.copy(); thin.iloc[-1, 5:] = float("nan")
+    check(tail(thin) == [] and share(thin) == 0.25, f"B1: 5 of 20 names published -> share 0.25 ({share(thin)})")
+    near = full.copy(); near.iloc[-1, :1] = float("nan")
+    check(share(near) == 0.95, "B1: 19 of 20 -> 0.95, above the partial line")
+    check(rmb.PUBLISHED_MIN_SHARE == 0.9, "B1: under 90% published counts as partial")
 
-# main(): an unchanged market is not downloaded; a changed one is
-calls = []
-with tempfile.TemporaryDirectory() as d:
-    path = os.path.join(d, "market_breadth.json")
-    stored = {"as_of": "2026-10-03 17:00", "markets": {
-        "US": {"as_of": "2026-10-03 17:00", "total": 501, "history": {"2026-10-02": 42.3}},
-        "INDIA": {"as_of": "2026-10-03 17:00", "total": 490, "history": {"2026-09-30": 42.2}}},
-        "status": {}}
-    Path(path).write_text(json.dumps(stored))
-    saved = (rmb.BREADTH_FILE, rmb.get_sp500_tickers, rmb.get_nifty500_tickers, rmb.calculate_breadth,
-             getattr(rmb, "latest_completed_session", None))
-    rmb.BREADTH_FILE = path
-    rmb.get_sp500_tickers = lambda: ["A"] * 10
-    rmb.get_nifty500_tickers = lambda: ["B.NS"] * 10
-    rmb.calculate_breadth = lambda tickers, label, tz, hhmm: (calls.append(label) or
-                                                              {"total": 9, "pct_above": 50.0, "history": {"2026-10-01": 50.0}})
-    rmb.latest_completed_session = lambda ticker, tz, hhmm, **k: {"SPY": "2026-10-02", "^CRSLDX": "2026-10-01"}[ticker]
+    # calculate_breadth computes a part-published day from the names that have it
+    long_idx = pd.bdate_range("2025-01-01", periods=600)
+    rising = pd.Series(range(600), index=long_idx, dtype=float) + 100
+    falling = 800 - pd.Series(range(600), index=long_idx, dtype=float)
+    def batch_frame(names, last_row_names):
+        data = {}
+        for n in names:
+            col = (rising if n.startswith("U") else falling).copy()
+            if n not in last_row_names:
+                col.iloc[-1] = float("nan")
+            data[("Close", n)] = col
+        df = pd.DataFrame(data)
+        df.columns = pd.MultiIndex.from_tuples(df.columns, names=["Price", "Ticker"])
+        return df
+    names = [f"U{i}" for i in range(10)] + [f"D{i}" for i in range(10)]
+    saved_dl, saved_sleep = rmb.yf.download, rmb.time.sleep
     try:
-        rmb.main()
-        out = json.loads(Path(path).read_text())
+        rmb.time.sleep = lambda s: None
+        some = {f"U{i}" for i in range(8)} | {f"D{i}" for i in range(4)}
+        rmb.yf.download = lambda t, **k: batch_frame(t if isinstance(t, list) else [t], some)
+        b = rmb.calculate_breadth(names, "Test", "America/New_York", (16, 0))
+        last = max(b["history"])
+        check(last == str(long_idx[-1].date()) and b["total"] == 12 and b["history"][last] == 66.7 and b["partial"],
+              f"B1: a 12-of-20 latest day is kept, computed from those 12 (8 above -> 66.7%), marked partial "
+              f"({last}, {b['total']}, {b['history'].get(last)}, partial={b['partial']})")
+        rmb.yf.download = lambda t, **k: batch_frame(t if isinstance(t, list) else [t], set())
+        b = rmb.calculate_breadth(names, "Test", "America/New_York", (16, 0))
+        check(max(b["history"]) == str(long_idx[-2].date()) and b["unpublished"] == [str(long_idx[-1].date())]
+              and not b["partial"], f"B1: a day with no close at all is unpublished ({b['unpublished']})")
+        # 2026-10-09 9:28 PM ET: 1 of 503 US names had a Friday close
+        rmb.yf.download = lambda t, **k: batch_frame(t if isinstance(t, list) else [t], {"U0"})
+        b = rmb.calculate_breadth(names, "Test", "America/New_York", (16, 0))
+        check(max(b["history"]) == str(long_idx[-2].date()) and b["unpublished"] == [str(long_idx[-1].date())]
+              and b["total"] == 20 and not b["partial"],
+              f"B1: a day under half published (1 of 20) is held back, not read from one name "
+              f"(ends {max(b['history'])}, unpublished {b['unpublished']})")
+        rmb.yf.download = lambda t, **k: batch_frame(t if isinstance(t, list) else [t], set(names[:10]))
+        b = rmb.calculate_breadth(names, "Test", "America/New_York", (16, 0))
+        check(max(b["history"]) == str(long_idx[-1].date()) and b["total"] == 10 and b["partial"],
+              "B1: exactly half published is computed (from those 10), marked partial")
     finally:
-        (rmb.BREADTH_FILE, rmb.get_sp500_tickers, rmb.get_nifty500_tickers, rmb.calculate_breadth, _l) = saved
-        if _l:
-            rmb.latest_completed_session = _l
-check(calls == ["Nifty 500"], f"B1: only the market with a new session is downloaded ({calls})")
+        rmb.yf.download, rmb.time.sleep = saved_dl, saved_sleep
+
+
+def run_main(stored, expected, block):
+    """main() with the downloads stubbed; returns (saved file, legs downloaded)."""
+    calls = []
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "market_breadth.json")
+        Path(path).write_text(json.dumps(stored))
+        saved = (rmb.BREADTH_FILE, rmb.get_sp500_tickers, rmb.get_nifty500_tickers,
+                 rmb.calculate_breadth, rmb.expected_session)
+        rmb.BREADTH_FILE = path
+        rmb.get_sp500_tickers = lambda: ["A"] * 10
+        rmb.get_nifty500_tickers = lambda: ["B.NS"] * 10
+        rmb.calculate_breadth = lambda tickers, label, tz, hhmm: (calls.append(label) or dict(block[label]))
+        rmb.expected_session = lambda tz, hhmm, **k: expected[tz]
+        try:
+            rmb.main()
+            return json.loads(Path(path).read_text()), calls
+        finally:
+            (rmb.BREADTH_FILE, rmb.get_sp500_tickers, rmb.get_nifty500_tickers,
+             rmb.calculate_breadth, rmb.expected_session) = saved
+
+
+STORED = {"as_of": "2026-10-03 17:00", "markets": {
+    "US": {"as_of": "2026-10-03 17:00", "total": 501, "history": {"2026-10-02": 42.3}},
+    "INDIA": {"as_of": "2026-10-03 17:00", "total": 490, "history": {"2026-09-30": 42.2}}},
+    "status": {}}
+NEW_INDIA = {"total": 9, "pct_above": 50.0, "history": {"2026-10-01": 50.0}, "partial": False, "unpublished": []}
+out, calls = run_main(STORED, {"America/New_York": "2026-10-02", "Asia/Kolkata": "2026-10-01"},
+                      {"Nifty 500": NEW_INDIA})
+check(calls == ["Nifty 500"], f"B1: only the market short of its expected session is downloaded ({calls})")
 check(out["status"] == {"US": "unchanged", "INDIA": "ok"}, f"B1: statuses say so ({out['status']})")
 check(out["markets"]["US"]["history"] == {"2026-10-02": 42.3} and out["markets"]["US"]["as_of"] == out["as_of"],
       "B1: the unchanged block is kept, and marked current (so the app does not call it stale)")
+check("unpublished" not in out["markets"]["INDIA"], "B1: the unpublished list is not stored")
+
+# 2026-10-09: Friday traded, Yahoo served it as NaN -> awaiting, block still saved
+LATE_US = {"total": 9, "pct_above": 46.7, "history": {"2026-10-08": 46.7}, "partial": False, "unpublished": ["2026-10-09"]}
+out, calls = run_main(STORED, {"America/New_York": "2026-10-09", "Asia/Kolkata": "2026-09-30"},
+                      {"S&P 500": LATE_US})
+check(out["status"] == {"US": "awaiting", "INDIA": "unchanged"},
+      f"B1: an expected session Yahoo has not published -> 'awaiting' ({out['status']})")
+check(out["markets"]["US"]["history"] == {"2026-10-08": 46.7},
+      "B1: ...and the block, as current as Yahoo allows, is still saved")
+
+# a holiday: short of the expected day, but no unpublished row -> ok
+HOLIDAY_US = {"total": 9, "pct_above": 46.7, "history": {"2026-10-08": 46.7}, "partial": False, "unpublished": []}
+out, calls = run_main(STORED, {"America/New_York": "2026-10-09", "Asia/Kolkata": "2026-09-30"},
+                      {"S&P 500": HOLIDAY_US})
+check(out["status"]["US"] == "ok", f"B1: short of the expected day with no unpublished row (a holiday) -> ok ({out['status']})")
+
+# a part-published latest day: saved and shown, status "partial", recomputed next run
+PART_US = {"total": 250, "pct_above": 45.0, "history": {"2026-10-08": 46.7, "2026-10-09": 45.0},
+           "partial": True, "unpublished": []}
+out, calls = run_main(STORED, {"America/New_York": "2026-10-09", "Asia/Kolkata": "2026-09-30"},
+                      {"S&P 500": PART_US})
+us = out["markets"]["US"]
+check(out["status"]["US"] == "partial" and max(us["history"]) == "2026-10-09" and us["total"] == 250,
+      f"B1: a part-published Friday is shown on Friday, from 250 names, status partial ({out['status']})")
+check(us.get("partial") is True and rmb.needs_refresh(us, "2026-10-09"),
+      "B1: ...stored as partial, so the next run recomputes it although its date is current")
+
+# never replace a stored reading with a staler one
+STORED_FRI = {"as_of": "2026-10-09 16:18", "markets": {
+    "US": {"as_of": "2026-10-09 16:18", "total": 499, "history": {"2026-10-08": 46.7}},
+    "INDIA": {"as_of": "2026-10-09 16:18", "total": 488, "history": {"2026-10-09": 38.5}, "partial": True}},
+    "status": {}}
+EARLY = {"total": 480, "pct_above": 39.9, "history": {"2026-10-08": 39.9}, "partial": False, "unpublished": ["2026-10-09"]}
+out, _ = run_main(STORED_FRI, {"America/New_York": "2026-10-08", "Asia/Kolkata": "2026-10-09"}, {"Nifty 500": EARLY})
+check(out["markets"]["INDIA"]["history"] == {"2026-10-09": 38.5},
+      f"B1: a download ending a day earlier keeps the stored block ({out['markets']['INDIA']['history']})")
+THINNER = {"total": 250, "pct_above": 41.0, "history": {"2026-10-09": 41.0}, "partial": True, "unpublished": []}
+out, _ = run_main(STORED_FRI, {"America/New_York": "2026-10-08", "Asia/Kolkata": "2026-10-09"}, {"Nifty 500": THINNER})
+check(out["markets"]["INDIA"]["total"] == 488 and out["markets"]["INDIA"]["history"] == {"2026-10-09": 38.5},
+      "B1: the same day from fewer names keeps the stored block")
+FULLER = {"total": 495, "pct_above": 38.9, "history": {"2026-10-09": 38.9}, "partial": False, "unpublished": []}
+out, _ = run_main(STORED_FRI, {"America/New_York": "2026-10-08", "Asia/Kolkata": "2026-10-09"}, {"Nifty 500": FULLER})
+check(out["markets"]["INDIA"]["total"] == 495 and out["status"]["INDIA"] == "ok"
+      and not out["markets"]["INDIA"].get("partial"),
+      f"B1: the same day from more names replaces a partial block, status ok ({out['status']})")
 
 # --- B2 / B4 / workflow ---------------------------------------------------------------
 WF = (REPO / ".github/workflows/market-breadth.yml").read_text()
 check('days: "MON,TUE,WED,THU,FRI"' in WF, "B2: the breadth slots run Monday to Friday")
-check('("ok", "unchanged")' in WF, "B1: the verify step accepts an unchanged market")
+check('("ok", "unchanged", "awaiting", "partial")' in WF and 'v in ("awaiting", "partial")' in WF and "sys.exit(1)" in WF,
+      "B1: the verify step accepts an unchanged market and fails an awaiting or partial one (so the gate retries)")
 APP = (REPO / "app.py").read_text()
 check("survivorship" in APP.lower(), "B4: the breadth charts note the survivorship bias")
 

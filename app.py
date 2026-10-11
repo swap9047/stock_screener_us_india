@@ -5637,6 +5637,15 @@ with tab_news:
                 if df is not None and not df.empty and col in df.columns:
                     return f"{df[col].iloc[-1]:.1f}"
                 return "--"
+
+            # The latest day, named in each title. 3 years at under a pixel per
+            # day put the last three days within ~2 px of the edge, so the hover
+            # snapped to Oct 7 and Oct 9's data looked missing (2026-10-09).
+            def get_last_date(df):
+                if df is not None and not df.empty and "Date" in df.columns:
+                    d = df["Date"].max()
+                    return f"{d:%b} {d.day}"
+                return "--"
             
             # `or {}` is load-bearing: refresh_market_breadth.py's calculate_breadth
             # returns None when every download batch fails, and a stored None made
@@ -5662,11 +5671,11 @@ with tab_news:
             stale_ind = _stale_suffix("INDIA")
             stale_us = _stale_suffix("US")
             
-            title_ema_ind = f"Nifty 500: % Above 200-Day SMA (Current: {get_val(df_ema_ind, '% Above 200d SMA')}%, Captured: {total_ind}){stale_ind}"
-            title_ema_us = f"S&P 500: % Above 200-Day SMA (Current: {get_val(df_ema_us, '% Above 200d SMA')}%, Captured: {total_us}){stale_us}"
+            title_ema_ind = f"Nifty 500: % Above 200-Day SMA ({get_last_date(df_ema_ind)}: {get_val(df_ema_ind, '% Above 200d SMA')}%, Captured: {total_ind}){stale_ind}"
+            title_ema_us = f"S&P 500: % Above 200-Day SMA ({get_last_date(df_ema_us)}: {get_val(df_ema_us, '% Above 200d SMA')}%, Captured: {total_us}){stale_us}"
         
-            title_hl_ind = f"Nifty 500: 52-Week Highs vs Lows (Highs: {get_val(df_hl_ind, '% New Highs')}%, Lows: {get_val(df_hl_ind, '% New Lows')}%){stale_ind}"
-            title_hl_us = f"S&P 500: 52-Week Highs vs Lows (Highs: {get_val(df_hl_us, '% New Highs')}%, Lows: {get_val(df_hl_us, '% New Lows')}%){stale_us}"
+            title_hl_ind = f"Nifty 500: 52-Week Highs vs Lows ({get_last_date(df_hl_ind)}: Highs {get_val(df_hl_ind, '% New Highs')}%, Lows {get_val(df_hl_ind, '% New Lows')}%){stale_ind}"
+            title_hl_us = f"S&P 500: 52-Week Highs vs Lows ({get_last_date(df_hl_us)}: Highs {get_val(df_hl_us, '% New Highs')}%, Lows {get_val(df_hl_us, '% New Lows')}%){stale_us}"
         
             def get_perf(df):
                 if df is not None and not df.empty and 'Portfolio' in df.columns and 'Benchmark' in df.columns:

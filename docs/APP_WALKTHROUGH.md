@@ -643,7 +643,13 @@ This tab is rendered only while it is open.
   The history uses **today's** index members, so earlier years read somewhat stronger
   than they were (survivorship bias); the chart caption says so. Each slot refreshes only
   a market with a new completed session: India's lands by the 7 AM ET slot, the US's by
-  7 PM. A quick index check decides, and a market with nothing new is kept as is.
+  7 PM. Each market's latest session is worked out from its own exchange clock (30
+  minutes after the close, weekends skipped), and a market that already has it is kept
+  as is. Yahoo publishes a day's closes late and piecemeal, so a latest day at least half
+  the index has a close for is computed from those stocks and marked partial; one under
+  half is held back. Either way the run reports it and the gate retries at the next
+  wake-up. A download never replaces a stored reading with an earlier day, or the same
+  day from fewer stocks. Each chart title names its latest day.
 - **Your two invested watchlists.** Each as an equal-weight, price-return curve against
   its index.
 - **The news digest**, with the scope picker, model pickers, and **🔄 Refresh News**,
@@ -797,7 +803,7 @@ GitHub drops or delays no longer costs a day.
 | `fundamentals.yml` | `refresh_fundamentals.py` | 21:00 | `markets` and `limit` inputs |
 | `daily-alerts.yml` | `alert_check.py` | 21:00 | the gate also asks whether any rule is due that day |
 | `expert-views.yml` | `refresh_data.py`, then `refresh_expert_views.py` | 01:00 | `markets` and `limit` inputs |
-| `market-breadth.yml` | breadth + dashboard performance | 07:00, 19:00, Mon-Fri | refreshes only a market with a new completed session ("unchanged" otherwise); downloads 50 stocks at a time, 5 s apart, then retries each failure on its own, 5 s apart, up to 3 rounds; fails loudly if a market's breadth didn't refresh |
+| `market-breadth.yml` | breadth + dashboard performance | 07:00, 19:00, Mon-Fri | refreshes only a market short of its latest session by the exchange clock ("unchanged" otherwise); a part-published day is "partial", an unpublished one "awaiting", and both fail the run so the gate retries; downloads 50 stocks at a time, 5 s apart, then retries each failure on its own, 5 s apart, up to 3 rounds; fails loudly if a market's breadth didn't refresh |
 | `weekly-wrapup.yml` | `weekly_wrapup_check.py` | Sunday 21:00 | |
 | `checks.yml` | `checks/run_all.py` (offline) | every push | needs no secrets or data |
 

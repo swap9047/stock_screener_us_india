@@ -93,8 +93,18 @@ jobs:
               data = json.load(f)
           status = data.get("status") or {}
           # "unchanged": no new session since the stored block, so it was kept.
-          failed = sorted(k for k, v in status.items() if v not in ("ok", "unchanged"))
+          # "awaiting": the session traded but Yahoo has no close for it yet.
+          # "partial": its latest day is computed from part of the index. Both
+          # are saved; failing the run is what makes the gate retry at the next
+          # wake-up rather than count the slot as done.
+          awaiting = sorted(k for k, v in status.items() if v in ("awaiting", "partial"))
+          if awaiting:
+              print(f"::error::Yahoo has not fully published the latest session for {awaiting} yet "
+                    f"({ {k: status[k] for k in awaiting} }) -- the slot gate retries at the next wake-up")
+          failed = sorted(k for k, v in status.items() if v not in ("ok", "unchanged", "awaiting", "partial"))
           missing = sorted({"US", "INDIA"} - set(status))
+          if awaiting and not (failed or missing):
+              sys.exit(1)
           if failed or missing:
               print(f"::error::Market breadth incomplete -- failed: {failed or 'none'}, "
                     f"missing from status: {missing or 'none'}")
