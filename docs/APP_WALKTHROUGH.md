@@ -53,7 +53,7 @@ commit their output.
 |---|---|---|
 | Every hour, around the clock | Data refresh | `data_snapshot.json`: prices plus every indicator, for every ticker |
 | 6:00 AM | News digest | `news_summary.json` + one Discord digest per watchlist in scope |
-| 7:00 AM and 7:00 PM, Mon-Fri | Market breadth + performance | `market_breadth.json`, `dashboard_perf.json` |
+| 7:00 AM, 1:00 PM and 7:00 PM, Mon-Fri | Market breadth + performance (1 PM: US intraday) | `market_breadth.json`, `dashboard_perf.json` |
 | 9:00 PM | Sentiment (fundamentals) | `fundamentals.json`: the AI earnings and guidance read per ticker |
 | 9:00 PM | Alert check | Discord alerts for rules due that day; `alert_state.json` |
 | 1:00 AM | Expert Take | A fresh snapshot, then `expert_views.json`: the AI verdict per ticker |
@@ -656,6 +656,13 @@ This tab is rendered only while it is open.
   reading. Each chart title names its latest day.
 - **Your two invested watchlists.** Each as an equal-weight, price-return curve against
   its index.
+- **Watchlist Breadth.** The same three charts for one watchlist or combined group you
+  pick: % of its stocks above their 200-day SMA (with Nifty 500's or S&P 500's line
+  overlaid), % at 52-week highs and lows, and its return against that index. The
+  benchmark defaults to the exchange most of its stocks list on and is remembered per
+  watchlist. It is computed in the app from `dashboard_perf.json` (6 years of closes)
+  with `breadth_math`, the same maths as the index charts. A small list moves in big
+  steps: with 13 stocks, each one is about 8 points.
 - **The news digest**, with the scope picker, model pickers, and **🔄 Refresh News**,
   which starts a full background run.
 
@@ -807,7 +814,7 @@ GitHub drops or delays no longer costs a day.
 | `fundamentals.yml` | `refresh_fundamentals.py` | 21:00 | `markets` and `limit` inputs |
 | `daily-alerts.yml` | `alert_check.py` | 21:00 | the gate also asks whether any rule is due that day |
 | `expert-views.yml` | `refresh_data.py`, then `refresh_expert_views.py` | 01:00 | `markets` and `limit` inputs |
-| `market-breadth.yml` | breadth + dashboard performance | 07:00, 19:00, Mon-Fri | refreshes only a market short of its latest session by the exchange clock, or holding a live (intraday) reading ("unchanged" otherwise; "live" mid-session); a part-published day is "partial", an unpublished one "awaiting", and both fail the run so the gate retries; downloads 50 stocks at a time, 5 s apart, then retries each failure on its own, 5 s apart, up to 3 rounds; fails loudly if a market's breadth didn't refresh |
+| `market-breadth.yml` | breadth + dashboard performance | 07:00, 13:00, 19:00, Mon-Fri | refreshes only a market short of its latest session by the exchange clock, or holding a live (intraday) reading ("unchanged" otherwise; "live" mid-session); a part-published day is "partial", an unpublished one "awaiting", and both fail the run so the gate retries; downloads 50 stocks at a time, 5 s apart, then retries each failure on its own, 5 s apart, up to 3 rounds; fails loudly if a market's breadth didn't refresh |
 | `weekly-wrapup.yml` | `weekly_wrapup_check.py` | Sunday 21:00 | |
 | `checks.yml` | `checks/run_all.py` (offline) | every push | needs no secrets or data |
 

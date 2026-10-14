@@ -81,6 +81,18 @@ check(not run, f"second fire inside the 19:00 slot -> skip ({why})")
 run, why = decide(et(2026, 9, 15, 20, 0), worked=[et(2026, 9, 15, 8, 0).astimezone(timezone.utc)], **B)
 check(run, f"the 07:00 slot's run does not satisfy the 19:00 slot ({why})")
 
+# --- breadth since 2026-10-14: a third, 13:00 slot (US intraday)
+B3 = dict(slots=(7, 13, 19), grace=23, days=["MON", "TUE", "WED", "THU", "FRI"])
+run, why = decide(et(2026, 10, 14, 14, 20), worked=[et(2026, 10, 14, 8, 30).astimezone(timezone.utc)], **B3)
+check(run and slot_gate.latest_slot(et(2026, 10, 14, 14, 20), (7, 13, 19)).hour == 13,
+      f"14:20 ET -> the 13:00 slot, not satisfied by the 07:00 slot's run ({why})")
+run, why = decide(et(2026, 10, 14, 15, 0), worked=[et(2026, 10, 14, 13, 40).astimezone(timezone.utc)], **B3)
+check(not run, f"a second fire inside the 13:00 slot -> skip ({why})")
+check(slot_gate.latest_slot(et(2026, 10, 14, 12, 59), (7, 13, 19)).hour == 7,
+      "12:59 ET -> still the 07:00 slot's window")
+WF_BREADTH = (Path(__file__).resolve().parents[1] / ".github/workflows/market-breadth.yml").read_text()
+check('slots: "7,13,19"' in WF_BREADTH, "market-breadth.yml has the 7 AM, 1 PM and 7 PM slots")
+
 # --- news digest: one 06:00 slot a day, 23h window
 N = dict(slots=(6,), grace=23)
 run, why = decide(et(2026, 9, 16, 4, 59), **N)

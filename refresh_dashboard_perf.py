@@ -1,7 +1,10 @@
 """Scheduled dashboard performance-data refresher.
 
-Fetches 5y daily closes for every watchlist ticker (plus each market's
-benchmark) and writes them to dashboard_perf.json. The Streamlit Dashboard
+Fetches 6y daily closes for every watchlist ticker (plus each market's
+benchmark) and writes them to dashboard_perf.json. 6 years, not 5 (2026-10-14):
+the app's per-watchlist breadth view computes 200-day SMAs and 52-week highs
+from these closes, and their warmup would otherwise blank the first year of
+its 5-year view. The performance curves cut to the chosen horizon anyway. The Streamlit Dashboard
 page reads this file instead of hitting yfinance live at render time, so the
 only refresh point for this data is this script -- run by the same GitHub
 Actions workflow that refreshes market breadth (market-breadth.yml).
@@ -9,7 +12,7 @@ Actions workflow that refreshes market breadth (market-breadth.yml).
 Output schema:
     {
       "as_of": "... UTC",
-      "period": "5y",
+      "period": "6y",
       "markets": { "<market>": { "<ticker>": {"YYYY-MM-DD": close, ...}, ... } }
     }
 
@@ -37,10 +40,11 @@ from stock_data import load_watchlists, load_settings, get_benchmarks
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 OUT_FILE = os.path.join(SCRIPT_DIR, "dashboard_perf.json")
+PERIOD = "6y"
 
 
 def _download_series(tickers):
-    """Bulk-download 5y daily closes for `tickers`, retrying failed ones
+    """Bulk-download 6y daily closes for `tickers`, retrying failed ones
     individually. Returns a dict {ticker: pd.Series of close}."""
     series = {}
     failed = list(tickers)
@@ -48,7 +52,7 @@ def _download_series(tickers):
     try:
         buf = io.StringIO()
         with redirect_stderr(buf):
-            data = yf.download(failed, period="5y", interval="1d", auto_adjust=False, progress=False, threads=False)
+            data = yf.download(failed, period=PERIOD, interval="1d", auto_adjust=False, progress=False, threads=False)
     except Exception as e:
         print(f"  bulk download error: {e}")
 
@@ -67,7 +71,7 @@ def _download_series(tickers):
         try:
             buf = io.StringIO()
             with redirect_stderr(buf):
-                rd = yf.download(t, period="5y", interval="1d", auto_adjust=False, progress=False)
+                rd = yf.download(t, period=PERIOD, interval="1d", auto_adjust=False, progress=False)
             if not rd.empty and "Close" in rd.columns:
                 s = rd["Close"].dropna()
                 if isinstance(s, pd.DataFrame):
@@ -85,6 +89,30 @@ def _download_series(tickers):
 # treated as a failed fetch rather than a reading -- the same floor, and the same
 # reasoning, as refresh_market_breadth.MIN_COVERAGE_FRACTION.
 MIN_COVERAGE_FRACTION = 0.5
+
+
+# Days a stored close may be carried over when a fresh download ends before it.
+KEEP_TAIL_DAYS = 5
+
+
+def keep_recent_tail(new, old, today=None):
+    """`new` ({"YYYY-MM-DD": close}) plus any of `old`'s closes dated after
+    new's last day and within KEEP_TAIL_DAYS of `today`.
+
+    Yahoo blanks the latest daily row for hours at a time: at 12:30 AM IST on
+    2026-10-15 every Indian ticker's Oct 14 close came back empty, though an
+    earlier run had stored it. Written over wholesale, that run would have
+    dropped India's latest day from the performance curves and the watchlist
+    breadth view. Only recent days are carried, so a delisted ticker's old
+    closes never linger.
+    """
+    if not new or not old:
+        return new
+    last = max(new)
+    today = today or datetime.now(timezone.utc).date()
+    floor = (pd.Timestamp(today) - pd.Timedelta(days=KEEP_TAIL_DAYS)).strftime("%Y-%m-%d")
+    tail = {d: v for d, v in old.items() if d > last and d >= floor}
+    return {**new, **tail} if tail else new
 
 
 def load_previous():
@@ -128,6 +156,8 @@ def main():
             col: {d.strftime("%Y-%m-%d"): round(float(v), 4) for d, v in s.items()}
             for col, s in series.items()
         }
+        prev_block = prev_markets.get(market) or {}
+        outer = {col: keep_recent_tail(closes, prev_block.get(col)) for col, closes in outer.items()}
         if len(outer) < MIN_COVERAGE_FRACTION * len(all_tickers):
             # Not a reading. Keep the previous block if there is one; a market
             # with no previous block stays absent, which is honest -- an empty
@@ -150,7 +180,7 @@ def main():
     # carried over from `previous` -- only markets we still track are written.
     payload = {
         "as_of": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-        "period": "5y",
+        "period": PERIOD,
         "markets": markets_out,
         "status": status,
     }

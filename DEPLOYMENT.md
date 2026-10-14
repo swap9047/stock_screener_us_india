@@ -145,7 +145,7 @@ It uses `GEMINI_API_KEY` and `DATA_REPO_TOKEN` repo secrets. It supports `workfl
 
 ## 8d. Market breadth & dashboard performance
 
-A sixth GitHub Actions workflow, `.github/workflows/market-breadth.yml`, does its work once per **7:00 AM** and **7:00 PM ET** slot, Monday to Friday (a late run still counts until the next slot starts). It runs `refresh_market_breadth.py` and `refresh_dashboard_perf.py` to compute advance/decline breadth metrics (`market_breadth.json`) and portfolio performance metrics (`dashboard_perf.json`), committing both to the private data repo.
+A sixth GitHub Actions workflow, `.github/workflows/market-breadth.yml`, does its work once per **7:00 AM**, **1:00 PM** and **7:00 PM ET** slot, Monday to Friday (a late run still counts until the next slot starts). It runs `refresh_market_breadth.py` and `refresh_dashboard_perf.py` to compute advance/decline breadth metrics (`market_breadth.json`) and portfolio performance metrics (`dashboard_perf.json`), committing both to the private data repo.
 
 Yahoo publishes a day's closes late, often hours after the close and a few stocks at a time. When the latest day is missing or only partly there, the run saves what it has, shows red, and the next hourly wake-up tries again. A red breadth run in the evening is usually this, not a fault.
 
@@ -189,5 +189,5 @@ The **Re-analyze All** and **Refresh news** buttons start GitHub Actions runs in
 | Hourly data refresh (around the clock) | No new secret needed — GitHub Actions workflow is already committed |
 | Daily Expert Views (1:00 AM ET) | Needs `GEMINI_API_KEY` repo secret — GitHub Actions workflow is already committed |
 | Daily Fundamental Views (9:00 PM ET) | Needs `GEMINI_API_KEY` repo secret — GitHub Actions workflow is already committed |
-| Market Breadth & Performance (7 AM & 7 PM ET) | No new secret needed — GitHub Actions workflow is already committed |
+| Market Breadth & Performance (7 AM, 1 PM & 7 PM ET) | No new secret needed — GitHub Actions workflow is already committed |
 | Weekly Wrap-up digest (Sunday 9:00 PM ET) | Uses `DISCORD_WEBHOOK_URL` repo secret — GitHub Actions workflow is already committed |

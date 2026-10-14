@@ -7,6 +7,8 @@ import requests
 import pandas as pd
 import yfinance as yf
 
+from breadth_math import compute_breadth
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BREADTH_FILE = os.path.join(SCRIPT_DIR, "market_breadth.json")
 
@@ -273,104 +275,18 @@ def calculate_breadth(tickers, label, tz, close_hhmm):
         print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {label}: {closes.index[-1].date()} is only "
               f"{share:.0%} published -- computed from the names that have it, marked partial")
 
-    # Calculate 200d SMA. This is the simple 200-day average -- the "200 DSMA"
-    # convention used everywhere else in the app (stock_data.py) and by public
-    # breadth screeners.
-    #
-    # min_periods=190 rather than 200: the panel is a union of every ticker's
-    # calendar, so a name that simply had no print on a few days carries sporadic
-    # NaNs. Demanding all 200 would drop ~190 perfectly good Nifty names over gaps
-    # of 1-10 days. Averaging 190+ of the last 200 closes is the same number to
-    # within rounding; what we actually want to exclude is recent listings, which
-    # the cumulative-history mask below handles directly.
-    sma200 = closes.rolling(window=200, min_periods=190).mean()
-    sma200 = sma200.where(closes.notna().cumsum() >= 200)
-    is_above = closes > sma200
-
-    # Calculate 52w High/Low (252 trading days).
-    #
-    # Same cumulative-history mask the SMA gets above, for the same reason and
-    # it was missing here: without it a stock with 126 sessions of history could
-    # post a "52-week high" off a 126-day window (min_periods tolerates gaps
-    # INSIDE the window, it does not require the window to be full), while
-    # stocks too new to qualify at all still sat in the denominator. The
-    # numerator was too generous and the denominator too large -- a split that
-    # matters most in exactly the stretches this chart is read for, after an
-    # IPO wave or an index reconstitution. Threshold is the window size, as
-    # `>= 200` is for the 200-day SMA.
-    enough_52w = closes.notna().cumsum() >= 252
-    high52 = closes.rolling(window=252, min_periods=126).max().where(enough_52w)
-    low52 = closes.rolling(window=252, min_periods=126).min().where(enough_52w)
-
-    is_new_high = closes >= high52
-    is_new_low = closes <= low52
-
-    valid_counts = closes.notna().sum(axis=1)
-    # Each series needs its OWN denominator: only stocks that actually have the
-    # measure in question. ma_counts for the 200d SMA, hl_counts for the 52-week
-    # window -- counting a stock that cannot yet qualify understates the rate.
-    ma_counts = (closes.notna() & sma200.notna()).sum(axis=1)
-    hl_counts = (closes.notna() & high52.notna()).sum(axis=1)
-
-    breadth_series = (is_above.sum(axis=1) / ma_counts) * 100
-    # Guard the division rather than leaning on valid_mask: a zero denominator
-    # yields inf, and inf survives a later boolean mask if the row is kept.
-    highs_series = (is_new_high.sum(axis=1) / hl_counts.replace(0, pd.NA)) * 100
-    lows_series = (is_new_low.sum(axis=1) / hl_counts.replace(0, pd.NA)) * 100
-
-    # Warmup: drop the first 252 rows of the DOWNLOADED panel so the 52w
-    # high/low window is full. This used to be `iloc[252:]` applied AFTER
-    # valid_mask -- but valid_mask had already removed the ~200-row SMA warmup,
-    # so the two stacked and ~450 rows were lost. The 6y download then only
-    # reached back ~4.2y, and the app's "5 Years" view sat blank for its first
-    # ~9 months (history started 2022-06-28 instead of ~2021-09).
-    # A panel too short to warm up keeps every row, as the old code did.
-    warm = pd.Series(len(closes) <= 252, index=closes.index)
-    warm.iloc[252:] = True
-    valid_mask = (valid_counts > 0) & (ma_counts > 0) & (hl_counts > 0) & warm
-    breadth_series = breadth_series[valid_mask]
-    highs_series = highs_series[valid_mask]
-    lows_series = lows_series[valid_mask]
-
-    five_years_ago = pd.Timestamp.now(tz=breadth_series.index.tz) - pd.DateOffset(years=5)
-    mask_5y = breadth_series.index >= five_years_ago
-    
-    breadth_series = breadth_series[mask_5y]
-    highs_series = highs_series[mask_5y]
-    lows_series = lows_series[mask_5y]
-    
-    history_dict = {}
-    highs_dict = {}
-    lows_dict = {}
-    
-    for date in breadth_series.index:
-        date_str = date.strftime("%Y-%m-%d")
-        history_dict[date_str] = round(float(breadth_series[date]), 1)
-        highs_dict[date_str] = round(float(highs_series[date]), 1)
-        lows_dict[date_str] = round(float(lows_series[date]), 1)
-        
-    last_valid_idx = closes.index[-1]
-    latest_close = closes.loc[last_valid_idx]
-    latest_sma = sma200.loc[last_valid_idx]
-    has_ma = latest_close.notna() & latest_sma.notna()
-    above_now = int((latest_close > latest_sma).sum())
-    total_now = int(has_ma.sum())
-    pct_above_now = float(above_now / total_now * 100) if total_now > 0 else 0.0
-
-    print(f"{label}: {last_valid_idx.date()} -- {above_now}/{total_now} ({pct_above_now:.1f}%) above 200d SMA")
-    return {
-        "above": int(above_now),
-        "below": int(total_now - above_now),
-        "total": int(total_now),
-        "pct_above": round(pct_above_now, 1),
-        "history": history_dict,
-        "highs_history": highs_dict,
-        "lows_history": lows_dict,
-        # Stored, so the next run recomputes the day (needs_refresh).
-        "partial": partial,
-        # Not stored: main() pops it to tell "Yahoo is late" from a holiday.
-        "unpublished": unpublished,
-    }
+    # The maths itself is shared with the app's per-watchlist breadth view
+    # (breadth_math.compute_breadth), so the two count a stock the same way.
+    block = compute_breadth(closes, since=pd.Timestamp.now(tz=closes.index.tz) - pd.DateOffset(years=5))
+    if block is None:
+        return None
+    print(f"{label}: {closes.index[-1].date()} -- {block['above']}/{block['total']} "
+          f"({block['pct_above']:.1f}%) above 200d SMA")
+    # Stored, so the next run recomputes the day (needs_refresh).
+    block["partial"] = partial
+    # Not stored: main() pops it to tell "Yahoo is late" from a holiday.
+    block["unpublished"] = unpublished
+    return block
 
 def main():
     print("=== Refreshing Market Breadth ===")

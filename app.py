@@ -64,6 +64,7 @@ from stock_data import (
     refresh_data_end_age, enrich_rows, data_end_is_stale, STALE_MISSED_SESSIONS,
 )
 from watchlist_labels import COMBINED_TAB_LABELS, watchlist_label_error
+from breadth_math import compute_breadth, assemble_closes
 import llm_util
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE,
                      send_discord_batch, build_discord_messages_for_rule, describe_schedule, DISCLAIMER,
@@ -5426,7 +5427,9 @@ with tab_news:
         # A widget that is not rendered on a run loses its session_state, so
         # these would reset every time you left the tab. Re-assigning keeps them.
         for _k in ("time_horizon_filter", "news_scope_select", "news_search_model_select",
-                   "news_reasoning_model_select", "news_reasoning_budget_select"):
+                   "news_reasoning_model_select", "news_reasoning_budget_select",
+                   "breadth_watchlist_select",
+                   *[k for k in st.session_state if str(k).startswith("breadth_benchmark_")]):
             if _k in st.session_state:
                 st.session_state[_k] = st.session_state[_k]
     else:
@@ -5795,6 +5798,118 @@ with tab_news:
                     "modeBarButtonsToRemove": ["lasso2d", "select2d", "autoScale2d"],
                 },
             )
+
+        # --- One watchlist's breadth (2026-10-14) -------------------------------
+        # The same three charts as above, over the stocks of ONE watchlist or
+        # combined group, against Nifty 500 or S&P 500. Built here from
+        # dashboard_perf.json's closes (every watchlist's tickers, 6 years) with
+        # breadth_math.compute_breadth -- the maths the index-breadth job uses, so a
+        # stock is counted the same way in both. No live fetch at render.
+        st.divider()
+        st.subheader("Watchlist Breadth")
+        _wb_labels = {k: v.get("label", k) for k, v in markets_registry_now.items()}
+        _wb_labels.update(combined_display_label_by_key)
+        _wb_benchmarks = {"Nifty 500": ("^CRSLDX", "INDIA"), "S&P 500": ("SPY", "US")}
+        col_wb, col_bench = st.columns([3, 2])
+        with col_wb:
+            wb_key = st.selectbox("Watchlist", list(_wb_labels), format_func=lambda k: _wb_labels.get(k, k),
+                                  key="breadth_watchlist_select")
+        # A group is its members' stocks together, each counted once.
+        _wb_members = combined_markets_by_key.get(wb_key, [wb_key])
+        wb_tickers = list(dict.fromkeys(t for m in _wb_members for t in watchlists_now.get(m, []) if t))
+        # Only the selected watchlist's radio is drawn, and Streamlit drops a
+        # widget's state on any run that does not draw it -- so the others' choices
+        # are re-assigned here or each would reset on the next switch. Not the
+        # current one's: re-assigning a widget drawn with an index= warns.
+        for _k in [k for k in st.session_state if str(k).startswith("breadth_benchmark_")]:
+            if _k != f"breadth_benchmark_{wb_key}":
+                st.session_state[_k] = st.session_state[_k]
+        with col_bench:
+            # Keyed per watchlist, so each keeps its own choice; the default is the
+            # index of the exchange most of its stocks list on.
+            _india_share = sum(t.endswith((".NS", ".BO")) for t in wb_tickers) / max(len(wb_tickers), 1)
+            wb_bench_label = st.radio("Benchmark", list(_wb_benchmarks), horizontal=True,
+                                      index=0 if _india_share > 0.5 else 1,
+                                      key=f"breadth_benchmark_{wb_key}")
+        wb_bench, wb_bench_market = _wb_benchmarks[wb_bench_label]
+        wb_name = _wb_labels.get(wb_key, wb_key)
+
+        _perf_markets = perf_data.get("markets") or {}
+        wb_closes, wb_missing = assemble_closes(_perf_markets, wb_tickers)
+        wb_bench_closes, _ = assemble_closes(_perf_markets, [wb_bench])
+        _wb_cutoff = pd.Timestamp.now().normalize() - pd.DateOffset(months=months)
+        wb = compute_breadth(wb_closes, since=_wb_cutoff) if not wb_closes.empty else None
+
+        if not wb_tickers:
+            st.info(f"{wb_name} has no stocks.")
+        elif not wb or not wb["history"]:
+            st.info(f"Not enough stored price history for {wb_name} yet -- breadth needs 200 days per stock. "
+                    "dashboard_perf.json is refreshed by the market-breadth workflow.")
+        else:
+            df_wb_ema = pd.DataFrame({"Date": pd.to_datetime(list(wb["history"])),
+                                      "% Above 200d SMA": list(wb["history"].values())})
+            df_wb_hl = pd.DataFrame({"Date": pd.to_datetime(list(wb["highs_history"])),
+                                     "% New Highs": list(wb["highs_history"].values()),
+                                     "% New Lows": list(wb["lows_history"].values())})
+            df_idx_ema, _ = format_json_breadth(_breadth_block(wb_bench_market), months)
+            df_wb_perf = None
+            if not wb_bench_closes.empty:
+                # A list may hold the benchmark itself (SPY); join only when it doesn't,
+                # or the duplicate column raises.
+                _wb_panel = (wb_closes if wb_bench in wb_closes.columns
+                             else wb_closes.join(wb_bench_closes, how="outer"))
+                df_wb_perf = calculate_portfolio_returns(_wb_panel,
+                                                         list(wb_closes.columns), wb_bench,
+                                                         weights=None, filter_months=months)
+
+            _idx_now = get_val(df_idx_ema, "% Above 200d SMA")
+            wb_titles = (
+                f"{wb_name}: % Above 200-Day SMA ({get_last_date(df_wb_ema)}: {wb['pct_above']:.1f}%, "
+                f"Captured: {wb['total']}) vs {wb_bench_label} {_idx_now}%",
+                f"{wb_name}: 52-Week Highs vs Lows ({get_last_date(df_wb_hl)}: Highs "
+                f"{get_val(df_wb_hl, '% New Highs')}%, Lows {get_val(df_wb_hl, '% New Lows')}%)",
+                f"{wb_name} vs {wb_bench_label} ({get_perf(df_wb_perf)})",
+            )
+            fig_wb = make_subplots(rows=3, cols=1, shared_xaxes="all", vertical_spacing=0.08,
+                                   subplot_titles=wb_titles)
+            fig_wb.add_trace(go.Scatter(x=df_wb_ema["Date"], y=df_wb_ema["% Above 200d SMA"], name=wb_name,
+                                        line=dict(color="#2ecc71", width=1.5)), row=1, col=1)
+            if df_idx_ema is not None and not df_idx_ema.empty:
+                fig_wb.add_trace(go.Scatter(x=df_idx_ema["Date"], y=df_idx_ema["% Above 200d SMA"],
+                                            name=wb_bench_label, line=dict(color="#95a5a6", width=1.5, dash="dot")),
+                                 row=1, col=1)
+            fig_wb.add_hline(y=50, line_dash="dash", line_color="rgba(0,0,0,0.3)", row=1, col=1)
+            fig_wb.add_trace(go.Scatter(x=df_wb_hl["Date"], y=df_wb_hl["% New Highs"], name="% New Highs",
+                                        line=dict(color="#2ecc71", width=1.5)), row=2, col=1)
+            fig_wb.add_trace(go.Scatter(x=df_wb_hl["Date"], y=df_wb_hl["% New Lows"], name="% New Lows",
+                                        line=dict(color="#e74c3c", width=1.5)), row=2, col=1)
+            if df_wb_perf is not None and not df_wb_perf.empty:
+                fig_wb.add_trace(go.Scatter(x=df_wb_perf.index, y=df_wb_perf["Portfolio"], name=wb_name,
+                                            line=dict(color="#3498db", width=2)), row=3, col=1)
+                fig_wb.add_trace(go.Scatter(x=df_wb_perf.index, y=df_wb_perf["Benchmark"], name=wb_bench_label,
+                                            line=dict(color="#95a5a6", width=1.5, dash="dot")), row=3, col=1)
+            else:
+                fig_wb.add_annotation(text=f"No {wb_bench_label} price series stored yet", showarrow=False,
+                                      xref="x3 domain", yref="y3 domain", x=0.5, y=0.5,
+                                      font=dict(color="#95a5a6", size=13))
+            fig_wb.update_layout(height=900, hovermode="x unified", showlegend=False,
+                                 margin=dict(l=0, r=0, t=55, b=0),
+                                 modebar=dict(orientation="v", bgcolor="rgba(0,0,0,0)"))
+            fig_wb.update_xaxes(showspikes=True, spikemode="across", spikesnap="cursor", showline=True, showgrid=False)
+            fig_wb.update_yaxes(showgrid=True)
+            _wb_note = (f"{len(wb_tickers)} stocks; {wb['total']} have the 200 days of history the line needs, "
+                        f"so each one moves it by {100 / max(wb['total'], 1):.1f} points. "
+                        f"Return is the list equal-weighted and rebalanced daily, price only, against "
+                        f"{wb_bench_label} ({wb_bench}) -- a hindsight view of today's members, like the "
+                        f"curves above.")
+            if wb_missing:
+                _wb_note += (f" {len(wb_missing)} of its stocks {'has' if len(wb_missing) == 1 else 'have'} "
+                             "no stored prices yet (added since the last market-breadth run) and "
+                             f"{'is' if len(wb_missing) == 1 else 'are'} left out.")
+            st.caption(_wb_note)
+            st.plotly_chart(fig_wb, width="stretch", key="breadth_watchlist_chart",
+                            config={"displaylogo": False,
+                                    "modeBarButtonsToRemove": ["lasso2d", "select2d", "autoScale2d"]})
 
         st.divider()
         st.subheader("Watchlist news digest")

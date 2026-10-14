@@ -158,8 +158,12 @@ _p2["OLD1"] = pd.Series(np.concatenate([np.linspace(100, 200, 200), np.linspace(
 check(round(float(_highs_pct(_p2, True)[_last]), 1) == 33.3,
       "a mature name genuinely at a 52w high still registers (1 of 3 qualifying)")
 
-_bsrc = open(f"{REPO}/refresh_market_breadth.py").read()
-check("closes.notna().cumsum() >= 252" in _bsrc, "the 52w mask is applied in refresh_market_breadth")
+# The maths moved to breadth_math.py on 2026-10-14 (shared with the app's
+# per-watchlist breadth view); refresh_market_breadth calls it.
+_bsrc = open(f"{REPO}/breadth_math.py").read()
+check("closes.notna().cumsum() >= 252" in _bsrc, "the 52w mask is applied in breadth_math")
+check("compute_breadth(closes" in open(f"{REPO}/refresh_market_breadth.py").read(),
+      "refresh_market_breadth computes through breadth_math")
 check("hl_counts" in _bsrc and "(closes.notna() & high52.notna())" in _bsrc,
       "new-high/new-low use their own denominator, not valid_counts")
 check("hl_counts.replace(0, pd.NA)" in _bsrc, "a zero denominator yields NA, not inf")
