@@ -5438,10 +5438,11 @@ with tab_news:
         with col_filter:
             # 6 Months and 1 Year added 2026-10-14: at 3 years the last few days
             # share about a pixel, so the line looked as if it stopped days early.
+            # 1 Year is the default (owner, 2026-10-14).
             _horizon_months = {"6 Months": 6, "1 Year": 12, "3 Years": 36, "5 Years": 60}
-            time_filter = st.radio("Time Horizon", list(_horizon_months), index=2, horizontal=True,
+            time_filter = st.radio("Time Horizon", list(_horizon_months), index=1, horizontal=True,
                                    key="time_horizon_filter")
-            months = _horizon_months.get(time_filter, 36)
+            months = _horizon_months.get(time_filter, 12)
         
         with col_refresh:
             if st.button("🔄 Refresh Charts", width="stretch"):

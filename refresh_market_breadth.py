@@ -174,9 +174,10 @@ def latest_day_share(closes):
 
 def needs_refresh(block, expected):
     """False only when the stored block already holds the latest session
-    (expected_session), finally -- a live or partial reading is always redone: each slot has one new close (India's
-    by 7 AM ET, the US's by 7 PM ET), and re-downloading the other market's ~500
-    tickers x 6 years bought nothing but Yahoo throttling risk."""
+    (expected_session) as a final reading -- a live or partial one is always
+    redone. Each slot has one new close (India's by 7 AM ET, the US's by 7 PM
+    ET), and re-downloading the other market's ~500 tickers x 6 years bought
+    nothing but Yahoo throttling risk."""
     history = (block or {}).get("history") or {}
     if not history or not expected or block.get("partial") or block.get("live"):
         return True

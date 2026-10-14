@@ -4,10 +4,12 @@ Fetches 6y daily closes for every watchlist ticker (plus each market's
 benchmark) and writes them to dashboard_perf.json. 6 years, not 5 (2026-10-14):
 the app's per-watchlist breadth view computes 200-day SMAs and 52-week highs
 from these closes, and their warmup would otherwise blank the first year of
-its 5-year view. The performance curves cut to the chosen horizon anyway. The Streamlit Dashboard
-page reads this file instead of hitting yfinance live at render time, so the
-only refresh point for this data is this script -- run by the same GitHub
-Actions workflow that refreshes market breadth (market-breadth.yml).
+its 5-year view. The performance curves cut to the chosen horizon anyway.
+
+The Streamlit Dashboard page reads this file instead of hitting yfinance live
+at render time, so the only refresh point for this data is this script -- run
+by the same GitHub Actions workflow that refreshes market breadth
+(market-breadth.yml).
 
 Output schema:
     {

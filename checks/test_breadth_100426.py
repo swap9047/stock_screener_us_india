@@ -279,6 +279,7 @@ check("survivorship" in APP.lower(), "B4: the breadth charts note the survivorsh
 check('"6 Months": 6, "1 Year": 12, "3 Years": 36, "5 Years": 60' in APP and "DateOffset(months=filter_months)" in APP,
       "the breadth charts offer 6 months and 1 year as well as 3 and 5 years")
 check('" intraday" if _breadth_block(market_key).get("live")' in APP, "a live breadth reading is labelled intraday")
+check('list(_horizon_months), index=1,' in APP, "the breadth charts open on 1 Year (owner, 2026-10-14)")
 
 # --- B3 the retry loop ----------------------------------------------------------------
 check(rmb.BATCH_PAUSE_SECONDS == 5 and rmb.RETRY_PAUSE_SECONDS == 5,
