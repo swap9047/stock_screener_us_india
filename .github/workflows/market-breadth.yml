@@ -93,6 +93,8 @@ jobs:
               data = json.load(f)
           status = data.get("status") or {}
           # "unchanged": no new session since the stored block, so it was kept.
+          # "live": computed from today's still-trading session; fine, it is
+          # redone at the next run.
           # "awaiting": the session traded but Yahoo has no close for it yet.
           # "partial": its latest day is computed from part of the index. Both
           # are saved; failing the run is what makes the gate retry at the next
@@ -101,7 +103,7 @@ jobs:
           if awaiting:
               print(f"::error::Yahoo has not fully published the latest session for {awaiting} yet "
                     f"({ {k: status[k] for k in awaiting} }) -- the slot gate retries at the next wake-up")
-          failed = sorted(k for k, v in status.items() if v not in ("ok", "unchanged", "awaiting", "partial"))
+          failed = sorted(k for k, v in status.items() if v not in ("ok", "unchanged", "live", "awaiting", "partial"))
           missing = sorted({"US", "INDIA"} - set(status))
           if awaiting and not (failed or missing):
               sys.exit(1)

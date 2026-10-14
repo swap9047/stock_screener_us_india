@@ -59,29 +59,40 @@ if needs:
     check(needs({"history": {}}, "2026-10-01"), "B1: an empty history -> refresh")
 
 exp = fn("expected_session")
-if exp:
+live = fn("is_live")
+if exp and live:
     NY, IN = "America/New_York", "Asia/Kolkata"
+    US_OPEN, US_CLOSE, IN_OPEN, IN_CLOSE = (9, 30), (16, 0), (9, 15), (15, 30)
     def at(ts, tz):
         return pd.Timestamp(ts, tz=tz)
-    check(exp(NY, (16, 0), now=at("2026-10-09 20:35", NY)) == "2026-10-09",
-          "B1: Friday 8:35 PM ET -> the US expects Friday (the 2026-10-09 miss)")
-    check(exp(NY, (16, 0), now=at("2026-10-09 16:29", NY)) == "2026-10-08",
-          "B1: inside the 30-minute settle window -> still Thursday")
-    check(exp(NY, (16, 0), now=at("2026-10-09 16:30", NY)) == "2026-10-09",
-          "B1: 30 minutes after the close -> Friday")
-    check(exp(NY, (16, 0), now=at("2026-10-12 07:00", NY)) == "2026-10-09",
+    # Since 2026-10-14 the latest session is the one that has OPENED (the line
+    # follows the latest fetch, not the day close).
+    check(exp(NY, US_OPEN, now=at("2026-10-09 09:29", NY)) == "2026-10-08",
+          "B1: before the US open -> the day before")
+    check(exp(NY, US_OPEN, now=at("2026-10-09 09:30", NY)) == "2026-10-09",
+          "B1: at the US open -> today, its bar still forming")
+    check(exp(NY, US_OPEN, now=at("2026-10-09 20:35", NY)) == "2026-10-09",
+          "B1: Friday 8:35 PM ET -> Friday (the 2026-10-09 miss)")
+    check(exp(NY, US_OPEN, now=at("2026-10-12 07:00", NY)) == "2026-10-09",
           "B1: Monday 7 AM ET -> back over the weekend to Friday")
-    check(exp(NY, (16, 0), now=at("2026-10-10 12:00", NY)) == "2026-10-09",
-          "B1: Saturday -> Friday")
-    # India, from the ET slot times: 7 AM ET is 4:30 PM IST in summer, 5:30 PM in winter.
-    check(exp(IN, (15, 30), now=at("2026-10-09 07:00", NY)) == "2026-10-09",
-          "B1: the 7 AM ET slot -> India expects that day (4:30 PM IST)")
-    check(exp(IN, (15, 30), now=at("2026-12-04 07:00", NY)) == "2026-12-04",
-          "B1: ...and in winter (5:30 PM IST)")
-    check(exp(IN, (15, 30), now=at("2026-10-09 05:59", NY)) == "2026-10-08",
-          "B1: before NSE's close + 30 min (6:00 AM ET) -> the day before")
-    check(exp(IN, (15, 30), now=at("2026-10-09 19:00", NY)) == "2026-10-09",
-          "B1: the 7 PM ET slot (Saturday 4:30 AM IST) -> India expects Friday")
+    check(exp(NY, US_OPEN, now=at("2026-10-10 12:00", NY)) == "2026-10-09", "B1: Saturday -> Friday")
+    check(exp(IN, IN_OPEN, now=at("2026-10-09 07:00", NY)) == "2026-10-09",
+          "B1: the 7 AM ET slot -> India's that day (4:30 PM IST)")
+    check(exp(IN, IN_OPEN, now=at("2026-10-08 23:44", NY)) == "2026-10-08",
+          "B1: 9:14 AM IST -> India's day before")
+    check(exp(IN, IN_OPEN, now=at("2026-10-08 23:45", NY)) == "2026-10-09",
+          "B1: 9:15 AM IST (11:45 PM ET) -> India's new day, forming")
+    check(exp(IN, IN_OPEN, now=at("2026-10-09 19:00", NY)) == "2026-10-09",
+          "B1: the 7 PM ET slot (Saturday 4:30 AM IST) -> India's Friday")
+
+    check(live("2026-10-14", NY, US_CLOSE, now=at("2026-10-14 11:44", NY)),
+          "B1: a US reading at 11:44 AM ET is live")
+    check(live("2026-10-14", NY, US_CLOSE, now=at("2026-10-14 16:29", NY)),
+          "B1: ...until 30 minutes after the close")
+    check(not live("2026-10-14", NY, US_CLOSE, now=at("2026-10-14 16:30", NY)), "B1: then final")
+    check(not live("2026-10-13", NY, US_CLOSE, now=at("2026-10-14 11:44", NY)), "B1: an earlier day is never live")
+    check(not live("2026-10-14", IN, IN_CLOSE, now=at("2026-10-14 11:44", NY)),
+          "B1: India at 11:44 AM ET (9:14 PM IST) is final")
 
 tail = fn("unpublished_tail")
 share = fn("latest_day_share")
@@ -143,15 +154,18 @@ if tail and share:
         rmb.yf.download, rmb.time.sleep = saved_dl, saved_sleep
 
 
-def run_main(stored, expected, block):
-    """main() with the downloads stubbed; returns (saved file, legs downloaded)."""
+def run_main(stored, expected, block, live_days=None):
+    """main() with the downloads stubbed; returns (saved file, legs downloaded).
+    `live_days` {tz: {dates}}: what is_live answers (default: nothing is live)."""
     calls = []
+    live_days = live_days or {}
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "market_breadth.json")
         Path(path).write_text(json.dumps(stored))
         saved = (rmb.BREADTH_FILE, rmb.get_sp500_tickers, rmb.get_nifty500_tickers,
-                 rmb.calculate_breadth, rmb.expected_session)
+                 rmb.calculate_breadth, rmb.expected_session, rmb.is_live)
         rmb.BREADTH_FILE = path
+        rmb.is_live = lambda day, tz, hhmm, **k: day in live_days.get(tz, set())
         rmb.get_sp500_tickers = lambda: ["A"] * 10
         rmb.get_nifty500_tickers = lambda: ["B.NS"] * 10
         rmb.calculate_breadth = lambda tickers, label, tz, hhmm: (calls.append(label) or dict(block[label]))
@@ -161,7 +175,7 @@ def run_main(stored, expected, block):
             return json.loads(Path(path).read_text()), calls
         finally:
             (rmb.BREADTH_FILE, rmb.get_sp500_tickers, rmb.get_nifty500_tickers,
-             rmb.calculate_breadth, rmb.expected_session) = saved
+             rmb.calculate_breadth, rmb.expected_session, rmb.is_live) = saved
 
 
 STORED = {"as_of": "2026-10-03 17:00", "markets": {
@@ -222,13 +236,49 @@ check(out["markets"]["INDIA"]["total"] == 495 and out["status"]["INDIA"] == "ok"
       and not out["markets"]["INDIA"].get("partial"),
       f"B1: the same day from more names replaces a partial block, status ok ({out['status']})")
 
+# --- live readings (2026-10-14: follow the latest fetch, not the day close) ----------
+NY = "America/New_York"
+EXP = {NY: "2026-10-14", "Asia/Kolkata": "2026-09-30"}
+LIVE_US = {"total": 500, "pct_above": 49.9, "history": {"2026-10-13": 49.4, "2026-10-14": 49.9},
+           "partial": False, "unpublished": []}
+out, calls = run_main(STORED, EXP, {"S&P 500": LIVE_US}, live_days={NY: {"2026-10-14"}})
+us = out["markets"]["US"]
+check(out["status"]["US"] == "live" and us["live"] is True and max(us["history"]) == "2026-10-14",
+      f"B1: mid-session the line ends on today, stored live, status live ({out['status']})")
+check(rmb.needs_refresh(us, "2026-10-14"), "B1: a live reading is redone at the next run")
+
+STORED_LIVE = {"as_of": "x", "status": {}, "markets": {
+    "US": {"as_of": "x", "total": 500, "history": {"2026-10-13": 49.4, "2026-10-14": 49.9}, "live": True},
+    "INDIA": {"as_of": "x", "total": 490, "history": {"2026-09-30": 42.2}}}}
+# after the close, Yahoo blanks the day: the download ends a day early -> keep the
+# intraday reading, but retry (awaiting) rather than count the slot done on it
+BLANK = {"total": 500, "pct_above": 49.4, "history": {"2026-10-13": 49.4}, "partial": False,
+         "unpublished": ["2026-10-14"]}
+out, _ = run_main(STORED_LIVE, EXP, {"S&P 500": BLANK})
+check(max(out["markets"]["US"]["history"]) == "2026-10-14" and out["status"]["US"] == "awaiting",
+      f"B1: after the close, a blank day keeps the intraday reading and retries ({out['status']})")
+# the final close arrives, even from one name fewer -> it replaces the live reading
+FINAL = {"total": 499, "pct_above": 50.2, "history": {"2026-10-13": 49.4, "2026-10-14": 50.2},
+         "partial": False, "unpublished": []}
+out, _ = run_main(STORED_LIVE, EXP, {"S&P 500": FINAL})
+us = out["markets"]["US"]
+check(us["history"]["2026-10-14"] == 50.2 and not us["live"] and out["status"]["US"] == "ok",
+      f"B1: a final close replaces the live reading, even from fewer names ({out['status']})")
+# a newer live reading replaces an older live one, whatever its count
+LATER = dict(LIVE_US, total=480, history={"2026-10-13": 49.4, "2026-10-14": 51.0})
+out, _ = run_main(STORED_LIVE, EXP, {"S&P 500": LATER}, live_days={NY: {"2026-10-14"}})
+check(out["markets"]["US"]["history"]["2026-10-14"] == 51.0, "B1: a newer live reading replaces an older one")
+
 # --- B2 / B4 / workflow ---------------------------------------------------------------
 WF = (REPO / ".github/workflows/market-breadth.yml").read_text()
 check('days: "MON,TUE,WED,THU,FRI"' in WF, "B2: the breadth slots run Monday to Friday")
-check('("ok", "unchanged", "awaiting", "partial")' in WF and 'v in ("awaiting", "partial")' in WF and "sys.exit(1)" in WF,
+check('("ok", "unchanged", "live", "awaiting", "partial")' in WF and 'v in ("awaiting", "partial")' in WF and "sys.exit(1)" in WF,
       "B1: the verify step accepts an unchanged market and fails an awaiting or partial one (so the gate retries)")
 APP = (REPO / "app.py").read_text()
 check("survivorship" in APP.lower(), "B4: the breadth charts note the survivorship bias")
+check('"6 Months": 6, "1 Year": 12, "3 Years": 36, "5 Years": 60' in APP and "DateOffset(months=filter_months)" in APP,
+      "the breadth charts offer 6 months and 1 year as well as 3 and 5 years")
+check('" intraday" if _breadth_block(market_key).get("live")' in APP, "a live breadth reading is labelled intraday")
 
 # --- B3 the retry loop ----------------------------------------------------------------
 check(rmb.BATCH_PAUSE_SECONDS == 5 and rmb.RETRY_PAUSE_SECONDS == 5,

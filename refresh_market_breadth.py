@@ -28,8 +28,8 @@ BATCH_PAUSE_SECONDS = 5
 RETRY_PAUSE_SECONDS = 5
 MAX_RETRY_PASSES = 3
 
-# Minutes after the close before a session counts as done, so Yahoo has settled
-# the closing print (trim_to_completed_session, expected_session).
+# Minutes after the close before a day's reading counts as final rather than
+# live (is_live): Yahoo needs a while to settle the closing print.
 SETTLE_MINUTES = 30
 
 # Yahoo publishes a day's daily bars with a lag and not all at once. Before it
@@ -109,30 +109,15 @@ def get_nifty500_tickers():
     df = pd.read_csv(io.StringIO(r.text))
     return [f"{sym}.NS" for sym in df['Symbol'].tolist()]
 
-def trim_to_completed_session(closes, tz, close_hhmm, now=None):
-    """Drop the trailing row when it is today's still-forming bar.
+def expected_session(tz, open_hhmm, now=None):
+    """The latest session that has STARTED by now, from the exchange's own
+    clock: today in `tz` once the exchange has opened, else the day before,
+    stepping back over weekends. "YYYY-MM-DD".
 
-    A slot is after its market's close (7 AM ET for India, 7 PM ET for the US),
-    but a leg can still run while its exchange is open -- the job used to push
-    the India leg to ~11:30 IST, mid-session, and a manual dispatch can land
-    anywhere -- and then yfinance hands back a live intraday bar for today.
-    Dropping it only when the exchange has not yet closed in its own timezone
-    keeps a leg run after the close on its freshest settled bar.
-    """
-    if closes.empty:
-        return closes
-    now = now.tz_convert(tz) if now is not None else pd.Timestamp.now(tz=tz)
-    close_h, close_m = close_hhmm
-    cutoff = now.normalize() + pd.Timedelta(hours=close_h, minutes=close_m + SETTLE_MINUTES)
-    if closes.index[-1].date() == now.date() and now < cutoff:
-        return closes.iloc[:-1]
-    return closes
-
-
-def expected_session(tz, close_hhmm, now=None):
-    """The latest session that should have closed by now, from the exchange's
-    own clock: today in `tz` once it is SETTLE_MINUTES past the close, else the
-    day before, stepping back over weekends. "YYYY-MM-DD".
+    From the open, not the close (owner, 2026-10-14): the line follows the
+    latest prices fetched, today's still-forming bar included, rather than
+    waiting for the day's close. A reading taken before the close is stored as
+    live (is_live) and recomputed at every later run until the final one lands.
 
     Replaced asking Yahoo, which answered from one index series (SPY, ^CRSLDX)
     and lagged: on 2026-10-09 it still gave Thursday at 8:35 PM and 9:12 PM ET,
@@ -145,13 +130,23 @@ def expected_session(tz, close_hhmm, now=None):
     published any close for yet (a row of NaN, see unpublished_tail).
     """
     now = now.tz_convert(tz) if now is not None else pd.Timestamp.now(tz=tz)
-    close_h, close_m = close_hhmm
+    open_h, open_m = open_hhmm
     day = now.normalize()
-    if now < day + pd.Timedelta(hours=close_h, minutes=close_m + SETTLE_MINUTES):
+    if now < day + pd.Timedelta(hours=open_h, minutes=open_m):
         day -= pd.Timedelta(days=1)
     while day.weekday() >= 5:
         day -= pd.Timedelta(days=1)
     return day.strftime("%Y-%m-%d")
+
+
+def is_live(day, tz, close_hhmm, now=None):
+    """True when `day` ("YYYY-MM-DD") is today in `tz` and its close has not yet
+    settled (SETTLE_MINUTES after it): its bar is still forming, and the reading
+    built from it is not final."""
+    now = now.tz_convert(tz) if now is not None else pd.Timestamp.now(tz=tz)
+    close_h, close_m = close_hhmm
+    settled = now.normalize() + pd.Timedelta(hours=close_h, minutes=close_m + SETTLE_MINUTES)
+    return day == now.strftime("%Y-%m-%d") and now < settled
 
 
 def unpublished_tail(closes):
@@ -176,12 +171,12 @@ def latest_day_share(closes):
 
 
 def needs_refresh(block, expected):
-    """False only when the stored block already holds the session that should
-    have closed by now (expected_session): each slot has one new close (India's
+    """False only when the stored block already holds the latest session
+    (expected_session), finally -- a live or partial reading is always redone: each slot has one new close (India's
     by 7 AM ET, the US's by 7 PM ET), and re-downloading the other market's ~500
     tickers x 6 years bought nothing but Yahoo throttling risk."""
     history = (block or {}).get("history") or {}
-    if not history or not expected or block.get("partial"):
+    if not history or not expected or block.get("partial") or block.get("live"):
         return True
     return max(history) < expected
 
@@ -248,8 +243,10 @@ def calculate_breadth(tickers, label, tz, close_hhmm):
         print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Final failures that could not be downloaded: {len(failed_tickers)}")
         
     print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Calculating Historical Metrics...")
+    # Today's still-forming bar is KEPT (owner, 2026-10-14: follow the latest
+    # fetch, not the day close); main() marks such a reading live. It used to be
+    # dropped until 30 minutes after the close.
     closes = pd.concat(all_data, axis=1).sort_index()
-    closes = trim_to_completed_session(closes, tz, close_hhmm)
     # Before dropna(how="all"): an unpublished day is a row of NaN, and dropping
     # it first would make it look like a holiday (no row at all).
     unpublished = unpublished_tail(closes)
@@ -405,14 +402,15 @@ def main():
         "status": {},
     }
 
+    # (key, members, label, exchange timezone, regular-session open, close)
     legs = [
-        ("US", get_sp500_tickers, "S&P 500", "America/New_York", (16, 0)),
-        ("INDIA", get_nifty500_tickers, "Nifty 500", "Asia/Kolkata", (15, 30)),
+        ("US", get_sp500_tickers, "S&P 500", "America/New_York", (9, 30), (16, 0)),
+        ("INDIA", get_nifty500_tickers, "Nifty 500", "Asia/Kolkata", (9, 15), (15, 30)),
     ]
 
-    for key, get_tickers, label, tz, close_hhmm in legs:
+    for key, get_tickers, label, tz, open_hhmm, close_hhmm in legs:
         kept = results["markets"].get(key)
-        expected = expected_session(tz, close_hhmm)
+        expected = expected_session(tz, open_hhmm)
         if not needs_refresh(kept, expected):
             # Nothing new since the stored block. Mark it current (as_of = now)
             # so the app doesn't label it stale -- "as_of" means "current as of",
@@ -459,18 +457,23 @@ def main():
         # as_of no longer describes it. The UI reads this to label the chart.
         block["as_of"] = now
         unpublished = block.pop("unpublished", [])
+        block["live"] = is_live(max(block.get("history") or {"": 0}), tz, close_hhmm)
+
         # Never trade a stored reading for a staler one: a block ending on an
         # earlier day, or the same day computed from fewer names. Yahoo's latest
         # day is not stable -- at 9:20 PM ET on 2026-10-09 only half the Nifty
         # names still had the Friday close 488 had when the 11:55 AM run stored it.
-        if kept:
-            kept_key = (max(kept.get("history") or {"": 0}), kept.get("total") or 0)
-            new_key = (max(block.get("history") or {"": 0}), block.get("total") or 0)
-            if kept_key > new_key:
-                print(f"{label}: the stored block is more current ({kept_key[0]}, {kept_key[1]} names) "
-                      f"than this download ({new_key[0]}, {new_key[1]}) -- keeping it")
-                block = kept
-                block["as_of"] = now
+        # A final reading always beats a live one of the same day, and a newer
+        # live one an older live one (for those the count says nothing).
+        def _currency(b):
+            final = not b.get("live")
+            return (max(b.get("history") or {"": 0}), final, (b.get("total") or 0) if final else 0)
+        if kept and _currency(kept) > _currency(block):
+            k = _currency(kept)
+            print(f"{label}: the stored block is more current ({k[0]}, {'final' if k[1] else 'live'}, "
+                  f"{kept.get('total')} names) than this download -- keeping it")
+            block = kept
+            block["as_of"] = now
         results["markets"][key] = block
         # "awaiting": the expected session traded but Yahoo has no close for it
         # yet. "partial": the latest day is computed from part of the index.
@@ -485,6 +488,18 @@ def main():
         elif block.get("partial"):
             print(f"{label}: {last} computed from {block.get('total')} names (partly published); will retry")
             results["status"][key] = "partial"
+        elif block.get("live") and not is_live(last, tz, close_hhmm):
+            # A reading taken mid-session, kept because this download had no
+            # final close for the day yet (Yahoo blanks the daily row for hours
+            # after the close). Retry like "awaiting", or the slot would count as
+            # done on an intraday number.
+            print(f"{label}: {last} is still the intraday reading and the close has passed; will retry")
+            results["status"][key] = "awaiting"
+        elif block.get("live"):
+            # Not a failure: the session is still trading. needs_refresh redoes
+            # it at the next run, which is the next slot (or a manual run).
+            print(f"{label}: {last} is live (session still open) -- recomputed at the next run")
+            results["status"][key] = "live"
         else:
             results["status"][key] = "ok"
 

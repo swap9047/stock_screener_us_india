@@ -1559,8 +1559,8 @@ def merge_short_history(previous, fresh, per_market, watchlists, today=None):
 
 
 # Regular-session close per exchange, in the exchange's own timezone, plus a
-# settle margin before a closing print is trusted (same 30m the market-breadth
-# job uses in refresh_market_breadth.trim_to_completed_session).
+# settle margin before a closing print is trusted (the same 30m as
+# refresh_market_breadth.SETTLE_MINUTES).
 EXCHANGE_SESSIONS = {
     "INDIA": ("Asia/Kolkata", 15, 30),
     "US": ("America/New_York", 16, 0),

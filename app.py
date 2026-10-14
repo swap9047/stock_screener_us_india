@@ -5433,8 +5433,12 @@ with tab_news:
         st.subheader("Market Breadth & Performance")
         col_filter, col_refresh = st.columns([3, 1])
         with col_filter:
-            time_filter = st.radio("Time Horizon", ["3 Years", "5 Years"], horizontal=True, key="time_horizon_filter")
-            years = 3 if time_filter == "3 Years" else 5
+            # 6 Months and 1 Year added 2026-10-14: at 3 years the last few days
+            # share about a pixel, so the line looked as if it stopped days early.
+            _horizon_months = {"6 Months": 6, "1 Year": 12, "3 Years": 36, "5 Years": 60}
+            time_filter = st.radio("Time Horizon", list(_horizon_months), index=2, horizontal=True,
+                                   key="time_horizon_filter")
+            months = _horizon_months.get(time_filter, 36)
         
         with col_refresh:
             if st.button("🔄 Refresh Charts", width="stretch"):
@@ -5480,12 +5484,12 @@ with tab_news:
             )
             st.plotly_chart(fig, width="stretch")
 
-        def calculate_portfolio_returns(closes, tickers, benchmark_ticker, weights=None, filter_years=3):
+        def calculate_portfolio_returns(closes, tickers, benchmark_ticker, weights=None, filter_months=36):
             if closes is None or closes.empty: return None
             if closes.index.tzinfo is not None:
-                cutoff = pd.Timestamp.now(tz=closes.index.tz) - pd.DateOffset(years=filter_years)
+                cutoff = pd.Timestamp.now(tz=closes.index.tz) - pd.DateOffset(months=filter_months)
             else:
-                cutoff = pd.Timestamp.now().normalize() - pd.DateOffset(years=filter_years)
+                cutoff = pd.Timestamp.now().normalize() - pd.DateOffset(months=filter_months)
             
             closes = closes[closes.index >= cutoff]
             if closes.empty: return None
@@ -5525,9 +5529,9 @@ with tab_news:
                 return pd.DataFrame({"Portfolio": portfolio, "Benchmark": bench})
             return None
 
-        def format_json_breadth(market_data, filter_years):
+        def format_json_breadth(market_data, filter_months):
             if not market_data: return None, None
-            cutoff = pd.Timestamp.now().normalize() - pd.DateOffset(years=filter_years)
+            cutoff = pd.Timestamp.now().normalize() - pd.DateOffset(months=filter_months)
         
             # SMA
             hist = market_data.get("history", {})
@@ -5608,14 +5612,14 @@ with tab_news:
             if ind_tickers:
                 closes_ind = _closes_from_perf("india_invested")
                 if closes_ind is not None and "^CRSLDX" in closes_ind.columns:
-                    df_perf_ind = calculate_portfolio_returns(closes_ind, ind_tickers, "^CRSLDX", weights=None, filter_years=years)
+                    df_perf_ind = calculate_portfolio_returns(closes_ind, ind_tickers, "^CRSLDX", weights=None, filter_months=months)
             
             closes_us = None
             df_perf_us = None
             if us_tickers:
                 closes_us = _closes_from_perf("us_invested")
                 if closes_us is not None and "SPY" in closes_us.columns:
-                    df_perf_us = calculate_portfolio_returns(closes_us, us_tickers, "SPY", weights=None, filter_years=years)
+                    df_perf_us = calculate_portfolio_returns(closes_us, us_tickers, "SPY", weights=None, filter_months=months)
             
             if perf_as_of:
                 st.caption(
@@ -5630,8 +5634,8 @@ with tab_news:
             # breadth (Nifty 500 / S&P 500), independent of the watchlist
             # registry -- NOT renamed alongside markets.json/watchlist.json, so
             # these stay as the literal keys refresh_market_breadth.py writes.
-            df_ema_ind, df_hl_ind = format_json_breadth(breadth_data.get("markets", {}).get("INDIA"), years)
-            df_ema_us, df_hl_us = format_json_breadth(breadth_data.get("markets", {}).get("US"), years)
+            df_ema_ind, df_hl_ind = format_json_breadth(breadth_data.get("markets", {}).get("INDIA"), months)
+            df_ema_us, df_hl_us = format_json_breadth(breadth_data.get("markets", {}).get("US"), months)
 
             def get_val(df, col):
                 if df is not None and not df.empty and col in df.columns:
@@ -5666,16 +5670,21 @@ with tab_news:
                     return f" [stale: {block_as_of}]"
                 return ""
 
+            # A reading built from a still-trading session (refresh_market_breadth
+            # keeps today's forming bar and stores the block as live).
+            def _when(df, market_key):
+                return get_last_date(df) + (" intraday" if _breadth_block(market_key).get("live") else "")
+
             total_ind = _breadth_block("INDIA").get("total", "--")
             total_us = _breadth_block("US").get("total", "--")
             stale_ind = _stale_suffix("INDIA")
             stale_us = _stale_suffix("US")
             
-            title_ema_ind = f"Nifty 500: % Above 200-Day SMA ({get_last_date(df_ema_ind)}: {get_val(df_ema_ind, '% Above 200d SMA')}%, Captured: {total_ind}){stale_ind}"
-            title_ema_us = f"S&P 500: % Above 200-Day SMA ({get_last_date(df_ema_us)}: {get_val(df_ema_us, '% Above 200d SMA')}%, Captured: {total_us}){stale_us}"
+            title_ema_ind = f"Nifty 500: % Above 200-Day SMA ({_when(df_ema_ind, "INDIA")}: {get_val(df_ema_ind, '% Above 200d SMA')}%, Captured: {total_ind}){stale_ind}"
+            title_ema_us = f"S&P 500: % Above 200-Day SMA ({_when(df_ema_us, "US")}: {get_val(df_ema_us, '% Above 200d SMA')}%, Captured: {total_us}){stale_us}"
         
-            title_hl_ind = f"Nifty 500: 52-Week Highs vs Lows ({get_last_date(df_hl_ind)}: Highs {get_val(df_hl_ind, '% New Highs')}%, Lows {get_val(df_hl_ind, '% New Lows')}%){stale_ind}"
-            title_hl_us = f"S&P 500: 52-Week Highs vs Lows ({get_last_date(df_hl_us)}: Highs {get_val(df_hl_us, '% New Highs')}%, Lows {get_val(df_hl_us, '% New Lows')}%){stale_us}"
+            title_hl_ind = f"Nifty 500: 52-Week Highs vs Lows ({_when(df_hl_ind, "INDIA")}: Highs {get_val(df_hl_ind, '% New Highs')}%, Lows {get_val(df_hl_ind, '% New Lows')}%){stale_ind}"
+            title_hl_us = f"S&P 500: 52-Week Highs vs Lows ({_when(df_hl_us, "US")}: Highs {get_val(df_hl_us, '% New Highs')}%, Lows {get_val(df_hl_us, '% New Lows')}%){stale_us}"
         
             def get_perf(df):
                 if df is not None and not df.empty and 'Portfolio' in df.columns and 'Benchmark' in df.columns:
