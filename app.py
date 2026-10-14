@@ -5680,11 +5680,11 @@ with tab_news:
             stale_ind = _stale_suffix("INDIA")
             stale_us = _stale_suffix("US")
             
-            title_ema_ind = f"Nifty 500: % Above 200-Day SMA ({_when(df_ema_ind, "INDIA")}: {get_val(df_ema_ind, '% Above 200d SMA')}%, Captured: {total_ind}){stale_ind}"
-            title_ema_us = f"S&P 500: % Above 200-Day SMA ({_when(df_ema_us, "US")}: {get_val(df_ema_us, '% Above 200d SMA')}%, Captured: {total_us}){stale_us}"
+            title_ema_ind = f"Nifty 500: % Above 200-Day SMA ({_when(df_ema_ind, 'INDIA')}: {get_val(df_ema_ind, '% Above 200d SMA')}%, Captured: {total_ind}){stale_ind}"
+            title_ema_us = f"S&P 500: % Above 200-Day SMA ({_when(df_ema_us, 'US')}: {get_val(df_ema_us, '% Above 200d SMA')}%, Captured: {total_us}){stale_us}"
         
-            title_hl_ind = f"Nifty 500: 52-Week Highs vs Lows ({_when(df_hl_ind, "INDIA")}: Highs {get_val(df_hl_ind, '% New Highs')}%, Lows {get_val(df_hl_ind, '% New Lows')}%){stale_ind}"
-            title_hl_us = f"S&P 500: 52-Week Highs vs Lows ({_when(df_hl_us, "US")}: Highs {get_val(df_hl_us, '% New Highs')}%, Lows {get_val(df_hl_us, '% New Lows')}%){stale_us}"
+            title_hl_ind = f"Nifty 500: 52-Week Highs vs Lows ({_when(df_hl_ind, 'INDIA')}: Highs {get_val(df_hl_ind, '% New Highs')}%, Lows {get_val(df_hl_ind, '% New Lows')}%){stale_ind}"
+            title_hl_us = f"S&P 500: 52-Week Highs vs Lows ({_when(df_hl_us, 'US')}: Highs {get_val(df_hl_us, '% New Highs')}%, Lows {get_val(df_hl_us, '% New Lows')}%){stale_us}"
         
             def get_perf(df):
                 if df is not None and not df.empty and 'Portfolio' in df.columns and 'Benchmark' in df.columns:
