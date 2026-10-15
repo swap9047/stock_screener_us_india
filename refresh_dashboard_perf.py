@@ -15,12 +15,15 @@ Output schema:
     {
       "as_of": "... UTC",
       "period": "6y",
-      "markets": { "<market>": { "<ticker>": {"YYYY-MM-DD": close, ...}, ... } }
+      "markets": { "<market>": { "<ticker>": {"YYYY-MM-DD": close, ...}, ... } },
+      "benchmarks": { "<ticker>": {"YYYY-MM-DD": close, ...}, ... }
     }
 
-The benchmark ticker (US: SPY, INDIA: ^CRSLDX) is stored as a normal column
-within its market, matching what the app's calculate_portfolio_returns()
-expects.
+Each market's own benchmark ticker (from markets.json) is stored as a normal
+column within its market, matching what the app's calculate_portfolio_returns()
+expects. "benchmarks" holds BENCHMARK_SERIES once, for the charts that let you
+pick the index -- a US watchlist against the Nasdaq 100 needs QQQ, which no
+market block stores (2026-10-15).
 
 Closes are PRICE return (auto_adjust=False -> split-adjusted, dividends not
 reinvested). The India benchmark ^CRSLDX is a price index, so dividend-adjusted
@@ -43,6 +46,9 @@ from stock_data import load_watchlists, load_settings, get_benchmarks
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 OUT_FILE = os.path.join(SCRIPT_DIR, "dashboard_perf.json")
 PERIOD = "6y"
+# The indexes the app's charts can be switched between: S&P 500, Nasdaq 100,
+# Nifty 500.
+BENCHMARK_SERIES = ["SPY", "QQQ", "^CRSLDX"]
 
 
 def _download_series(tickers):
@@ -178,12 +184,33 @@ def main():
         status[market] = "ok"
         print(f"[{market}] stored {len(outer)} series")
 
+    # The selectable benchmarks, once. Same keep-the-previous rule as a market:
+    # a failed download keeps the stored series rather than dropping them.
+    prev_bench = previous.get("benchmarks") or {}
+    print(f"[benchmarks] downloading {len(BENCHMARK_SERIES)} series...")
+    bench_series = _download_series(BENCHMARK_SERIES)
+    benchmarks_out = {}
+    for t in BENCHMARK_SERIES:
+        new = {d.strftime("%Y-%m-%d"): round(float(v), 4) for d, v in bench_series[t].items()} \
+            if t in bench_series else None
+        if new:
+            benchmarks_out[t] = keep_recent_tail(new, prev_bench.get(t))
+        elif prev_bench.get(t):
+            benchmarks_out[t] = prev_bench[t]
+            print(f"::warning::[benchmarks] {t} failed to download -- kept the stored series")
+        else:
+            print(f"::warning::[benchmarks] {t} failed to download and none is stored")
+    # "ok" only when every series downloaded afresh: a kept one is stale, and the
+    # verify step's "kept previous data" warning is how that becomes visible.
+    status["benchmarks"] = "ok" if all(t in bench_series for t in BENCHMARK_SERIES) else "failed"
+
     # A market that has dropped out of watchlist.json is intentionally NOT
     # carried over from `previous` -- only markets we still track are written.
     payload = {
         "as_of": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         "period": PERIOD,
         "markets": markets_out,
+        "benchmarks": benchmarks_out,
         "status": status,
     }
     # Atomic, and 3.6 MB: the longest window in this repo for a cancelled job to

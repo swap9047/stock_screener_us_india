@@ -638,8 +638,13 @@ tickers de-duplicated. You edit tickers on the real tabs.
 
 ### News tab
 This tab is rendered only while it is open.
-- **Market breadth (6 months, 1 year, 3 or 5 years).** For the Nifty 500 and S&P 500: % of stocks above
-  their 200-day SMA, and % at 52-week highs and lows.
+- **Market breadth (6 months, 1 year, 3 or 5 years; 1 year by default).** For the Nifty 500
+  and, by the **US index** switch, the S&P 500 or Nasdaq 100: % of stocks above their
+  200-day SMA (0-20% and 80-100% shaded), and 52-week highs (bars up) against lows (bars
+  down). The US Invested return curve follows the switch too. **🔄 Refresh Charts** starts
+  the market-breadth workflow, which also refreshes the watchlist tabs' prices; the
+  charts update about five minutes after it finishes. On a phone the panels stack in one
+  column and tapping only shows values (no zoom).
   The history uses **today's** index members, so earlier years read somewhat stronger
   than they were (survivorship bias); the chart caption says so. Each slot refreshes only
   a market with a new completed session: India's lands by the 7 AM ET slot, the US's by
@@ -814,7 +819,7 @@ GitHub drops or delays no longer costs a day.
 | `fundamentals.yml` | `refresh_fundamentals.py` | 21:00 | `markets` and `limit` inputs |
 | `daily-alerts.yml` | `alert_check.py` | 21:00 | the gate also asks whether any rule is due that day |
 | `expert-views.yml` | `refresh_data.py`, then `refresh_expert_views.py` | 01:00 | `markets` and `limit` inputs |
-| `market-breadth.yml` | breadth + dashboard performance | 07:00, 13:00, 19:00, Mon-Fri | refreshes only a market short of its latest session by the exchange clock, or holding a live (intraday) reading ("unchanged" otherwise; "live" mid-session); a part-published day is "partial", an unpublished one "awaiting", and both fail the run so the gate retries; downloads 50 stocks at a time, 5 s apart, then retries each failure on its own, 5 s apart, up to 3 rounds; fails loudly if a market's breadth didn't refresh |
+| `market-breadth.yml` | breadth (S&P 500, Nifty 500, Nasdaq 100) + dashboard performance + the watchlist snapshot | 07:00, 13:00, 19:00, Mon-Fri; also the app's Refresh Charts | refreshes only a market short of its latest session by the exchange clock, or holding a live (intraday) reading ("unchanged" otherwise; "live" mid-session); a part-published day is "partial", an unpublished one "awaiting", and both fail the run so the gate retries; downloads 50 stocks at a time, 5 s apart, then retries each failure on its own, 5 s apart, up to 3 rounds; fails loudly if a market's breadth didn't refresh |
 | `weekly-wrapup.yml` | `weekly_wrapup_check.py` | Sunday 21:00 | |
 | `checks.yml` | `checks/run_all.py` (offline) | every push | needs no secrets or data |
 

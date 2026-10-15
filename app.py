@@ -65,6 +65,7 @@ from stock_data import (
 )
 from watchlist_labels import COMBINED_TAB_LABELS, watchlist_label_error
 from breadth_math import compute_breadth, assemble_closes
+import breadth_charts
 import llm_util
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE,
                      send_discord_batch, build_discord_messages_for_rule, describe_schedule, DISCLAIMER,
@@ -5426,7 +5427,7 @@ with tab_news:
     if not tab_news.open:
         # A widget that is not rendered on a run loses its session_state, so
         # these would reset every time you left the tab. Re-assigning keeps them.
-        for _k in ("time_horizon_filter", "news_scope_select", "news_search_model_select",
+        for _k in ("time_horizon_filter", "breadth_us_index", "news_scope_select", "news_search_model_select",
                    "news_reasoning_model_select", "news_reasoning_budget_select",
                    "breadth_watchlist_select",
                    *[k for k in st.session_state if str(k).startswith("breadth_benchmark_")]):
@@ -5443,11 +5444,32 @@ with tab_news:
             time_filter = st.radio("Time Horizon", list(_horizon_months), index=1, horizontal=True,
                                    key="time_horizon_filter")
             months = _horizon_months.get(time_filter, 12)
+            # The right-hand column's index (2026-10-15): its breadth, highs/lows and
+            # the US Invested return curve all follow this. Keys are
+            # market_breadth.json's blocks and the benchmark ticker.
+            _us_indexes = {"S&P 500": ("US", "SPY"), "Nasdaq 100": ("NASDAQ100", "QQQ")}
+            us_index_label = st.radio("US index", list(_us_indexes), horizontal=True, key="breadth_us_index")
+            us_breadth_key, us_bench_ticker = _us_indexes.get(us_index_label, ("US", "SPY"))
         
         with col_refresh:
-            if st.button("🔄 Refresh Charts", width="stretch"):
-                st.cache_data.clear()
-                st.rerun()
+            # Starts the market-breadth workflow (2026-10-15): breadth, the
+            # performance curves AND data_snapshot.json, so the watchlist tabs come
+            # back as current as the charts. It used to only clear the cache and
+            # rerun, which re-read the same files -- nothing was fetched. No rerun
+            # here: it would wipe the message. The app re-pulls the files every 5
+            # minutes, so the new data appears on its own once the run commits.
+            if st.button("🔄 Refresh Charts", width="stretch", key="breadth_refresh_charts"):
+                token, repo, _ = get_github_config(st.secrets)
+                if token and repo:
+                    ok, msg = trigger_github_workflow(token, repo, "market-breadth.yml")
+                    if ok:
+                        st.success(f"Refresh started: breadth, performance and watchlist prices. "
+                                   f"[View it on GitHub](https://github.com/{repo}/actions/workflows/market-breadth.yml) "
+                                   "-- about 10 minutes, then the charts update within 5.")
+                    else:
+                        st.error(f"Failed to start refresh: {msg}")
+                else:
+                    st.error("Missing GITHUB_TOKEN or GITHUB_REPO in secrets.")
 
         # Helpers
         import plotly.graph_objects as go
@@ -5622,8 +5644,16 @@ with tab_news:
             df_perf_us = None
             if us_tickers:
                 closes_us = _closes_from_perf("us_invested")
-                if closes_us is not None and "SPY" in closes_us.columns:
-                    df_perf_us = calculate_portfolio_returns(closes_us, us_tickers, "SPY", weights=None, filter_months=months)
+                # The block stores the market's own benchmark (SPY); another index
+                # comes from dashboard_perf.json's "benchmarks" (QQQ for Nasdaq 100).
+                if closes_us is not None and us_bench_ticker not in closes_us.columns:
+                    _bench_series = (perf_data.get("benchmarks") or {}).get(us_bench_ticker)
+                    if _bench_series:
+                        _b = pd.Series(_bench_series, dtype=float, name=us_bench_ticker)
+                        _b.index = pd.to_datetime(_b.index)
+                        closes_us = closes_us.join(_b, how="outer")
+                if closes_us is not None and us_bench_ticker in closes_us.columns:
+                    df_perf_us = calculate_portfolio_returns(closes_us, us_tickers, us_bench_ticker, weights=None, filter_months=months)
             
             if perf_as_of:
                 st.caption(
@@ -5639,7 +5669,13 @@ with tab_news:
             # registry -- NOT renamed alongside markets.json/watchlist.json, so
             # these stay as the literal keys refresh_market_breadth.py writes.
             df_ema_ind, df_hl_ind = format_json_breadth(breadth_data.get("markets", {}).get("INDIA"), months)
-            df_ema_us, df_hl_us = format_json_breadth(breadth_data.get("markets", {}).get("US"), months)
+            df_ema_us, df_hl_us = format_json_breadth(breadth_data.get("markets", {}).get(us_breadth_key), months)
+
+            # A phone or tablet, from the request's User-Agent (no header -> desktop).
+            try:
+                _mobile = breadth_charts.is_mobile(st.context.headers.get("User-Agent", ""))
+            except Exception:
+                _mobile = False
 
             def get_val(df, col):
                 if df is not None and not df.empty and col in df.columns:
@@ -5680,15 +5716,15 @@ with tab_news:
                 return get_last_date(df) + (" intraday" if _breadth_block(market_key).get("live") else "")
 
             total_ind = _breadth_block("INDIA").get("total", "--")
-            total_us = _breadth_block("US").get("total", "--")
+            total_us = _breadth_block(us_breadth_key).get("total", "--")
             stale_ind = _stale_suffix("INDIA")
-            stale_us = _stale_suffix("US")
+            stale_us = _stale_suffix(us_breadth_key)
             
             title_ema_ind = f"Nifty 500: % Above 200-Day SMA ({_when(df_ema_ind, 'INDIA')}: {get_val(df_ema_ind, '% Above 200d SMA')}%, Captured: {total_ind}){stale_ind}"
-            title_ema_us = f"S&P 500: % Above 200-Day SMA ({_when(df_ema_us, 'US')}: {get_val(df_ema_us, '% Above 200d SMA')}%, Captured: {total_us}){stale_us}"
+            title_ema_us = f"{us_index_label}: % Above 200-Day SMA ({_when(df_ema_us, us_breadth_key)}: {get_val(df_ema_us, '% Above 200d SMA')}%, Captured: {total_us}){stale_us}"
         
             title_hl_ind = f"Nifty 500: 52-Week Highs vs Lows ({_when(df_hl_ind, 'INDIA')}: Highs {get_val(df_hl_ind, '% New Highs')}%, Lows {get_val(df_hl_ind, '% New Lows')}%){stale_ind}"
-            title_hl_us = f"S&P 500: 52-Week Highs vs Lows ({_when(df_hl_us, 'US')}: Highs {get_val(df_hl_us, '% New Highs')}%, Lows {get_val(df_hl_us, '% New Lows')}%){stale_us}"
+            title_hl_us = f"{us_index_label}: 52-Week Highs vs Lows ({_when(df_hl_us, us_breadth_key)}: Highs {get_val(df_hl_us, '% New Highs')}%, Lows {get_val(df_hl_us, '% New Lows')}%){stale_us}"
         
             def get_perf(df):
                 if df is not None and not df.empty and 'Portfolio' in df.columns and 'Benchmark' in df.columns:
@@ -5702,103 +5738,68 @@ with tab_news:
             _us_display_label = markets_registry_now.get("us_invested", {}).get("label", "US Invested")
             # These used to read markets.json's "benchmark", which holds the TICKER,
             # so the title said "India Invested vs ^CRSLDX". The panels below
-            # always plot ^CRSLDX / SPY (hardcoded above), so name those directly.
+            # always plot ^CRSLDX and the chosen US index, so name those directly.
             _ind_bench_label = "Nifty 500"
-            _us_bench_label = "S&P 500"
+            _us_bench_label = us_index_label
             title_perf_ind = f"{_ind_display_label} vs {_ind_bench_label} ({get_perf(df_perf_ind)})"
             title_perf_us = f"{_us_display_label} vs {_us_bench_label} ({get_perf(df_perf_us)})"
 
-            fig = make_subplots(
-                rows=3, cols=2,
-                shared_xaxes="all",
-                vertical_spacing=0.08,
-                horizontal_spacing=0.05,
-                subplot_titles=(
-                    title_ema_ind, title_ema_us,
-                    title_hl_ind, title_hl_us,
-                    title_perf_ind, title_perf_us
-                )
-            )
-        
-            colors = ['#2ecc71', '#e74c3c', '#f39c12']
+            # Phones get the six panels stacked in one column (two side by side
+            # are unreadable at that width), titles broken before their figures,
+            # and no zoom or drag -- a tap only shows values (2026-10-15).
+            _panels = [("ema", "ind", title_ema_ind), ("ema", "us", title_ema_us),
+                       ("hl", "ind", title_hl_ind), ("hl", "us", title_hl_us),
+                       ("perf", "ind", title_perf_ind), ("perf", "us", title_perf_us)]
+            if _mobile:
+                _panels = [p_ for m in ("ind", "us") for p_ in _panels if p_[1] == m]
+                _pos = {(kind, m): (i + 1, 1) for i, (kind, m, _) in enumerate(_panels)}
+                fig = make_subplots(rows=6, cols=1, shared_xaxes="all", vertical_spacing=0.05,
+                                    subplot_titles=[t.replace(" (", "<br>(", 1) for _, _, t in _panels])
+            else:
+                _pos = {(kind, m): (i // 2 + 1, i % 2 + 1) for i, (kind, m, _) in enumerate(_panels)}
+                fig = make_subplots(rows=3, cols=2, shared_xaxes="all", vertical_spacing=0.08,
+                                    horizontal_spacing=0.05, subplot_titles=[t for _, _, t in _panels])
+
+            # An index the job has never stored (Nasdaq 100 until its first run
+            # after 2026-10-15) is not a failed refresh -- say so.
+            _us_missing_text = (f"No {us_index_label} data yet - stored by the next breadth run"
+                                if not _breadth_block(us_breadth_key) else "No data - last refresh failed")
+            # Same for the return panel: the chosen index's prices not stored yet
+            # (QQQ until the performance job's first run after 2026-10-15).
+            _us_perf_missing_text = (f"No {us_index_label} prices yet - stored by the next breadth run"
+                                     if closes_us is not None and us_bench_ticker not in closes_us.columns
+                                     else "No data - last refresh failed")
 
             # An empty panel is indistinguishable from a panel whose data is all
             # zero. Say why it is blank -- the S&P breadth charts sat empty for 8
             # days because a refresh leg was failing silently, and nothing on screen
             # pointed at the refresh job.
-            def _no_data(row, col):
-                fig.add_annotation(
-                    text="No data - last refresh failed",
-                    showarrow=False,
-                    xref="x domain", yref="y domain", x=0.5, y=0.5,
-                    row=row, col=col,
-                    font=dict(color="#95a5a6", size=13),
-                )
-
-            # Row 1: SMA Breadth
-            if df_ema_ind is not None and not df_ema_ind.empty:
-                for i, col in enumerate([c for c in df_ema_ind.columns if c != 'Date']):
-                    fig.add_trace(go.Scatter(x=df_ema_ind['Date'], y=df_ema_ind[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5), showlegend=False), row=1, col=1)
-                fig.add_hline(y=50, line_dash="dash", line_color="rgba(0,0,0,0.3)", row=1, col=1)
-            else:
-                _no_data(1, 1)
-
-            if df_ema_us is not None and not df_ema_us.empty:
-                for i, col in enumerate([c for c in df_ema_us.columns if c != 'Date']):
-                    fig.add_trace(go.Scatter(x=df_ema_us['Date'], y=df_ema_us[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5), showlegend=False), row=1, col=2)
-                fig.add_hline(y=50, line_dash="dash", line_color="rgba(0,0,0,0.3)", row=1, col=2)
-            else:
-                _no_data(1, 2)
-
-            # Row 2: High/Low Extremes
-            if df_hl_ind is not None and not df_hl_ind.empty:
-                for i, col in enumerate([c for c in df_hl_ind.columns if c != 'Date']):
-                    fig.add_trace(go.Scatter(x=df_hl_ind['Date'], y=df_hl_ind[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5), showlegend=False), row=2, col=1)
-            else:
-                _no_data(2, 1)
-
-            if df_hl_us is not None and not df_hl_us.empty:
-                for i, col in enumerate([c for c in df_hl_us.columns if c != 'Date']):
-                    fig.add_trace(go.Scatter(x=df_hl_us['Date'], y=df_hl_us[col], name=col, line=dict(color=colors[i % len(colors)], width=1.5), showlegend=False), row=2, col=2)
-            else:
-                _no_data(2, 2)
-
-            # Row 3: Portfolio Performance
             _ind_label = markets_registry_now.get("india_invested", {}).get("label", "India Invested")
             _us_label = markets_registry_now.get("us_invested", {}).get("label", "US Invested")
-            if df_perf_ind is not None and not df_perf_ind.empty:
-                fig.add_trace(go.Scatter(x=df_perf_ind.index, y=df_perf_ind['Portfolio'], name=_ind_label, line=dict(color='#3498db', width=2), showlegend=False), row=3, col=1)
-                fig.add_trace(go.Scatter(x=df_perf_ind.index, y=df_perf_ind['Benchmark'], name=_ind_bench_label, line=dict(color='#95a5a6', width=1.5, dash='dot'), showlegend=False), row=3, col=1)
-            else:
-                _no_data(3, 1)
+            for _m, _ema, _hl, _perf, _name, _bench, _missing in (
+                    ("ind", df_ema_ind, df_hl_ind, df_perf_ind, _ind_label, _ind_bench_label,
+                     "No data - last refresh failed"),
+                    ("us", df_ema_us, df_hl_us, df_perf_us, _us_label, _us_bench_label, _us_missing_text)):
+                _perf_missing = _us_perf_missing_text if _m == "us" else "No data - last refresh failed"
+                _r, _c = _pos[("ema", _m)]
+                if _ema is not None and not _ema.empty:
+                    breadth_charts.add_breadth(fig, _ema, _r, _c, "% Above 200d SMA")
+                else:
+                    breadth_charts.no_data(fig, _r, _c, _missing)
+                _r, _c = _pos[("hl", _m)]
+                if _hl is not None and not _hl.empty:
+                    breadth_charts.add_highs_lows(fig, _hl, _r, _c)
+                else:
+                    breadth_charts.no_data(fig, _r, _c, _missing)
+                _r, _c = _pos[("perf", _m)]
+                if _perf is not None and not _perf.empty:
+                    breadth_charts.add_performance(fig, _perf, _r, _c, _name, _bench)
+                else:
+                    breadth_charts.no_data(fig, _r, _c, _perf_missing)
 
-            if df_perf_us is not None and not df_perf_us.empty:
-                fig.add_trace(go.Scatter(x=df_perf_us.index, y=df_perf_us['Portfolio'], name=_us_label, line=dict(color='#3498db', width=2), showlegend=False), row=3, col=2)
-                fig.add_trace(go.Scatter(x=df_perf_us.index, y=df_perf_us['Benchmark'], name=_us_bench_label, line=dict(color='#95a5a6', width=1.5, dash='dot'), showlegend=False), row=3, col=2)
-            else:
-                _no_data(3, 2)
-
-            fig.update_layout(
-                height=900,
-                hovermode="x unified",
-                # t=30 left the modebar sitting directly on the right column's
-                # subplot title. A vertical modebar parks it against the right edge
-                # and the extra headroom keeps it clear of the titles entirely.
-                margin=dict(l=0, r=0, t=55, b=0),
-                modebar=dict(orientation="v", bgcolor="rgba(0,0,0,0)"),
-                showlegend=False
-            )
-            fig.update_xaxes(showspikes=True, spikemode="across", spikesnap="cursor", showline=True, showgrid=False)
-            fig.update_yaxes(showgrid=True)
-        
-            st.plotly_chart(
-                fig,
-                width="stretch",
-                config={
-                    "displaylogo": False,
-                    "modeBarButtonsToRemove": ["lasso2d", "select2d", "autoScale2d"],
-                },
-            )
+            breadth_charts.style(fig, height=1800 if _mobile else 900, mobile=_mobile)
+            st.plotly_chart(fig, width="stretch", key="breadth_index_chart",
+                            config=breadth_charts.plotly_config(_mobile))
 
         # --- One watchlist's breadth (2026-10-14) -------------------------------
         # The same three charts as above, over the stocks of ONE watchlist or
@@ -5810,7 +5811,8 @@ with tab_news:
         st.subheader("Watchlist Breadth")
         _wb_labels = {k: v.get("label", k) for k, v in markets_registry_now.items()}
         _wb_labels.update(combined_display_label_by_key)
-        _wb_benchmarks = {"Nifty 500": ("^CRSLDX", "INDIA"), "S&P 500": ("SPY", "US")}
+        _wb_benchmarks = {"Nifty 500": ("^CRSLDX", "INDIA"), "S&P 500": ("SPY", "US"),
+                          "Nasdaq 100": ("QQQ", "NASDAQ100")}
         col_wb, col_bench = st.columns([3, 2])
         with col_wb:
             wb_key = st.selectbox("Watchlist", list(_wb_labels), format_func=lambda k: _wb_labels.get(k, k),
@@ -5837,7 +5839,10 @@ with tab_news:
 
         _perf_markets = perf_data.get("markets") or {}
         wb_closes, wb_missing = assemble_closes(_perf_markets, wb_tickers)
-        wb_bench_closes, _ = assemble_closes(_perf_markets, [wb_bench])
+        # dashboard_perf.json's "benchmarks" holds every selectable index once
+        # (QQQ is in no market block); a market block's own copy is a fallback.
+        wb_bench_closes, _ = assemble_closes({"benchmarks": perf_data.get("benchmarks") or {}, **_perf_markets},
+                                             [wb_bench])
         _wb_cutoff = pd.Timestamp.now().normalize() - pd.DateOffset(months=months)
         wb = compute_breadth(wb_closes, since=_wb_cutoff) if not wb_closes.empty else None
 
@@ -5872,32 +5877,16 @@ with tab_news:
                 f"{wb_name} vs {wb_bench_label} ({get_perf(df_wb_perf)})",
             )
             fig_wb = make_subplots(rows=3, cols=1, shared_xaxes="all", vertical_spacing=0.08,
-                                   subplot_titles=wb_titles)
-            fig_wb.add_trace(go.Scatter(x=df_wb_ema["Date"], y=df_wb_ema["% Above 200d SMA"], name=wb_name,
-                                        line=dict(color="#2ecc71", width=1.5)), row=1, col=1)
-            if df_idx_ema is not None and not df_idx_ema.empty:
-                fig_wb.add_trace(go.Scatter(x=df_idx_ema["Date"], y=df_idx_ema["% Above 200d SMA"],
-                                            name=wb_bench_label, line=dict(color="#95a5a6", width=1.5, dash="dot")),
-                                 row=1, col=1)
-            fig_wb.add_hline(y=50, line_dash="dash", line_color="rgba(0,0,0,0.3)", row=1, col=1)
-            fig_wb.add_trace(go.Scatter(x=df_wb_hl["Date"], y=df_wb_hl["% New Highs"], name="% New Highs",
-                                        line=dict(color="#2ecc71", width=1.5)), row=2, col=1)
-            fig_wb.add_trace(go.Scatter(x=df_wb_hl["Date"], y=df_wb_hl["% New Lows"], name="% New Lows",
-                                        line=dict(color="#e74c3c", width=1.5)), row=2, col=1)
+                                   subplot_titles=[t.replace(" (", "<br>(", 1) if _mobile else t
+                                                   for t in wb_titles])
+            breadth_charts.add_breadth(fig_wb, df_wb_ema, 1, 1, wb_name, overlay=df_idx_ema,
+                                       overlay_name=wb_bench_label)
+            breadth_charts.add_highs_lows(fig_wb, df_wb_hl, 2, 1)
             if df_wb_perf is not None and not df_wb_perf.empty:
-                fig_wb.add_trace(go.Scatter(x=df_wb_perf.index, y=df_wb_perf["Portfolio"], name=wb_name,
-                                            line=dict(color="#3498db", width=2)), row=3, col=1)
-                fig_wb.add_trace(go.Scatter(x=df_wb_perf.index, y=df_wb_perf["Benchmark"], name=wb_bench_label,
-                                            line=dict(color="#95a5a6", width=1.5, dash="dot")), row=3, col=1)
+                breadth_charts.add_performance(fig_wb, df_wb_perf, 3, 1, wb_name, wb_bench_label)
             else:
-                fig_wb.add_annotation(text=f"No {wb_bench_label} price series stored yet", showarrow=False,
-                                      xref="x3 domain", yref="y3 domain", x=0.5, y=0.5,
-                                      font=dict(color="#95a5a6", size=13))
-            fig_wb.update_layout(height=900, hovermode="x unified", showlegend=False,
-                                 margin=dict(l=0, r=0, t=55, b=0),
-                                 modebar=dict(orientation="v", bgcolor="rgba(0,0,0,0)"))
-            fig_wb.update_xaxes(showspikes=True, spikemode="across", spikesnap="cursor", showline=True, showgrid=False)
-            fig_wb.update_yaxes(showgrid=True)
+                breadth_charts.no_data(fig_wb, 3, 1, f"No {wb_bench_label} price series stored yet")
+            breadth_charts.style(fig_wb, height=1100 if _mobile else 900, mobile=_mobile)
             _wb_note = (f"{len(wb_tickers)} stocks; {wb['total']} have the 200 days of history the line needs, "
                         f"so each one moves it by {100 / max(wb['total'], 1):.1f} points. "
                         f"Return is the list equal-weighted and rebalanced daily, price only, against "
@@ -5909,8 +5898,7 @@ with tab_news:
                              f"{'is' if len(wb_missing) == 1 else 'are'} left out.")
             st.caption(_wb_note)
             st.plotly_chart(fig_wb, width="stretch", key="breadth_watchlist_chart",
-                            config={"displaylogo": False,
-                                    "modeBarButtonsToRemove": ["lasso2d", "select2d", "autoScale2d"]})
+                            config=breadth_charts.plotly_config(_mobile))
 
         st.divider()
         st.subheader("Watchlist news digest")

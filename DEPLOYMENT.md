@@ -145,7 +145,7 @@ It uses `GEMINI_API_KEY` and `DATA_REPO_TOKEN` repo secrets. It supports `workfl
 
 ## 8d. Market breadth & dashboard performance
 
-A sixth GitHub Actions workflow, `.github/workflows/market-breadth.yml`, does its work once per **7:00 AM**, **1:00 PM** and **7:00 PM ET** slot, Monday to Friday (a late run still counts until the next slot starts). It runs `refresh_market_breadth.py` and `refresh_dashboard_perf.py` to compute advance/decline breadth metrics (`market_breadth.json`) and portfolio performance metrics (`dashboard_perf.json`), committing both to the private data repo.
+A sixth GitHub Actions workflow, `.github/workflows/market-breadth.yml`, does its work once per **7:00 AM**, **1:00 PM** and **7:00 PM ET** slot, Monday to Friday (a late run still counts until the next slot starts). It runs `refresh_market_breadth.py` (S&P 500, Nifty 500 and Nasdaq 100) and `refresh_dashboard_perf.py` to compute breadth metrics (`market_breadth.json`) and portfolio performance metrics (`dashboard_perf.json`), then `refresh_data.py` so the watchlist tabs' prices (`data_snapshot.json`) are as current as the charts, committing all three to the private data repo. The app's **🔄 Refresh Charts** button starts the same workflow, using `GITHUB_TOKEN`.
 
 Yahoo publishes a day's closes late, often hours after the close and a few stocks at a time. When the latest day is missing or only partly there, the run saves what it has, shows red, and the next hourly wake-up tries again. A red breadth run in the evening is usually this, not a fault.
 

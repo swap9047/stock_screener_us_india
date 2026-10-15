@@ -104,6 +104,33 @@ def get_sp500_tickers():
     table = pd.read_html(io.StringIO(r.text))[0]
     return table['Symbol'].str.replace('.', '-').tolist()
 
+def get_nasdaq100_tickers():
+    """Nasdaq-100 members (2026-10-15: the app's US column can switch to it).
+
+    From Wikipedia's list page, like the S&P 500's -- the index article itself no
+    longer carries the table. Nasdaq's own list API is the fallback: one source
+    being down or reshaped should not cost the leg. Fewer than 90 names from
+    either is treated as a broken parse, not a membership change.
+    """
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    try:
+        r = requests.get('https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies',
+                         headers=headers, timeout=30)
+        table = next(t for t in pd.read_html(io.StringIO(r.text)) if 'Ticker' in t.columns)
+        tickers = table['Ticker'].astype(str).str.strip().str.replace('.', '-').tolist()
+        if len(tickers) >= 90:
+            return tickers
+        print(f"  Nasdaq-100 list from Wikipedia had only {len(tickers)} names -- trying Nasdaq")
+    except Exception as e:
+        print(f"  Nasdaq-100 list from Wikipedia failed ({e}) -- trying Nasdaq")
+    r = requests.get('https://api.nasdaq.com/api/quote/list-type/nasdaq100',
+                     headers={**headers, 'Accept': 'application/json'}, timeout=30)
+    rows = ((r.json().get('data') or {}).get('data') or {}).get('rows') or []
+    tickers = [str(row['symbol']).strip().replace('.', '-') for row in rows if row.get('symbol')]
+    if len(tickers) < 90:
+        raise ValueError(f"Nasdaq-100 list has only {len(tickers)} names from either source")
+    return tickers
+
 def get_nifty500_tickers():
     url = 'https://nsearchives.nseindia.com/content/indices/ind_nifty500list.csv'
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -323,6 +350,9 @@ def main():
     legs = [
         ("US", get_sp500_tickers, "S&P 500", "America/New_York", (9, 30), (16, 0)),
         ("INDIA", get_nifty500_tickers, "Nifty 500", "Asia/Kolkata", (9, 15), (15, 30)),
+        # ~100 names, almost all also in the S&P 500 -- downloaded again rather
+        # than shared, so each leg stays independent (one failing keeps the other).
+        ("NASDAQ100", get_nasdaq100_tickers, "Nasdaq 100", "America/New_York", (9, 30), (16, 0)),
     ]
 
     for key, get_tickers, label, tz, open_hhmm, close_hhmm in legs:

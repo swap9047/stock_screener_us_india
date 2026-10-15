@@ -156,26 +156,39 @@ if tail and share:
 
 def run_main(stored, expected, block, live_days=None):
     """main() with the downloads stubbed; returns (saved file, legs downloaded).
-    `live_days` {tz: {dates}}: what is_live answers (default: nothing is live)."""
+    `live_days` {tz: {dates}}: what is_live answers (default: nothing is live).
+
+    The Nasdaq 100 leg (2026-10-15) is stubbed too -- nothing here may touch the
+    network -- and, unless `block` has a "Nasdaq 100" entry, left out of what is
+    returned: these checks are about the US and India legs."""
     calls = []
     live_days = live_days or {}
+    with_nasdaq = "Nasdaq 100" in block
+    block = {"Nasdaq 100": {"total": 9, "pct_above": 50.0, "history": {"2026-10-01": 50.0},
+                            "partial": False, "unpublished": []}, **block}
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "market_breadth.json")
         Path(path).write_text(json.dumps(stored))
         saved = (rmb.BREADTH_FILE, rmb.get_sp500_tickers, rmb.get_nifty500_tickers,
-                 rmb.calculate_breadth, rmb.expected_session, rmb.is_live)
+                 rmb.calculate_breadth, rmb.expected_session, rmb.is_live, rmb.get_nasdaq100_tickers)
         rmb.BREADTH_FILE = path
         rmb.is_live = lambda day, tz, hhmm, **k: day in live_days.get(tz, set())
         rmb.get_sp500_tickers = lambda: ["A"] * 10
         rmb.get_nifty500_tickers = lambda: ["B.NS"] * 10
+        rmb.get_nasdaq100_tickers = lambda: ["C"] * 10
         rmb.calculate_breadth = lambda tickers, label, tz, hhmm: (calls.append(label) or dict(block[label]))
         rmb.expected_session = lambda tz, hhmm, **k: expected[tz]
         try:
             rmb.main()
-            return json.loads(Path(path).read_text()), calls
+            out = json.loads(Path(path).read_text())
+            if not with_nasdaq:
+                out["status"].pop("NASDAQ100", None)
+                out["markets"].pop("NASDAQ100", None)
+                calls = [c for c in calls if c != "Nasdaq 100"]
+            return out, calls
         finally:
             (rmb.BREADTH_FILE, rmb.get_sp500_tickers, rmb.get_nifty500_tickers,
-             rmb.calculate_breadth, rmb.expected_session, rmb.is_live) = saved
+             rmb.calculate_breadth, rmb.expected_session, rmb.is_live, rmb.get_nasdaq100_tickers) = saved
 
 
 STORED = {"as_of": "2026-10-03 17:00", "markets": {
@@ -269,9 +282,48 @@ LATER = dict(LIVE_US, total=480, history={"2026-10-13": 49.4, "2026-10-14": 51.0
 out, _ = run_main(STORED_LIVE, EXP, {"S&P 500": LATER}, live_days={NY: {"2026-10-14"}})
 check(out["markets"]["US"]["history"]["2026-10-14"] == 51.0, "B1: a newer live reading replaces an older one")
 
+# --- Nasdaq 100 (2026-10-15): a third leg, stored under its own key ------------------
+NDX = {"total": 101, "pct_above": 55.0, "history": {"2026-10-14": 55.0}, "partial": False, "unpublished": []}
+out, calls = run_main(STORED, {"America/New_York": "2026-10-14", "Asia/Kolkata": "2026-09-30"},
+                      {"S&P 500": dict(NDX, total=500), "Nasdaq 100": NDX})
+check("Nasdaq 100" in calls and out["status"].get("NASDAQ100") == "ok"
+      and out["markets"]["NASDAQ100"]["history"] == {"2026-10-14": 55.0},
+      f"Nasdaq 100 is computed and stored as its own block ({out['status']})")
+check(out["markets"]["US"]["total"] == 500, "...without touching the S&P 500 block")
+legs = [l for l in (REPO / "refresh_market_breadth.py").read_text().splitlines() if '("NASDAQ100"' in l]
+check(legs and '"America/New_York", (9, 30), (16, 0)' in legs[0], "Nasdaq 100 runs on the US exchange clock")
+
+nd = fn("get_nasdaq100_tickers")
+if nd:
+    import types
+    class Resp:
+        def __init__(self, text="", js=None): self.text, self._js = text, js
+        def json(self): return self._js
+    wiki = ("<table><tr><th>Ticker</th><th>Company</th></tr>"
+            + "".join(f"<tr><td>T{i}</td><td>Co {i}</td></tr>" for i in range(99))
+            + "<tr><td>ACME.B</td><td>Acme</td></tr></table>")
+    api = {"data": {"data": {"rows": [{"symbol": f"N{i}"} for i in range(101)]}}}
+    saved_req = rmb.requests
+    try:
+        rmb.requests = types.SimpleNamespace(get=lambda url, **k: Resp(wiki) if "wikipedia" in url else Resp(js=api))
+        got = nd()
+        check(len(got) == 100 and got[-1] == "ACME-B", f"Nasdaq 100 members from Wikipedia, dots as dashes ({len(got)})")
+        rmb.requests = types.SimpleNamespace(get=lambda url, **k: Resp("<p>no table</p>") if "wikipedia" in url else Resp(js=api))
+        got = nd()
+        check(len(got) == 101 and got[0] == "N0", "Wikipedia without the table -> Nasdaq's list API")
+        rmb.requests = types.SimpleNamespace(get=lambda url, **k: Resp(wiki.replace("T9", "")[:200]) if "wikipedia" in url
+                                             else Resp(js={"data": {"data": {"rows": [{"symbol": "X"}]}}}))
+        try:
+            nd(); check(False, "a broken parse from both sources raises")
+        except ValueError:
+            check(True, "a broken parse from both sources raises (the leg fails, the stored block stays)")
+    finally:
+        rmb.requests = saved_req
+
 # --- B2 / B4 / workflow ---------------------------------------------------------------
 WF = (REPO / ".github/workflows/market-breadth.yml").read_text()
 check('days: "MON,TUE,WED,THU,FRI"' in WF, "B2: the breadth slots run Monday to Friday")
+check('{"US", "INDIA", "NASDAQ100"}' in WF, "the verify step expects the Nasdaq 100 block too")
 check('("ok", "unchanged", "live", "awaiting", "partial")' in WF and 'v in ("awaiting", "partial")' in WF and "sys.exit(1)" in WF,
       "B1: the verify step accepts an unchanged market and fails an awaiting or partial one (so the gate retries)")
 APP = (REPO / "app.py").read_text()

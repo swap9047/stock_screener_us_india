@@ -60,7 +60,10 @@ def run_main(capture_per_market, out_file):
     calls = {"i": 0}
 
     def _dl(tickers):
-        # markets are iterated in watchlist order
+        # markets are iterated in watchlist order; the call after them is the
+        # shared "benchmarks" block (2026-10-15), always fully captured here
+        if calls["i"] >= len(WL):
+            return fake_series(tickers, len(tickers))
         market = list(WL)[calls["i"]]
         calls["i"] += 1
         return fake_series(tickers, capture_per_market[market])
@@ -77,7 +80,7 @@ tmp = os.path.join(tempfile.mkdtemp(), "dashboard_perf.json")
 good = run_main({"us_picks": 4, "in_picks": 3}, tmp)
 check(len(good["markets"]["us_picks"]) == 4 and len(good["markets"]["in_picks"]) == 3,
       "a healthy run stores every series")
-check(good.get("status") == {"us_picks": "ok", "in_picks": "ok"}, "healthy run reports status ok")
+check(good.get("status") == {"us_picks": "ok", "in_picks": "ok", "benchmarks": "ok"}, "healthy run reports status ok")
 
 # Run 2: the US leg is throttled down to 1 of 4 -- below the 50% floor.
 degraded = run_main({"us_picks": 1, "in_picks": 3}, tmp)

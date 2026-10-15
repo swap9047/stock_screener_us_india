@@ -126,5 +126,42 @@ check(keep({"2026-01-05": 1.0}, {"2026-01-05": 1.0, "2026-01-06": 1.1}, today=da
       "W4: an old stored tail (a delisted ticker) is not carried")
 check(keep({}, old) == {} and keep(new, None) == new, "W4: nothing to merge -> the download as is")
 
+# --- dashboard_perf.json "benchmarks" (2026-10-15: SPY, QQQ, ^CRSLDX once) ------------
+import json, tempfile, os
+def run_perf(previous, fail=()):
+    d = tempfile.mkdtemp()
+    path = os.path.join(d, "dashboard_perf.json")
+    if previous is not None:
+        Path(path).write_text(json.dumps(previous))
+    saved = (rdp.OUT_FILE, rdp._download_series, rdp.load_watchlists, rdp.load_settings, rdp.get_benchmarks)
+    days = pd.bdate_range("2026-10-08", "2026-10-14")
+    rdp.OUT_FILE = path
+    rdp._download_series = lambda tickers: {t: pd.Series(range(1, len(days) + 1), index=days, dtype=float)
+                                            for t in tickers if t not in fail}
+    rdp.load_watchlists = lambda: {"us_one": ["ACME", "BOLT"]}
+    rdp.load_settings = lambda: {}
+    rdp.get_benchmarks = lambda settings=None: {"us_one": "SPY"}
+    try:
+        rdp.main()
+        return json.loads(Path(path).read_text())
+    finally:
+        rdp.OUT_FILE, rdp._download_series, rdp.load_watchlists, rdp.load_settings, rdp.get_benchmarks = saved
+out = run_perf(None)
+check(sorted(out["benchmarks"]) == ["QQQ", "SPY", "^CRSLDX"] and out["status"]["benchmarks"] == "ok"
+      and max(out["benchmarks"]["QQQ"]) == "2026-10-14",
+      f"perf: every selectable index is stored once under benchmarks ({sorted(out['benchmarks'])})")
+check(sorted(out["markets"]["us_one"]) == ["ACME", "BOLT", "SPY"], "perf: market blocks are unchanged (own benchmark kept)")
+prev = {"markets": {}, "benchmarks": {"QQQ": {"2026-10-13": 9.0}}}
+out = run_perf(prev, fail=("QQQ",))
+check(out["benchmarks"]["QQQ"] == {"2026-10-13": 9.0} and out["status"]["benchmarks"] == "failed",
+      "perf: a failed benchmark download keeps the stored series, and says so")
+
+APP2 = (REPO / "app.py").read_text()
+check('"Nasdaq 100": ("NASDAQ100", "QQQ")' in APP2 and 'key="breadth_us_index"' in APP2,
+      "app: the US column switches between S&P 500 and Nasdaq 100")
+check('"Nasdaq 100": ("QQQ", "NASDAQ100")' in APP2, "app: the watchlist view offers Nasdaq 100 as a benchmark")
+check('perf_data.get("benchmarks")' in APP2 and APP2.count('perf_data.get("benchmarks")') >= 2,
+      "app: both charts take a benchmark the market block lacks from dashboard_perf.json's benchmarks")
+
 print(f"FAILURES: {fails}")
 sys.exit(1 if fails else 0)

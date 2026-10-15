@@ -1,0 +1,177 @@
+"""Plotly building blocks for the News tab's breadth and performance charts.
+
+Shared by the index view (Nifty 500 / S&P 500 or Nasdaq 100, side by side) and
+the per-watchlist view, so both look the same. Pure plotly + pandas, no
+Streamlit: the app passes in DataFrames and a `mobile` flag.
+
+Design (2026-10-15, the charts "looked basic"):
+- breadth: a line on a fixed 0-100% axis, the 0-20% / 80-100% extremes
+  shaded, the 50% line dashed, and a dot on the last point -- so where the line
+  ends is visible (at 3 years the last few days share a pixel, and the line read
+  as stopping days early);
+- 52-week highs vs lows as diverging bars, highs up and lows down, instead of
+  two tangled lines;
+- returns: the watchlist filled against its 100 start, the index dotted;
+- transparent backgrounds and faint grids, so Streamlit's light and dark themes
+  both carry it.
+
+On a phone (owner, 2026-10-15) a tap only shows values: dragging, pinching and
+double-tapping no longer zoom or filter the chart, and the panels stack in one
+column instead of being squeezed side by side.
+"""
+
+import pandas as pd
+import plotly.graph_objects as go
+
+GREEN = "#2ecc71"
+RED = "#e74c3c"
+BLUE = "#3498db"
+GREY = "#95a5a6"
+FAINT = "rgba(128,128,128,0.18)"
+
+_MOBILE_MARKERS = ("mobi", "android", "iphone", "ipad", "ipod")
+
+
+def is_mobile(user_agent):
+    """True for a phone or tablet browser's User-Agent string."""
+    ua = (user_agent or "").lower()
+    return any(m in ua for m in _MOBILE_MARKERS)
+
+
+def _last_point(fig, x, y, color, row, col):
+    """A dot on the series' last point, so the end of the line is visible."""
+    fig.add_trace(go.Scatter(x=[x.iloc[-1]], y=[y.iloc[-1]], mode="markers", showlegend=False,
+                             marker=dict(color=color, size=8, line=dict(color="white", width=1.5)),
+                             hoverinfo="skip"), row=row, col=col)
+
+
+# Every add_hline/add_hrect here passes exclude_empty_subplots=False: plotly skips
+# a shape on a subplot with no trace yet, and these are drawn before the lines --
+# so the zones, the 50% line and the 100 baseline silently vanished (2026-10-15).
+
+
+def add_breadth(fig, df, row, col, name, overlay=None, overlay_name=None):
+    """% above the 200-day SMA: `df` has Date and "% Above 200d SMA". `overlay`
+    (same shape) is drawn dotted underneath, e.g. the index under a watchlist."""
+    # No fill under the line: a fill to zero means nothing for a % that swings
+    # around 50, and it hid these zones.
+    for y0, y1, colour in ((0, 20, "rgba(231,76,60,0.12)"), (80, 100, "rgba(46,204,113,0.12)")):
+        fig.add_hrect(y0=y0, y1=y1, fillcolor=colour, line_width=0, layer="below", row=row, col=col,
+                      exclude_empty_subplots=False)
+    fig.add_hline(y=50, line_dash="dash", line_color="rgba(128,128,128,0.55)", line_width=1, row=row, col=col,
+                      exclude_empty_subplots=False)
+    if overlay is not None and not overlay.empty:
+        fig.add_trace(go.Scatter(x=overlay["Date"], y=overlay["% Above 200d SMA"], name=overlay_name,
+                                 line=dict(color=GREY, width=1.5, dash="dot"),
+                                 hovertemplate="%{y:.1f}%"), row=row, col=col)
+    fig.add_trace(go.Scatter(x=df["Date"], y=df["% Above 200d SMA"], name=name,
+                             line=dict(color=GREEN, width=2), hovertemplate="%{y:.1f}%"),
+                  row=row, col=col)
+    _last_point(fig, df["Date"], df["% Above 200d SMA"], GREEN, row, col)
+    ticks = [0, 20, 50, 80, 100]
+    fig.update_yaxes(range=[0, 100], tickvals=ticks, ticktext=[f"{t}%" for t in ticks], row=row, col=col)
+
+
+def add_highs_lows(fig, df, row, col):
+    """52-week highs (up, green) and lows (down, red) as diverging bars: `df`
+    has Date, "% New Highs" and "% New Lows". Hover shows both as positives."""
+    highs, lows = df["% New Highs"], df["% New Lows"]
+    fig.add_trace(go.Bar(x=df["Date"], y=highs, name="New highs", marker_color=GREEN, marker_line_width=0,
+                         hovertemplate="%{y:.1f}%"), row=row, col=col)
+    fig.add_trace(go.Bar(x=df["Date"], y=-lows, name="New lows", marker_color=RED, marker_line_width=0,
+                         customdata=lows, hovertemplate="%{customdata:.1f}%"), row=row, col=col)
+    fig.add_hline(y=0, line_color="rgba(128,128,128,0.55)", line_width=1, row=row, col=col,
+                      exclude_empty_subplots=False)
+    # Symmetric axis with positive labels both ways: the lows are drawn negative.
+    top = max(float(highs.max() or 0), float(lows.max() or 0), 5.0)
+    step = 5 if top <= 20 else 10 if top <= 50 else 25
+    edge = step * -(-top // step)
+    ticks = [v for v in range(-int(edge), int(edge) + 1, step)]
+    fig.update_yaxes(range=[-edge, edge], tickvals=ticks, ticktext=[f"{abs(v)}%" for v in ticks],
+                     row=row, col=col)
+
+
+def add_performance(fig, df, row, col, name, bench_name):
+    """Equal-weight return vs the index: `df` indexed by date with Portfolio and
+    Benchmark (both start at 100)."""
+    fig.add_hline(y=100, line_color="rgba(128,128,128,0.55)", line_width=1, row=row, col=col,
+                      exclude_empty_subplots=False)
+    # An invisible 100 line for the watchlist's fill to sit against.
+    fig.add_trace(go.Scatter(x=df.index, y=[100] * len(df), line=dict(width=0), showlegend=False,
+                             hoverinfo="skip"), row=row, col=col)
+    fig.add_trace(go.Scatter(x=df.index, y=df["Portfolio"], name=name, line=dict(color=BLUE, width=2),
+                             fill="tonexty", fillcolor="rgba(52,152,219,0.10)", hovertemplate="%{y:.1f}"),
+                  row=row, col=col)
+    fig.add_trace(go.Scatter(x=df.index, y=df["Benchmark"], name=bench_name,
+                             line=dict(color=GREY, width=1.5, dash="dot"), hovertemplate="%{y:.1f}"),
+                  row=row, col=col)
+    _last_point(fig, pd.Series(df.index), df["Portfolio"].reset_index(drop=True), BLUE, row, col)
+
+
+def no_data(fig, row, col, text):
+    """Why a panel is blank: an empty panel reads the same as all-zero data.
+
+    Placed on the page at the centre of the panel's area, not on its axes: an
+    axis with no trace is never drawn, so a note anchored to it was dropped --
+    and xref="x domain" with row/col put it in the FIRST panel anyway. Only the
+    first panel's note ever showed (2026-10-15)."""
+    sp = fig.get_subplot(row, col)
+    (x0, x1), (y0, y1) = sp.xaxis.domain, sp.yaxis.domain
+    fig.add_annotation(text=text, showarrow=False, xref="paper", yref="paper",
+                       x=(x0 + x1) / 2, y=(y0 + y1) / 2, xanchor="center", yanchor="middle",
+                       font=dict(color=GREY, size=13))
+
+
+def _date_span(fig):
+    """(first, last) date over every trace, or None."""
+    lo = hi = None
+    for tr in fig.data:
+        if tr.x is None or len(tr.x) == 0:
+            continue
+        xs = pd.to_datetime(pd.Series(list(tr.x)), errors="coerce").dropna()
+        if xs.empty:
+            continue
+        lo = xs.min() if lo is None else min(lo, xs.min())
+        hi = xs.max() if hi is None else max(hi, xs.max())
+    return (lo, hi) if lo is not None else None
+
+
+def style(fig, height, mobile):
+    """Shared look, and the phone behaviour: no zoom/drag, values on tap.
+
+    The date axis is set outright from the data: the panels share one axis, and
+    an EMPTY panel's default numeric range read as 1970 and squeezed every other
+    panel into a sliver at the right (2026-10-15, a benchmark not stored yet).
+    A 2% pad on the right keeps the last-point dot clear of the edge."""
+    fig.update_layout(
+        height=height,
+        hovermode="x unified",
+        showlegend=False,
+        barmode="relative",
+        bargap=0,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        # t=55: the right column's titles cleared the modebar only with this
+        # headroom (a vertical modebar parks against the right edge).
+        margin=dict(l=0, r=0, t=55, b=0),
+        modebar=dict(orientation="v", bgcolor="rgba(0,0,0,0)"),
+        hoverlabel=dict(font_size=12),
+        dragmode=False if mobile else "zoom",
+    )
+    fig.update_annotations(font_size=13)
+    span = _date_span(fig)
+    if span:
+        lo, hi = span
+        fig.update_xaxes(range=[lo, hi + (hi - lo) * 0.02])
+    fig.update_xaxes(showspikes=True, spikemode="across", spikesnap="cursor", spikethickness=1,
+                     spikecolor="rgba(128,128,128,0.6)", spikedash="dot", showline=False, showgrid=False,
+                     fixedrange=mobile)
+    fig.update_yaxes(showgrid=True, gridcolor=FAINT, zeroline=False, fixedrange=mobile)
+    return fig
+
+
+def plotly_config(mobile):
+    """st.plotly_chart's config: on a phone, no modebar, scroll or double-tap zoom."""
+    if mobile:
+        return {"displayModeBar": False, "scrollZoom": False, "doubleClick": False, "displaylogo": False}
+    return {"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "select2d", "autoScale2d"]}

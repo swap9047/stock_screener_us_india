@@ -77,11 +77,23 @@ jobs:
         run: |
           python -u refresh_dashboard_perf.py 2>&1 | python -u log_redact.py
 
+      # The watchlist tabs' prices too (owner, 2026-10-15): a breadth refresh --
+      # scheduled or the app's "Refresh Charts" button -- leaves the tabs as
+      # current as the charts. The same script and commit as data-refresh.yml,
+      # whose hourly runs GitHub throttles to a few a day. continue-on-error: a
+      # failed snapshot must not cost the breadth commit below; commit-data keeps
+      # the data repo's copy when it is newer, and skips an unchanged file.
+      - name: Refresh data snapshot
+        continue-on-error: true
+        shell: bash
+        run: |
+          python -u refresh_data.py 2>&1 | python -u log_redact.py
+
       - name: Commit and push changes
         uses: ./.github/actions/commit-data
         with:
-          files: market_breadth.json dashboard_perf.json
-          message: "Update market breadth & dashboard performance data [automated]"
+          files: market_breadth.json dashboard_perf.json data_snapshot.json
+          message: "Update market breadth, dashboard performance & data snapshot [automated]"
 
       # Runs AFTER the commit on purpose. A leg that fails still leaves the
       # other market refreshed and worth committing, and refresh_market_breadth.py
@@ -107,7 +119,7 @@ jobs:
               print(f"::error::Yahoo has not fully published the latest session for {awaiting} yet "
                     f"({ {k: status[k] for k in awaiting} }) -- the slot gate retries at the next wake-up")
           failed = sorted(k for k, v in status.items() if v not in ("ok", "unchanged", "live", "awaiting", "partial"))
-          missing = sorted({"US", "INDIA"} - set(status))
+          missing = sorted({"US", "INDIA", "NASDAQ100"} - set(status))
           if awaiting and not (failed or missing):
               sys.exit(1)
           if failed or missing:
