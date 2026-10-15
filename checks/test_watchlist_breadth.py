@@ -109,14 +109,18 @@ check(empty.empty and missing == ["ACME"], "W3: nothing stored -> an empty panel
 
 # --- W4 ------------------------------------------------------------------------------
 APP = (REPO / "app.py").read_text()
-check('key="breadth_watchlist_select"' in APP and 'list(_wb_labels)' in APP
+check('key=f"breadth_watchlist_{side}"' in APP and "_wb_options = list(_wb_labels)" in APP
       and "_wb_labels.update(combined_display_label_by_key)" in APP,
-      "W4: the dropdown offers every watchlist and the combined groups")
-check('key=f"breadth_benchmark_{wb_key}"' in APP and '"Nifty 500": ("^CRSLDX", "INDIA"), "S&P 500": ("SPY", "US")' in APP,
-      "W4: a Nifty 500 / S&P 500 benchmark, kept per watchlist")
-check("compute_breadth(wb_closes" in APP and "assemble_closes(_perf_markets, wb_tickers)" in APP,
+      "W4: each side's dropdown offers every watchlist and the combined groups")
+check('_watchlist_side("left", "india_invested", col_left)' in APP
+      and '_watchlist_side("right", "us_invested", col_right)' in APP,
+      "W4: split in two -- India Invested on the left, US Invested on the right by default (2026-10-15)")
+check('key=f"breadth_benchmark_{side}_{wb_key}"' in APP and "index=0 if india_share > 0.5 else 1" in APP
+      and '"Nifty 500": ("^CRSLDX", "INDIA"), "S&P 500": ("SPY", "US")' in APP,
+      "W4: a benchmark per side and watchlist, defaulting to the list's exchange (Nifty 500 / S&P 500)")
+check("compute_breadth(closes, since=_wb_cutoff)" in APP and "assemble_closes(_perf_markets, tickers)" in APP,
       "W4: the view computes through breadth_math, from dashboard_perf.json")
-check('"breadth_watchlist_select",' in APP and 'startswith("breadth_benchmark_")' in APP,
+check('"breadth_watchlist_left", "breadth_watchlist_right",' in APP and 'startswith("breadth_benchmark_")' in APP,
       "W4: the view's choices survive leaving the News tab")
 PERF = (REPO / "refresh_dashboard_perf.py").read_text()
 check('PERIOD = "6y"' in PERF and 'period="5y"' not in PERF,

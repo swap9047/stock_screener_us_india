@@ -46,16 +46,38 @@ def _last_point(fig, x, y, color, row, col):
                              hoverinfo="skip"), row=row, col=col)
 
 
+def _panel_legend(fig, row, col):
+    """The id of a legend just under this panel's bottom-left corner, created on
+    first use. One per breadth panel (plotly 5.15+ multiple legends): a single
+    figure legend could not say which panel's lines it names. Under the panel,
+    not in it: a watchlist's line often runs through the top corners, and the
+    gap below is free -- the shared date axis labels only the bottom row.
+    traceorder is set outright: plotly reverses a legend by default when the
+    figure has stacked bars (the highs/lows panels), so the first one read
+    backwards."""
+    sp = fig.get_subplot(row, col)
+    n = sp.xaxis.plotly_name[len("xaxis"):]
+    legend_id = f"legend{n}" if n not in ("", "1") else "legend"
+    (x0, _), (y0, _) = sp.xaxis.domain, sp.yaxis.domain
+    fig.update_layout({legend_id: dict(x=x0, y=y0 - 0.005, xanchor="left", yanchor="top", orientation="h",
+                                       traceorder="normal", bgcolor="rgba(0,0,0,0)", font=dict(size=11))})
+    return legend_id
+
+
 # Every add_hline/add_hrect here passes exclude_empty_subplots=False: plotly skips
 # a shape on a subplot with no trace yet, and these are drawn before the lines --
 # so the zones, the 50% line and the 100 baseline silently vanished (2026-10-15).
 
 
-def add_breadth(fig, df, row, col, name, overlay=None, overlay_name=None, show_50=False):
+def add_breadth(fig, df, row, col, overlay=None, overlay_name=None, show_50=False):
     """% above the 200-day SMA: `df` has Date and "% Above 200d SMA". `overlay`
     (same shape) is drawn dotted underneath, e.g. the index under a watchlist.
     `show_50` adds df's "% Above 50d SMA" in amber (the chart's 50-day toggle),
-    under the 200-day line, which stays the main reading."""
+    under the 200-day line, which stays the main reading.
+
+    Labels (owner, 2026-10-15): the panel's own legend says "%200d" / "%50d", the
+    hover says it in full -- "% stocks above 200d SMA" -- via a hovertemplate whose
+    empty <extra> drops the short name from the hover."""
     # No fill under the line: a fill to zero means nothing for a % that swings
     # around 50, and it hid these zones.
     # Faint on purpose (owner, 2026-10-15): a tint behind the line, not a block
@@ -65,18 +87,22 @@ def add_breadth(fig, df, row, col, name, overlay=None, overlay_name=None, show_5
                       exclude_empty_subplots=False)
     fig.add_hline(y=50, line_dash="dash", line_color="rgba(128,128,128,0.55)", line_width=1, row=row, col=col,
                       exclude_empty_subplots=False)
+    legend = _panel_legend(fig, row, col)
     if overlay is not None and not overlay.empty:
-        fig.add_trace(go.Scatter(x=overlay["Date"], y=overlay["% Above 200d SMA"], name=overlay_name,
-                                 line=dict(color=GREY, width=1.5, dash="dot"),
-                                 hovertemplate="%{y:.1f}%"), row=row, col=col)
+        fig.add_trace(go.Scatter(x=overlay["Date"], y=overlay["% Above 200d SMA"], name=f"{overlay_name} %200d",
+                                 line=dict(color=GREY, width=1.5, dash="dot"), legend=legend, legendrank=3,
+                                 hovertemplate=f"{overlay_name}: % stocks above 200d SMA %{{y:.1f}}%<extra></extra>"),
+                      row=row, col=col)
     if show_50 and "% Above 50d SMA" in df.columns and df["% Above 50d SMA"].notna().any():
         d50 = df[["Date", "% Above 50d SMA"]].dropna()
-        fig.add_trace(go.Scatter(x=d50["Date"], y=d50["% Above 50d SMA"], name=f"{name} (50-day)",
-                                 line=dict(color=AMBER, width=1.4), opacity=0.85,
-                                 hovertemplate="%{y:.1f}%"), row=row, col=col)
+        fig.add_trace(go.Scatter(x=d50["Date"], y=d50["% Above 50d SMA"], name="%50d",
+                                 line=dict(color=AMBER, width=1.4), opacity=0.85, legend=legend, legendrank=2,
+                                 hovertemplate="% stocks above 50d SMA %{y:.1f}%<extra></extra>"),
+                      row=row, col=col)
         _last_point(fig, d50["Date"], d50["% Above 50d SMA"], AMBER, row, col)
-    fig.add_trace(go.Scatter(x=df["Date"], y=df["% Above 200d SMA"], name=name,
-                             line=dict(color=GREEN, width=2), hovertemplate="%{y:.1f}%"),
+    fig.add_trace(go.Scatter(x=df["Date"], y=df["% Above 200d SMA"], name="%200d",
+                             line=dict(color=GREEN, width=2), legend=legend, legendrank=1,
+                             hovertemplate="% stocks above 200d SMA %{y:.1f}%<extra></extra>"),
                   row=row, col=col)
     _last_point(fig, df["Date"], df["% Above 200d SMA"], GREEN, row, col)
     ticks = [0, 20, 50, 80, 100]
@@ -88,8 +114,10 @@ def add_highs_lows(fig, df, row, col):
     has Date, "% New Highs" and "% New Lows". Hover shows both as positives."""
     highs, lows = df["% New Highs"], df["% New Lows"]
     fig.add_trace(go.Bar(x=df["Date"], y=highs, name="New highs", marker_color=GREEN, marker_line_width=0,
+                         showlegend=False,
                          hovertemplate="%{y:.1f}%"), row=row, col=col)
     fig.add_trace(go.Bar(x=df["Date"], y=-lows, name="New lows", marker_color=RED, marker_line_width=0,
+                         showlegend=False,
                          customdata=lows, hovertemplate="%{customdata:.1f}%"), row=row, col=col)
     fig.add_hline(y=0, line_color="rgba(128,128,128,0.55)", line_width=1, row=row, col=col,
                       exclude_empty_subplots=False)
@@ -111,9 +139,10 @@ def add_performance(fig, df, row, col, name, bench_name):
     fig.add_trace(go.Scatter(x=df.index, y=[100] * len(df), line=dict(width=0), showlegend=False,
                              hoverinfo="skip"), row=row, col=col)
     fig.add_trace(go.Scatter(x=df.index, y=df["Portfolio"], name=name, line=dict(color=BLUE, width=2),
+                             showlegend=False,
                              fill="tonexty", fillcolor="rgba(52,152,219,0.10)", hovertemplate="%{y:.1f}"),
                   row=row, col=col)
-    fig.add_trace(go.Scatter(x=df.index, y=df["Benchmark"], name=bench_name,
+    fig.add_trace(go.Scatter(x=df.index, y=df["Benchmark"], name=bench_name, showlegend=False,
                              line=dict(color=GREY, width=1.5, dash="dot"), hovertemplate="%{y:.1f}"),
                   row=row, col=col)
     _last_point(fig, pd.Series(df.index), df["Portfolio"].reset_index(drop=True), BLUE, row, col)
@@ -157,7 +186,7 @@ def style(fig, height, mobile):
     fig.update_layout(
         height=height,
         hovermode="x unified",
-        showlegend=False,
+        showlegend=True,
         barmode="relative",
         bargap=0,
         paper_bgcolor="rgba(0,0,0,0)",
@@ -170,6 +199,11 @@ def style(fig, height, mobile):
         dragmode=False if mobile else "zoom",
     )
     fig.update_annotations(font_size=13)
+    if mobile:
+        # A tap on a legend item would hide that line -- the "filtering by tap"
+        # phones should not do (2026-10-15).
+        for key in [k for k in fig.layout.to_plotly_json() if k.startswith("legend")]:
+            fig.layout[key].update(itemclick=False, itemdoubleclick=False)
     span = _date_span(fig)
     if span:
         lo, hi = span

@@ -638,7 +638,7 @@ tickers de-duplicated. You edit tickers on the real tabs.
 
 ### News tab
 This tab is rendered only while it is open.
-- **Market breadth (6 months, 1 year, 3 or 5 years; 1 year by default).** For the Nifty 500
+- **Market breadth (6 months, 1, 2 or 5 years; 2 years by default).** For the Nifty 500
   and, by the **US index** switch, the S&P 500 or Nasdaq 100: % of stocks above their
   200-day SMA (0-20% and 80-100% faintly shaded; **Show % above 50-day SMA** adds the
   shorter-term line in amber, on this view and the watchlist one), and 52-week highs (bars
@@ -662,11 +662,13 @@ This tab is rendered only while it is open.
   reading. Each chart title names its latest day.
 - **Your two invested watchlists.** Each as an equal-weight, price-return curve against
   its index.
-- **Watchlist Breadth.** The same three charts for one watchlist or combined group you
-  pick: % of its stocks above their 200-day SMA (with Nifty 500's or S&P 500's line
-  overlaid), % at 52-week highs and lows, and its return against that index. The
-  benchmark defaults to the exchange most of its stocks list on and is remembered per
-  watchlist. It is computed in the app from `dashboard_perf.json` (6 years of closes)
+- **Watchlist Breadth.** The same three charts for two watchlists or combined groups side
+  by side -- India Invested vs Nifty 500 on the left and US Invested vs S&P 500 on the right
+  by default, each with its own pickers: % of its stocks above their 200-day SMA (with the
+  index's line overlaid), % at 52-week highs and lows, and its return against that index
+  (Nifty 500, S&P 500 or Nasdaq 100). The benchmark defaults to the exchange most of its
+  stocks list on and is remembered per side and watchlist. Each breadth panel's legend
+  (under it) names %200d / %50d; the hover reads "% stocks above 200d SMA". It is computed in the app from `dashboard_perf.json` (6 years of closes)
   with `breadth_math`, the same maths as the index charts. A small list moves in big
   steps: with 13 stocks, each one is about 8 points.
 - **The news digest**, with the scope picker, model pickers, and **🔄 Refresh News**,

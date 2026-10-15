@@ -335,10 +335,10 @@ check('("ok", "unchanged", "live", "awaiting", "partial")' in WF and 'v in ("awa
       "B1: the verify step accepts an unchanged market and fails an awaiting or partial one (so the gate retries)")
 APP = (REPO / "app.py").read_text()
 check("survivorship" in APP.lower(), "B4: the breadth charts note the survivorship bias")
-check('"6 Months": 6, "1 Year": 12, "3 Years": 36, "5 Years": 60' in APP and "DateOffset(months=filter_months)" in APP,
-      "the breadth charts offer 6 months and 1 year as well as 3 and 5 years")
+check('"6 Months": 6, "1 Year": 12, "2 Years": 24, "5 Years": 60' in APP and "DateOffset(months=filter_months)" in APP,
+      "the breadth charts offer 6 months, 1, 2 and 5 years (2 replaced 3 on 2026-10-15)")
 check('" intraday" if _breadth_block(market_key).get("live")' in APP, "a live breadth reading is labelled intraday")
-check('list(_horizon_months), index=1,' in APP, "the breadth charts open on 1 Year (owner, 2026-10-14)")
+check('list(_horizon_months), index=2,' in APP, "the breadth charts open on 2 Years (owner, 2026-10-15)")
 
 # --- B3 the retry loop ----------------------------------------------------------------
 check(rmb.BATCH_PAUSE_SECONDS == 5 and rmb.RETRY_PAUSE_SECONDS == 5,

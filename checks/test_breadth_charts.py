@@ -52,14 +52,14 @@ perf = pd.DataFrame({"Portfolio": [100.0 + i for i in range(60)], "Benchmark": [
 
 def figure(mobile, empty_second=False):
     fig = make_subplots(rows=3, cols=2, shared_xaxes="all")
-    bc.add_breadth(fig, ema, 1, 1, "A")
+    bc.add_breadth(fig, ema, 1, 1)
     bc.add_highs_lows(fig, hl, 2, 1)
     bc.add_performance(fig, perf, 3, 1, "List", "Index")
     if empty_second:
         for r in (1, 2, 3):
             bc.no_data(fig, r, 2, f"none {r}")
     else:
-        bc.add_breadth(fig, ema, 1, 2, "B")
+        bc.add_breadth(fig, ema, 1, 2)
         bc.add_highs_lows(fig, hl, 2, 2)
         bc.add_performance(fig, perf, 3, 2, "List", "Index")
     return bc.style(fig, height=900, mobile=mobile)
@@ -109,16 +109,41 @@ check(all(not str(t).startswith("-") for t in y3.ticktext) and y3.range[0] == -y
 # --- C7 the 50-day overlay (2026-10-15) ----------------------------------------------
 e50 = ema.assign(**{"% Above 50d SMA": [55.0] * 60})
 f = make_subplots(rows=1, cols=1)
-bc.add_breadth(f, e50, 1, 1, "A", show_50=True)
+bc.add_breadth(f, e50, 1, 1, show_50=True)
 names = [t.name for t in f.data if t.name]
-check(names == ["A (50-day)", "A"] and f.data[0].line.color == bc.AMBER,
+check(names == ["%50d", "%200d"] and f.data[0].line.color == bc.AMBER,
       f"C7: the 50-day line is drawn in amber, under the 200-day ({names})")
 f2 = make_subplots(rows=1, cols=1)
-bc.add_breadth(f2, e50, 1, 1, "A")
-check([t.name for t in f2.data if t.name] == ["A"], "C7: off by default")
+bc.add_breadth(f2, e50, 1, 1)
+check([t.name for t in f2.data if t.name] == ["%200d"], "C7: only the 200-day unless asked")
 f3 = make_subplots(rows=1, cols=1)
-bc.add_breadth(f3, ema.assign(**{"% Above 50d SMA": [None] * 60}), 1, 1, "A", show_50=True)
-check([t.name for t in f3.data if t.name] == ["A"], "C7: a block stored before the 50-day series draws no empty line")
+bc.add_breadth(f3, ema.assign(**{"% Above 50d SMA": [None] * 60}), 1, 1, show_50=True)
+check([t.name for t in f3.data if t.name] == ["%200d"], "C7: a block stored before the 50-day series draws no empty line")
+
+# --- C8 labels and legends (2026-10-15) ------------------------------------------------
+lines = {t.name: t for t in f.data if t.name}
+check(lines["%200d"].hovertemplate.startswith("% stocks above 200d SMA")
+      and lines["%50d"].hovertemplate.startswith("% stocks above 50d SMA")
+      and all(t.hovertemplate.endswith("<extra></extra>") for t in lines.values()),
+      "C8: the hover says '% stocks above 200d / 50d SMA'; the legend's short name stays out of it")
+fo = make_subplots(rows=1, cols=1)
+bc.add_breadth(fo, e50, 1, 1, overlay=ema, overlay_name="Nifty 500", show_50=True)
+check([t.name for t in fo.data if t.name] == ["Nifty 500 %200d", "%50d", "%200d"]
+      and "Nifty 500: % stocks above 200d SMA" in fo.data[0].hovertemplate,
+      "C8: the watchlist view's index line is named for its index, in the legend and the hover")
+legs = {t.legend for t in d.data if t.showlegend is not False}
+check(legs == {"legend", "legend2"},
+      f"C8: each breadth panel has its own legend; nothing else is in one ({sorted(legs)})")
+lay = d.layout.to_plotly_json()
+dom2 = d.get_subplot(1, 2).xaxis.domain
+ydom2 = d.get_subplot(1, 2).yaxis.domain
+check(lay["legend2"]["x"] == dom2[0] and lay["legend2"]["yanchor"] == "top" and lay["legend2"]["y"] < ydom2[0]
+      and all(lay[k]["traceorder"] == "normal" for k in ("legend", "legend2")),
+      "C8: ...just under its own panel, left-aligned, in the same order in every panel")
+check(all(lay[k].get("itemclick") is False for k in lay if k.startswith("legend")) is False
+      and all(m.layout.to_plotly_json()[k].get("itemclick") is False
+              for k in m.layout.to_plotly_json() if k.startswith("legend")),
+      "C8: a tap on a legend item hides nothing on a phone; a desktop click still toggles")
 
 # --- C6 ------------------------------------------------------------------------------
 APP = (REPO / "app.py").read_text()
