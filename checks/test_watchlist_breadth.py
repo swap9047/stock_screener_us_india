@@ -50,6 +50,15 @@ check(b["history"][last] == 75.0 and b["highs_history"][last] == 75.0 and b["low
       f"W1: highs 3 of 4, lows 1 of 4 on the last day ({b['highs_history'][last]}, {b['lows_history'][last]})")
 check(min(b["history"]) == str(idx[252].date()), "W1: the first 252 rows are warmup")
 
+# the 50-day (2026-10-15): the 150-day listing HAS 50 sessions, so it counts there
+check(b["pct_above_50"] == 80.0 and b["history_50"][last] == 80.0,
+      f"W1: % above the 50-day: 4 of 5 (the new listing qualifies for 50 days, not 200) ({b['pct_above_50']})")
+check(set(b["history_50"]) <= set(b["history"]), "W1: the 50-day series is on the same days as the 200-day")
+tiny = panel.copy()
+tiny["FRESH"] = np.nan
+tiny.loc[idx[-30:], "FRESH"] = np.linspace(1, 9, 30)      # 30 sessions: under 50
+check(bm.compute_breadth(tiny)["pct_above_50"] == 80.0, "W1: a 30-session listing is left out of the 50-day too")
+
 mixed = panel.copy()
 mixed["ZED.NS"] = up * 3
 mixed.loc[idx[-1], "ZED.NS"] = np.nan          # its exchange shut on the last day

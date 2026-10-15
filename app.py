@@ -5427,7 +5427,7 @@ with tab_news:
     if not tab_news.open:
         # A widget that is not rendered on a run loses its session_state, so
         # these would reset every time you left the tab. Re-assigning keeps them.
-        for _k in ("time_horizon_filter", "breadth_us_index", "news_scope_select", "news_search_model_select",
+        for _k in ("time_horizon_filter", "breadth_us_index", "breadth_show_50d", "news_scope_select", "news_search_model_select",
                    "news_reasoning_model_select", "news_reasoning_budget_select",
                    "breadth_watchlist_select",
                    *[k for k in st.session_state if str(k).startswith("breadth_benchmark_")]):
@@ -5450,6 +5450,9 @@ with tab_news:
             _us_indexes = {"S&P 500": ("US", "SPY"), "Nasdaq 100": ("NASDAQ100", "QQQ")}
             us_index_label = st.radio("US index", list(_us_indexes), horizontal=True, key="breadth_us_index")
             us_breadth_key, us_bench_ticker = _us_indexes.get(us_index_label, ("US", "SPY"))
+            # A second line on every breadth chart (2026-10-15): % above the 50-day
+            # SMA, the shorter-term read, in amber under the 200-day's green.
+            show_50 = st.toggle("Show % above 50-day SMA", key="breadth_show_50d")
         
         with col_refresh:
             # Starts the market-breadth workflow (2026-10-15): breadth, the
@@ -5563,6 +5566,9 @@ with tab_news:
             hist = market_data.get("history", {})
             df_ema = pd.DataFrame(list(hist.items()), columns=["Date", "% Above 200d SMA"]) if hist else pd.DataFrame()
             if not df_ema.empty:
+                # The 50-day series, on the same days; absent from a block stored
+                # before 2026-10-15 (the column is then all NaN and not drawn).
+                df_ema["% Above 50d SMA"] = df_ema["Date"].map(market_data.get("history_50") or {})
                 df_ema["Date"] = pd.to_datetime(df_ema["Date"])
                 df_ema = df_ema[df_ema["Date"] >= cutoff]
             
@@ -5678,9 +5684,13 @@ with tab_news:
                 _mobile = False
 
             def get_val(df, col):
-                if df is not None and not df.empty and col in df.columns:
+                if df is not None and not df.empty and col in df.columns and pd.notna(df[col].iloc[-1]):
                     return f"{df[col].iloc[-1]:.1f}"
                 return "--"
+
+            # ", 50d: 45.2%" in a breadth title while the 50-day line is shown.
+            def _fifty(df):
+                return f", 50d: {get_val(df, '% Above 50d SMA')}%" if show_50 else ""
 
             # The latest day, named in each title. 3 years at under a pixel per
             # day put the last three days within ~2 px of the edge, so the hover
@@ -5720,8 +5730,8 @@ with tab_news:
             stale_ind = _stale_suffix("INDIA")
             stale_us = _stale_suffix(us_breadth_key)
             
-            title_ema_ind = f"Nifty 500: % Above 200-Day SMA ({_when(df_ema_ind, 'INDIA')}: {get_val(df_ema_ind, '% Above 200d SMA')}%, Captured: {total_ind}){stale_ind}"
-            title_ema_us = f"{us_index_label}: % Above 200-Day SMA ({_when(df_ema_us, us_breadth_key)}: {get_val(df_ema_us, '% Above 200d SMA')}%, Captured: {total_us}){stale_us}"
+            title_ema_ind = f"Nifty 500: % Above 200-Day SMA ({_when(df_ema_ind, 'INDIA')}: {get_val(df_ema_ind, '% Above 200d SMA')}%{_fifty(df_ema_ind)}, Captured: {total_ind}){stale_ind}"
+            title_ema_us = f"{us_index_label}: % Above 200-Day SMA ({_when(df_ema_us, us_breadth_key)}: {get_val(df_ema_us, '% Above 200d SMA')}%{_fifty(df_ema_us)}, Captured: {total_us}){stale_us}"
         
             title_hl_ind = f"Nifty 500: 52-Week Highs vs Lows ({_when(df_hl_ind, 'INDIA')}: Highs {get_val(df_hl_ind, '% New Highs')}%, Lows {get_val(df_hl_ind, '% New Lows')}%){stale_ind}"
             title_hl_us = f"{us_index_label}: 52-Week Highs vs Lows ({_when(df_hl_us, us_breadth_key)}: Highs {get_val(df_hl_us, '% New Highs')}%, Lows {get_val(df_hl_us, '% New Lows')}%){stale_us}"
@@ -5783,7 +5793,7 @@ with tab_news:
                 _perf_missing = _us_perf_missing_text if _m == "us" else "No data - last refresh failed"
                 _r, _c = _pos[("ema", _m)]
                 if _ema is not None and not _ema.empty:
-                    breadth_charts.add_breadth(fig, _ema, _r, _c, "% Above 200d SMA")
+                    breadth_charts.add_breadth(fig, _ema, _r, _c, "% Above 200d SMA", show_50=show_50)
                 else:
                     breadth_charts.no_data(fig, _r, _c, _missing)
                 _r, _c = _pos[("hl", _m)]
@@ -5853,7 +5863,8 @@ with tab_news:
                     "dashboard_perf.json is refreshed by the market-breadth workflow.")
         else:
             df_wb_ema = pd.DataFrame({"Date": pd.to_datetime(list(wb["history"])),
-                                      "% Above 200d SMA": list(wb["history"].values())})
+                                      "% Above 200d SMA": list(wb["history"].values()),
+                                      "% Above 50d SMA": [wb["history_50"].get(d) for d in wb["history"]]})
             df_wb_hl = pd.DataFrame({"Date": pd.to_datetime(list(wb["highs_history"])),
                                      "% New Highs": list(wb["highs_history"].values()),
                                      "% New Lows": list(wb["lows_history"].values())})
@@ -5870,8 +5881,8 @@ with tab_news:
 
             _idx_now = get_val(df_idx_ema, "% Above 200d SMA")
             wb_titles = (
-                f"{wb_name}: % Above 200-Day SMA ({get_last_date(df_wb_ema)}: {wb['pct_above']:.1f}%, "
-                f"Captured: {wb['total']}) vs {wb_bench_label} {_idx_now}%",
+                f"{wb_name}: % Above 200-Day SMA ({get_last_date(df_wb_ema)}: {wb['pct_above']:.1f}%"
+                f"{_fifty(df_wb_ema)}, Captured: {wb['total']}) vs {wb_bench_label} {_idx_now}%",
                 f"{wb_name}: 52-Week Highs vs Lows ({get_last_date(df_wb_hl)}: Highs "
                 f"{get_val(df_wb_hl, '% New Highs')}%, Lows {get_val(df_wb_hl, '% New Lows')}%)",
                 f"{wb_name} vs {wb_bench_label} ({get_perf(df_wb_perf)})",
@@ -5879,7 +5890,7 @@ with tab_news:
             fig_wb = make_subplots(rows=3, cols=1, shared_xaxes="all", vertical_spacing=0.08,
                                    subplot_titles=[t.replace(" (", "<br>(", 1) if _mobile else t
                                                    for t in wb_titles])
-            breadth_charts.add_breadth(fig_wb, df_wb_ema, 1, 1, wb_name, overlay=df_idx_ema,
+            breadth_charts.add_breadth(fig_wb, df_wb_ema, 1, 1, wb_name, overlay=df_idx_ema, show_50=show_50,
                                        overlay_name=wb_bench_label)
             breadth_charts.add_highs_lows(fig_wb, df_wb_hl, 2, 1)
             if df_wb_perf is not None and not df_wb_perf.empty:

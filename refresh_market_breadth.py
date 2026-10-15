@@ -208,6 +208,10 @@ def needs_refresh(block, expected):
     history = (block or {}).get("history") or {}
     if not history or not expected or block.get("partial") or block.get("live"):
         return True
+    # A block from before the 50-day series existed (2026-10-15) is redone once,
+    # rather than waiting for the next session to fill the overlay in.
+    if "history_50" not in block:
+        return True
     return max(history) < expected
 
 

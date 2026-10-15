@@ -27,6 +27,7 @@ GREEN = "#2ecc71"
 RED = "#e74c3c"
 BLUE = "#3498db"
 GREY = "#95a5a6"
+AMBER = "#f39c12"
 FAINT = "rgba(128,128,128,0.18)"
 
 _MOBILE_MARKERS = ("mobi", "android", "iphone", "ipad", "ipod")
@@ -50,12 +51,16 @@ def _last_point(fig, x, y, color, row, col):
 # so the zones, the 50% line and the 100 baseline silently vanished (2026-10-15).
 
 
-def add_breadth(fig, df, row, col, name, overlay=None, overlay_name=None):
+def add_breadth(fig, df, row, col, name, overlay=None, overlay_name=None, show_50=False):
     """% above the 200-day SMA: `df` has Date and "% Above 200d SMA". `overlay`
-    (same shape) is drawn dotted underneath, e.g. the index under a watchlist."""
+    (same shape) is drawn dotted underneath, e.g. the index under a watchlist.
+    `show_50` adds df's "% Above 50d SMA" in amber (the chart's 50-day toggle),
+    under the 200-day line, which stays the main reading."""
     # No fill under the line: a fill to zero means nothing for a % that swings
     # around 50, and it hid these zones.
-    for y0, y1, colour in ((0, 20, "rgba(231,76,60,0.12)"), (80, 100, "rgba(46,204,113,0.12)")):
+    # Faint on purpose (owner, 2026-10-15): a tint behind the line, not a block
+    # competing with it. Translucent, so it sits on Streamlit's light or dark theme.
+    for y0, y1, colour in ((0, 20, "rgba(231,76,60,0.045)"), (80, 100, "rgba(46,204,113,0.05)")):
         fig.add_hrect(y0=y0, y1=y1, fillcolor=colour, line_width=0, layer="below", row=row, col=col,
                       exclude_empty_subplots=False)
     fig.add_hline(y=50, line_dash="dash", line_color="rgba(128,128,128,0.55)", line_width=1, row=row, col=col,
@@ -64,6 +69,12 @@ def add_breadth(fig, df, row, col, name, overlay=None, overlay_name=None):
         fig.add_trace(go.Scatter(x=overlay["Date"], y=overlay["% Above 200d SMA"], name=overlay_name,
                                  line=dict(color=GREY, width=1.5, dash="dot"),
                                  hovertemplate="%{y:.1f}%"), row=row, col=col)
+    if show_50 and "% Above 50d SMA" in df.columns and df["% Above 50d SMA"].notna().any():
+        d50 = df[["Date", "% Above 50d SMA"]].dropna()
+        fig.add_trace(go.Scatter(x=d50["Date"], y=d50["% Above 50d SMA"], name=f"{name} (50-day)",
+                                 line=dict(color=AMBER, width=1.4), opacity=0.85,
+                                 hovertemplate="%{y:.1f}%"), row=row, col=col)
+        _last_point(fig, d50["Date"], d50["% Above 50d SMA"], AMBER, row, col)
     fig.add_trace(go.Scatter(x=df["Date"], y=df["% Above 200d SMA"], name=name,
                              line=dict(color=GREEN, width=2), hovertemplate="%{y:.1f}%"),
                   row=row, col=col)

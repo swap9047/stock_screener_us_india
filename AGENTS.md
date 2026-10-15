@@ -35,7 +35,7 @@ step names, so each key needs a line in the AI steps' `env:` blocks. Every run l
 `[key rotation] N key(s): ...`; if that number is lower than expected, that line is
 missing.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1183
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1191
 offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
@@ -58,7 +58,7 @@ verified by rendering the app headlessly; recipe at the bottom.
 | `expert_views.py` | 936 | Expert Take. The verdict is decided in code, live, from Trend, Tech Uptrend, TA Rules and Sentiment (`decide_expert_verdict`, `expert_take_for_row`); the nightly model writes the explanation and trade plan, and may lower the verdict one step for a dated material negative event in the last 14 days (`news_risk_active`). Its prompt also gets Sentiment's checked facts for the quarter (section 4) |
 | `filters.py` | 485 | The boolean condition engine — shared by UI filters **and** background alerts |
 | `breadth_charts.py` | 177 | Plotly building blocks for the News tab's breadth / highs-lows / return panels (both views), and the phone behaviour (`is_mobile`: stacked panels, no zoom or drag) |
-| `breadth_math.py` | 145 | Breadth maths (% above the 200-day SMA, 52-week highs/lows, per-day denominators) — shared by the index-breadth job **and** the app's per-watchlist breadth view; `assemble_closes` builds a watchlist's panel from `dashboard_perf.json` |
+| `breadth_math.py` | 165 | Breadth maths (% above the 200-day and 50-day SMAs, 52-week highs/lows, per-day denominators) — shared by the index-breadth job **and** the app's per-watchlist breadth view; `assemble_closes` builds a watchlist's panel from `dashboard_perf.json` |
 | `llm_util.py` | 679 | Shared Gemini-call plumbing (timeout wrapper, retry/model-ladder logic, `FailureFuse`) for the three AI pipelines |
 | `weekly_wrapup.py` | 365 | Weekly Discord digest |
 | `custom_columns.py` | 294 | User-defined formula columns |

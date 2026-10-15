@@ -640,8 +640,9 @@ tickers de-duplicated. You edit tickers on the real tabs.
 This tab is rendered only while it is open.
 - **Market breadth (6 months, 1 year, 3 or 5 years; 1 year by default).** For the Nifty 500
   and, by the **US index** switch, the S&P 500 or Nasdaq 100: % of stocks above their
-  200-day SMA (0-20% and 80-100% shaded), and 52-week highs (bars up) against lows (bars
-  down). The US Invested return curve follows the switch too. **🔄 Refresh Charts** starts
+  200-day SMA (0-20% and 80-100% faintly shaded; **Show % above 50-day SMA** adds the
+  shorter-term line in amber, on this view and the watchlist one), and 52-week highs (bars
+  up) against lows (bars down). The US Invested return curve follows the switch too. **🔄 Refresh Charts** starts
   the market-breadth workflow, which also refreshes the watchlist tabs' prices; the
   charts update about five minutes after it finishes. On a phone the panels stack in one
   column and tapping only shows values (no zoom).

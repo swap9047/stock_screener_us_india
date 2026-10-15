@@ -51,12 +51,14 @@ def fn(name):
 # --- B1 is there a new session? ------------------------------------------------------
 needs = fn("needs_refresh")
 if needs:
-    block = {"history": {"2026-09-30": 42.2, "2026-10-01": 38.6}}
+    block = {"history": {"2026-09-30": 42.2, "2026-10-01": 38.6}, "history_50": {"2026-10-01": 40.0}}
     check(needs(None, "2026-10-01"), "B1: no stored block -> refresh")
     check(needs(block, None), "B1: the session check failed -> refresh (never skip blind)")
     check(needs(block, "2026-10-02"), "B1: a newer completed session -> refresh")
     check(not needs(block, "2026-10-01"), "B1: the latest session is already stored -> skip")
     check(needs({"history": {}}, "2026-10-01"), "B1: an empty history -> refresh")
+    check(needs({"history": {"2026-10-01": 38.6}}, "2026-10-01"),
+          "B1: a block from before the 50-day series is redone once, though its date is current")
 
 exp = fn("expected_session")
 live = fn("is_live")
@@ -163,6 +165,11 @@ def run_main(stored, expected, block, live_days=None):
     returned: these checks are about the US and India legs."""
     calls = []
     live_days = live_days or {}
+    # The fixtures are current blocks: give them the 50-day series (2026-10-15),
+    # or needs_refresh redoes every one of them.
+    stored = json.loads(json.dumps(stored))
+    for v in (stored.get("markets") or {}).values():
+        v.setdefault("history_50", {})
     with_nasdaq = "Nasdaq 100" in block
     block = {"Nasdaq 100": {"total": 9, "pct_above": 50.0, "history": {"2026-10-01": 50.0},
                             "partial": False, "unpublished": []}, **block}

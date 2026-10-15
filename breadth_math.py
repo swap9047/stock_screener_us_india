@@ -20,6 +20,8 @@ def compute_breadth(closes, since=None):
     Returns {"above", "below", "total", "pct_above"} for the latest day --
     counting only stocks that have both a close that day and a 200-day SMA --
     plus "history", "highs_history" and "lows_history": {"YYYY-MM-DD": %}.
+    "pct_above_50" / "history_50" are the same over the 50-day SMA (2026-10-15,
+    the charts' 50-day overlay), on the same days as "history".
     """
     if closes is None or closes.empty:
         return None
@@ -38,6 +40,12 @@ def compute_breadth(closes, since=None):
     sma200 = closes.rolling(window=200, min_periods=190).mean()
     sma200 = sma200.where(closes.notna().cumsum() >= 200)
     is_above = closes > sma200
+    # The 50-day the same way: 48 of the last 50 closes (the 200-day's 95%), and
+    # only once a stock has 50 sessions, so a new listing is not "above" an
+    # average of its first few days.
+    sma50 = closes.rolling(window=50, min_periods=48).mean()
+    sma50 = sma50.where(closes.notna().cumsum() >= 50)
+    is_above_50 = closes > sma50
 
     # Calculate 52w High/Low (252 trading days).
     #
@@ -64,9 +72,11 @@ def compute_breadth(closes, since=None):
     # Per day, too: a mixed India + US list has days one exchange is shut, and
     # those stocks simply have no close that day rather than counting as below.
     ma_counts = (closes.notna() & sma200.notna()).sum(axis=1)
+    ma50_counts = (closes.notna() & sma50.notna()).sum(axis=1)
     hl_counts = (closes.notna() & high52.notna()).sum(axis=1)
 
     breadth_series = (is_above.sum(axis=1) / ma_counts) * 100
+    breadth50_series = (is_above_50.sum(axis=1) / ma50_counts.replace(0, pd.NA)) * 100
     # Guard the division rather than leaning on valid_mask: a zero denominator
     # yields inf, and inf survives a later boolean mask if the row is kept.
     highs_series = (is_new_high.sum(axis=1) / hl_counts.replace(0, pd.NA)) * 100
@@ -83,19 +93,23 @@ def compute_breadth(closes, since=None):
     warm.iloc[252:] = True
     valid_mask = (valid_counts > 0) & (ma_counts > 0) & (hl_counts > 0) & warm
     breadth_series = breadth_series[valid_mask]
+    breadth50_series = breadth50_series[valid_mask]
     highs_series = highs_series[valid_mask]
     lows_series = lows_series[valid_mask]
 
     if since is not None:
         keep = breadth_series.index >= since
         breadth_series = breadth_series[keep]
+        breadth50_series = breadth50_series[keep]
         highs_series = highs_series[keep]
         lows_series = lows_series[keep]
 
-    history_dict, highs_dict, lows_dict = {}, {}, {}
+    history_dict, history50_dict, highs_dict, lows_dict = {}, {}, {}, {}
     for date in breadth_series.index:
         date_str = date.strftime("%Y-%m-%d")
         history_dict[date_str] = round(float(breadth_series[date]), 1)
+        if pd.notna(breadth50_series[date]):
+            history50_dict[date_str] = round(float(breadth50_series[date]), 1)
         highs_dict[date_str] = round(float(highs_series[date]), 1)
         lows_dict[date_str] = round(float(lows_series[date]), 1)
 
@@ -106,6 +120,10 @@ def compute_breadth(closes, since=None):
     above_now = int((latest_close > latest_sma).sum())
     total_now = int(has_ma.sum())
     pct_above_now = float(above_now / total_now * 100) if total_now > 0 else 0.0
+    latest_sma50 = sma50.loc[last_valid_idx]
+    has_ma50 = latest_close.notna() & latest_sma50.notna()
+    total50 = int(has_ma50.sum())
+    pct_above_50 = round(float((latest_close > latest_sma50).sum() / total50 * 100), 1) if total50 else None
 
     return {
         "above": above_now,
@@ -115,6 +133,8 @@ def compute_breadth(closes, since=None):
         "history": history_dict,
         "highs_history": highs_dict,
         "lows_history": lows_dict,
+        "pct_above_50": pct_above_50,
+        "history_50": history50_dict,
     }
 
 

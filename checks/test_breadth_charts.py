@@ -106,10 +106,27 @@ y3 = d.layout.yaxis3
 check(all(not str(t).startswith("-") for t in y3.ticktext) and y3.range[0] == -y3.range[1],
       f"C5: a symmetric axis labelled with positives ({list(y3.ticktext)})")
 
+# --- C7 the 50-day overlay (2026-10-15) ----------------------------------------------
+e50 = ema.assign(**{"% Above 50d SMA": [55.0] * 60})
+f = make_subplots(rows=1, cols=1)
+bc.add_breadth(f, e50, 1, 1, "A", show_50=True)
+names = [t.name for t in f.data if t.name]
+check(names == ["A (50-day)", "A"] and f.data[0].line.color == bc.AMBER,
+      f"C7: the 50-day line is drawn in amber, under the 200-day ({names})")
+f2 = make_subplots(rows=1, cols=1)
+bc.add_breadth(f2, e50, 1, 1, "A")
+check([t.name for t in f2.data if t.name] == ["A"], "C7: off by default")
+f3 = make_subplots(rows=1, cols=1)
+bc.add_breadth(f3, ema.assign(**{"% Above 50d SMA": [None] * 60}), 1, 1, "A", show_50=True)
+check([t.name for t in f3.data if t.name] == ["A"], "C7: a block stored before the 50-day series draws no empty line")
+
 # --- C6 ------------------------------------------------------------------------------
 APP = (REPO / "app.py").read_text()
 check('key="breadth_refresh_charts"' in APP and 'trigger_github_workflow(token, repo, "market-breadth.yml")' in APP,
       "C6: Refresh Charts starts the market-breadth workflow")
+check('st.toggle("Show % above 50-day SMA", key="breadth_show_50d")' in APP
+      and APP.count("show_50=show_50") == 2 and '"breadth_show_50d"' in APP,
+      "C7: one toggle shows the 50-day on both views, and survives leaving the tab")
 check("breadth_charts.is_mobile(st.context.headers" in APP and APP.count("breadth_charts.plotly_config(_mobile)") == 2,
       "C6: both charts get the phone behaviour")
 WF = (REPO / ".github/workflows/market-breadth.yml").read_text()
