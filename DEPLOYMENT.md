@@ -119,7 +119,7 @@ A few things worth knowing:
 
 ## 8. Data refresh (faster page loads)
 
-A third GitHub Actions workflow, `.github/workflows/data-refresh.yml`, fetches all watchlist tickers via yfinance and saves the result to `data_snapshot.json`. It runs **hourly, every hour, around the clock** — not just during US market hours, since India trades roughly 23:45-06:00 ET and a daytime-only window would sample that session exactly never. It's a single cron with no EDT/EST pair or gate job needed (an hourly cron fires correctly in both seasons), and idle hours cost nothing extra: the commit step no-ops when the snapshot is byte-identical to the last run. The app loads this snapshot on open instead of hitting yfinance live every session — much faster, and avoids every visitor re-fetching identical data.
+A third GitHub Actions workflow, `.github/workflows/data-refresh.yml`, fetches all watchlist tickers via yfinance and saves the result to `data_snapshot.json`. It runs **every 15 minutes, around the clock** (GitHub throttles scheduled runs well below that in practice) — not just during US market hours, since India trades roughly 23:45-06:00 ET and a daytime-only window would sample that session exactly never. It's a single cron with no EDT/EST pair or gate job needed (an hourly cron fires correctly in both seasons), and idle hours cost nothing extra: the commit step no-ops when the snapshot is byte-identical to the last run. The app loads this snapshot on open instead of hitting yfinance live every session — much faster, and avoids every visitor re-fetching identical data.
 
 No new secret needed beyond `DATA_REPO_TOKEN` — it commits `data_snapshot.json` to the private data repo.
 
@@ -145,7 +145,7 @@ It uses `GEMINI_API_KEY` and `DATA_REPO_TOKEN` repo secrets. It supports `workfl
 
 ## 8d. Market breadth & dashboard performance
 
-A sixth GitHub Actions workflow, `.github/workflows/market-breadth.yml`, does its work once per **7:00 AM**, **1:00 PM** and **7:00 PM ET** slot, Monday to Friday (a late run still counts until the next slot starts). It runs `refresh_market_breadth.py` (S&P 500, Nifty 500 and Nasdaq 100) and `refresh_dashboard_perf.py` to compute breadth metrics (`market_breadth.json`) and portfolio performance metrics (`dashboard_perf.json`), then `refresh_data.py` so the watchlist tabs' prices (`data_snapshot.json`) are as current as the charts, committing all three to the private data repo. The app's **🔄 Refresh Charts** button starts the same workflow, using `GITHUB_TOKEN`.
+A sixth GitHub Actions workflow, `.github/workflows/market-breadth.yml`, does its work every 6 hours, once per **1:00 AM**, **7:00 AM**, **1:00 PM** and **7:00 PM ET** slot, Monday to Friday (a late run still counts until the next slot starts). It runs `refresh_market_breadth.py` (S&P 500, Nifty 500 and Nasdaq 100) and `refresh_dashboard_perf.py` to compute breadth metrics (`market_breadth.json`) and portfolio performance metrics (`dashboard_perf.json`), then `refresh_data.py` so the watchlist tabs' prices (`data_snapshot.json`) are as current as the charts, committing all three to the private data repo. The app's **🔄 Refresh Charts** button starts the same workflow, using `GITHUB_TOKEN`.
 
 Yahoo publishes a day's closes late, often hours after the close and a few stocks at a time. When the latest day is missing or only partly there, the run saves what it has, shows red, and the next hourly wake-up tries again. A red breadth run in the evening is usually this, not a fault.
 
@@ -189,5 +189,5 @@ The **Re-analyze All** and **Refresh news** buttons start GitHub Actions runs in
 | Hourly data refresh (around the clock) | No new secret needed — GitHub Actions workflow is already committed |
 | Daily Expert Views (1:00 AM ET) | Needs `GEMINI_API_KEY` repo secret — GitHub Actions workflow is already committed |
 | Daily Fundamental Views (9:00 PM ET) | Needs `GEMINI_API_KEY` repo secret — GitHub Actions workflow is already committed |
-| Market Breadth & Performance (7 AM, 1 PM & 7 PM ET) | No new secret needed — GitHub Actions workflow is already committed |
+| Market Breadth & Performance (1 AM, 7 AM, 1 PM & 7 PM ET) | No new secret needed — GitHub Actions workflow is already committed |
 | Weekly Wrap-up digest (Sunday 9:00 PM ET) | Uses `DISCORD_WEBHOOK_URL` repo secret — GitHub Actions workflow is already committed |

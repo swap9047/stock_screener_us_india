@@ -124,9 +124,9 @@ check([t.name for t in f3.data if t.name] == ["A"], "C7: a block stored before t
 APP = (REPO / "app.py").read_text()
 check('key="breadth_refresh_charts"' in APP and 'trigger_github_workflow(token, repo, "market-breadth.yml")' in APP,
       "C6: Refresh Charts starts the market-breadth workflow")
-check('st.toggle("Show % above 50-day SMA", key="breadth_show_50d")' in APP
+check('st.toggle("Show % above 50-day SMA", value=True, key="breadth_show_50d")' in APP
       and APP.count("show_50=show_50") == 2 and '"breadth_show_50d"' in APP,
-      "C7: one toggle shows the 50-day on both views, and survives leaving the tab")
+      "C7: one toggle, on by default, shows the 50-day on both views and survives leaving the tab")
 check("breadth_charts.is_mobile(st.context.headers" in APP and APP.count("breadth_charts.plotly_config(_mobile)") == 2,
       "C6: both charts get the phone behaviour")
 WF = (REPO / ".github/workflows/market-breadth.yml").read_text()

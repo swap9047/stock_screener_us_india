@@ -2,7 +2,7 @@ name: Market Breadth Updater
 
 on:
   # ONE hourly wake-up, not four cron lines across two DST seasons. The gate job
-  # decides which of the three daily slots (7 AM / 1 PM / 7 PM ET) this run owns.
+  # decides which of the four daily slots (1 AM / 7 AM / 1 PM / 7 PM ET) this run owns.
   schedule:
     - cron: "0 * * * *"
   workflow_dispatch:
@@ -16,12 +16,14 @@ permissions:
   actions: read    # the slot gate reads this workflow's own run history
 
 jobs:
-  # Once per 7 AM / 1 PM / 7 PM ET slot, Mon-Fri: Saturday's slots had no new
-  # session to fetch. 7 AM is after NSE's close (5-6 AM ET), 7 PM after the US
-  # close, and 1 PM (owner, 2026-10-14) mid-way through the US session, so the
-  # S&P 500 line shows an intraday reading during the day (India is final by
-  # then and is skipped as "unchanged").
-  # 23 h window (owner, 2026-10-08), though a slot never gets more than the 6-12 h
+  # Every 6 hours, Mon-Fri (owner, 2026-10-15): 1 AM / 7 AM / 1 PM / 7 PM ET.
+  # Saturday's slots had no new session to fetch. 1 AM ET is mid-way through the
+  # NSE session (23:45-06:00 ET), so the Nifty 500 line gets an intraday reading;
+  # 7 AM is after NSE's close (5-6 AM ET); 1 PM (2026-10-14) is mid-way through
+  # the US session; 7 PM is after the US close. A market with nothing new in a
+  # slot is skipped as "unchanged". A Friday NSE session is the 1 AM FRIDAY slot,
+  # so MON-FRI still covers every session.
+  # 23 h window (owner, 2026-10-08), though a slot never gets more than the 6 h
   # to the next one: the gate always works the LATEST slot, so once the next one
   # starts it takes over -- and nothing is lost, because that run refreshes every
   # market with a new session, the missed slot's included.
@@ -36,7 +38,7 @@ jobs:
       - id: slot
         uses: ./.github/actions/slot-gate
         with:
-          slots: "7,13,19"
+          slots: "1,7,13,19"
           grace-hours: "23"
           days: "MON,TUE,WED,THU,FRI"
           work-job: update_breadth

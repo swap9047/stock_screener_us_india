@@ -91,7 +91,15 @@ check(not run, f"a second fire inside the 13:00 slot -> skip ({why})")
 check(slot_gate.latest_slot(et(2026, 10, 14, 12, 59), (7, 13, 19)).hour == 7,
       "12:59 ET -> still the 07:00 slot's window")
 WF_BREADTH = (Path(__file__).resolve().parents[1] / ".github/workflows/market-breadth.yml").read_text()
-check('slots: "7,13,19"' in WF_BREADTH, "market-breadth.yml has the 7 AM, 1 PM and 7 PM slots")
+check('slots: "1,7,13,19"' in WF_BREADTH, "market-breadth.yml runs every 6 hours: 1 AM, 7 AM, 1 PM and 7 PM ET")
+B4 = dict(slots=(1, 7, 13, 19), grace=23, days=["MON", "TUE", "WED", "THU", "FRI"])
+run, why = decide(et(2026, 10, 16, 2, 30), worked=[et(2026, 10, 15, 19, 40).astimezone(timezone.utc)], **B4)
+check(run and slot_gate.latest_slot(et(2026, 10, 16, 2, 30), (1, 7, 13, 19)).hour == 1,
+      f"02:30 ET Friday -> the 01:00 slot (NSE mid-session), not satisfied by 19:00's run ({why})")
+run, why = decide(et(2026, 10, 17, 2, 0), **B4)
+check(not run, f"Saturday 01:00 -> not a weekday slot (no session) ({why})")
+WF_DATA = (Path(__file__).resolve().parents[1] / ".github/workflows/data-refresh.yml").read_text()
+check('cron: "*/15 * * * *"' in WF_DATA, "data-refresh.yml wakes every 15 minutes")
 
 # --- news digest: one 06:00 slot a day, 23h window
 N = dict(slots=(6,), grace=23)

@@ -5451,8 +5451,9 @@ with tab_news:
             us_index_label = st.radio("US index", list(_us_indexes), horizontal=True, key="breadth_us_index")
             us_breadth_key, us_bench_ticker = _us_indexes.get(us_index_label, ("US", "SPY"))
             # A second line on every breadth chart (2026-10-15): % above the 50-day
-            # SMA, the shorter-term read, in amber under the 200-day's green.
-            show_50 = st.toggle("Show % above 50-day SMA", key="breadth_show_50d")
+            # SMA, the shorter-term read, in amber under the 200-day's green. On by
+            # default (owner, 2026-10-15).
+            show_50 = st.toggle("Show % above 50-day SMA", value=True, key="breadth_show_50d")
         
         with col_refresh:
             # Starts the market-breadth workflow (2026-10-15): breadth, the

@@ -51,9 +51,9 @@ commit their output.
 
 | When (slot) | Job | What it produces |
 |---|---|---|
-| Every hour, around the clock | Data refresh | `data_snapshot.json`: prices plus every indicator, for every ticker |
+| Every 15 minutes, around the clock (GitHub runs it far less often) | Data refresh | `data_snapshot.json`: prices plus every indicator, for every ticker |
 | 6:00 AM | News digest | `news_summary.json` + one Discord digest per watchlist in scope |
-| 7:00 AM, 1:00 PM and 7:00 PM, Mon-Fri | Market breadth + performance (1 PM: US intraday) | `market_breadth.json`, `dashboard_perf.json` |
+| 1:00 AM, 7:00 AM, 1:00 PM and 7:00 PM, Mon-Fri | Market breadth + performance (1 AM: India intraday; 1 PM: US intraday) | `market_breadth.json`, `dashboard_perf.json` |
 | 9:00 PM | Sentiment (fundamentals) | `fundamentals.json`: the AI earnings and guidance read per ticker |
 | 9:00 PM | Alert check | Discord alerts for rules due that day; `alert_state.json` |
 | 1:00 AM | Expert Take | A fresh snapshot, then `expert_views.json`: the AI verdict per ticker |
@@ -815,12 +815,12 @@ GitHub drops or delays no longer costs a day.
 
 | Workflow | Work | Slot | Notes |
 |---|---|---|---|
-| `data-refresh.yml` | `refresh_data.py` | every wake-up | no gate |
+| `data-refresh.yml` | `refresh_data.py` | every wake-up (every 15 min, throttled by GitHub) | no gate |
 | `news-summary.yml` | `news_check.py` | 06:00 | `markets` and `limit` inputs make a partial, silent run |
 | `fundamentals.yml` | `refresh_fundamentals.py` | 21:00 | `markets` and `limit` inputs |
 | `daily-alerts.yml` | `alert_check.py` | 21:00 | the gate also asks whether any rule is due that day |
 | `expert-views.yml` | `refresh_data.py`, then `refresh_expert_views.py` | 01:00 | `markets` and `limit` inputs |
-| `market-breadth.yml` | breadth (S&P 500, Nifty 500, Nasdaq 100) + dashboard performance + the watchlist snapshot | 07:00, 13:00, 19:00, Mon-Fri; also the app's Refresh Charts | refreshes only a market short of its latest session by the exchange clock, or holding a live (intraday) reading ("unchanged" otherwise; "live" mid-session); a part-published day is "partial", an unpublished one "awaiting", and both fail the run so the gate retries; downloads 50 stocks at a time, 5 s apart, then retries each failure on its own, 5 s apart, up to 3 rounds; fails loudly if a market's breadth didn't refresh |
+| `market-breadth.yml` | breadth (S&P 500, Nifty 500, Nasdaq 100) + dashboard performance + the watchlist snapshot | 01:00, 07:00, 13:00, 19:00 (every 6 h), Mon-Fri; also the app's Refresh Charts | refreshes only a market short of its latest session by the exchange clock, or holding a live (intraday) reading ("unchanged" otherwise; "live" mid-session); a part-published day is "partial", an unpublished one "awaiting", and both fail the run so the gate retries; downloads 50 stocks at a time, 5 s apart, then retries each failure on its own, 5 s apart, up to 3 rounds; fails loudly if a market's breadth didn't refresh |
 | `weekly-wrapup.yml` | `weekly_wrapup_check.py` | Sunday 21:00 | |
 | `checks.yml` | `checks/run_all.py` (offline) | every push | needs no secrets or data |
 
