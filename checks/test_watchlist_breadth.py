@@ -9,6 +9,7 @@ W3 assemble_closes builds one panel from dashboard_perf.json's per-watchlist
    watchlist's block, a ticker with no series is reported.
 W4 the app view: watchlist + group dropdown, a benchmark per watchlist, 6 years
    of performance data so the 5-year view is not blanked by the warmup.
+W5 a return title over a benchmark day the list lacks reads a number, not nan.
 
 Offline: invented tickers, no network, no data files.
 """
@@ -67,6 +68,30 @@ check(b2["total"] == 4 and b2["history"][last] == 75.0,
       f"W1: a stock with no close that day (its exchange shut) is left out of that day, not counted below "
       f"({b2['total']}, {b2['history'][last]})")
 check(b2["history"][str(idx[-2].date())] == 80.0, "W1: ...and counted the day before (4 of 5 above)")
+
+# A group mixing two exchanges (All Invested: India + US). Each exchange trades
+# on days the other is shut, so a stock has a close on only ~94% of the panel's
+# rows. The SMA used to be a 200-ROW window needing 190 closes: an India stock
+# had 189 in the last 200 rows and dropped out, so All Invested read 69.2% of 39
+# stocks instead of 75.0% of 52 (2026-10-15). It is taken over each stock's OWN
+# last 200 closes now, as the watchlist tabs' 200 DSMA is.
+cal = pd.DataFrame({"ACME": up, "ZED.NS": up * 2}).astype(float)
+cal.loc[idx[::16], "ACME"] = np.nan             # US holidays
+cal.loc[idx[8::16], "ZED.NS"] = np.nan          # India holidays, other days
+cal.loc[idx[-1], "ZED.NS"] = np.nan             # and shut on the last day
+b4 = bm.compute_breadth(cal)
+both = [d for d in idx[-40:] if cal.loc[d].notna().all()][-1]
+check(b4["history"].get(str(both.date())) == 100.0 and b4["history_50"].get(str(both.date())) == 100.0,
+      f"W1: two calendars -- both rising stocks count above their 200- and 50-day SMAs "
+      f"({b4['history'].get(str(both.date()))}, {b4['history_50'].get(str(both.date()))})")
+# the history starts once a stock has 252 closes of its own (the 52-week window)
+start = max(idx[252], min(cal[c].dropna().index[251] for c in cal))
+check(len(b4["history"]) == int((idx >= start).sum()) and set(b4["history"].values()) == {100.0}
+      and set(b4["history_50"].values()) == {100.0},
+      f"W1: ...on every day after the warmup, not only some -- a row window loses one stock or "
+      f"both as holidays pass ({len(b4['history'])} days)")
+check(b4["total"] == 1 and b4["pct_above"] == 100.0 and both != idx[-1],
+      f"W1: the last day only one exchange traded counts that one stock ({b4['total']})")
 
 since = idx[-10]
 b3 = bm.compute_breadth(panel, since=since)
@@ -175,6 +200,25 @@ check('"Nasdaq 100": ("NASDAQ100", "QQQ")' in APP2 and 'key="breadth_us_index"' 
 check('"Nasdaq 100": ("QQQ", "NASDAQ100")' in APP2, "app: the watchlist view offers Nasdaq 100 as a benchmark")
 check('perf_data.get("benchmarks")' in APP2 and APP2.count('perf_data.get("benchmarks")') >= 2,
       "app: both charts take a benchmark the market block lacks from dashboard_perf.json's benchmarks")
+
+# --- W5 a benchmark day the list does not have ---------------------------------------
+# A US list against Nifty 500 once India's next session opens: the benchmark has a
+# day no stock in the list has, the curve's value that day is NaN, and the title
+# read "Watchlist: +nan%" (2026-10-15). Runs the app's own two functions.
+import re
+import textwrap
+_ns = {"pd": pd}
+for _pat in (r"\n(        def calculate_portfolio_returns.*?)\n        def format_json_breadth",
+             r"\n(            def get_perf\(df\):.*?)\n            _ind_display_label"):
+    exec(textwrap.dedent(re.search(_pat, APP, re.S).group(1)), _ns)
+_idx = pd.bdate_range(end="2026-10-15", periods=300)
+_cl = pd.DataFrame({"ACME": np.linspace(100, 150, 300), "BOLT": np.linspace(50, 60, 300)}, index=_idx)
+_bn = pd.Series(np.linspace(1000, 1100, 301), index=_idx.append(pd.DatetimeIndex(["2026-10-16"])), name="ZBENCH")
+_df = _ns["calculate_portfolio_returns"](_cl.join(_bn, how="outer"), ["ACME", "BOLT"], "ZBENCH", filter_months=6)
+_title = _ns["get_perf"](_df)
+check(pd.isna(_df["Portfolio"].iloc[-1]) and "nan" not in _title.lower()
+      and _title.startswith(f"Watchlist: {(_df['Portfolio'].dropna().iloc[-1] - 100):+.1f}%"),
+      f"W5: the return title uses the list's last valid value, not the benchmark-only day ({_title})")
 
 print(f"FAILURES: {fails}")
 sys.exit(1 if fails else 0)

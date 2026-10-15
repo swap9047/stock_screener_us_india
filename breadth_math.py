@@ -13,6 +13,12 @@ NaN where a ticker has no close) and returns numbers.
 import pandas as pd
 
 
+def _own_sessions(closes, fn):
+    """`fn` applied to each ticker's own closes (its NaN rows dropped), then
+    lined back up with the panel's dates -- NaN on the days it has no close."""
+    return closes.apply(lambda s: fn(s.dropna()).reindex(s.index))
+
+
 def compute_breadth(closes, since=None):
     """Breadth over `closes` (DataFrame, one column per ticker), or None when
     it is empty. `since` (a Timestamp) drops earlier days from the history.
@@ -31,36 +37,32 @@ def compute_breadth(closes, since=None):
     # convention used everywhere else in the app (stock_data.py) and by public
     # breadth screeners.
     #
-    # min_periods=190 rather than 200: the panel is a union of every ticker's
-    # calendar, so a name that simply had no print on a few days carries sporadic
-    # NaNs. Demanding all 200 would drop ~190 perfectly good Nifty names over gaps
-    # of 1-10 days. Averaging 190+ of the last 200 closes is the same number to
-    # within rounding; what we actually want to exclude is recent listings, which
-    # the cumulative-history mask below handles directly.
-    sma200 = closes.rolling(window=200, min_periods=190).mean()
-    sma200 = sma200.where(closes.notna().cumsum() >= 200)
+    # Over each stock's OWN last 200 closes (_own_sessions), not the panel's last
+    # 200 rows. The panel is a union of every ticker's calendar, and a row window
+    # broke on it: it needed 190 closes in 200 rows, and an India stock in a mixed
+    # India + US group had 189 (the US trades on Indian holidays and vice versa).
+    # All Invested read 69.2% of 39 stocks instead of 75.0% of 52, and differed on
+    # over half its days, by up to 26 points (44 on the 50-day) -- 2026-10-15. A
+    # full window of a stock's own closes also needs no min_periods: a name with
+    # no print on a few days just reaches a little further back, and a listing
+    # with under 200 sessions has no SMA, so it is out of numerator and
+    # denominator alike.
+    sma200 = _own_sessions(closes, lambda s: s.rolling(window=200).mean())
     is_above = closes > sma200
-    # The 50-day the same way: 48 of the last 50 closes (the 200-day's 95%), and
-    # only once a stock has 50 sessions, so a new listing is not "above" an
-    # average of its first few days.
-    sma50 = closes.rolling(window=50, min_periods=48).mean()
-    sma50 = sma50.where(closes.notna().cumsum() >= 50)
+    # The 50-day the same way, so a new listing is not "above" an average of its
+    # first few days.
+    sma50 = _own_sessions(closes, lambda s: s.rolling(window=50).mean())
     is_above_50 = closes > sma50
 
-    # Calculate 52w High/Low (252 trading days).
-    #
-    # Same cumulative-history mask the SMA gets above, for the same reason and
-    # it was missing here: without it a stock with 126 sessions of history could
-    # post a "52-week high" off a 126-day window (min_periods tolerates gaps
-    # INSIDE the window, it does not require the window to be full), while
+    # Calculate 52w High/Low (252 trading days), over each stock's own 252
+    # closes like the SMAs. The full window matters: a stock with 126 sessions
+    # of history used to post a "52-week high" off a 126-day window, while
     # stocks too new to qualify at all still sat in the denominator. The
     # numerator was too generous and the denominator too large -- a split that
     # matters most in exactly the stretches this chart is read for, after an
-    # IPO wave or an index reconstitution. Threshold is the window size, as
-    # `>= 200` is for the 200-day SMA.
-    enough_52w = closes.notna().cumsum() >= 252
-    high52 = closes.rolling(window=252, min_periods=126).max().where(enough_52w)
-    low52 = closes.rolling(window=252, min_periods=126).min().where(enough_52w)
+    # IPO wave or an index reconstitution.
+    high52 = _own_sessions(closes, lambda s: s.rolling(window=252).max())
+    low52 = _own_sessions(closes, lambda s: s.rolling(window=252).min())
 
     is_new_high = closes >= high52
     is_new_low = closes <= low52

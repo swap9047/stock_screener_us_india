@@ -5439,14 +5439,16 @@ with tab_news:
         with col_filter:
             # 6 Months and 1 Year added 2026-10-14: at 3 years the last few days
             # share about a pixel, so the line looked as if it stopped days early.
-            # 2 Years replaced 3 and is the default (owner, 2026-10-15).
-            _horizon_months = {"6 Months": 6, "1 Year": 12, "2 Years": 24, "5 Years": 60}
-            # A saved choice that no longer exists ("3 Years") falls back to the default.
+            # 1.5 and 3 Years added and the list made a dropdown, 1.5 Years the
+            # default (owner, 2026-10-15).
+            _horizon_months = {"6 Months": 6, "1 Year": 12, "1.5 Years": 18, "2 Years": 24,
+                               "3 Years": 36, "5 Years": 60}
+            # A saved choice that no longer exists falls back to the default.
             if st.session_state.get("time_horizon_filter") not in (None, *_horizon_months):
                 del st.session_state["time_horizon_filter"]
-            time_filter = st.radio("Time Horizon", list(_horizon_months), index=2, horizontal=True,
-                                   key="time_horizon_filter")
-            months = _horizon_months.get(time_filter, 24)
+            time_filter = st.selectbox("Time Horizon", list(_horizon_months), index=2,
+                                       key="time_horizon_filter")
+            months = _horizon_months.get(time_filter, 18)
             # The right-hand column's index (2026-10-15): its breadth, highs/lows and
             # the US Invested return curve all follow this. Keys are
             # market_breadth.json's blocks and the benchmark ticker.
@@ -5742,7 +5744,14 @@ with tab_news:
         
             def get_perf(df):
                 if df is not None and not df.empty and 'Portfolio' in df.columns and 'Benchmark' in df.columns:
-                    ret_port = (df['Portfolio'].iloc[-1] / 100 - 1) * 100
+                    # Last VALID value, both sides: the benchmark can have a day the
+                    # list does not (a US list against Nifty 500 once India's next
+                    # session opens), and that row's portfolio value is NaN -- the
+                    # title read "Watchlist: +nan%" (found 2026-10-15).
+                    port_valid = df['Portfolio'].dropna()
+                    if port_valid.empty:
+                        return "--"
+                    ret_port = (port_valid.iloc[-1] / 100 - 1) * 100
                     bench_valid = df['Benchmark'].dropna()
                     ret_bench = (bench_valid.iloc[-1] / 100 - 1) * 100 if not bench_valid.empty else float('nan')
                     return f"Watchlist: {ret_port:+.1f}%, Bench: {ret_bench:+.1f}%"

@@ -164,7 +164,14 @@ check(round(float(_highs_pct(_p2, True)[_last]), 1) == 33.3,
 # The maths moved to breadth_math.py on 2026-10-14 (shared with the app's
 # per-watchlist breadth view); refresh_market_breadth calls it.
 _bsrc = open(f"{REPO}/breadth_math.py").read()
-check("closes.notna().cumsum() >= 252" in _bsrc, "the 52w mask is applied in breadth_math")
+# 2026-10-15: the window is each stock's own 252 closes (_own_sessions), a full
+# window, which needs no separate history mask -- so check the behaviour.
+import breadth_math as _bm
+_bh = _bm.compute_breadth(_panel)["highs_history"][str(_last.date())]
+check(_bh == 0.0, f"breadth_math: a 130-session listing is not a 52w high ({_bh})")
+check(_bm.compute_breadth(_p2)["highs_history"][str(_last.date())] == 33.3,
+      "breadth_math: ...a mature name at its 52w high still is (1 of 3)")
+check("s.rolling(window=252).max()" in _bsrc, "the 52w window is a full one in breadth_math")
 check("compute_breadth(closes" in open(f"{REPO}/refresh_market_breadth.py").read(),
       "refresh_market_breadth computes through breadth_math")
 check("hl_counts" in _bsrc and "(closes.notna() & high52.notna())" in _bsrc,
