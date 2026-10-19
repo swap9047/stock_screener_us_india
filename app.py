@@ -3973,7 +3973,21 @@ def render_expert_view_expander(market, filtered_rows, settings, results=None):
     # Was missing entirely, so the per-ticker re-analyze button below raised
     # NameError the moment it was clicked.
 
-    with st.expander(f"🤖 AI Stock Expert Views ({market} — {len(tickers)} tickers)", expanded=False):
+    ev_label = f"🤖 AI Stock Expert Views ({market} — {len(tickers)} tickers)"
+    if IS_MOBILE:
+        # On a phone, build the cards only while the expander is open. A plain
+        # expander runs its body collapsed or not, so every tab sent a card and a
+        # Re-analyze button per ticker on every rerun -- the bulk of a phone's
+        # first load (Brave Android lagged). Opening it costs one rerun. Desktop
+        # keeps the plain expander: there the cost was never felt, and it opens
+        # instantly. The Expert Take column does not come from here.
+        ev_exp = st.expander(ev_label, key=f"ev_exp_{market}", on_change="rerun")
+        if not ev_exp.open:
+            return
+    else:
+        ev_exp = st.expander(ev_label, expanded=False)
+
+    with ev_exp:
         # Scrollable container for all ticker cards
         scroll_html_open = (
             "<div style='max-height:680px; overflow-y:auto; padding-right:6px; "
@@ -5314,6 +5328,13 @@ combined_markets_by_key = {k: watchlist_groups_now.get(k, []) for k in combined_
 # tab automatically.
 all_tabs = st.tabs(market_tab_labels + combined_tab_labels + ["News", "Alert Rules"],
                    key="main_tabs", on_change="rerun")
+# A phone or tablet browser. Read by the watchlist tabs, which on a phone skip the
+# work for what is not on screen (see render_expert_view_expander and the
+# `hidden_on_phone` argument of render_market_tab); desktop renders as it always did.
+try:
+    IS_MOBILE = breadth_charts.is_mobile(st.context.headers.get("User-Agent", ""))
+except Exception:   # no request headers (a headless run) -> desktop, as the News tab does
+    IS_MOBILE = False
 n_markets = len(market_keys_now)
 market_tabs = dict(zip(market_keys_now, all_tabs[:n_markets]))
 combined_tabs = dict(zip(combined_keys, all_tabs[n_markets:-2]))
