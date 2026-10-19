@@ -1,0 +1,52 @@
+name: Keep App Awake
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+# Streamlit Community Cloud puts an app to sleep after about 12 hours with no
+# visitor. This opens the app in a headless browser (keepalive.py) so that never
+# happens, and clicks the wake-up button if it already has.
+#
+# A plain HTTP ping does not count as a visit -- the timer follows the websocket a
+# real page opens -- hence the browser. The login form is enough: loading the page
+# starts the script run, which shows it, so no credentials are used here.
+#
+# Every 4 hours, three times the margin the 12 h limit needs, because GitHub
+# starts scheduled runs hours late and drops some outright (AGENTS.md, GitHub
+# Actions section). No gate: a spare visit costs nothing.
+#
+# This workflow loads no data and commits nothing, so it has none of the
+# data steps the other workflows share; test_workflows.py
+# asserts that exemption (it holds only APP_URL and prints nothing from the app).
+on:
+  schedule:
+    - cron: "17 */4 * * *"
+  workflow_dispatch: {}    # run manually from the Actions tab anytime
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  visit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install browser
+        run: |
+          pip install playwright==1.49.1
+          playwright install --with-deps chromium
+
+      - name: Visit the app
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+        run: python -u keepalive.py

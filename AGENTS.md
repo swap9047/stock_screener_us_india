@@ -35,7 +35,7 @@ step names, so each key needs a line in the AI steps' `env:` blocks. Every run l
 `[key rotation] N key(s): ...`; if that number is lower than expected, that line is
 missing.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1206
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1209
 offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
@@ -341,6 +341,14 @@ Each of these has actually bitten this codebase.
 `checks.yml` is not in this table: it runs `checks/run_all.py` on every push, touches no
 data and needs no secrets (so it works from a fork). Keep it that way — `test_workflows.py`
 asserts it.
+
+`keep-alive.yml` is not in the table either: every 4 hours (`17 */4 * * *`, no gate) it runs
+`keepalive.py`, which opens the app in headless Chromium so Streamlit Community Cloud does not
+put it to sleep after ~12 h without a visitor (a plain HTTP ping does not count; the timer
+follows the websocket). It clicks the wake-up button if the app already slept, and needs one
+secret, `APP_URL` (a secret because this repo and its logs are public). It loads and commits no
+data and does not log in -- the login form already counts as a visit -- so `test_workflows.py`
+exempts it from the load-data / commit-data rules and asserts it uses only that secret.
 
 **Every workflow wakes hourly (`cron: "0 * * * *"`) and a `gate` job decides whether this
 run does the work** (`data-refresh.yml` every 15 minutes) -- `.github/actions/slot-gate`, inputs `slots` (ET hours), `grace-hours`,
