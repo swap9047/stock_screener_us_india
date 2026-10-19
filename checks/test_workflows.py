@@ -16,7 +16,7 @@ R = REPO + "/.github"
 # checks.yml is the CI suite: it loads no data, commits nothing and prints only
 # invented fixtures, so the data rules below do not apply to it. Its exemption is
 # asserted rather than assumed, just below.
-NON_DATA = {"checks.yml"}
+NON_DATA = {"checks.yml", "keep-alive.yml"}
 
 ci = yaml.safe_load(open(f"{R}/workflows/checks.yml"))
 ci_text = open(f"{R}/workflows/checks.yml").read()
@@ -24,6 +24,15 @@ check("secrets." not in ci_text, "checks.yml uses no secrets (so it runs on fork
 check("stock_screener_data" not in ci_text and "load-data" not in ci_text,
       "checks.yml never touches the private data repo")
 check((ci.get("permissions") or {}).get("contents") == "read", "checks.yml is read-only on this repo")
+
+# keep-alive.yml only opens the app in a browser: no data, no commits. Asserted, not assumed.
+ka_text = open(f"{R}/workflows/keep-alive.yml").read()
+ka = yaml.safe_load(ka_text)
+check("load-data" not in ka_text and "commit-data" not in ka_text and "DATA_REPO_TOKEN" not in ka_text,
+      "keep-alive.yml never touches the data repo")
+check(re.findall(r"secrets\.(\w+)", ka_text) == ["APP_URL"], "keep-alive.yml uses only the APP_URL secret")
+check((ka.get("permissions") or {}).get("contents") == "read" and "git push" not in ka_text,
+      "keep-alive.yml is read-only on this repo")
 
 for path in sorted(glob.glob(f"{R}/workflows/*.yml")):
     if path.rsplit("/", 1)[1] in NON_DATA:
