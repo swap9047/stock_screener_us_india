@@ -35,7 +35,7 @@ step names, so each key needs a line in the AI steps' `env:` blocks. Every run l
 `[key rotation] N key(s): ...`; if that number is lower than expected, that line is
 missing.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1209
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1222
 offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
@@ -161,6 +161,13 @@ Two things you cannot guess and will get wrong:
   is gated on `tab_news.open` because nothing else reads it. Anything expensive
   in a tab body costs you 11× (7 watchlists + 2 combined tabs + News + Alert Rules —
   recount against `markets.json` and the `st.tabs(...)` call in `app.py` if that drifts).
+  **On a phone** (`IS_MOBILE`, from the User-Agent via `breadth_charts.is_mobile`) a
+  hidden watchlist tab skips its table, AI-review box and Expert Views cards
+  (`render_market_tab(..., hidden_on_phone=True)`), and the Expert Views expander
+  builds its cards only while open. That took a phone's first load from ~5.4 MB to
+  ~0.4 MB of HTML (7 x 40 synthetic tickers). The tab's widgets still run, and the
+  keys of the skipped ones are re-assigned so they survive. Desktop is untouched;
+  `checks/test_phone_render.py` renders both.
 - **`st.tabs` is instantiated early on purpose.** A keyed widget's `session_state` only
   survives a rerun if the widget was re-instantiated on the run before it — so any widget
   that calls `st.rerun()` *before* `st.tabs` would orphan the tab selection and bounce you

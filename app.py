@@ -4091,7 +4091,8 @@ def render_expert_view_expander(market, filtered_rows, settings, results=None):
 
 
 def render_market_tab(market, results, settings, visible_keys, label_by_key, sort_levels=None,
-                       combined_markets=None, combined_label=None, short_history=None):
+                       combined_markets=None, combined_label=None, short_history=None,
+                       hidden_on_phone=False):
     """Renders one watchlist table tab. `market` is either a real registry
     key (single-market tab) or a synthetic key like "all_invested" used only
     for widget-key namespacing / CSV filenames when `combined_markets` is
@@ -4099,7 +4100,14 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
     `results`) -- see the module-level combined-tab wiring below for how
     the two are told apart. A combined tab has no single benchmark, no
     watchlist editor (ticker membership is edited from the real per-market
-    tabs, unaffected by this), and a friendlier empty-state message."""
+    tabs, unaffected by this), and a friendlier empty-state message.
+
+    `hidden_on_phone`: a phone, and this tab is not the one on screen. The
+    table, the AI-review box and the Expert Views cards are then not built:
+    they were ~90% of what a phone downloaded on first load, for tabs it could
+    not see. The filter, search and editor widgets above still run, so their
+    state survives switching away; switching tabs already reruns
+    (st.tabs on_change="rerun"), which builds the newly shown tab."""
     benchmarks = get_benchmarks(settings)
     labels = ema_col_labels(settings)
     custom_columns = load_custom_columns()
@@ -4403,7 +4411,13 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             + ", ".join(f"{t} ({short_history[t]['bars']})" for t in _too_new)
         )
 
-    if filtered:
+    if filtered and hidden_on_phone:
+        # A widget not rendered on a run loses its session_state; re-assigning
+        # keeps the AI-review selection for when this tab is shown again.
+        _k = f"ai_review_tickers_{market}"
+        if _k in st.session_state:
+            st.session_state[_k] = st.session_state[_k]
+    elif filtered:
         def vstop_change_str(row):
             weeks = row.get("vstop_weekly_weeks_since_change")
             if weeks is None:
@@ -4921,7 +4935,12 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
     # `results` (not just the filtered rows) so the alert rules behind the
     # per-ticker re-analyze button resolve over the whole market, exactly as
     # they do in the nightly job.
-    render_expert_view_expander(market, filtered, settings, results=results)
+    if hidden_on_phone:
+        _k = f"ev_exp_{market}"   # keep the expander's open state (see above)
+        if _k in st.session_state:
+            st.session_state[_k] = st.session_state[_k]
+    else:
+        render_expert_view_expander(market, filtered, settings, results=results)
 
     st.caption(
         f"Mansfield RS = ((price/{bench} ratio today ÷ SMA of that ratio, n) − 1) × 100. "
@@ -5429,6 +5448,7 @@ for ck in combined_keys:
             ck, combined_results, settings_now, shared_visible_keys, shared_label_by_key,
             saved_sort_levels(ck, shared_key_by_label), combined_markets=combined_markets_here,
             combined_label=combined_display_label_by_key[ck], short_history=short_history_now,
+            hidden_on_phone=IS_MOBILE and not combined_tabs[ck].open,
         )
 
 for mkt in market_keys_now:
@@ -5436,6 +5456,7 @@ for mkt in market_keys_now:
         render_market_tab(
             mkt, per_market.get(mkt, []), settings_now, shared_visible_keys, shared_label_by_key,
             saved_sort_levels(mkt, shared_key_by_label), short_history=short_history_now,
+            hidden_on_phone=IS_MOBILE and not market_tabs[mkt].open,
         )
 
 with tab_news:
