@@ -91,8 +91,9 @@ check(not run, f"a second fire inside the 13:00 slot -> skip ({why})")
 check(slot_gate.latest_slot(et(2026, 10, 14, 12, 59), (7, 13, 19)).hour == 7,
       "12:59 ET -> still the 07:00 slot's window")
 WF_BREADTH = (Path(__file__).resolve().parents[1] / ".github/workflows/market-breadth.yml").read_text()
-check('slots: "' + ",".join(str(h) for h in range(24)) + '"' in WF_BREADTH and 'window: "SUN:18-FRI:23"' in WF_BREADTH,
-      "market-breadth.yml runs every hour, Sunday 6 PM ET to Friday 11 PM ET (owner, 2026-10-21)")
+BREADTH_SLOTS = tuple(h for h in range(24) if h not in (18, 19, 20, 21))
+check('slots: "' + ",".join(str(h) for h in BREADTH_SLOTS) + '"' in WF_BREADTH and 'window: "SUN:22-FRI:17"' in WF_BREADTH,
+      "market-breadth.yml runs hourly, Sunday 10 PM to Friday 5 PM ET, none at 6-9 PM ET (owner, 2026-10-21)")
 check("days:" not in WF_BREADTH.split("gate:")[1].split("update_breadth:")[0].replace("`days`", ""),
       "the breadth gate uses window, not days")
 
@@ -122,6 +123,25 @@ check(run, f"the 14:00 slot's run does not satisfy the 15:00 slot ({why})")
 # A run that is more than an hour late lands in a later slot, never an old one.
 run, why = decide(et(2026, 10, 21, 17, 45), worked=[et(2026, 10, 21, 14, 5).astimezone(timezone.utc)], **W)
 check(run and slot_gate.latest_slot(et(2026, 10, 21, 17, 45), W["slots"]).hour == 17, f"a run 3h after the last one works the 17:00 slot ({why})")
+# The real breadth schedule: slots 0-17 and 22-23, window SUN:22-FRI:17 (2026-10-18 is a Sunday).
+R = dict(slots=BREADTH_SLOTS, grace=1, window=slot_gate.parse_window("SUN:22-FRI:17"))
+for label, now, want in [
+    ("Sunday 21:30 -> before the window opens", et(2026, 10, 18, 21, 30), False),
+    ("Sunday 22:05 -> first slot of the week", et(2026, 10, 18, 22, 5), True),
+    ("Monday 03:00 -> overnight India session", et(2026, 10, 19, 3, 0), True),
+    ("Wednesday 17:10 -> the 17:00 slot, last before the gap", et(2026, 10, 21, 17, 10), True),
+    ("Wednesday 18:30 -> inside the 6-9 PM gap, 17:00 is 1.5h old", et(2026, 10, 21, 18, 30), False),
+    ("Wednesday 21:59 -> still the gap", et(2026, 10, 21, 21, 59), False),
+    ("Wednesday 22:00 -> the gap ends", et(2026, 10, 21, 22, 0), True),
+    ("Thursday 23:30 -> evening slot before Friday", et(2026, 10, 22, 23, 30), True),
+    ("Friday 16:30 -> the 16:00 slot", et(2026, 10, 23, 16, 30), True),
+    ("Friday 17:10 -> the last slot of the week", et(2026, 10, 23, 17, 10), True),
+    ("Friday 19:00 -> after the week ends", et(2026, 10, 23, 19, 0), False),
+    ("Friday 22:30 -> no Friday-night slot", et(2026, 10, 23, 22, 30), False),
+    ("Saturday 03:00 -> no session", et(2026, 10, 24, 3, 0), False),
+]:
+    run, why = decide(now, **R)
+    check(run is want, f"breadth schedule: {label} ({why})")
 # A window whose end lies before its start wraps through the weekend.
 wrap = slot_gate.parse_window("FRI:20-MON:6")
 sat = slot_gate.latest_slot(et(2026, 10, 24, 12, 0), tuple(range(24)))
