@@ -1,8 +1,9 @@
 name: Market Breadth Updater
 
 on:
-  # ONE hourly wake-up, not four cron lines across two DST seasons. The gate job
-  # decides which of the four daily slots (1 AM / 7 AM / 1 PM / 7 PM ET) this run owns.
+  # ONE hourly wake-up, not a cron line per DST season. The gate job decides
+  # whether this run owns an hourly slot inside the Sunday-evening-to-Friday-night
+  # window (see the gate job).
   schedule:
     - cron: "0 * * * *"
   workflow_dispatch:
@@ -16,17 +17,19 @@ permissions:
   actions: read    # the slot gate reads this workflow's own run history
 
 jobs:
-  # Every 6 hours, Mon-Fri (owner, 2026-10-15): 1 AM / 7 AM / 1 PM / 7 PM ET.
-  # Saturday's slots had no new session to fetch. 1 AM ET is mid-way through the
-  # NSE session (23:45-06:00 ET), so the Nifty 500 line gets an intraday reading;
-  # 7 AM is after NSE's close (5-6 AM ET); 1 PM (2026-10-14) is mid-way through
-  # the US session; 7 PM is after the US close. A market with nothing new in a
-  # slot is skipped as "unchanged". A Friday NSE session is the 1 AM FRIDAY slot,
-  # so MON-FRI still covers every session.
-  # 23 h window (owner, 2026-10-08), though a slot never gets more than the 6 h
-  # to the next one: the gate always works the LATEST slot, so once the next one
-  # starts it takes over -- and nothing is lost, because that run refreshes every
-  # market with a new session, the missed slot's included.
+  # Every hour from Sunday 6 PM ET to Friday 11 PM ET (owner, 2026-10-21; it was
+  # 1 AM / 7 AM / 1 PM / 7 PM ET, Mon-Fri). Sunday 6 PM is ahead of the NSE
+  # Monday open (~23:45 ET Sunday) and Friday 11 PM is after the US close, so the
+  # window holds every NSE and US session of the week; Saturday has none.
+  # A market with nothing new in a slot is skipped as "unchanged", and one still
+  # trading gets a "live" reading that the next slot redoes.
+  # `window` limits the slots by their START time, in ET. Hourly slots all day plus
+  # `days` could not say "Sunday from 18:00", hence the window input.
+  # grace-hours 1: the gate always works the LATEST slot, and an hourly slot is
+  # replaced by the next one after an hour anyway. GitHub still throttles a cron to
+  # a few runs a day, so the real cadence is however often it fires; a late run
+  # works the slot it lands in and the others are skipped. A run landing after
+  # Friday 23:59 ET finds Saturday's slot (outside the window) and does nothing.
   gate:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -38,9 +41,9 @@ jobs:
       - id: slot
         uses: ./.github/actions/slot-gate
         with:
-          slots: "1,7,13,19"
-          grace-hours: "23"
-          days: "MON,TUE,WED,THU,FRI"
+          slots: "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23"
+          grace-hours: "1"
+          window: "SUN:18-FRI:23"
           work-job: update_breadth
           workflow-file: market-breadth.yml
           token: ${{ github.token }}

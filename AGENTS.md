@@ -35,7 +35,7 @@ step names, so each key needs a line in the AI steps' `env:` blocks. Every run l
 `[key rotation] N key(s): ...`; if that number is lower than expected, that line is
 missing.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1222
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1234
 offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
@@ -342,7 +342,7 @@ Each of these has actually bitten this codebase.
 | `fundamentals.yml` | `refresh_fundamentals.py` | `fundamentals.json` | 9:00 PM | 22 h |
 | `daily-alerts.yml` | `alert_check.py` | `alert_state.json` | 9:00 PM | 22 h |
 | `expert-views.yml` | `refresh_data.py`, `refresh_expert_views.py` | `data_snapshot.json`, `expert_views.json` | 1:00 AM | 22 h |
-| `market-breadth.yml` | `refresh_market_breadth.py` (S&P 500, Nifty 500, Nasdaq 100), `refresh_dashboard_perf.py`, `refresh_data.py` | `market_breadth.json`, `dashboard_perf.json`, `data_snapshot.json` | 1:00 AM + 7:00 AM + 1:00 PM + 7:00 PM (every 6 h), Mon-Fri (a market with no new session is skipped; a mid-session run stores today's forming bar as "live", redone next run; a latest day Yahoo has only part-published is "partial"/"awaiting" and fails the run, so the gate retries) | 23 h (in effect 6 h: the next slot takes over) |
+| `market-breadth.yml` | `refresh_market_breadth.py` (S&P 500, Nifty 500, Nasdaq 100), `refresh_dashboard_perf.py`, `refresh_data.py` | `market_breadth.json`, `dashboard_perf.json`, `data_snapshot.json` | Every hour from Sunday 6 PM ET to Friday 11 PM ET (the gate's `window`; no Saturday slot) (a market with no new session is skipped; a mid-session run stores today's forming bar as "live", redone next run; a latest day Yahoo has only part-published is "partial"/"awaiting" and fails the run, so the gate retries) | 1 h (the next hourly slot takes over) |
 | `weekly-wrapup.yml` | `weekly_wrapup_check.py` | `weekly_wrapup_state.json` | Sunday 9:00 PM | 22 h |
 
 `checks.yml` is not in this table: it runs `checks/run_all.py` on every push, touches no
@@ -374,11 +374,16 @@ Three things about it you cannot guess:
   `?status=completed`, a filter that lagged and let the alerts slot be worked twice.
 - **The gate always works the LATEST slot**, so a `grace-hours` longer than the gap
   between slots never lets a run do an older one -- the window just ends when the next
-  slot starts. Breadth's 23 h therefore means "until the next slot" (6 h away),
-  which loses nothing: the next slot's run refreshes every market with a new session. For
+  slot starts. Breadth's hourly slots therefore use a 1 h grace: a run only ever works
+  the hour it lands in, and the next run refreshes every market with a new session. For
   a one-slot-a-day workflow, keep the window under 24 h (news uses 23, the rest 22).
 - **`days` filters the SLOT's weekday, not the run's.** The Sunday wrap-up slot is still
   Sunday's when the run starts on Monday morning.
+- **`window` (`SUN:18-FRI:23`) limits slots by their start, in ET, both ends inclusive.**
+  Hourly slots plus `days` cannot say "Sunday from 18:00", which breadth needs. Like
+  `days`, it judges the slot, so a run landing after Friday 23:59 ET finds Saturday's
+  slot, outside the window, and does nothing -- Friday 23:00's work is only done by a
+  run that starts inside that hour.
 
 **An "hourly" cron is not hourly.** GitHub throttles it to 4-6 runs a day, 2-5 hours
 apart (measured on `data-refresh.yml`, 2026-09-07..10). That is still several chances per
