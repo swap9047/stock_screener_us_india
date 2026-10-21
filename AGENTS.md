@@ -35,7 +35,7 @@ step names, so each key needs a line in the AI steps' `env:` blocks. Every run l
 `[key rotation] N key(s): ...`; if that number is lower than expected, that line is
 missing.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1234
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1247
 offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
@@ -342,7 +342,7 @@ Each of these has actually bitten this codebase.
 | `fundamentals.yml` | `refresh_fundamentals.py` | `fundamentals.json` | 9:00 PM | 22 h |
 | `daily-alerts.yml` | `alert_check.py` | `alert_state.json` | 9:00 PM | 22 h |
 | `expert-views.yml` | `refresh_data.py`, `refresh_expert_views.py` | `data_snapshot.json`, `expert_views.json` | 1:00 AM | 22 h |
-| `market-breadth.yml` | `refresh_market_breadth.py` (S&P 500, Nifty 500, Nasdaq 100), `refresh_dashboard_perf.py`, `refresh_data.py` | `market_breadth.json`, `dashboard_perf.json`, `data_snapshot.json` | Every hour from Sunday 6 PM ET to Friday 11 PM ET (the gate's `window`; no Saturday slot) (a market with no new session is skipped; a mid-session run stores today's forming bar as "live", redone next run; a latest day Yahoo has only part-published is "partial"/"awaiting" and fails the run, so the gate retries) | 1 h (the next hourly slot takes over) |
+| `market-breadth.yml` | `refresh_market_breadth.py` (S&P 500, Nifty 500, Nasdaq 100), `refresh_dashboard_perf.py`, `refresh_data.py` | `market_breadth.json`, `dashboard_perf.json`, `data_snapshot.json` | Every hour from Sunday 10 PM ET to Friday 5 PM ET, none 6-9 PM ET (the gate's `window` plus a slot list without hours 18-21; no Saturday slot) (a market with no new session is skipped; a mid-session run stores today's forming bar as "live", redone next run; a latest day Yahoo has only part-published is "partial"/"awaiting" and fails the run, so the gate retries) | 1 h (the next hourly slot takes over) |
 | `weekly-wrapup.yml` | `weekly_wrapup_check.py` | `weekly_wrapup_state.json` | Sunday 9:00 PM | 22 h |
 
 `checks.yml` is not in this table: it runs `checks/run_all.py` on every push, touches no
@@ -379,17 +379,29 @@ Three things about it you cannot guess:
   a one-slot-a-day workflow, keep the window under 24 h (news uses 23, the rest 22).
 - **`days` filters the SLOT's weekday, not the run's.** The Sunday wrap-up slot is still
   Sunday's when the run starts on Monday morning.
-- **`window` (`SUN:18-FRI:23`) limits slots by their start, in ET, both ends inclusive.**
-  Hourly slots plus `days` cannot say "Sunday from 18:00", which breadth needs. Like
-  `days`, it judges the slot, so a run landing after Friday 23:59 ET finds Saturday's
-  slot, outside the window, and does nothing -- Friday 23:00's work is only done by a
-  run that starts inside that hour.
+- **`window` (`SUN:22-FRI:17` for breadth) limits slots by their start, in ET, both ends
+  inclusive.** Hourly slots plus `days` cannot say "Sunday from 22:00", which breadth
+  needs. Like `days`, it judges the slot, so a run landing after Friday 17:59 ET finds a
+  slot outside the window and does nothing -- Friday 17:00's work is only done by a run
+  that starts inside that hour.
 
 **An "hourly" cron is not hourly.** GitHub throttles it to 4-6 runs a day, 2-5 hours
 apart (measured on `data-refresh.yml`, 2026-09-07..10). That is still several chances per
 slot, which is the point, but it means a slot's work can start hours after the slot -- so
 `grace-hours` has to be generous (22-23 h) and
 `SNAPSHOT_STALE_WARN_HOURS = 6` sits close to the real gap between data refreshes.
+
+**A Cloudflare Worker is the real clock for `data-refresh.yml` and `market-breadth.yml`**
+(owner, 2026-10-21; deployed by hand in the Cloudflare dashboard, its code is not in this
+repo). Its cron trigger (`0,30 * * * *`) fires at :00 and :30 UTC and it calls `workflow_dispatch` through a
+fine-grained token scoped to THIS repo with Actions: write (never the data repo). Only
+inside Sunday 22:00 ET to Friday 17:00 ET, and not between 17:30 and 21:30 ET on any day:
+`data-refresh.yml` every 30 minutes, `market-breadth.yml` at :00 only. A dispatch skips `market-breadth.yml`'s gate
+(`github.event_name == 'workflow_dispatch'`), so the Worker enforces the window itself;
+keep it equal to the gate's `window` and `slots`, which are the fallback if the Worker is down. The
+GitHub `*/15` cron on `data-refresh.yml` stays as a throttled backup. Every successful
+snapshot write is stamped `generated_at = now`, so every run commits to the data repo --
+that is why the Worker is limited to the window and not left running around the clock.
 
 This replaced a cron pair per workflow (one line per DST season) plus a gate that rejected
 the line belonging to the other season. It only worked while GitHub fired the right line:

@@ -329,7 +329,7 @@ if nd:
 
 # --- B2 / B4 / workflow ---------------------------------------------------------------
 WF = (REPO / ".github/workflows/market-breadth.yml").read_text()
-check('window: "SUN:18-FRI:23"' in WF, "B2: the breadth slots run Sunday 6 PM to Friday 11 PM ET, no Saturday slot")
+check('window: "SUN:22-FRI:17"' in WF, "B2: the breadth slots run Sunday 10 PM to Friday 5 PM ET, no Saturday slot")
 check('{"US", "INDIA", "NASDAQ100"}' in WF, "the verify step expects the Nasdaq 100 block too")
 check('("ok", "unchanged", "live", "awaiting", "partial")' in WF and 'v in ("awaiting", "partial")' in WF and "sys.exit(1)" in WF,
       "B1: the verify step accepts an unchanged market and fails an awaiting or partial one (so the gate retries)")
