@@ -44,7 +44,35 @@ def latest_slot(now_et, slot_hours):
     return max(starts) if starts else None
 
 
-def decide(now_et, slot_hours, grace_hours, days, worked_at):
+def parse_window(text):
+    """"SUN:18-FRI:23" -> (from, to) as hours since Sunday 00:00 ET; None if blank.
+
+    Both ends are inclusive and name a slot's START hour. Sunday is day 0 so a
+    "Sunday evening to Friday night" window is one unbroken range, though a window
+    whose end lies before its start still wraps through the weekend.
+    """
+    text = (text or "").strip().upper()
+    if not text:
+        return None
+    ends = []
+    for part in text.split("-"):
+        day, _, hour = part.partition(":")
+        ends.append(((DAY_CODES.index(day.strip()) + 1) % 7) * 24 + int(hour))
+    if len(ends) != 2:
+        raise ValueError(f"window must look like SUN:18-FRI:23, got {text!r}")
+    return tuple(ends)
+
+
+def in_window(slot, window):
+    """Is this slot's start inside `window` (see parse_window)? No window = always."""
+    if window is None:
+        return True
+    pos = ((slot.weekday() + 1) % 7) * 24 + slot.hour
+    start, end = window
+    return start <= pos <= end if start <= end else pos >= start or pos <= end
+
+
+def decide(now_et, slot_hours, grace_hours, days, worked_at, window=None):
     """(run, reason). `worked_at` holds the start times of runs that did work."""
     slot = latest_slot(now_et, slot_hours)
     if slot is None:
@@ -54,6 +82,8 @@ def decide(now_et, slot_hours, grace_hours, days, worked_at):
         return False, f"slot {slot:%a %Y-%m-%d %H:%M} ET is {age.total_seconds() / 3600:.1f}h old (stale after {grace_hours}h)"
     if days and DAY_CODES[slot.weekday()] not in days:
         return False, f"slot {slot:%a %Y-%m-%d %H:%M} ET is not on {','.join(days)}"
+    if not in_window(slot, window):
+        return False, f"slot {slot:%a %Y-%m-%d %H:%M} ET is outside the window"
     for started in worked_at:
         if started.astimezone(ET) >= slot:
             return False, f"slot {slot:%a %Y-%m-%d %H:%M} ET already done by a run at {started.astimezone(ET):%H:%M} ET"
@@ -137,12 +167,13 @@ def main():
     slot_hours = [int(h) for h in os.environ["SLOT_HOURS_ET"].replace(" ", "").split(",") if h]
     grace_hours = float(os.environ["GRACE_HOURS"])
     days = [d.strip().upper() for d in os.environ.get("DAYS", "").split(",") if d.strip()]
+    window = parse_window(os.environ.get("WINDOW", ""))
     now_et = datetime.now(ET)
     # Look back far enough to cover the window, whichever slot we land on.
     since = (now_et - timedelta(hours=grace_hours + 24)).astimezone(ZoneInfo("UTC"))
     worked = worked_runs(os.environ["REPO"], os.environ["WORKFLOW_FILE"], os.environ["WORK_JOB"],
                          os.environ["GH_TOKEN"], since, os.environ.get("RUN_ID"))
-    run, reason = decide(now_et, slot_hours, grace_hours, days, worked)
+    run, reason = decide(now_et, slot_hours, grace_hours, days, worked, window)
     print(f"now {now_et:%a %Y-%m-%d %H:%M} ET | {reason}", file=sys.stderr)
     print(f"run={'true' if run else 'false'}")
 

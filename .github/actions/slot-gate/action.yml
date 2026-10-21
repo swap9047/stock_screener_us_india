@@ -14,6 +14,10 @@ inputs:
     description: 'Weekday codes the slot applies to (e.g. "SUN"); blank = every day'
     required: false
     default: ""
+  window:
+    description: 'Optional range of slot start times, inclusive, as DAY:HOUR-DAY:HOUR in ET (e.g. "SUN:18-FRI:23"); blank = no limit. Like days, it judges the SLOT, not the run. For a range a plain slots + days pair cannot say, such as a Sunday that starts late.'
+    required: false
+    default: ""
   work-job:
     description: >
       Name of the job that does the work. A run whose gate said "no" still
@@ -38,6 +42,7 @@ runs:
         SLOT_HOURS_ET: ${{ inputs.slots }}
         GRACE_HOURS: ${{ inputs.grace-hours }}
         DAYS: ${{ inputs.days }}
+        WINDOW: ${{ inputs.window }}
         WORK_JOB: ${{ inputs.work-job }}
         WORKFLOW_FILE: ${{ inputs.workflow-file }}
         REPO: ${{ github.repository }}

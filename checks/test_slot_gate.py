@@ -23,8 +23,8 @@ def check(ok, label):
 def et(y, m, d, h, mi=0):
     return datetime(y, m, d, h, mi, tzinfo=ET)
 
-def decide(now, slots=(21,), grace=22, days=None, worked=()):
-    return slot_gate.decide(now, slots, grace, days, list(worked))
+def decide(now, slots=(21,), grace=22, days=None, worked=(), window=None):
+    return slot_gate.decide(now, slots, grace, days, list(worked), window)
 
 # --- the daily 21:00 ET slot
 run, why = decide(et(2026, 9, 15, 21, 20))
@@ -91,13 +91,42 @@ check(not run, f"a second fire inside the 13:00 slot -> skip ({why})")
 check(slot_gate.latest_slot(et(2026, 10, 14, 12, 59), (7, 13, 19)).hour == 7,
       "12:59 ET -> still the 07:00 slot's window")
 WF_BREADTH = (Path(__file__).resolve().parents[1] / ".github/workflows/market-breadth.yml").read_text()
-check('slots: "1,7,13,19"' in WF_BREADTH, "market-breadth.yml runs every 6 hours: 1 AM, 7 AM, 1 PM and 7 PM ET")
-B4 = dict(slots=(1, 7, 13, 19), grace=23, days=["MON", "TUE", "WED", "THU", "FRI"])
-run, why = decide(et(2026, 10, 16, 2, 30), worked=[et(2026, 10, 15, 19, 40).astimezone(timezone.utc)], **B4)
-check(run and slot_gate.latest_slot(et(2026, 10, 16, 2, 30), (1, 7, 13, 19)).hour == 1,
-      f"02:30 ET Friday -> the 01:00 slot (NSE mid-session), not satisfied by 19:00's run ({why})")
-run, why = decide(et(2026, 10, 17, 2, 0), **B4)
-check(not run, f"Saturday 01:00 -> not a weekday slot (no session) ({why})")
+check('slots: "' + ",".join(str(h) for h in range(24)) + '"' in WF_BREADTH and 'window: "SUN:18-FRI:23"' in WF_BREADTH,
+      "market-breadth.yml runs every hour, Sunday 6 PM ET to Friday 11 PM ET (owner, 2026-10-21)")
+check("days:" not in WF_BREADTH.split("gate:")[1].split("update_breadth:")[0].replace("`days`", ""),
+      "the breadth gate uses window, not days")
+
+# --- breadth since 2026-10-21: hourly slots inside a Sunday 18:00 -> Friday 23:00 window
+W = dict(slots=tuple(range(24)), grace=1, window=slot_gate.parse_window("SUN:18-FRI:23"))
+check(W["window"] == (18, 5 * 24 + 23), f"SUN:18-FRI:23 parses to hours since Sunday 00:00 ({W['window']})")
+check(slot_gate.parse_window("") is None and slot_gate.parse_window(None) is None, "a blank window means no limit")
+# 2026-10-18 is a Sunday, 2026-10-23 a Friday, 2026-10-24 a Saturday
+run, why = decide(et(2026, 10, 18, 17, 30), **W)
+check(not run, f"Sunday 17:30 ET -> before the window opens ({why})")
+run, why = decide(et(2026, 10, 18, 18, 5), **W)
+check(run, f"Sunday 18:05 ET -> the first slot of the week ({why})")
+run, why = decide(et(2026, 10, 19, 3, 20), **W)
+check(run and slot_gate.latest_slot(et(2026, 10, 19, 3, 20), W["slots"]).hour == 3, f"Monday 03:20 ET -> the 03:00 slot ({why})")
+run, why = decide(et(2026, 10, 21, 14, 59), **W)
+check(run, f"Wednesday 14:59 ET -> the 14:00 slot ({why})")
+run, why = decide(et(2026, 10, 23, 23, 40), **W)
+check(run, f"Friday 23:40 ET -> the last slot of the week ({why})")
+run, why = decide(et(2026, 10, 24, 0, 10), **W)
+check(not run, f"Saturday 00:10 ET -> outside the window ({why})")
+run, why = decide(et(2026, 10, 24, 12, 0), **W)
+check(not run, f"Saturday noon -> outside the window ({why})")
+run, why = decide(et(2026, 10, 21, 14, 59), worked=[et(2026, 10, 21, 14, 5).astimezone(timezone.utc)], **W)
+check(not run, f"a second fire inside the 14:00 slot -> skip ({why})")
+run, why = decide(et(2026, 10, 21, 15, 10), worked=[et(2026, 10, 21, 14, 5).astimezone(timezone.utc)], **W)
+check(run, f"the 14:00 slot's run does not satisfy the 15:00 slot ({why})")
+# A run that is more than an hour late lands in a later slot, never an old one.
+run, why = decide(et(2026, 10, 21, 17, 45), worked=[et(2026, 10, 21, 14, 5).astimezone(timezone.utc)], **W)
+check(run and slot_gate.latest_slot(et(2026, 10, 21, 17, 45), W["slots"]).hour == 17, f"a run 3h after the last one works the 17:00 slot ({why})")
+# A window whose end lies before its start wraps through the weekend.
+wrap = slot_gate.parse_window("FRI:20-MON:6")
+sat = slot_gate.latest_slot(et(2026, 10, 24, 12, 0), tuple(range(24)))
+check(slot_gate.in_window(sat, wrap) and not slot_gate.in_window(et(2026, 10, 21, 12, 0), wrap),
+      "a FRI:20-MON:6 window wraps through the weekend")
 WF_DATA = (Path(__file__).resolve().parents[1] / ".github/workflows/data-refresh.yml").read_text()
 check('cron: "*/15 * * * *"' in WF_DATA, "data-refresh.yml wakes every 15 minutes")
 
