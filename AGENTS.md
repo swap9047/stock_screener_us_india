@@ -63,6 +63,7 @@ verified by rendering the app headlessly; recipe at the bottom.
 | `weekly_wrapup.py` | 365 | Weekly Discord digest |
 | `custom_columns.py` | 294 | User-defined formula columns |
 | `ticker_notes.py` | 117 | Per-ticker notes and manual flags. (`signal` was retired on 2026-10-04; the ticker dot is Expert Take's colour) |
+| `market_api.py` | 252 | What the screener shares with other apps (the research library's Q&A, Claude chat): the metric catalog by group, the public part of a row (a whitelist: never the watchlist, notes, flags, Interested or custom columns) and `compute_rows`, a live `fetch_snapshot` for any ticker. Served live by `api/market.py` on Vercel (`vercel.json`, its own slim `api/requirements.txt`) |
 | `watchlist_labels.py` | 46 | Tab labels a watchlist may not take. Kept out of `stock_data.py`, whose code fingerprint (comments and docstrings excluded) marks the snapshot stale on any code edit |
 
 `refresh_*.py` and `*_check.py` are thin entry points that exist only to be run by GitHub
@@ -344,6 +345,9 @@ Each of these has actually bitten this codebase.
 | `expert-views.yml` | `refresh_data.py`, `refresh_expert_views.py` | `data_snapshot.json`, `expert_views.json` | 1:00 AM | 22 h |
 | `market-breadth.yml` | `refresh_market_breadth.py` (S&P 500, Nifty 500, Nasdaq 100), `refresh_dashboard_perf.py`, `refresh_data.py` | `market_breadth.json`, `dashboard_perf.json`, `data_snapshot.json` | Every hour from Sunday 10 PM ET to Friday 5 PM ET, none 6-9 PM ET (the gate's `window` plus a slot list without hours 18-21; no Saturday slot) (a market with no new session is skipped; a mid-session run stores today's forming bar as "live", redone next run; a latest day Yahoo has only part-published is "partial"/"awaiting" and fails the run, so the gate retries) | 1 h (the next hourly slot takes over) |
 | `weekly-wrapup.yml` | `weekly_wrapup_check.py` | `weekly_wrapup_state.json` | Sunday 9:00 PM | 22 h |
+| `market-library.yml` | `publish_market.py library` | nothing (rows in the research library's database) | 7:00 AM, 5:00 PM | 9 h |
+
+**The research library's copy.** `data-refresh.yml` ends with `publish_market.py screener` (after its commit, `continue-on-error`): the snapshot's tickers and their AI write-ups go into the transcription app's knowledge database (Supabase), where its Q&A and Claude chat read them. `market-library.yml` computes the companies that library discusses and no watchlist tracks. Both write as the `market_writer` role (`MARKET_DB_URL` secret; unset = skipped), which can touch only the `kg_market*` tables there, and print counts only: library tickers are not in `log_redact.py`'s lists, so `publish_market.py` swallows the computation's per-ticker lines. What may be published is `market_api.py`'s whitelist -- never watchlists, notes, flags, Interested or custom columns. `test_workflows.py` exempts `market-library.yml` (`DB_ONLY`) from commit-data and pins its secrets.
 
 `checks.yml` is not in this table: it runs `checks/run_all.py` on every push, touches no
 data and needs no secrets (so it works from a fork). Keep it that way — `test_workflows.py`

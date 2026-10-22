@@ -157,6 +157,26 @@ A seventh GitHub Actions workflow, `.github/workflows/weekly-wrapup.yml`, runs o
 
 It uses `DISCORD_WEBHOOK_URL` and `DATA_REPO_TOKEN` repo secrets.
 
+## 8f. Share the metrics with the research library (optional)
+
+The transcription app's knowledge graph (Supabase) can show this screener's numbers next to what narrators said, in
+its Q&A and in Claude chat. `data-refresh.yml` publishes the watchlists' tickers after every refresh, and
+`market-library.yml` (7:00 AM and 5:00 PM ET) computes the companies that library discusses which no watchlist tracks.
+What is published is `market_api.py`'s list: prices, indicators, valuation, growth and the AI write-ups -- never which
+watchlist a ticker is in, notes, flags, Interested or custom columns.
+
+1. In Supabase's SQL editor: `CREATE ROLE market_writer LOGIN PASSWORD '<a long password of letters and digits>';`
+   (the transcription app grants it the market tables the next time it opens the database).
+2. Add the repo secret **`MARKET_DB_URL`**: the session pooler URI from Supabase's Connect panel with
+   `market_writer.<project ref>` as the user and that password.
+
+Without the secret both steps skip quietly.
+
+**Live metrics for any ticker (Vercel).** `api/market.py` computes a ticker on request with the same code
+(`vercel.json`, `api/requirements.txt`). Import this repo into Vercel (Hobby plan, framework "Other") and set
+`MARKET_API_TOKEN` (a long random string) in the project's environment variables; requests then need it as
+`Authorization: Bearer <token>` or `?token=`.
+
 ## 9. Push config changes made through the deployed app back to GitHub
 
 If you edit alert rules, the watchlist, custom filters, notes and flags, custom columns, the column layout or Settings through the **deployed** app's UI, that write first lands on that Streamlit Cloud instance's local disk, which a restart wipes and the GitHub Actions workflows never see. So the app commits every such edit to the **private data repo** via GitHub's REST API (no git/SSH needed — just HTTPS with `requests`), automatically: watchlist saves, adds and renames push as they happen, the AI re-analyze buttons push the tickers they changed, and everything else is pushed as one commit at the end of the click that changed it. A push that fails shows a sidebar warning and is retried on your next click; the Alert Rules tab's **☁️ Push config to GitHub** button remains as a manual fallback.
@@ -191,3 +211,4 @@ The **Re-analyze All** and **Refresh news** buttons start GitHub Actions runs in
 | Daily Fundamental Views (9:00 PM ET) | Needs `GEMINI_API_KEY` repo secret — GitHub Actions workflow is already committed |
 | Market Breadth & Performance (1 AM, 7 AM, 1 PM & 7 PM ET) | No new secret needed — GitHub Actions workflow is already committed |
 | Weekly Wrap-up digest (Sunday 9:00 PM ET) | Uses `DISCORD_WEBHOOK_URL` repo secret — GitHub Actions workflow is already committed |
+| Metrics in the research library (Q&A, Claude chat) | Needs a `market_writer` role in its Supabase and the `MARKET_DB_URL` repo secret (8f) |
