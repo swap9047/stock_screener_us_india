@@ -108,7 +108,8 @@ check("ai_views" not in ma.select_groups(dict(rec, ai={}), ["ai_views", "price"]
 # --- benchmarks and the live computation ----------------------------------------------------
 check(ma.benchmark_for("ZED.NS") == ("Nifty 500", sd.INDEX_DEFINITIONS["Nifty 500"])
       and ma.benchmark_for("ACME") == ("S&P 500", sd.INDEX_DEFINITIONS["S&P 500"])
-      and ma.benchmark_for("ACME", {"ACME": "Nifty 500"})[0] == "Nifty 500",
+      and ma.benchmark_for("ACME", {"ACME": {"index": "Nifty 500", "benchmark": "^CRSLDX"}})[0] == "Nifty 500"
+      and ma.benchmark_for("ZED.NS", {"ZED.NS": {"index": None, "benchmark": None}})[0] == "Nifty 500",
       "benchmark: the recorded index first, else Nifty 500 for India and the S&P 500 for US listings")
 
 calls = []
@@ -250,6 +251,41 @@ finally:
     sd.load_data_snapshot = real_load
 check(todo == ["NEW.NS"] and tracked == 3,
       f"library tickers: everything the library discusses minus the screener's own, in the database or the snapshot ({todo}, {tracked})")
+# The library run prints counts only: Yahoo's per-ticker complaints (stdout, stderr and yfinance's logger)
+# name tickers log_redact.py doesn't know. Run it end to end on a fake connection and capture what it prints.
+import contextlib as _cl, io as _io, logging as _lg  # noqa: E401,E402
+
+
+def noisy_compute(tickers, **kw):
+    print("NEWCO.NS: ERROR stdout")
+    print("$NEWCO.NS: possibly delisted", file=sys.stderr)
+    _lg.getLogger("yfinance").error("1 Failed download: ['NEWCO.NS']")
+    return {}
+
+
+class PubConn(FakeConn):
+    def transaction(self):
+        return _cl.nullcontext()
+
+
+FakeCur.executemany = lambda self, sql, rows: self.sql.append(sql)
+
+
+real_compute, real_load2 = ma.compute_rows, sd.load_data_snapshot
+ma.compute_rows, sd.load_data_snapshot = noisy_compute, (lambda: snap)
+real_tix = sd.load_ticker_index
+sd.load_ticker_index = lambda: {}
+out = _io.StringIO()
+try:
+    with _cl.redirect_stdout(out), _cl.redirect_stderr(out):
+        rc = pm.publish_library(PubConn([[("NEWCO.NS",)], []]))
+finally:
+    ma.compute_rows, sd.load_data_snapshot, sd.load_ticker_index = real_compute, real_load2, real_tix
+check("NEWCO" not in out.getvalue() and rc == 1 and "3 error line(s) suppressed" in out.getvalue(),
+      f"the library run never prints a ticker, whatever channel Yahoo's complaint comes through ({out.getvalue()!r})")
+check(_lg.getLogger("yfinance").propagate and not any(isinstance(h, _lg.StreamHandler) and getattr(h, "stream", None) is not None
+                                                      and h.stream.__class__ is _io.StringIO for h in _lg.getLogger("yfinance").handlers),
+      "...and yfinance's logger is put back as it was")
 os.environ.pop("MARKET_DB_URL", None)
 check(pm.main(["publish_market.py", "library"]) == 0, "without MARKET_DB_URL it publishes nothing and does not fail")
 check(pm.main(["publish_market.py", "bogus"]) == 2, "an unknown mode is a usage error")

@@ -23,6 +23,7 @@ computation's own per-ticker messages are swallowed here rather than reaching th
 import contextlib
 import io
 import json
+import logging
 import os
 import sys
 from datetime import datetime, timezone
@@ -143,17 +144,27 @@ def publish_library(conn):
         return 0
     settings = stock_data.load_settings()
     log = io.StringIO()
+    # Yahoo's complaints name the ticker ("$XYZ.NS: possibly delisted", "Failed downloads: [...]") and come
+    # through yfinance's logger and stderr, not stdout. Library tickers aren't in log_redact.py's lists, so
+    # all three are kept here: a local run of the first version printed them, and the public Actions log
+    # would have shown them too.
+    yf_logger = logging.getLogger("yfinance")
+    saved = (yf_logger.handlers[:], yf_logger.propagate)
+    yf_logger.handlers, yf_logger.propagate = [logging.StreamHandler(log)], False
     try:
-        with contextlib.redirect_stdout(log):
+        with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
             rows = market_api.compute_rows(tickers, settings=settings, ticker_index=stock_data.load_ticker_index())
     except Exception as e:
         print(f"::error::Computation failed ({type(e).__name__}); nothing published.")
         return 1
+    finally:
+        yf_logger.handlers, yf_logger.propagate = saved
     as_of = _now()
     records = [market_api.public_record(row, "library", as_of=as_of, settings=settings) for row in rows.values()]
     n = upsert(conn, records) if records else 0
     write_catalog_and_settings(conn, settings)
-    failures = sum(1 for line in log.getvalue().splitlines() if "ERROR" in line or "failed" in line.lower())
+    failures = sum(1 for line in log.getvalue().splitlines()
+                   if any(w in line.lower() for w in ("error", "failed", "delisted", "rate limit")))
     print(f"Published {n} of {len(tickers)}; {len(tickers) - n} returned no data from Yahoo ({failures} error line(s) suppressed).")
     # Nothing at all computed means Yahoo refused the run: fail, so the slot gate tries again.
     return 0 if n else 1
