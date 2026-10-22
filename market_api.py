@@ -267,9 +267,13 @@ def select_groups(record, groups=None):
 def benchmark_for(ticker, ticker_index=None):
     """The benchmark RS and relative returns are measured against: the ticker's recorded index
     when the screener knows it, else Nifty 500 for an Indian listing and the S&P 500 otherwise --
-    what detect_ticker_index would decide, without its Yahoo lookup."""
-    index_name = (ticker_index or {}).get(ticker)
-    if index_name in stock_data.INDEX_DEFINITIONS:
+    what detect_ticker_index would decide, without its Yahoo lookup.
+
+    ticker_index is load_ticker_index()'s {ticker: {"index", "benchmark"}}. The first library run
+    crashed (TypeError) because this read each entry as a bare index name."""
+    entry = (ticker_index or {}).get(ticker)
+    index_name = entry.get("index") if isinstance(entry, dict) else entry
+    if isinstance(index_name, str) and index_name in stock_data.INDEX_DEFINITIONS:
         return index_name, stock_data.INDEX_DEFINITIONS[index_name]
     name = "Nifty 500" if listing_of(ticker)[1] == "INR" else "S&P 500"
     return name, stock_data.INDEX_DEFINITIONS[name]
