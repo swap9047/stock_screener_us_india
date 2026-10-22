@@ -1,0 +1,77 @@
+name: Research Library Market Data
+
+run-name: ${{ github.event.inputs.limit && 'partial run' || github.workflow }}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+# Computes the screener's metrics for every company the research library (the transcription
+# app's knowledge graph on Supabase) discusses that no watchlist here tracks, and publishes them
+# there with publish_market.py -- the watchlists' own tickers go up after every data refresh
+# (data-refresh.yml). Twice a day: 7 AM ET, after NSE's close (~6 AM ET), and 5 PM ET, after
+# the US close. Commits nothing: the only output is rows in that database, written as its
+# market_writer role (MARKET_DB_URL), which can touch nothing else there.
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Compute only the first N library tickers (blank = all). A number, never ticker names: step env is printed in this public repo's logs"
+        required: false
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read   # writes only to the research library's database, never to this repo or the data repo
+  actions: read    # the slot gate reads this workflow's own run history
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.slot.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: slot
+        uses: ./.github/actions/slot-gate
+        with:
+          slots: "7,17"
+          # Under the 10 h gap from 7 AM to 5 PM: a late run only ever works the latest slot.
+          grace-hours: "9"
+          work-job: publish
+          workflow-file: market-library.yml
+          token: ${{ github.token }}
+
+  publish:
+    needs: gate
+    if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # settings.json (the calc settings) and ticker_index.json (each ticker's index); the
+      # watchlists also let log_redact.py mask what is held.
+      - uses: ./.github/actions/load-data
+        with:
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt "psycopg[binary]~=3.3"
+
+      - name: Compute and publish the library's tickers
+        shell: bash
+        run: python -u publish_market.py library 2>&1 | python -u log_redact.py
+        env:
+          MARKET_DB_URL: ${{ secrets.MARKET_DB_URL }}
+          MARKET_LIMIT: ${{ github.event.inputs.limit }}

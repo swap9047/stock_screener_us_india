@@ -239,5 +239,14 @@ def compute_rows(tickers, settings=None, ticker_index=None):
         results, _as_of = stock_data.fetch_snapshot(members, benchmark=benchmark, settings=settings)
         for row in results:
             row.setdefault("index_name", index_name)
+            row["expert_take"] = columns_verdict(row)
             rows[row["ticker"]] = row
     return rows
+
+
+def columns_verdict(row):
+    """Expert Take as the dashboard decides it from the columns (Trend, Tech Uptrend, TA Rules), for a row
+    that has no Sentiment or nightly write-up -- a library ticker the screener doesn't track. Same
+    function as the dashboard's (expert_views.expert_take_for_row), with no news step to apply."""
+    from expert_views import expert_take_for_row
+    return expert_take_for_row(row, {})["verdict"].title()

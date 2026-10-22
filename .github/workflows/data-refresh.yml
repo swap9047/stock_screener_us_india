@@ -68,3 +68,16 @@ jobs:
         with:
           files: data_snapshot.json
           message: "Update data_snapshot.json [automated]"
+
+      # The research library (the transcription app's knowledge graph on Supabase) reads these
+      # numbers for its Q&A and for Claude chat -- see publish_market.py. After the commit and
+      # never able to fail the run: the snapshot is this workflow's job, the copy is a bonus.
+      # psycopg is installed here only, so the app's own requirements.txt stays free of it.
+      - name: Publish to the research library
+        continue-on-error: true
+        shell: bash
+        run: |
+          pip install --quiet "psycopg[binary]~=3.3"
+          python -u publish_market.py screener 2>&1 | python -u log_redact.py
+        env:
+          MARKET_DB_URL: ${{ secrets.MARKET_DB_URL }}

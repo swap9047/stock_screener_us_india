@@ -144,6 +144,61 @@ check(not endpoint._authorized(Headers(Authorization="Bearer nope"), {}) and not
       "a wrong or missing token is refused")
 os.environ.pop("MARKET_API_TOKEN", None)
 
+# --- publish_market.py: what goes into the research library's database ----------------------------
+import publish_market as pm  # noqa: E402
+
+snap = {"generated_at": "2026-10-20T00:44:59+00:00", "per_market": {
+    "india_invested": [dict(row, sentiment="Neutral")],
+    "india_watchlist": [dict(row, market="india_watchlist")],          # the same ticker in a second watchlist
+    "us_watchlist": [{"ticker": "ACME", "company_name": "Acme Corp", "last_close": 5.0, "market": "us_watchlist"}]}}
+recs = pm.screener_records(snap, {"ZED.NS": {"headline": "h"}}, {"ZED.NS": {"sentiment": "Positive", "earnings_summary": "e"}})
+check([r["ticker"] for r in recs] == ["ZED.NS", "ACME"], "one record per ticker, even in two watchlists")
+check(recs[0]["ai"]["sentiment"]["sentiment"] == "Neutral" and recs[0]["as_of"] == snap["generated_at"],
+      "Sentiment is the guarded label the row shows, not the raw model output; as_of is the snapshot's")
+check(not any(w in json.dumps(recs) for w in ("india_invested", "india_watchlist", "us_watchlist", "core holding")),
+      "no watchlist name or note reaches the database")
+
+
+class FakeCur:
+    def __init__(self, results):
+        self.results, self.sql = results, []
+
+    def execute(self, sql, params=None):
+        self.sql.append(sql)
+
+    def fetchall(self):
+        return self.results.pop(0)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class FakeConn:
+    def __init__(self, results):
+        self.cur = FakeCur(results)
+
+    def cursor(self):
+        return self.cur
+
+
+real_load = sd.load_data_snapshot
+sd.load_data_snapshot = lambda: snap
+try:
+    todo, tracked = pm.library_tickers(FakeConn([[("ZED.NS",), ("NEW.NS",), ("ACME",), ("LATE",)], [("LATE",)]]))
+finally:
+    sd.load_data_snapshot = real_load
+check(todo == ["NEW.NS"] and tracked == 3,
+      f"library tickers: everything the library discusses minus the screener's own, in the database or the snapshot ({todo}, {tracked})")
+os.environ.pop("MARKET_DB_URL", None)
+check(pm.main(["publish_market.py", "library"]) == 0, "without MARKET_DB_URL it publishes nothing and does not fail")
+check(pm.main(["publish_market.py", "bogus"]) == 2, "an unknown mode is a usage error")
+src = (REPO / "publish_market.py").read_text()
+check("redirect_stdout" in src and "print(t" not in src and "print(f\"{t" not in src,
+      "the library run swallows per-ticker messages (library tickers aren't in log_redact's lists)")
+
 # --- deployment files ---------------------------------------------------------------------------
 vercel = json.loads((REPO / "vercel.json").read_text())
 check([b["src"] for b in vercel["builds"]] == ["api/market.py"], "Vercel builds only api/market.py")

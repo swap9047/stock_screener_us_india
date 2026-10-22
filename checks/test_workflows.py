@@ -17,6 +17,9 @@ R = REPO + "/.github"
 # invented fixtures, so the data rules below do not apply to it. Its exemption is
 # asserted rather than assumed, just below.
 NON_DATA = {"checks.yml", "keep-alive.yml"}
+# Workflows whose only output is rows in the research library's database (publish_market.py):
+# they load data and redact like the rest, but have nothing to commit.
+DB_ONLY = {"market-library.yml"}
 
 ci = yaml.safe_load(open(f"{R}/workflows/checks.yml"))
 ci_text = open(f"{R}/workflows/checks.yml").read()
@@ -51,7 +54,18 @@ for path in sorted(glob.glob(f"{R}/workflows/*.yml")):
         for s in runs_py:
             if re.search(r"\S+\.py", s["run"]) and "<<" not in s["run"]:
                 check("| python -u log_redact.py" in s["run"] and s.get("shell") == "bash", f"{name}/{jn}: '{s.get('name', s['run'][:30])}' piped through log_redact with shell: bash")
+    if name in DB_ONLY:
+        check("commit-data" not in text and sorted(set(re.findall(r"secrets\.(\w+)", text))) == ["DATA_REPO_TOKEN", "MARKET_DB_URL"],
+              f"{name}: commits nothing; secrets are only the data repo's token and the market writer's URL")
+        continue
     check("./.github/actions/commit-data" in text, f"{name}: commits via commit-data")
+# The research library copy runs after the snapshot is committed and can never fail the refresh.
+dr = yaml.safe_load(open(f"{R}/workflows/data-refresh.yml"))["jobs"]["refresh"]["steps"]
+pub = [i for i, s in enumerate(dr) if "publish_market.py" in s.get("run", "")]
+com = [i for i, s in enumerate(dr) if s.get("uses") == "./.github/actions/commit-data"]
+check(len(pub) == 1 and com and pub[0] > com[0] and dr[pub[0]].get("continue-on-error") is True
+      and "secrets.MARKET_DB_URL" in str(dr[pub[0]].get("env")),
+      "data-refresh.yml publishes to the research library after its commit, and that step cannot fail the run")
 for a in ("load-data", "commit-data"):
     act = yaml.safe_load(open(f"{R}/actions/{a}/action.yml"))
     for s in act["runs"]["steps"]:
