@@ -1,0 +1,8 @@
+{
+  "builds": [
+    {"src": "api/market.py", "use": "@vercel/python"}
+  ],
+  "routes": [
+    {"src": "/api/market", "dest": "api/market.py"}
+  ]
+}
