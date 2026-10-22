@@ -91,13 +91,37 @@ def fake_fetch(tickers, benchmark="SPY", settings=None, **kw):
 real_fetch = sd.fetch_snapshot
 sd.fetch_snapshot = fake_fetch
 try:
-    rows = ma.compute_rows(["acme", "ZED.NS", "GONE", "ACME", " "], settings=settings)
+    rows = ma.compute_rows(["acme", "ZED.NS", "GONE", "ACME", " "], settings=settings, retry_wait=0)
 finally:
     sd.fetch_snapshot = real_fetch
-check(sorted(calls) == sorted([(("ACME", "GONE"), "SPY"), (("ZED.NS",), "^CRSLDX")]),
+check(sorted(calls[:2]) == sorted([(("ACME", "GONE"), "SPY"), (("ZED.NS",), "^CRSLDX")]),
       f"one fetch per benchmark, tickers upper-cased and deduplicated ({calls})")
 check(set(rows) == {"ACME", "ZED.NS"} and rows["ZED.NS"]["index_name"] == "Nifty 500",
       "a ticker Yahoo returned nothing for is absent; the index is recorded")
+check(calls[-1] == (("GONE",), "SPY") and len(calls) == 3,
+      f"a missing ticker is asked for once more, on its own ({calls})")
+
+# Yahoo leaves a symbol out of one batch and returns it on the next ask: the retry recovers it.
+calls.clear()
+seen = set()
+
+
+def flaky_fetch(tickers, benchmark="SPY", settings=None, **kw):
+    calls.append((tuple(tickers), benchmark))
+    out = [{"ticker": t, "last_close": 1.0} for t in tickers if not t.endswith(".NS") or t in seen]
+    seen.update(tickers)
+    return out, "now"
+
+
+sd.fetch_snapshot = flaky_fetch
+try:
+    rows = ma.compute_rows(["ZED.NS", "ACME"], settings=settings, retry_wait=0)
+    no_retry = ma.compute_rows(["NEW.NS"], settings=settings, retry_wait=None)
+finally:
+    sd.fetch_snapshot = real_fetch
+check(set(rows) == {"ZED.NS", "ACME"} and calls[-2] == (("ZED.NS",), "^CRSLDX"),
+      "a ticker left out of the first batch is recovered by the retry")
+check(no_retry == {} and calls[-1] == (("NEW.NS",), "^CRSLDX"), "retry_wait=None asks only once")
 
 # --- api/market.py ---------------------------------------------------------------------------
 import market as endpoint  # noqa: E402
@@ -117,13 +141,16 @@ try:
 
     def boom(tickers, **kw):
         print("[yf.download attempt 1/3 failed] rate limited")
+        import logging
+        logging.getLogger("yfinance").error("1 Failed download: YFRateLimitError")
         raise RuntimeError("Yahoo refused")
 
 
     ma.compute_rows = boom
     body, status = endpoint.market_response(["ACME"], [])
-    check(status == 502 and "Yahoo refused" in body["error"] and any("rate limited" in l for l in body["log"]),
-          "a failed computation is a 502 that carries Yahoo's messages")
+    check(status == 502 and "Yahoo refused" in body["error"] and any("rate limited" in l for l in body["log"])
+          and any("1 Failed download" in l for l in body["log"]),
+          "a failed computation is a 502 that carries Yahoo's messages, printed and logged by yfinance")
 finally:
     ma.compute_rows = real_compute
 

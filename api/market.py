@@ -17,6 +17,7 @@ import contextlib
 import hmac
 import io
 import json
+import logging
 import os
 import sys
 import time
@@ -55,13 +56,20 @@ def market_response(tickers, groups):
         return {"error": f"at most {MAX_TICKERS} tickers per request"}, 400
     started = time.time()
     log = io.StringIO()
+    # fetch_snapshot reports Yahoo's failures by printing, yfinance through its logger (a ticker left
+    # out of a bulk download, a rate limit); keep both for the caller -- the first Vercel test came
+    # back with a ticker missing and an empty log.
+    handler_ = logging.StreamHandler(log)
+    yf_logger = logging.getLogger("yfinance")
+    yf_logger.addHandler(handler_)
     try:
-        # fetch_snapshot reports Yahoo's failures by printing; keep them for the caller.
-        with contextlib.redirect_stdout(log):
+        with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
             rows = market_api.compute_rows(tickers)
     except Exception as e:
         return {"error": f"computation failed: {type(e).__name__}: {e}",
                 "log": log.getvalue().splitlines()[-20:]}, 502
+    finally:
+        yf_logger.removeHandler(handler_)
     results = []
     for t in tickers:
         row = rows.get(t.strip().upper())

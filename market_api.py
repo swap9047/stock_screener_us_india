@@ -15,6 +15,7 @@ from, so a number here can never drift from the one on screen. Nothing in this m
 Streamlit or the AI pipelines, so the Vercel function stays small.
 """
 
+import time
 from datetime import datetime, timezone
 
 import stock_data
@@ -226,13 +227,31 @@ def benchmark_for(ticker, ticker_index=None):
     return name, stock_data.INDEX_DEFINITIONS[name]
 
 
-def compute_rows(tickers, settings=None, ticker_index=None):
+# A ticker missing from a bulk download is asked for once more, after this pause. Yahoo leaves single
+# symbols out of a batch now and then (a rate-limited or slow symbol: on Vercel, an NSE ticker came back
+# empty while the S&P one beside it, the same minute, was complete), and fetch_snapshot skips an empty
+# ticker without a word.
+RETRY_MISSING_WAIT_S = 3
+
+
+def compute_rows(tickers, settings=None, ticker_index=None, retry_wait=RETRY_MISSING_WAIT_S):
     """{ticker: row} computed live by fetch_snapshot, one call per benchmark (it cannot mix
-    benchmarks in one call). A ticker Yahoo returned nothing for is simply absent; a benchmark
-    group whose download fails raises, as fetch_snapshot does."""
+    benchmarks in one call). A ticker Yahoo returned nothing for is tried once more (retry_wait
+    seconds later, None = no retry), then simply absent; a benchmark group whose download fails
+    raises, as fetch_snapshot does."""
     settings = settings or stock_data.load_settings()
+    wanted = list(dict.fromkeys(t.strip().upper() for t in tickers if t and t.strip()))
+    rows = _compute_once(wanted, settings, ticker_index)
+    missing = [t for t in wanted if t not in rows]
+    if missing and retry_wait is not None:
+        time.sleep(retry_wait)
+        rows.update(_compute_once(missing, settings, ticker_index))
+    return rows
+
+
+def _compute_once(tickers, settings, ticker_index):
     groups = {}
-    for t in dict.fromkeys(t.strip().upper() for t in tickers if t and t.strip()):
+    for t in tickers:
         groups.setdefault(benchmark_for(t, ticker_index), []).append(t)
     rows = {}
     for (index_name, benchmark), members in groups.items():
