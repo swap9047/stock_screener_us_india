@@ -129,8 +129,9 @@ check("rs_neutral=" in call and "ma_neutral_pct=" in call and "slope_neutral_pct
       "B1: the snapshot passes the band settings")
 
 # --- the hover text reads the stored detail, so it cannot disagree with the label ----
+# The hover builders live in glossary.py (app.py imports them; market_api shares them).
 import ast
-app_src = (REPO / "app.py").read_text()
+app_src = (REPO / "glossary.py").read_text()
 tree = ast.parse(app_src)
 fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "tech_uptrend_tooltip")
 body = ast.get_source_segment(app_src, fn)
@@ -150,7 +151,7 @@ os.environ.setdefault("SKIP_GITHUB_PULL", "1")
 ns = {}
 for name in ("_mark", "tech_uptrend_tooltip", "vol_trend_tooltip"):
     fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
-    exec(compile(ast.Module(body=[fn], type_ignores=[]), "app.py", "exec"), ns)
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), "glossary.py", "exec"), ns)
 old_row = {"tech_uptrend": 1, "vstop_weekly": 100.0, "last_close": 110.0, "ema40": 105.0,
            "avg_volume_10d": 900, "avg_volume_100d": 1000, "volume_trend": "In-line"}
 txt = ns["tech_uptrend_tooltip"](old_row, {}, {"w_slow": "40 WEMA"})

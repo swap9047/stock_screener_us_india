@@ -60,17 +60,48 @@ check(rec["metrics"]["pct_change_1d"] is None and rec["metrics"]["rsi14_weekly"]
       "NaN becomes None and floats are rounded")
 check((rec["exchange"], rec["currency"]) == ("NSE", "INR") and rec["source"] == "screener", "identity and provenance")
 check(rec["ai"] == {"expert": {"verdict": "ACCUMULATE", "headline": "Base breakout"},
-                    "sentiment": {"sentiment": "Positive", "future_guidance": "20% growth"}},
-      "AI views keep only the listed write-up fields (no model names, no internal reasoning)")
+                    "sentiment": {"sentiment": "Positive", "reasoning": "internal", "future_guidance": "20% growth"}},
+      "AI views keep only the listed write-up fields: Sentiment's reasoning, never the model names")
 check(ma.ai_views(None, {}) == {}, "a ticker without write-ups has no AI views")
 check([ma.listing_of(t) for t in ("ACME", "ZED.BO", "zed.ns")] == [("US", "USD"), ("BSE", "INR"), ("NSE", "INR")],
       "exchange and currency from the suffix")
+
+# --- definitions and the "why" behind each signal (glossary.py, shared with the dashboard) ---------
+import glossary  # noqa: E402
+
+gdefs = glossary.column_definitions(settings, glossary.ema_col_labels(settings))
+check(labels and {c["field"]: c["description"] for c in cat}["trend"] == gdefs["Trend"]
+      and {c["field"]: c["description"] for c in cat}["last_close"] == gdefs["Last"],
+      "a metric's definition is the dashboard's own glossary entry (Last Close -> its 'Last' column)")
+check({c["field"]: c["description"] for c in cat}["below_40"].startswith("True when"),
+      "a metric with no glossary entry keeps its own short definition")
+full = {"ticker": "ZED.NS", "trend": "Uptrend", "tech_uptrend": 0, "ta_rules": "Maintain/Add", "volume_trend": "In-line",
+        "sentiment": None, "median_volume_10d": 70, "median_volume_100d": 100,
+        "trend_detail": sd.compute_trend(100, __import__("pandas").Series([90.0, 92.0, 94.0, 96.0]), 2.0, 200.0, 1.0,
+                                         1.0, 1.0, 3, ema_fast=98)[2],
+        "tech_uptrend_detail": sd.compute_tech_uptrend(100, 110, "Down", 0, 96, 70, 100, 3, 0.3)[1],
+        "ta_rules_detail": sd.compute_ta_rules(100.0, 99.0, 97.0, 90.0, [], [99.0])[1]}
+why = ma.public_record(full, "library", settings=settings)["metrics"]
+check(why["trend_why"] == glossary.trend_tooltip(full, glossary.ema_col_labels(settings))
+      and "✓ Price > 40 WEMA" in why["trend_why"] and why["tech_uptrend_why"].startswith("Tech Uptrend requires ALL of:")
+      and "Close > Weekly VStop" in why["tech_uptrend_why"] and why["ta_rules_why"].endswith("→ Maintain/Add")
+      and "10D ÷ 100D" in why["volume_trend_why"],
+      "the explain group is the dashboard's hover text for Trend, Tech Uptrend, TA Rules and Vol Trend")
+check(why["expert_take_why"].startswith("Accumulate: ") and "Sentiment: Unknown" in why["expert_take_why"],
+      f"Expert Take's reasons, for a library ticker with no Sentiment ({why['expert_take_why']!r})")
+import datetime as _dt  # noqa: E402
+
+risk = {"material_negative": True, "category": "regulatory or legal action", "date": _dt.date.today().isoformat(), "quote": "SEBI order"}
+lowered = ma.explanations(full, settings, {"news_risk": risk})["expert_take_why"]
+check(lowered.startswith("Hold: ") and "Lowered one step for news: regulatory or legal action" in lowered and "SEBI order" in lowered,
+      f"a news event that lowered the verdict is named ({lowered!r})")
+check(ma.explanations({"ticker": "NEW"}, settings) == {}, "a row without signals has nothing to explain")
 
 # --- choosing groups --------------------------------------------------------------------
 picked = ma.select_groups(rec, ["price", "valuation", "no_such_group"])
 check(set(picked) == {"price", "valuation"} and picked["price"] == {"last_close": 101.5, "data_end": "2026-10-20"},
       "only the asked groups, unknown names ignored, empty values left out")
-check(set(ma.select_groups(rec, [])) == {"price", "momentum", "valuation", "trend", "ai_views"},
+check(set(ma.select_groups(rec, [])) == {"price", "momentum", "valuation", "trend", "explain", "ai_views"},
       "no groups asked means every group that has values")
 check("ai_views" not in ma.select_groups(dict(rec, ai={}), ["ai_views", "price"]), "no write-ups, no ai_views group")
 
