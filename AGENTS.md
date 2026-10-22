@@ -63,7 +63,8 @@ verified by rendering the app headlessly; recipe at the bottom.
 | `weekly_wrapup.py` | 365 | Weekly Discord digest |
 | `custom_columns.py` | 294 | User-defined formula columns |
 | `ticker_notes.py` | 117 | Per-ticker notes and manual flags. (`signal` was retired on 2026-10-04; the ticker dot is Expert Take's colour) |
-| `market_api.py` | 252 | What the screener shares with other apps (the research library's Q&A, Claude chat): the metric catalog by group, the public part of a row (a whitelist: never the watchlist, notes, flags, Interested or custom columns) and `compute_rows`, a live `fetch_snapshot` for any ticker. Served live by `api/market.py` on Vercel (`vercel.json`, its own slim `api/requirements.txt`) |
+| `market_api.py` | 319 | What the screener shares with other apps (the research library's Q&A, Claude chat): the metric catalog by group, the public part of a row (a whitelist: never the watchlist, notes, flags, Interested or custom columns) and `compute_rows`, a live `fetch_snapshot` for any ticker. Served live by `api/market.py` on Vercel (`vercel.json`, its own slim `api/requirements.txt`) |
+| `glossary.py` | 394 | The glossary (`column_definitions`, each column's header tooltip) and the per-signal "why" text (`trend_tooltip`, `tech_uptrend_tooltip`, `ta_rules_tooltip`, `vol_trend_tooltip`). Pure functions, no Streamlit: `app.py` imports them, and `market_api` publishes the same words as metric definitions and its `explain` group, so the screen and the research library never explain a number differently |
 | `watchlist_labels.py` | 46 | Tab labels a watchlist may not take. Kept out of `stock_data.py`, whose code fingerprint (comments and docstrings excluded) marks the snapshot stale on any code edit |
 
 `refresh_*.py` and `*_check.py` are thin entry points that exist only to be run by GitHub
@@ -228,7 +229,7 @@ them driving a live nightly rule, had no column until 2026-09-22.
    matches; the engine fails closed, it doesn't crash.
 4. **`_sort_label_to_field`** (`app.py`) — only when the sortable field differs from the
    column key.
-5. **`column_definitions`** (`app.py`) — the glossary entry and header tooltip.
+5. **`column_definitions`** (`glossary.py`) — the glossary entry and header tooltip. It is also the definition the research library's Q&A and Claude chat get for the metric (`market_api.catalog`); a column they should see needs a `market_api.METRIC_GROUPS` entry too.
 6. **`SYNCABLE_FILES`** (`github_sync.py`) — only if it introduces a new JSON file, and see
    the atomic-push trap below.
 

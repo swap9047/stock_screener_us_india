@@ -188,17 +188,11 @@ check(filters.passes_filter(row, {"metric_a": "ta_rules", "operator": "in", "com
       "a rule 'TA Rules in [Exit, Be Cautious]' matches an Exit row")
 
 # --- the hover text names each zone once -------------------------------------
-# app.ta_rules_tooltip, lifted out of app.py (importing app would run the whole
-# Streamlit script). A close inside a zone used to list it as both Support and
-# Resistance, and the zone a verdict was decided on was listed again under the
+# glossary.ta_rules_tooltip (app.py imports it; it used to be lifted out of app.py here, since
+# importing app would run the whole Streamlit script). A close inside a zone used to list it as
+# both Support and Resistance, and the zone a verdict was decided on was listed again under the
 # role it has now (a broken ceiling shown as "Support" above "Broken resistance").
-import ast
-
-_tree = ast.parse((REPO / "app.py").read_text())
-_fn = next(n for n in _tree.body if isinstance(n, ast.FunctionDef) and n.name == "ta_rules_tooltip")
-_ns = {}
-exec(compile(ast.Module(body=[_fn], type_ignores=[]), "app.py", "exec"), _ns)
-ta_rules_tooltip = _ns["ta_rules_tooltip"]
+from glossary import ta_rules_tooltip
 
 ZONE = {"low": 100.0, "high": 102.0, "touches": 3, "last_touch": "2026-01-02"}
 FLAT = (101.0, 100.5, 100.0)   # spread 1% -> converging
@@ -217,8 +211,11 @@ check("inside zone 100.00–102.00" in ta_rules_tooltip(
       "tooltip says the close is inside the zone")
 
 # --- the label stays on one line; the flowchart image comes from the data repo -
+import ast
 import html as _html
 
+# with_tooltip stays in app.py (it is HTML for the table), lifted out here as before.
+_tree = ast.parse((REPO / "app.py").read_text())
 _fn = next(n for n in _tree.body if isinstance(n, ast.FunctionDef) and n.name == "with_tooltip")
 _ns = {"html": _html}
 exec(compile(ast.Module(body=[_fn], type_ignores=[]), "app.py", "exec"), _ns)

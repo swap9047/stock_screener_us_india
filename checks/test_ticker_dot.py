@@ -70,7 +70,8 @@ for row, want in (({"trend": "Uptrend", "tech_uptrend": 1, "ta_rules": "Maintain
 check('badge = f"{badge} ⚑"' in src and 'if take["news_lowered"]:' in src,
       "the Expert Take cell adds ⚑ only when news lowered the columns' verdict")
 check('"Also used: this quarter' in src, "the hover text says when this quarter's facts were used")
-check("Its colour is the dot next to the ticker" in src, "the Expert Take glossary says the dot is its colour")
+check("Its colour is the dot next to the ticker" in (REPO / "glossary.py").read_text(),
+      "the Expert Take glossary says the dot is its colour")
 
 print(f"FAILURES: {fails}")
 sys.exit(1 if fails else 0)

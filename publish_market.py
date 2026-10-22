@@ -78,7 +78,7 @@ def write_catalog_and_settings(conn, settings):
     return len(entries)
 
 
-def screener_records(snapshot, expert_views, fundamentals):
+def screener_records(snapshot, expert_views, fundamentals, settings=None):
     """One record per snapshot ticker (a ticker in two watchlists once). Its Sentiment label is the
     guarded one the row carries (what the dashboard shows), not the raw model output."""
     as_of = snapshot.get("generated_at") or _now()
@@ -91,7 +91,8 @@ def screener_records(snapshot, expert_views, fundamentals):
             fundamental = dict(fundamentals.get(t) or {})
             if fundamental and row.get("sentiment"):
                 fundamental["sentiment"] = row["sentiment"]
-            records[t] = market_api.public_record(row, "screener", expert_views.get(t), fundamental, as_of=as_of)
+            records[t] = market_api.public_record(row, "screener", expert_views.get(t), fundamental, as_of=as_of,
+                                                  settings=settings)
     return list(records.values())
 
 
@@ -102,7 +103,8 @@ def publish_screener(conn):
     if not snapshot:
         print("No data_snapshot.json -- nothing to publish.")
         return 1
-    records = screener_records(snapshot, load_expert_views(), load_fundamentals())
+    settings = stock_data.load_settings()
+    records = screener_records(snapshot, load_expert_views(), load_fundamentals(), settings)
     n = upsert(conn, records)
     removed = 0
     if len(records) >= MIN_SNAPSHOT_ROWS:
@@ -112,7 +114,7 @@ def publish_screener(conn):
             cur.execute("DELETE FROM kg_market WHERE source = 'screener' AND NOT (ticker = ANY(%s))",
                         ([r["ticker"] for r in records],))
             removed = cur.rowcount
-    catalog = write_catalog_and_settings(conn, stock_data.load_settings())
+    catalog = write_catalog_and_settings(conn, settings)
     print(f"Published {n} screener ticker(s), {sum(1 for r in records if r['ai'])} with AI write-ups; "
           f"removed {removed} no longer tracked; catalog {catalog} metric(s).")
     return 0
@@ -148,7 +150,7 @@ def publish_library(conn):
         print(f"::error::Computation failed ({type(e).__name__}); nothing published.")
         return 1
     as_of = _now()
-    records = [market_api.public_record(row, "library", as_of=as_of) for row in rows.values()]
+    records = [market_api.public_record(row, "library", as_of=as_of, settings=settings) for row in rows.values()]
     n = upsert(conn, records) if records else 0
     write_catalog_and_settings(conn, settings)
     failures = sum(1 for line in log.getvalue().splitlines() if "ERROR" in line or "failed" in line.lower())

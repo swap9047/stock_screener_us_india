@@ -96,7 +96,9 @@ check(ev.decide_expert_verdict({"trend": "Mixed", "tech_uptrend": 0, "ta_rules":
 check("Mixed" in ev.VERDICT_RULES, "L1: the verdict rules tell the model what Mixed means")
 check('["Any", "Strong Uptrend", "Uptrend", "Mixed", "Downtrend", "Strong Downtrend"]' in APP,
       "L1: the table's Trend filter offers Mixed")
-check('"Mixed": "#' in APP and APP.count('"Mixed"') >= 3, "L1: the Trend cell and the Signal cell colour Mixed")
+# The Trend hover text moved to glossary.py (shared with market_api); count Mixed across both.
+_APP_AND_GLOSSARY = APP + (REPO / "glossary.py").read_text()
+check('"Mixed": "#' in APP and _APP_AND_GLOSSARY.count('"Mixed"') >= 3, "L1: the Trend cell and the Signal cell colour Mixed")
 
 # --- F1 every changed config file is pushed at the end of the run ------------
 import github_sync as gs

@@ -116,14 +116,26 @@ METRIC_GROUPS = {
         ("qtr_revenue_growth", "Qtr Revenue Growth %", "%", "Latest quarter's revenue vs a year ago."),
         ("reported_qtr", "Reported Qtr", "", "The quarter those growth figures are for."),
     ]),
+    # Not row fields: the dashboard's own hover text for each signal (glossary.py), computed by
+    # explanations() when a record is built, so another app can say WHY a signal reads as it does.
+    "explain": ("Why the signals read as they do", [
+        ("trend_why", "Trend: why", "", "Each condition behind Trend -- passed (✓), failed (✗) or too close to call (–) -- with the numbers, then the test for Strong."),
+        ("tech_uptrend_why", "Tech Uptrend: why", "", "Each requirement of Tech Uptrend, passed or failed, with the numbers."),
+        ("ta_rules_why", "TA Rules: why", "", "The path taken through the weekly EMA flowchart on the last completed week, with the numbers each step was decided on."),
+        ("volume_trend_why", "Vol Trend: why", "", "The 10-day vs 100-day median volume ratio against the Exploding and Declining thresholds."),
+        ("expert_take_why", "Expert Take: why", "", "What decided the Expert Take verdict (Trend, Tech Uptrend, TA Rules, Sentiment), and a news event that lowered it, if any."),
+    ]),
 }
+# Catalog fields whose glossary entry (glossary.column_definitions, keyed by column label) is under
+# another label than the metric's.
+GLOSSARY_LABELS = {"last_close": "Last"}
 
 # The screener's AI write-ups, from expert_views.json and fundamentals.json. Published for the
 # screener's own tickers only (the library-only ones have no write-up).
 AI_EXPERT_FIELDS = ("headline", "technical_summary", "catalyst_summary", "actionable_take", "verdict", "as_of")
-AI_SENTIMENT_FIELDS = ("sentiment", "earnings_summary", "future_guidance", "outlook_tone", "outlook_quote",
-                       "guidance_change", "analyst_action", "analyst_firm", "profit_yoy_pct", "revenue_yoy_pct",
-                       "results_vs_estimate", "earnings_report_date", "as_of")
+AI_SENTIMENT_FIELDS = ("sentiment", "sentiment_drivers", "reasoning", "earnings_summary", "future_guidance",
+                       "outlook_tone", "outlook_quote", "guidance_change", "analyst_action", "analyst_firm",
+                       "profit_yoy_pct", "revenue_yoy_pct", "results_vs_estimate", "earnings_report_date", "as_of")
 AI_GROUP = "ai_views"
 
 PUBLIC_FIELDS = tuple(f for _, fields in METRIC_GROUPS.values() for f, *_ in fields)
@@ -132,16 +144,21 @@ GROUP_NAMES = tuple(METRIC_GROUPS) + (AI_GROUP,)
 
 def catalog(settings=None):
     """[{field, group, label, unit, description, ord}] -- the menu a model picks from, with the
-    moving-average periods taken from the screener's settings."""
+    moving-average periods taken from the screener's settings. A metric's description is the
+    dashboard's own glossary entry (the column's header tooltip) where it has one, so a number
+    means the same thing here as on screen; the short text in METRIC_GROUPS covers the rest."""
+    import glossary
     settings = settings or stock_data.load_settings()
     w_fast, w_mid, w_slow = settings["ema_weekly"]
     d_fast, d_mid, d_slow = settings["ema_daily"]
     names = {"w_fast": w_fast, "w_mid": w_mid, "w_slow": w_slow, "d_fast": d_fast, "d_mid": d_mid, "d_slow": d_slow}
+    defs = glossary.column_definitions(settings, glossary.ema_col_labels(settings))
     out = []
     for group, (_, fields) in METRIC_GROUPS.items():
         for field, label, unit, description in fields:
-            out.append({"field": field, "group": group, "label": label.format(**names), "unit": unit,
-                        "description": description, "ord": len(out)})
+            label = label.format(**names)
+            out.append({"field": field, "group": group, "label": label, "unit": unit,
+                        "description": defs.get(GLOSSARY_LABELS.get(field, label)) or description, "ord": len(out)})
     out.append({"field": AI_GROUP, "group": AI_GROUP, "label": "Expert Take and Sentiment write-ups", "unit": "",
                 "description": "The screener's nightly AI write-ups: Expert Take (headline, technical and catalyst "
                                "summaries, trade plan) and Sentiment (earnings, guidance, outlook, analyst actions). "
@@ -189,14 +206,45 @@ def ai_views(expert_view, fundamental):
     return {k: v for k, v in out.items() if v}
 
 
-def public_record(row, source, expert_view=None, fundamental=None, as_of=None):
-    """The record another app gets for one row: identity, provenance, metrics and AI views."""
+def explanations(row, settings=None, expert_view=None):
+    """{field: text} for the explain group: the dashboard's hover text for Trend, Tech Uptrend, TA Rules
+    and Vol Trend (glossary.py -- the same words as on screen), and what decided Expert Take
+    (expert_views.expert_take_for_row: its reasons, and the news step when it lowered the verdict)."""
+    import glossary
+    from expert_views import expert_take_for_row
+    settings = settings or stock_data.load_settings()
+    labels = glossary.ema_col_labels(settings)
+    out = {}
+    if "trend" in row:
+        out["trend_why"] = glossary.trend_tooltip(row, labels)
+    if "tech_uptrend" in row:
+        out["tech_uptrend_why"] = glossary.tech_uptrend_tooltip(row, settings, labels)
+    if "ta_rules" in row:
+        out["ta_rules_why"] = glossary.ta_rules_tooltip(row)
+    if "volume_trend" in row:
+        out["volume_trend_why"] = glossary.vol_trend_tooltip(row, settings)
+    if row.get("trend"):
+        take = expert_take_for_row(row, expert_view or {})
+        why = f"{take['verdict'].title()}: " + "; ".join(take["reasons"])
+        risk = take.get("news_risk") or {}
+        if take.get("news_lowered") or take.get("news_noted"):
+            why += (f". {'Lowered one step' if take.get('news_lowered') else 'Noted (already Caution)'} for news: "
+                    f"{risk.get('category') or 'a material negative event'} ({risk.get('date') or 'undated'})"
+                    + (f' - "{risk["quote"]}"' if risk.get("quote") else ""))
+        out["expert_take_why"] = why
+    return out
+
+
+def public_record(row, source, expert_view=None, fundamental=None, as_of=None, settings=None):
+    """The record another app gets for one row: identity, provenance, metrics (with the explain
+    group) and AI views."""
     ticker = row.get("ticker")
     exchange, currency = listing_of(ticker)
     return {"ticker": ticker, "company_name": row.get("company_name") or ticker, "exchange": exchange,
             "currency": currency, "source": source, "data_end": row.get("data_end"),
             "as_of": as_of or datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "metrics": public_metrics(row), "ai": ai_views(expert_view, fundamental)}
+            "metrics": public_metrics(row) | explanations(row, settings, expert_view),
+            "ai": ai_views(expert_view, fundamental)}
 
 
 def select_groups(record, groups=None):

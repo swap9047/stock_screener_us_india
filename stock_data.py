@@ -1328,7 +1328,7 @@ def compute_ta_rules(close, ema_fast, ema_mid, ema_slow, zones, recent_closes,
     sits far below would read as broken support. No zones at all falls through
     to Wait/Watch, the chart's own No -> No path.
 
-    Returns (verdict, detail) -- detail feeds app.ta_rules_tooltip."""
+    Returns (verdict, detail) -- detail feeds glossary.ta_rules_tooltip."""
     buf = break_pct / 100
     spread_pct = (max(ema_fast, ema_mid, ema_slow) - min(ema_fast, ema_mid, ema_slow)) / ema_slow * 100
     converging = spread_pct <= converge_pct
