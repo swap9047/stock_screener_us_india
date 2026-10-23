@@ -31,15 +31,15 @@ jinja2~=3.1
 streamlit-sortables~=0.3.1
 google-genai~=2.14.0
 python-dotenv~=1.2
-# Unused: nothing imports openai (checked 2026-09-16). Kept in case the
-# OpenAI-compatible endpoint experiment resumes -- delete it if not.
-openai
 # The News tab's performance charts. Major releases rename figure APIs.
 plotly~=7.0
+# Deliberately unpinned: it is the IANA time-zone database, and an old copy is
+# wrong about future DST rules. Every ET schedule decision here depends on it.
 tzdata
 # Required by pandas.read_html in refresh_market_breadth.py (the S&P 500
 # constituent scrape) -- nothing imports lxml directly, so it reads as
 # removable. It used to arrive transitively via duckduckgo_search; deleting
 # that in the news-pipeline cleanup took lxml with it and silently killed US
 # market breadth for 8 days while every workflow run still reported success.
-lxml
+# Minor series pinned (2026-10-23), like every other parser this file holds.
+lxml~=6.1

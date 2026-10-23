@@ -40,7 +40,7 @@ decide what to send. See evaluate_and_fire.
 import json
 import os
 import time
-from datetime import date, datetime
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import requests

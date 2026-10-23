@@ -24,7 +24,6 @@ needing dependency ordering / cycle detection between custom columns.
 
 import ast
 import math
-import json
 import os
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))

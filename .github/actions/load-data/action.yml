@@ -16,7 +16,7 @@ runs:
   steps:
     # Checked out at the branch tip when this step runs, not at the SHA the
     # run was triggered on -- so a run queued behind another sees its commit.
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
       with:
         repository: ${{ inputs.repository }}
         token: ${{ inputs.token }}
