@@ -59,13 +59,19 @@ for path in sorted(glob.glob(f"{R}/workflows/*.yml")):
               f"{name}: commits nothing; secrets are only the data repo's token and the market writer's URL")
         continue
     check("./.github/actions/commit-data" in text, f"{name}: commits via commit-data")
-# The research library copy runs after the snapshot is committed and can never fail the refresh.
+# The research library copy runs after the snapshot is committed and can never fail the refresh: the
+# screener's rows first, then the library's companies, hourly (--min-gap skips every later run in the hour).
 dr = yaml.safe_load(open(f"{R}/workflows/data-refresh.yml"))["jobs"]["refresh"]["steps"]
 pub = [i for i, s in enumerate(dr) if "publish_market.py" in s.get("run", "")]
 com = [i for i, s in enumerate(dr) if s.get("uses") == "./.github/actions/commit-data"]
-check(len(pub) == 1 and com and pub[0] > com[0] and dr[pub[0]].get("continue-on-error") is True
-      and "secrets.MARKET_DB_URL" in str(dr[pub[0]].get("env")),
-      "data-refresh.yml publishes to the research library after its commit, and that step cannot fail the run")
+check(len(pub) == 2 and com and min(pub) > com[0]
+      and all(dr[i].get("continue-on-error") is True and "secrets.MARKET_DB_URL" in str(dr[i].get("env")) for i in pub),
+      "data-refresh.yml publishes to the research library after its commit, and those steps cannot fail the run")
+check("publish_market.py screener" in dr[pub[0]]["run"] and "publish_market.py library --min-gap" in dr[pub[1]]["run"],
+      "data-refresh.yml: the screener's rows, then the library's companies at most once in a window (--min-gap)")
+ml = open(f"{R}/workflows/market-library.yml").read()
+check("github.event_name == 'schedule' && '--min-gap" in ml,
+      "market-library.yml: the scheduled fallback skips when the hourly step just ran; a run by hand always publishes")
 for a in ("load-data", "commit-data"):
     act = yaml.safe_load(open(f"{R}/actions/{a}/action.yml"))
     for s in act["runs"]["steps"]:

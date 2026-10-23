@@ -295,6 +295,32 @@ check("NEWCO" not in out.getvalue() and rc == 1 and "6 error line(s) suppressed"
 check(_lg.getLogger("yfinance").propagate and not any(isinstance(h, _lg.StreamHandler) and getattr(h, "stream", None) is not None
                                                       and h.stream.__class__ is _io.StringIO for h in _lg.getLogger("yfinance").handlers),
       "...and yfinance's logger is put back as it was")
+# --min-gap: the hourly step in data-refresh.yml and the 7/17 fallback skip when the library was just published.
+from datetime import datetime as _dt, timedelta as _td, timezone as _tz  # noqa: E402
+
+_ago = lambda m: (_dt.now(_tz.utc) - _td(minutes=m)).isoformat(timespec="seconds")  # noqa: E731
+computed = []
+ma.compute_rows, sd.load_data_snapshot = (lambda t, **kw: (computed.append(list(t)), {})[1]), (lambda: snap)
+sd.load_ticker_index = lambda: {}
+try:
+    out = _io.StringIO()
+    with _cl.redirect_stdout(out):
+        rc = pm.publish_library(PubConn([[(_ago(20),)]]), min_gap=50)
+    check(rc == 0 and computed == [] and "published 20 min ago" in out.getvalue() and "skipped" in out.getvalue()
+          and "NEWCO" not in out.getvalue(), f"published 20 minutes ago: skipped, nothing computed ({out.getvalue().strip()!r})")
+    for label, first in (("70 minutes ago", [(_ago(70),)]), ("never (no library rows)", [(None,)])):
+        computed.clear()
+        with _cl.redirect_stdout(_io.StringIO()):
+            pm.publish_library(PubConn([first, [("NEWCO.NS",)], []]), min_gap=50)
+        check(computed and computed[0] == ["NEWCO.NS"], f"published {label}: computed as before")
+    computed.clear()
+    with _cl.redirect_stdout(_io.StringIO()):
+        pm.publish_library(PubConn([[("NEWCO.NS",)], []]))
+    check(computed and computed[0] == ["NEWCO.NS"], "no --min-gap (a run by hand): never asks, always computes")
+finally:
+    ma.compute_rows, sd.load_data_snapshot, sd.load_ticker_index = real_compute, real_load2, real_tix
+check(pm.main(["publish_market.py", "library", "--min-gap"]) == 2 and pm.main(["publish_market.py", "library", "--min-gap", "x"]) == 2,
+      "--min-gap without a number is a usage error")
 os.environ.pop("MARKET_DB_URL", None)
 check(pm.main(["publish_market.py", "library"]) == 0, "without MARKET_DB_URL it publishes nothing and does not fail")
 check(pm.main(["publish_market.py", "bogus"]) == 2, "an unknown mode is a usage error")

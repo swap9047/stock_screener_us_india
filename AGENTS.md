@@ -35,7 +35,7 @@ step names, so each key needs a line in the AI steps' `env:` blocks. Every run l
 `[key rotation] N key(s): ...`; if that number is lower than expected, that line is
 missing.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1402
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1410
 offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
@@ -350,16 +350,16 @@ Each of these has actually bitten this codebase.
 
 | Workflow | Runs | Commits (to the data repo) | Slot (ET) | Stale after |
 |---|---|---|---|---|
-| `data-refresh.yml` | `refresh_data.py` | `data_snapshot.json` | every 15 minutes, no gate (GitHub throttles it far below that) | n/a |
+| `data-refresh.yml` | `refresh_data.py`, then `publish_market.py screener` and (first run each hour) `publish_market.py library --min-gap 50` | `data_snapshot.json` | every 15 minutes, no gate (GitHub throttles it far below that) | n/a |
 | `news-summary.yml` | `news_check.py` | `news_summary.json` | 6:00 AM | 23 h |
 | `fundamentals.yml` | `refresh_fundamentals.py` | `fundamentals.json` | 9:00 PM | 22 h |
 | `daily-alerts.yml` | `alert_check.py` | `alert_state.json` | 9:00 PM | 22 h |
 | `expert-views.yml` | `refresh_data.py`, `refresh_expert_views.py` | `data_snapshot.json`, `expert_views.json` | 1:00 AM | 22 h |
 | `market-breadth.yml` | `refresh_market_breadth.py` (S&P 500, Nifty 500, Nasdaq 100), `refresh_dashboard_perf.py`, `refresh_data.py` | `market_breadth.json`, `dashboard_perf.json`, `data_snapshot.json` | Every hour from Sunday 10 PM ET to Friday 5 PM ET, none 6-9 PM ET (the gate's `window` plus a slot list without hours 18-21; no Saturday slot) (a market with no new session is skipped; a mid-session run stores today's forming bar as "live", redone next run; a latest day Yahoo has only part-published is "partial"/"awaiting" and fails the run, so the gate retries) | 1 h (the next hourly slot takes over) |
 | `weekly-wrapup.yml` | `weekly_wrapup_check.py` | `weekly_wrapup_state.json` | Sunday 9:00 PM | 22 h |
-| `market-library.yml` | `publish_market.py library` | nothing (rows in the research library's database) | 7:00 AM, 5:00 PM | 9 h |
+| `market-library.yml` | `publish_market.py library` (`--min-gap 50` on its schedule) | nothing (rows in the research library's database) | 7:00 AM, 5:00 PM (the fallback; data-refresh publishes the library hourly) | 9 h |
 
-**The research library's copy.** `data-refresh.yml` ends with `publish_market.py screener` (after its commit, `continue-on-error`): the snapshot's tickers and their AI write-ups go into the transcription app's knowledge database (Supabase), where its Q&A and Claude chat read them. `market-library.yml` computes the companies that library discusses and no watchlist tracks. Both write as the `market_writer` role (`MARKET_DB_URL` secret; unset = skipped), which can touch only the `kg_market*` tables there, and print counts only: library tickers are not in `log_redact.py`'s lists, so `publish_market.py` swallows the computation's per-ticker lines. What may be published is `market_api.py`'s whitelist -- never watchlists, notes, flags, Interested or custom columns. `test_workflows.py` exempts `market-library.yml` (`DB_ONLY`) from commit-data and pins its secrets.
+**The research library's copy.** `data-refresh.yml` ends with `publish_market.py screener` (after its commit, `continue-on-error`): the snapshot's tickers and their AI write-ups go into the transcription app's knowledge database (Supabase), where its Q&A and Claude chat read them. The companies that library discusses and no watchlist tracks are computed hourly by the same workflow's last step (`publish_market.py library --min-gap 50`: the first run in an hour publishes, every later one sees the database's own timestamp and skips), and at 7 AM / 5 PM ET by `market-library.yml`, the fallback for when the Worker is down or quiet (it skips too when the hourly step just ran; a run by hand always publishes). Both write as the `market_writer` role (`MARKET_DB_URL` secret; unset = skipped), which can touch only the `kg_market*` tables there, and print counts only: library tickers are not in `log_redact.py`'s lists, so `publish_market.py` swallows the computation's per-ticker lines. What may be published is `market_api.py`'s whitelist -- never watchlists, notes, flags, Interested or custom columns. `test_workflows.py` exempts `market-library.yml` (`DB_ONLY`) from commit-data and pins its secrets.
 
 `checks.yml` is not in this table: it runs `checks/run_all.py` on every push, touches no
 data and needs no secrets (so it works from a fork). Keep it that way — `test_workflows.py`

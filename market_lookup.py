@@ -29,7 +29,7 @@ import market_api
 import stock_data
 
 # A stored row older than this is computed again. The screener republishes its own tickers every
-# ~30 minutes in market hours and the library's twice a day, so in practice only rows nobody
+# ~30 minutes in market hours and the library's hourly, so in practice only rows nobody
 # refreshed (an earlier live lookup, a weekend) are recomputed.
 STALE_HOURS = 20
 # A row whose prices end before its exchange's last completed session is recomputed sooner: once it

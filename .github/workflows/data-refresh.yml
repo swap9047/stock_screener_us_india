@@ -81,3 +81,15 @@ jobs:
           python -u publish_market.py screener 2>&1 | python -u log_redact.py
         env:
           MARKET_DB_URL: ${{ secrets.MARKET_DB_URL }}
+
+      # The research library's own companies (the ones no watchlist tracks), hourly: the first refresh
+      # in each hour does them, every later one skips (--min-gap, from the database's own timestamps --
+      # whichever trigger came first, the Worker's :00/:30 or GitHub's */15). Last, so the snapshot and
+      # the screener's rows are never delayed by it, and never able to fail the run. market-library.yml
+      # still runs at 7 AM / 5 PM ET as the fallback when nothing runs here.
+      - name: Publish the library's companies (hourly)
+        continue-on-error: true
+        shell: bash
+        run: python -u publish_market.py library --min-gap 50 2>&1 | python -u log_redact.py
+        env:
+          MARKET_DB_URL: ${{ secrets.MARKET_DB_URL }}

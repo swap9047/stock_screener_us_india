@@ -8,8 +8,8 @@ env:
 # Computes the screener's metrics for every company the research library (the transcription
 # app's knowledge graph on Supabase) discusses that no watchlist here tracks, and publishes them
 # there with publish_market.py -- the watchlists' own tickers go up after every data refresh
-# (data-refresh.yml). Twice a day: 7 AM ET, after NSE's close (~6 AM ET), and 5 PM ET, after
-# the US close. Commits nothing: the only output is rows in that database, written as its
+# (data-refresh.yml), which also publishes these hourly in its window. This job is the fallback,
+# twice a day: 7 AM ET, after NSE's close (~6 AM ET), and 5 PM ET, after the US close. Commits nothing: the only output is rows in that database, written as its
 # market_writer role (MARKET_DB_URL), which can touch nothing else there.
 on:
   schedule:
@@ -71,7 +71,9 @@ jobs:
 
       - name: Compute and publish the library's tickers
         shell: bash
-        run: python -u publish_market.py library 2>&1 | python -u log_redact.py
+        # --min-gap on a schedule only: data-refresh.yml publishes the library hourly, so this fallback
+        # skips when that ran in the last 50 minutes. A run by hand always publishes.
+        run: python -u publish_market.py library ${{ github.event_name == 'schedule' && '--min-gap 50' || '' }} 2>&1 | python -u log_redact.py
         env:
           MARKET_DB_URL: ${{ secrets.MARKET_DB_URL }}
           MARKET_LIMIT: ${{ github.event.inputs.limit }}
