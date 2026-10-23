@@ -22,7 +22,8 @@ import os
 import re
 import time
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import market_api
 import stock_data
@@ -31,6 +32,11 @@ import stock_data
 # ~30 minutes in market hours and the library's twice a day, so in practice only rows nobody
 # refreshed (an earlier live lookup, a weekend) are recomputed.
 STALE_HOURS = 20
+# A row whose prices end before its exchange's last completed session is recomputed sooner: once it
+# is this old. Yahoo publishes some days' daily bars hours late, and a row computed in that gap used
+# to be served for STALE_HOURS (a 21 Oct close given at 01:40 UTC on the 23rd). An hour, so a stock
+# Yahoo still hasn't filled (or an exchange holiday) costs at most one recompute an hour.
+BEHIND_RECHECK_MINUTES = 60
 MAX_QUERIES = 5
 # A misspelt name is matched to the closest listing (pg_trgm similarity of match_keys) only when it
 # scores at least SIMILAR_MIN and leads every other company by SIMILAR_LEAD; otherwise Yahoo's
@@ -372,14 +378,40 @@ def resolve(db, query, yahoo=yahoo_symbol):
     return None, ""
 
 
+def last_completed_session(ticker, now=None):
+    """The date of the ticker's exchange's last settled session: today in the exchange's own
+    timezone once its close plus stock_data.SESSION_SETTLE_MINUTES has passed, else the weekday
+    before; weekends skipped, holidays not known (they only cost an hourly recheck)."""
+    now = now or datetime.now(timezone.utc)
+    tz, close_h, close_m = stock_data.EXCHANGE_SESSIONS[stock_data.exchange_session(ticker)]
+    local = now.astimezone(ZoneInfo(tz))
+    settled = local.replace(hour=close_h, minute=close_m, second=0, microsecond=0) \
+        + timedelta(minutes=stock_data.SESSION_SETTLE_MINUTES)
+    day = local.date() if local >= settled else local.date() - timedelta(days=1)
+    while day.weekday() >= 5:
+        day -= timedelta(days=1)
+    return day
+
+
 def is_stale(row, now=None):
+    """True when a stored row should be computed again: older than STALE_HOURS, or a session behind
+    its exchange (its prices end before last_completed_session) and older than BEHIND_RECHECK_MINUTES."""
+    now = now or datetime.now(timezone.utc)
     try:
         computed = datetime.fromisoformat(str(row.get("as_of")).replace("Z", "+00:00"))
         if computed.tzinfo is None:
             computed = computed.replace(tzinfo=timezone.utc)
     except (TypeError, ValueError):
         return True
-    return ((now or datetime.now(timezone.utc)) - computed).total_seconds() > STALE_HOURS * 3600
+    age = (now - computed).total_seconds()
+    if age > STALE_HOURS * 3600:
+        return True
+    try:
+        behind = datetime.strptime(str(row.get("data_end"))[:10], "%Y-%m-%d").date() < \
+            last_completed_session(str(row.get("ticker") or ""), now)
+    except ValueError:
+        behind = False
+    return behind and age > BEHIND_RECHECK_MINUTES * 60
 
 
 def screener_settings(db):

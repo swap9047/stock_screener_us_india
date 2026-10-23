@@ -35,7 +35,7 @@ step names, so each key needs a line in the AI steps' `env:` blocks. Every run l
 `[key rotation] N key(s): ...`; if that number is lower than expected, that line is
 missing.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1381
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1402
 offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
@@ -50,7 +50,7 @@ verified by rendering the app headlessly; recipe at the bottom.
 | File | Lines | What it owns |
 |---|---:|---|
 | `app.py` | 6746 | The entire UI: tabs, tables, sidebar, filters, sort, editors, AI control bars, News + Alert Rules tabs |
-| `stock_data.py` | 3182 | yfinance fetching, all indicator maths, watchlist/markets registry IO, `get_filterable_metrics` |
+| `stock_data.py` | 3307 | yfinance fetching, all indicator maths, watchlist/markets registry IO, `get_filterable_metrics` |
 | `alerts.py` | 1127 | Alert rule evaluation + Discord message building; every Discord post goes through `send_discord_batch`, which appends the disclaimer |
 | `news_summary.py` | 1022 | The daily news digest (6 AM ET): search and filter (3 stocks at a time, `NEWS_CONCURRENT_TICKERS`), then edit. Dated by its 6 AM ET slot (`news_slot_date`), funds skipped (`is_fund`), the code sets each company header and drops filler lines, the filter drops repeats of the previous digest, and a failed editor falls back to code-formatted bullets |
 | `fundamentals_eval.py` | 1191 | Sentiment ("fundamental view") generation + validation. The model only extracts facts; `score_sentiment` decides the label, weighted toward forward signals (guidance ±15, quoted outlook ±6, guidance vs consensus ±3, named-firm action ±3; the quarter's profit >15% YoY or a beat/miss ±1 only breaks ties; with no forward signal, profit >+25% / <-20% YoY decides alone). The search window is anchored to each company's last results (`search_window_for`) |
@@ -64,7 +64,7 @@ verified by rendering the app headlessly; recipe at the bottom.
 | `custom_columns.py` | 294 | User-defined formula columns |
 | `ticker_notes.py` | 117 | Per-ticker notes and manual flags. (`signal` was retired on 2026-10-04; the ticker dot is Expert Take's colour) |
 | `market_api.py` | 319 | What the screener shares with other apps (the research library's Q&A, Claude chat): the metric catalog by group, the public part of a row (a whitelist: never the watchlist, notes, flags, Interested or custom columns) and `compute_rows`, a live `fetch_snapshot` for any ticker. Served live on Vercel through `market_lookup.py` (`vercel.json`, its own slim `api/requirements.txt`) |
-| `market_lookup.py` | 419 | One lookup for every live caller: a company name or ticker -> a ticker (a suffix as typed, a bare six-digit BSE code, a known symbol, the research library's name decisions and listings by its `match_key`, the clearly closest listing, then Yahoo's symbol search) -> the stored row while fresh, else computed with the screener's saved settings and stored. **Yahoo prices BSE stocks as `SYMBOL.BO`, never the `<scrip code>.BO` the library's BSE listings carry**: `compute_priced` prices those under the symbol Yahoo's search gives for the ISIN (remembered in `kg_market_meta.yahoo_symbols`) and keeps the code as the row's key, and tries an NSE listing too new for the indicators on BSE. A ticker whose Yahoo company details failed (named by its bare symbol) is computed once more after 5 s; what is still blank is filled from the stored row (`keep_previous`: the name and info fields only when the details failed, statement figures whenever blank), in the live lookup and both publish modes. The library job uses it too. All database access goes through `MarketDB`, which checks replace with a fake |
+| `market_lookup.py` | 504 | One lookup for every live caller: a company name or ticker -> a ticker (a suffix as typed, a bare six-digit BSE code, a known symbol, the research library's name decisions and listings by its `match_key`, the clearly closest listing, then Yahoo's symbol search) -> the stored row while fresh, else computed with the screener's saved settings and stored. **Yahoo prices BSE stocks as `SYMBOL.BO`, never the `<scrip code>.BO` the library's BSE listings carry**: `compute_priced` prices those under the symbol Yahoo's search gives for the ISIN (remembered in `kg_market_meta.yahoo_symbols`) and keeps the code as the row's key, and tries an NSE listing too new for the indicators on BSE. A stored row is recomputed after `STALE_HOURS` (20), or after an hour when its prices end before its exchange's last completed session (`last_completed_session`, `BEHIND_RECHECK_MINUTES`). A ticker whose Yahoo company details failed (named by its bare symbol) is computed once more after 5 s; what is still blank is filled from the stored row (`keep_previous`: the name and info fields only when the details failed, statement figures whenever blank), in the live lookup and both publish modes. The library job uses it too. All database access goes through `MarketDB`, which checks replace with a fake |
 | `market_http.py` | 62 | What the two Vercel functions share: the token check (bearer, `?token=`, or the `/mcp/<token>` path a Claude connector URL carries) and capturing Yahoo's printed and logged messages. `api/market.py` is REST for the transcription app; `api/mcp.py` is a stateless MCP server (JSON-RPC over POST) for Claude chat |
 | `glossary.py` | 394 | The glossary (`column_definitions`, each column's header tooltip) and the per-signal "why" text (`trend_tooltip`, `tech_uptrend_tooltip`, `ta_rules_tooltip`, `vol_trend_tooltip`). Pure functions, no Streamlit: `app.py` imports them, and `market_api` publishes the same words as metric definitions and its `explain` group, so the screen and the research library never explain a number differently |
 | `watchlist_labels.py` | 46 | Tab labels a watchlist may not take. Kept out of `stock_data.py`, whose code fingerprint (comments and docstrings excluded) marks the snapshot stale on any code edit |
@@ -276,6 +276,15 @@ Each of these has actually bitten this codebase.
     only the held symbols among them would reveal which are held.
   - Don't put real tickers in comments, docs or commit messages; use neutral examples.
 
+- **Yahoo publishes some days' daily bars hours late.** On 2026-10-22 most NSE/BSE
+  stocks' 22 Oct row held only Volume until the next morning, while the quote and the
+  5-minute bars had the session; every consumer drops a row without a close, so the
+  dashboard, the alerts and the research library all read 21 Oct.
+  `fill_unpublished_daily_bars` (in `fetch_snapshot`, after `drop_forming_daily_bars`)
+  rebuilds such a trailing bar from the 5-minute bars once its session has settled, and
+  `official_close` takes its close from the quote (NSE/BSE's official close is a half-hour
+  average, not the last trade). Anything else -- no bars, a failed download, a blank older
+  than `UNPUBLISHED_BAR_MAX_DAYS` -- leaves the row as it was.
 - **A corrupt user-data file is loud, not empty.** `stock_data.read_json_strict` raises
   `DataFileError` for `watchlist.json`, `markets.json`, `settings.json`, `interested.json`,
   `watchlist_groups.json`, `ticker_index.json`, `alerts_config.json`, `custom_filters.json`,

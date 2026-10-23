@@ -1634,6 +1634,122 @@ def drop_forming_daily_bars(raw, tickers, now=None):
     return raw, trimmed
 
 
+# How many days back fill_unpublished_daily_bars still looks for a blank bar
+# (Yahoo keeps 5-minute bars for 60 days, but a blank older than a few days is
+# not a publishing lag).
+UNPUBLISHED_BAR_MAX_DAYS = 5
+
+
+def _download_intraday(tickers, timeout=60):
+    """The last 5 days of 5-minute bars for `tickers`, one bulk call under the
+    same hard timeout as _download_with_retries."""
+    from llm_util import call_with_timeout
+    return call_with_timeout(
+        lambda: yf.download(list(tickers), period="5d", interval="5m", group_by="ticker",
+                            auto_adjust=True, progress=False, threads=True),
+        timeout, name="yf.download intraday",
+    )
+
+
+def official_close(raw, t, info):
+    """Use the quote's price as the close of a bar fill_unpublished_daily_bars
+    rebuilt, when the quote is for that same session. NSE/BSE's official close
+    is a volume-weighted average of the last half hour, not the last trade
+    (Yahoo quoted 387.05 where the last 5-minute bar closed at 387.00); after
+    the session the quote carries it. High/Low widen to include it. Returns
+    True when the close was replaced."""
+    price, when = (info or {}).get("regularMarketPrice"), (info or {}).get("regularMarketTime")
+    rows = raw[t].dropna(how="all") if t in set(raw.columns.get_level_values(0)) else None
+    if not price or not when or rows is None or rows.empty:
+        return False
+    last = rows.index[-1]
+    tz = ZoneInfo(EXCHANGE_SESSIONS[exchange_session(t)][0])
+    if datetime.fromtimestamp(int(when), tz).date() != last.date():
+        return False
+    price = float(price)
+    raw.loc[last, (t, "Close")] = price
+    if "High" in raw[t].columns and not pd.isna(raw.loc[last, (t, "High")]):
+        raw.loc[last, (t, "High")] = max(float(raw.loc[last, (t, "High")]), price)
+    if "Low" in raw[t].columns and not pd.isna(raw.loc[last, (t, "Low")]):
+        raw.loc[last, (t, "Low")] = min(float(raw.loc[last, (t, "Low")]), price)
+    return True
+
+
+def fill_unpublished_daily_bars(raw, tickers, now=None, download=None):
+    """Rebuild a ticker's trailing daily bar that Yahoo has not published yet
+    from its 5-minute bars. Returns (raw, [tickers rebuilt]); `raw` is modified
+    in place.
+
+    WHY: Yahoo publishes some days' daily bars hours after the close. On
+    2026-10-22 most NSE/BSE stocks' 22 Oct row still carried only Volume at
+    01:40 UTC the next day (Open/High/Low/Close blank), while the quote and the
+    5-minute bars had the whole session. Every consumer drops a row without a
+    close, so the dashboard, the alert jobs and the research library's answers
+    all read 21 Oct ("Sealmatic closed at 402 on 21 Oct") next to a P/E Yahoo
+    had already moved to the 22 Oct price.
+
+    Only a trailing row whose Close is blank, whose session has settled
+    (forming_session_date: a forming bar is never filled, and with
+    completed_sessions_only it was already blanked) and which is at most
+    UNPUBLISHED_BAR_MAX_DAYS old. Open/High/Low/Close come from that local
+    date's 5-minute bars; Yahoo's own daily volume is kept when it has one.
+    fetch_snapshot then takes the close from the quote (official_close).
+    No bars for that date (a holiday row, Yahoo without intraday data) or a
+    failed download leaves the row as it was -- the old behaviour."""
+    now = now or datetime.now(ZoneInfo("UTC"))
+    rebuilt = []
+    if raw is None or raw.empty or not isinstance(raw.columns, pd.MultiIndex):
+        return raw, rebuilt
+    present = set(raw.columns.get_level_values(0))
+    todo = {}
+    for t in tickers:
+        if t not in present:
+            continue
+        rows = raw[t].dropna(how="all")
+        if rows.empty or "Close" not in rows.columns or not pd.isna(rows["Close"].iloc[-1]):
+            continue
+        last = rows.index[-1]
+        local_today = now.astimezone(ZoneInfo(EXCHANGE_SESSIONS[exchange_session(t)][0])).date()
+        if last.date() == forming_session_date(t, now) or (local_today - last.date()).days > UNPUBLISHED_BAR_MAX_DAYS:
+            continue
+        todo[t] = last
+    if not todo:
+        return raw, rebuilt
+    try:
+        intra = (download or _download_intraday)(list(todo))
+    except Exception as e:
+        print(f"  [fill_unpublished_daily_bars] intraday download failed ({type(e).__name__}); "
+              f"{len(todo)} unpublished bar(s) left out")
+        return raw, rebuilt
+    if intra is None or intra.empty:
+        return raw, rebuilt
+    for t, last in todo.items():
+        if isinstance(intra.columns, pd.MultiIndex):
+            if t not in set(intra.columns.get_level_values(0)):
+                continue
+            bars = intra[t]
+        elif len(todo) == 1:
+            bars = intra
+        else:
+            continue
+        bars = bars.dropna(subset=["Close"])
+        # The 5-minute index is in the exchange's own timezone, so .date() is the session's date.
+        day = bars[[ts.date() == last.date() for ts in bars.index]]
+        if day.empty:
+            continue
+        opens = day["Open"].dropna()
+        values = {"Open": float(opens.iloc[0]) if len(opens) else float(day["Close"].iloc[0]),
+                  "High": float(day["High"].max()), "Low": float(day["Low"].min()),
+                  "Close": float(day["Close"].iloc[-1])}
+        if "Volume" in raw[t].columns and pd.isna(raw.loc[last, (t, "Volume")]):
+            values["Volume"] = float(day["Volume"].sum())
+        for field, value in values.items():
+            if field in raw[t].columns:
+                raw.loc[last, (t, field)] = value
+        rebuilt.append(t)
+    return raw, rebuilt
+
+
 def _statement_row(frame, row_name):
     """One statement row as a Series, NaNs dropped.
 
@@ -1749,6 +1865,12 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
         if _forming:
             print(f"  [fetch_snapshot] dropped still-forming daily bar for {len(_forming)} ticker(s): "
                   f"{', '.join(_forming[:10])}{' ...' if len(_forming) > 10 else ''}")
+    # After the forming bars are blanked, so only settled sessions are filled; the
+    # benchmark too, so RS and relative returns compare the same days. A count
+    # only: the research library's job prints nothing per ticker.
+    raw, _rebuilt = fill_unpublished_daily_bars(raw, all_tickers)
+    if _rebuilt:
+        print(f"  [fetch_snapshot] rebuilt {len(_rebuilt)} daily bar(s) Yahoo had not published yet from 5-minute bars")
 
     bench_daily = raw[benchmark]["Close"].dropna()
     bench_df = raw[benchmark].dropna(how="all")
@@ -1776,6 +1898,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
         # the statements block used to read the PREVIOUS ticker's object and
         # store that company's ROCE/growth figures under this symbol.
         yf_t = None
+        info = {}
         try:
             yf_t = yf.Ticker(t)
             info = _fetch_info_with_retry(yf_t, t)
@@ -1892,6 +2015,8 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
         except Exception as e:
             print(f"  [{t}] Statement metrics failed: {e}")
 
+        if t in _rebuilt:
+            official_close(raw, t, info)
         try:
             df = raw[t].dropna(how="all")
             if df.empty:
