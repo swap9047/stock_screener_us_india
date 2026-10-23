@@ -69,6 +69,15 @@ check(len(pub) == 2 and com and min(pub) > com[0]
       "data-refresh.yml publishes to the research library after its commit, and those steps cannot fail the run")
 check("publish_market.py screener" in dr[pub[0]]["run"] and "publish_market.py library --min-gap" in dr[pub[1]]["run"],
       "data-refresh.yml: the screener's rows, then the library's companies at most once in a window (--min-gap)")
+# The watchlists, breadth and closes go to the research library after the breadth commit, before the verify
+# step that can fail the run, and can never fail it themselves.
+mb = yaml.safe_load(open(f"{R}/workflows/market-breadth.yml"))["jobs"]["update_breadth"]["steps"]
+wpub = [i for i, s in enumerate(mb) if "publish_market.py watchlists" in s.get("run", "")]
+wcom = [i for i, s in enumerate(mb) if s.get("uses") == "./.github/actions/commit-data"]
+wver = [i for i, s in enumerate(mb) if s.get("name", "").startswith("Verify")]
+check(len(wpub) == 1 and wcom and wver and wcom[0] < wpub[0] < wver[0] and mb[wpub[0]].get("continue-on-error") is True
+      and mb[wpub[0]].get("env") == {"MARKET_DB_URL": "${{ secrets.MARKET_DB_URL }}"},
+      "market-breadth.yml publishes watchlists/breadth/closes after its commit and before the verify step, never failing the run")
 ml = open(f"{R}/workflows/market-library.yml").read()
 check("github.event_name == 'schedule' && '--min-gap" in ml,
       "market-library.yml: the scheduled fallback skips when the hourly step just ran; a run by hand always publishes")

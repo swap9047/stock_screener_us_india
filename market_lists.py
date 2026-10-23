@@ -1,0 +1,269 @@
+"""The screener's lists for Claude chat (api/mcp.py): its watchlists as tables, market breadth and daily
+closes, read from the research library's database where publish_market.py's watchlists mode puts them
+(hourly, from market-breadth.yml).
+
+    list_watchlists(db)                          every tab and combined group, with its latest breadth
+    watchlist_table(db, name, groups, ...)       one list: a row per stock with the metric groups asked for
+    market_breadth(db, name, days)               an index's or a list's breadth, day by day
+    price_history(db, companies | watchlist, days)  daily closes; a ticker not held is fetched from Yahoo
+
+Each takes loose names ("my India holdings", "nifty") and never raises for a bad one: it answers
+found=False with the names it does know. The numbers are the screener's own, so a chat reads the same
+table and breadth the dashboard shows.
+"""
+
+import re
+from datetime import datetime, timedelta, timezone
+from statistics import mean, median
+
+import market_api
+import market_lookup
+
+# market_breadth.json's indexes, by the words people use for them.
+INDEX_ALIASES = {
+    "INDIA": ("nifty", "nifty 500", "nifty500", "india", "nse", "indian market"),
+    "US": ("s&p", "s&p 500", "sp500", "spx", "s and p 500", "us", "us market"),
+    "NASDAQ100": ("nasdaq", "nasdaq 100", "nasdaq100", "ndx"),
+}
+DEFAULT_GROUPS = ("price", "returns", "trend")
+MAX_BREADTH_DAYS = 1830
+MAX_PRICE_DAYS = 730
+MAX_PRICE_COMPANIES = 10
+# Above this many closes in one reply, every 5th session is kept (and the last): a 90-stock group over a
+# year is ~23k numbers, more than a chat can use.
+MAX_PRICE_POINTS = 6000
+# Return fields the table's summary counts and averages.
+SUMMARY_FIELDS = ("pct_change_1d", "perf_1w", "perf_ytd", "perf_1m", "perf_3m", "perf_6m", "perf_1y", "perf_3y",
+                  "rel_ret_1d_index", "rel_ret_1w_index", "rel_ret_1m_index", "rel_ret_6m_index")
+_FILLER = {"my", "the", "list", "tab", "stocks", "watch", "screener", "of", "in"}
+_SYNONYMS = {"holdings": "invested", "holding": "invested", "portfolio": "invested", "positions": "invested"}
+
+
+def _words(text):
+    return " ".join(re.sub(r"[^0-9a-z&]+", " ", str(text or "").lower()).split())
+
+
+def find_watchlist(lists, text):
+    """(name or None, candidates): the list a loose name means. Exact name or label first, then the only list
+    whose label and name hold every word ("holdings"/"portfolio" read as invested; filler like "my" dropped).
+    Close to the research library's find_watchlist, so both connectors read a name alike."""
+    q = _words(text)
+    if not q or not lists:
+        return None, [w["label"] for w in lists or []]
+    for w in lists:
+        if q in (_words(w["name"].replace("_", " ")), _words(w["label"])):
+            return w["name"], []
+    words = [_SYNONYMS.get(x, x) for x in q.split() if x not in _FILLER]
+
+    def holds(w, x):
+        # A word of the label or name starting with it ("invest", "substack"), or a run of 4+ letters inside the
+        # label written as one word ("market" in "Substack-OutperformingMarket").
+        text = f"{_words(w['label'])} {_words(w['name'].replace('_', ' '))}"
+        return any(t.startswith(x) for t in text.split()) or (len(x) >= 4 and x in text.replace(" ", ""))
+    hits = [w for w in lists if words and all(holds(w, x) for x in words)]
+    if len(hits) == 1:
+        return hits[0]["name"], []
+    return None, [w["label"] for w in (hits or lists)]
+
+
+def _index_series(text):
+    q = _words(text)
+    for series, names in INDEX_ALIASES.items():
+        if q == series.lower() or q in names:
+            return series
+    return None
+
+
+def list_watchlists(db):
+    """Every list and the indexes with breadth."""
+    lists, series = db.watchlists(), {s["series"]: s for s in db.breadth_series()}
+    return {
+        "watchlists": [{"name": w["name"], "label": w["label"], "kind": w["kind"], "stocks": w["members"],
+                        "benchmark": w["benchmark"], "breadth_latest": (series.get(w["name"]) or {}).get("latest")}
+                       for w in lists],
+        "indexes": [{"series": s["series"], "label": s["label"], "breadth_latest": s["latest"]}
+                    for s in series.values() if s["kind"] == "index"],
+        "note": "The user's stock screener tabs (India/US Invested are the user's holdings; a 'group' combines tabs). "
+                "get_watchlist gives one as a table, get_market_breadth its breadth, get_price_history its closes.",
+    }
+
+
+def _sort_field(sort_by, catalog):
+    """The catalog field a sort_by means: a field name or a label, any case."""
+    s = str(sort_by or "").strip().lower()
+    if not s:
+        return None
+    for c in catalog:
+        if s in (c["field"].lower(), str(c["label"]).lower()):
+            return c["field"]
+    return None
+
+
+def watchlist_table(db, name, groups=None, sort_by=None, descending=True, limit=None, settings=None):
+    """One list as a table: a row per stock (ticker, company, price_date and the chosen groups' metrics under
+    their screener labels), sorted when asked; a summary of each return shown (stocks up/down, median,
+    average); the definitions; the latest breadth; members without data."""
+    lists = db.watchlists()
+    wl, choices = find_watchlist(lists, name)
+    if not wl:
+        return {"query": name, "found": False, "available": choices,
+                "note": "No single watchlist matches; pass one of the available names."}
+    meta = next(w for w in lists if w["name"] == wl)
+    groups = [g for g in (groups or DEFAULT_GROUPS) if g in market_api.METRIC_GROUPS] or list(DEFAULT_GROUPS)
+    catalog = market_api.catalog(settings)
+    by_field = {c["field"]: c for c in catalog}
+    fields = [f for g in groups for f, *_ in market_api.METRIC_GROUPS[g][1]]
+    members = db.watchlist_members(wl)
+    stored = db.rows(members) if members else {}
+    rows = []
+    for t in members:
+        rec = stored.get(t)
+        if not rec:
+            continue
+        metrics = rec.get("metrics") or {}
+        row = {"ticker": t, "company": rec.get("company_name"), "price_date": rec.get("data_end")}
+        row.update({f: metrics.get(f) for f in fields})
+        rows.append(row)
+    key = _sort_field(sort_by, catalog)
+    if key:
+        filled = [r for r in rows if isinstance(r.get(key), (int, float))]
+        rows = sorted(filled, key=lambda r: r[key], reverse=bool(descending)) + [r for r in rows if r not in filled]
+    summary = {}
+    for f in SUMMARY_FIELDS:
+        if f not in fields:
+            continue
+        vals = [r[f] for r in rows if isinstance(r.get(f), (int, float))]
+        if vals:
+            summary[by_field[f]["label"]] = {"stocks": len(vals), "up": sum(v > 0 for v in vals), "down": sum(v < 0 for v in vals),
+                                             "median": round(median(vals), 2), "average": round(mean(vals), 2)}
+    shown = rows[:int(limit)] if limit and int(limit) > 0 else rows
+    label = {f: by_field.get(f, {}).get("label", f) for f in fields}
+    breadth = next((s["latest"] for s in db.breadth_series() if s["series"] == wl), None)
+    return {
+        "query": name, "found": True, "watchlist": wl, "label": meta["label"], "kind": meta["kind"],
+        "benchmark": meta["benchmark"], "stocks": len(members), "groups": groups,
+        "sorted_by": label.get(key) if key else None, "rows_shown": len(shown),
+        "rows": [{k if k in ("ticker", "company", "price_date") else label[k]: v for k, v in r.items()} for r in shown],
+        "summary": summary, "breadth_latest": breadth,
+        "without_data": [t for t in members if t not in stored],
+        "definitions": {label[f]: by_field[f]["description"] for f in fields if f in by_field and by_field[f].get("description")},
+        "note": "The user's stock screener, from Yahoo Finance daily bars (not live quotes); each row's price_date is its "
+                "latest bar. Cite figures as (screener, <price_date>). The summary covers every stock, not only the rows shown.",
+    }
+
+
+def market_breadth(db, name, days=365):
+    """An index's or a list's breadth over the last `days`: [date, % above 200d SMA, % above 50d SMA,
+    % at 52-week highs, % at 52-week lows]."""
+    days = max(1, min(int(days or 365), MAX_BREADTH_DAYS))
+    series = {s["series"]: s for s in db.breadth_series()}
+    key = _index_series(name)
+    if not key:
+        key, _ = find_watchlist(db.watchlists(), name)
+    if not key or key not in series:
+        return {"query": name, "found": False, "available": [s["label"] for s in series.values()],
+                "note": "Pass an index (Nifty 500, S&P 500, Nasdaq 100) or one of the watchlists."}
+    meta = series[key]
+    since = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
+    points = [[p["date"], p["pct_above_200"], p["pct_above_50"], p["pct_highs"], p["pct_lows"]]
+              for p in db.breadth_points(key, since)]
+    return {"query": name, "found": True, "series": key, "label": meta["label"], "kind": meta["kind"], "days": days,
+            "latest": meta["latest"], "as_of": meta["as_of"],
+            "columns": ["date", "% above 200-day SMA", "% above 50-day SMA", "% at 52-week high", "% at 52-week low"],
+            "points": points,
+            "note": "Market breadth from the user's stock screener: the share of the index's (or list's) stocks above their "
+                    "200- and 50-day simple moving averages and at 52-week highs and lows, each trading day. latest.total "
+                    "is how many stocks the reading counts."}
+
+
+def yahoo_closes(symbols, days):
+    """{symbol: [(date, close)]} from Yahoo (split-adjusted, dividends not added -- like the stored closes).
+    Empty on any failure."""
+    import yfinance as yf
+    from llm_util import call_with_timeout
+    period = "2y" if days > 365 else "1y" if days > 180 else "6mo" if days > 90 else "3mo"
+    try:
+        raw = call_with_timeout(lambda: yf.download(list(symbols), period=period, interval="1d", group_by="ticker",
+                                                    auto_adjust=False, progress=False, threads=True), 30, name="yf.download")
+    except Exception:
+        return {}
+    try:
+        # A session still trading is not a close (stock_data's rule for every job that judges closes).
+        import stock_data
+        raw, _ = stock_data.drop_forming_daily_bars(raw, list(symbols))
+    except Exception:
+        pass
+    out = {}
+    for s in symbols:
+        try:
+            closes = (raw[s] if len(symbols) > 1 or s in raw.columns.get_level_values(0) else raw)["Close"].dropna()
+        except Exception:
+            continue
+        out[s] = [(d.strftime("%Y-%m-%d"), round(float(c), 4)) for d, c in closes.items()]
+    return out
+
+
+def _thin(series):
+    """(series, step): every step-th close of each series counting back from its last, when the reply would hold
+    more than MAX_PRICE_POINTS closes -- at least weekly (5), coarser for a big group over two years. step 1 = all."""
+    total = sum(len(v) for v in series.values())
+    if total <= MAX_PRICE_POINTS:
+        return series, 1
+    step = max(5, -(-total // MAX_PRICE_POINTS))
+    return {t: [p for i, p in enumerate(v) if (len(v) - 1 - i) % step == 0] for t, v in series.items()}, step
+
+
+def price_history(db, companies=None, watchlist=None, days=90, fetch=yahoo_closes, yahoo=market_lookup.yahoo_symbol):
+    """Daily closes over the last `days`: a watchlist's stocks plus its benchmark, or up to MAX_PRICE_COMPANIES
+    names or tickers. Stored closes cover the screener's watchlist stocks and benchmarks (two years); any
+    other ticker is fetched from Yahoo now (not stored)."""
+    days = max(1, min(int(days or 90), MAX_PRICE_DAYS))
+    since = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
+    out = {"days": days, "since": since}
+    if watchlist:
+        lists = db.watchlists()
+        wl, choices = find_watchlist(lists, watchlist)
+        if not wl:
+            return {"query": watchlist, "found": False, "available": choices,
+                    "note": "No single watchlist matches; pass one of the available names."}
+        meta = next(w for w in lists if w["name"] == wl)
+        tickers = db.watchlist_members(wl) + ([meta["benchmark"]] if meta["benchmark"] else [])
+        out.update(watchlist=wl, label=meta["label"], benchmark=meta["benchmark"])
+        resolved = [(t, t) for t in dict.fromkeys(tickers)]
+        unmatched = []
+    else:
+        names = [str(c) for c in (companies or []) if str(c).strip()][:MAX_PRICE_COMPANIES]
+        if not names:
+            return {"found": False, "note": "Pass companies (names or tickers) or a watchlist."}
+        resolved, unmatched = [], []
+        # A ticker whose closes are stored (a watchlist stock, SPY, QQQ, ^CRSLDX) is taken as typed; an index name
+        # becomes its benchmark; anything else goes through the screener's name lookup.
+        held = set(db.prices([q.strip().upper() for q in names], since))
+        for q in names:
+            index_benchmark = {"INDIA": "^CRSLDX", "US": "SPY", "NASDAQ100": "QQQ"}.get(_index_series(q) or "")
+            up = q.strip().upper()
+            t = index_benchmark or (up if up in held or up.startswith("^") else market_lookup.resolve(db, q, yahoo)[0])
+            if not t and market_lookup.TICKER_RE.match(up):
+                t = up   # a ticker no listing or search knows: Yahoo's own answer says whether it exists
+            (resolved.append((q, t)) if t else unmatched.append(q))
+    tickers = list(dict.fromkeys(t for _, t in resolved))
+    series = db.prices(tickers, since) if tickers else {}
+    need = [t for t in tickers if not series.get(t)]
+    fetched = []
+    if need and not watchlist:
+        symbols = market_lookup.price_symbols(db, need)
+        got = fetch(list(dict.fromkeys(symbols.values())), days)
+        for t in need:
+            pts = [p for p in got.get(symbols[t], []) if p[0] >= since]
+            if pts:
+                series[t] = pts
+                fetched.append(t)
+    series, step = _thin({t: series[t] for t in tickers if series.get(t)})
+    out.update(found=bool(series), closes={t: [list(p) for p in v] for t, v in series.items()},
+               matched={q: t for q, t in resolved if not watchlist and q != t} or None,
+               fetched_from_yahoo=fetched, missing=[t for t in tickers if t not in series], unmatched=unmatched,
+               sampled=f"every {step}th session, counting back from the latest" if step > 1 else None,
+               note="Daily closes from the user's stock screener (split-adjusted, dividends not added). Watchlist stocks "
+                    "and benchmarks are stored two years back; other tickers are fetched from Yahoo on request. "
+                    "Benchmarks: ^CRSLDX Nifty 500, SPY S&P 500, QQQ Nasdaq 100.")
+    return {k: v for k, v in out.items() if v not in (None, [], {})} | {"found": bool(series)}

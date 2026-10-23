@@ -524,6 +524,8 @@ def get_filterable_metrics(settings=None):
         # here is what lets a rule reference them. Labels must match the
         # app.build_column_defs labels exactly so the glossary and the
         # condition-builder caption resolve them.
+        "Perf 1W %": "perf_1w",
+        "Perf YTD %": "perf_ytd",
         "Perf 1M %": "perf_1m",
         "Perf 3M %": "perf_3m",
         "Perf 6M %": "perf_6m",
@@ -534,6 +536,7 @@ def get_filterable_metrics(settings=None):
         "Qtr Revenue Growth %": "qtr_revenue_growth",
         "VStop Weeks Ago": "vstop_weekly_weeks_since_change",
         "10/30 W Golden Cross (weeks ago)": "gc_weeks_10_30",
+        "1D Ret vs Index": "rel_ret_1d_index",
         "1W Ret vs Index": "rel_ret_1w_index",
         "Tech Uptrend": "tech_uptrend",
         "TA Rules": "ta_rules",
@@ -1921,7 +1924,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
         # results.append instead of reporting blanks.
         ttm_profit_growth = ttm_revenue_growth = None
         roe = cfo_op_5yr = roce = None
-        perf_1m = perf_3m = perf_6m = perf_1y = perf_3y = None
+        perf_1w = perf_ytd = perf_1m = perf_3m = perf_6m = perf_1y = perf_3y = None
         trailing_pe = forward_pe = pb_ratio = ev_ebitda = p_cashflow = reported_qtr = None
         # Reset per ticker like everything above. If yf.Ticker() below raised,
         # the statements block used to read the PREVIOUS ticker's object and
@@ -2065,11 +2068,19 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
                     return round((float(daily_close.iloc[-1]) / float(daily_close.iloc[-n - 1]) - 1) * 100, 1)
                 return None
 
+            perf_1w = _perf(5)
             perf_1m = _perf(22)
             perf_3m = _perf(63)
             perf_6m = _perf(126)
             perf_1y = _perf(252)
             perf_3y = _perf(756)
+            # Year to date: against the last close of the calendar year before the
+            # latest bar's (not today's), so a run on 1 Jan before any session of the
+            # new year still reports the year just ended. Blank for a listing with no
+            # close in an earlier year.
+            _prior = daily_close[daily_close.index.year < daily_close.index[-1].year]
+            if len(_prior) and float(_prior.iloc[-1]):
+                perf_ytd = round((float(daily_close.iloc[-1]) / float(_prior.iloc[-1]) - 1) * 100, 1)
 
             # RSI
             rsi14_daily_series = compute_rsi(daily_close, rsi_period)
@@ -2567,6 +2578,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
             # (iloc[-6] on independently dropna'd closes), which lands on
             # different dates whenever the stock and benchmark have different
             # sessions in the last week.
+            rel_ret_1d_index = _rel_ret(1)
             rel_ret_1w_index = _rel_ret(5)
             rel_ret_1m_index = _rel_ret(22)
             rel_ret_6m_index = _rel_ret(126)
@@ -2577,6 +2589,8 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
                 "quote_type": quote_type,
                 "last_close": round(last_close, 1),
                 "pct_change_1d": pct_change_1d,
+                "perf_1w": perf_1w,
+                "perf_ytd": perf_ytd,
                 "perf_1m": perf_1m,
                 "perf_3m": perf_3m,
                 "perf_6m": perf_6m,
@@ -2662,6 +2676,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
                 "vstop_weekly_weeks_since_change": vstop_weekly_weeks_since_change,
                 "vstop_weekly_flipped": vstop_weekly_flipped,
                 "gc_weeks_10_30": gc_weeks_10_30,
+                "rel_ret_1d_index": rel_ret_1d_index,
                 "rel_ret_1w_index": rel_ret_1w_index,
                 "rel_ret_1m_index": rel_ret_1m_index,
                 "rel_ret_6m_index": rel_ret_6m_index,

@@ -585,7 +585,7 @@ def style_row(row, ema_labels):
             if color:
                 styles[i] = f"color:{color};font-weight:700"
         elif col in ("% Chg", "Qtr Profit Growth %", "Qtr Revenue Growth %",
-                     "Perf 1M %", "Perf 3M %", "Perf 6M %", "Perf 1Y %") and pd.notna(val):
+                     "Perf 1W %", "Perf YTD %", "Perf 1M %", "Perf 3M %", "Perf 6M %", "Perf 1Y %") and pd.notna(val):
             styles[i] = "color:#1e8449;font-weight:600" if val > 0 else ("color:#c0392b;font-weight:600" if val < 0 else "")
         elif col == "TA Rules" and isinstance(val, str):
             # The colours of TheWrap flowchart's own outcome boxes.
@@ -967,12 +967,12 @@ def ratio_cols():
 VOLUME_COLS = ["Vol 10D", "Vol 20D", "Vol 100D"]
 PCT_COLS = ["% Chg", "Qtr Profit Growth %", "Qtr EPS Growth %", "Qtr Revenue Growth %", "ROE %", "ROCE %",
             "PAT Growth TTM %", "Revenue Growth TTM %"]
-PERF_PCT_COLS = ["Perf 1M %", "Perf 3M %", "Perf 6M %", "Perf 1Y %", "Perf 3Y %"]
+PERF_PCT_COLS = ["Perf 1W %", "Perf YTD %", "Perf 1M %", "Perf 3M %", "Perf 6M %", "Perf 1Y %", "Perf 3Y %"]
 # Signed like PERF_PCT_COLS (+ = ahead of the benchmark) but kept at 1
 # decimal, not 0: these are scan inputs tested against thresholds as tight
 # as ">= 1", where PERF_PCT_COLS' whole-number rounding would render a 0.4
 # and a 1.4 identically.
-REL_PCT_COLS = ["1W Ret vs Index", "1M Ret vs Index", "6M Ret vs Index"]
+REL_PCT_COLS = ["1D Ret vs Index", "1W Ret vs Index", "1M Ret vs Index", "6M Ret vs Index"]
 # Unsigned percentages -- always >= 0, so formatted WITHOUT a sign prefix.
 # PCT_COLS' "+12.5%" would read as 12.5% ABOVE the high for the distances,
 # the exact opposite of what they mean, and a signed share-of-volume makes
@@ -2272,9 +2272,12 @@ def build_column_defs(labels, custom_columns=None):
         ("avg_volume_10d", "Vol 10D"),
         ("avg_volume_20d", "Vol 20D"),
         ("avg_volume_100d", "Vol 100D"),
+        ("rel_ret_1d_index", "1D Ret vs Index"),
         ("rel_ret_1w_index", "1W Ret vs Index"),
         ("rel_ret_1m_index", "1M Ret vs Index"),
         ("rel_ret_6m_index", "6M Ret vs Index"),
+        ("perf_1w", "Perf 1W %"),
+        ("perf_ytd", "Perf YTD %"),
         ("perf_1m", "Perf 1M %"),
         ("perf_3m", "Perf 3M %"),
         ("perf_6m", "Perf 6M %"),
