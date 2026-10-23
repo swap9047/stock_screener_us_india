@@ -150,6 +150,32 @@ class MarketDB:
                         "value = (COALESCE(NULLIF(kg_market_meta.value, ''), '{}')::jsonb || excluded.value::jsonb)::text",
                         (SYMBOLS_KEY, json.dumps(found)))
 
+    # The screener's lists (publish_market.py watchlists): read by market_lists for Claude chat's connector.
+    def watchlists(self):
+        return self._all("SELECT name, label, kind, benchmark, members, ord FROM kg_watchlists ORDER BY ord, name")
+
+    def watchlist_members(self, name):
+        return [r["ticker"] for r in self._all("SELECT ticker FROM kg_watchlist_members WHERE name = %s ORDER BY ticker", (name,))]
+
+    def breadth_series(self):
+        rows = self._all("SELECT series, label, kind, latest, as_of FROM kg_breadth_series ORDER BY kind, series")
+        for r in rows:
+            if isinstance(r.get("latest"), str):
+                r["latest"] = json.loads(r["latest"] or "{}")
+        return rows
+
+    def breadth_points(self, series, since):
+        return self._all("SELECT date, pct_above_200, pct_above_50, pct_highs, pct_lows FROM kg_breadth "
+                         "WHERE series = %s AND date >= %s ORDER BY date", (series, since))
+
+    def prices(self, tickers, since):
+        """{ticker: [(date, close)]} oldest first."""
+        out = {}
+        for r in self._all("SELECT ticker, date, close FROM kg_prices WHERE ticker = ANY(%s) AND date >= %s "
+                           "ORDER BY ticker, date", (list(tickers), since)):
+            out.setdefault(r["ticker"], []).append((r["date"], r["close"]))
+        return out
+
     def calc_settings(self):
         rows = self._all("SELECT value FROM kg_market_meta WHERE key = 'calc_settings'")
         try:

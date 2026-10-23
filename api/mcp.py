@@ -12,6 +12,11 @@ Tools:
                       screener's definitions and its reasons for each signal (market_lookup.lookup:
                       stored while fresh, else computed now with the screener's saved settings)
   metric_catalog      every metric by group, with its definition
+  list_watchlists     the screener's tabs (holdings included) and indexes, with their latest breadth
+  get_watchlist       one tab as a table: a row per stock with the groups asked for, sortable, summarised
+  get_market_breadth  an index's or a tab's breadth, day by day
+  get_price_history   daily closes of a tab or of named companies
+  (market_lists, over what publish_market.py's watchlists mode stores hourly)
 
 The tool descriptions are what Claude reads when deciding which tool to use, in any chat where the
 connector is on -- so they say plainly what the tool is for.
@@ -27,6 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import market_http  # noqa: E402  (first: sets the runtime up before yfinance is imported)
 import market_api  # noqa: E402
+import market_lists  # noqa: E402
 import market_lookup  # noqa: E402
 
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
@@ -40,7 +46,10 @@ INSTRUCTIONS = (
     "moving averages, RSI, relative strength, trend signals (Trend, Tech Uptrend, TA Rules, Expert Take), volume, "
     "52-week range or valuation multiples, call get_market_metrics before searching the web, and cite each figure "
     "with its price_date as (screener, <date>). Explain a signal with the tool's explain group and definitions, "
-    "which are the screener's own rules. Use web search for news, results and guidance, which this tool does not have.")
+    "which are the screener's own rules. For the user's watchlists and holdings (how a list did today or this week, its "
+    "best and worst stocks), call list_watchlists, then get_watchlist with the groups and sort you need; for market "
+    "breadth (Nifty 500, S&P 500, Nasdaq 100 or a watchlist) get_market_breadth; for a price chart or a return over "
+    "any window get_price_history. Use web search for news, results and guidance, which these tools do not have.")
 
 GROUP_HELP = ("price, returns, moving_averages, momentum (RSI, ADX), relative_strength (Mansfield RS vs Nifty 500 / "
               "S&P 500), trend (Trend, Tech Uptrend, TA Rules, Expert Take, weekly VStop), volume, range (52-week, "
@@ -76,6 +85,79 @@ TOOLS = [
         "annotations": {"readOnlyHint": True, "openWorldHint": True},
     },
     {
+        "name": "list_watchlists",
+        "title": "The user's watchlists and holdings",
+        "description": (
+            "Every tab of the user's stock screener -- watchlists and the holdings lists (India Invested, US Invested), "
+            "plus groups combining them -- with how many stocks each holds, its benchmark and its latest breadth "
+            "(% of its stocks above the 200- and 50-day averages), and the indexes with breadth. Call first for any "
+            "question about the user's watchlists or portfolio, then get_watchlist."),
+        "inputSchema": {"type": "object", "properties": {}},
+        "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "get_watchlist",
+        "title": "One watchlist as a table",
+        "description": (
+            "One of the user's screener watchlists or holdings lists as a table: a row per stock with the metric groups "
+            "asked for, a summary of each return (stocks up/down, median, average over the whole list), the metric "
+            "definitions and the list's breadth. For 'how did it do today / this week / this year' use groups "
+            "['price', 'returns'] (returns: 1W, YTD, 1M, 3M, 6M, 1Y, 3Y and vs-index); for best and worst performers sort "
+            "by that return (e.g. sort_by 'perf_1w', descending true for best, false for worst) with a limit. "
+            "Names are loose: 'India watchlist', 'my US holdings', 'all invested'."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "The watchlist, as named in list_watchlists or loosely."},
+                "groups": {"type": "array", "items": {"type": "string", "enum": list(market_api.METRIC_GROUPS)},
+                           "description": f"Metric groups per stock (default price, returns, trend): {GROUP_HELP}."},
+                "sort_by": {"type": "string", "description": "A metric field or label to sort by, e.g. pct_change_1d, perf_1w, perf_ytd, rsi14_daily."},
+                "descending": {"type": "boolean", "description": "Largest first (default true)."},
+                "limit": {"type": "integer", "minimum": 1, "description": "Rows to return after sorting (default all)."},
+            },
+            "required": ["name"],
+        },
+        "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "get_market_breadth",
+        "title": "Market breadth, day by day",
+        "description": (
+            "Market breadth from the user's screener for an index (Nifty 500, S&P 500, Nasdaq 100) or one of the user's "
+            "watchlists: each trading day, the % of its stocks above their 200-day and 50-day simple moving averages and "
+            "at 52-week highs and lows, plus the latest counts. The same numbers as the screener's breadth charts."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "An index ('Nifty 500', 'S&P 500', 'Nasdaq 100') or a watchlist."},
+                "days": {"type": "integer", "minimum": 1, "maximum": market_lists.MAX_BREADTH_DAYS,
+                         "description": "Calendar days of history (default 365)."},
+            },
+            "required": ["name"],
+        },
+        "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "get_price_history",
+        "title": "Daily closing prices",
+        "description": (
+            "Daily closes for a watchlist's stocks and its benchmark, or for up to 10 companies or indexes by name or "
+            "ticker (Nifty 500, S&P 500, Nasdaq 100 work too), over the last N days (up to 730). For returns over a "
+            "window the returns group does not have, or to compare stocks over the same dates. Watchlist stocks are "
+            "stored; any other listed stock is fetched from Yahoo."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "companies": {"type": "array", "items": {"type": "string"}, "maxItems": market_lists.MAX_PRICE_COMPANIES,
+                              "description": "Company names or tickers (or an index name)."},
+                "watchlist": {"type": "string", "description": "A watchlist instead of companies: its stocks plus its benchmark."},
+                "days": {"type": "integer", "minimum": 1, "maximum": market_lists.MAX_PRICE_DAYS,
+                         "description": "Calendar days back (default 90)."},
+            },
+        },
+        "annotations": {"readOnlyHint": True, "openWorldHint": True},
+    },
+    {
         "name": "metric_catalog",
         "title": "What each screener metric means",
         "description": "Every metric the stock screener computes, by group, with its definition (the screener's own glossary).",
@@ -85,12 +167,38 @@ TOOLS = [
 ]
 
 
-def call_tool(name, args, db=None, compute=None, yahoo=market_lookup.yahoo_symbol, search=market_lookup.yahoo_search):
+LIST_TOOLS = ("list_watchlists", "get_watchlist", "get_market_breadth", "get_price_history")
+
+
+def call_tool(name, args, db=None, compute=None, yahoo=market_lookup.yahoo_symbol, search=market_lookup.yahoo_search,
+              fetch=None):
     """(result dict, is_error) for one tools/call."""
     settings = market_lookup.screener_settings(db)
     if name == "metric_catalog":
         return {"groups": GROUP_HELP, "metrics": [{k: c[k] for k in ("group", "field", "label", "unit", "description")}
                                                   for c in market_api.catalog(settings)]}, False
+    if name in LIST_TOOLS:
+        if db is None:
+            return {"error": "the screener's database is not reachable right now"}, True
+        if name == "list_watchlists":
+            return market_lists.list_watchlists(db), False
+        if name == "get_watchlist":
+            if not str(args.get("name") or "").strip():
+                return {"error": "pass name: a watchlist (see list_watchlists)"}, True
+            return market_lists.watchlist_table(db, args["name"], args.get("groups"), args.get("sort_by"),
+                                                args.get("descending", True), args.get("limit"), settings), False
+        if name == "get_market_breadth":
+            if not str(args.get("name") or "").strip():
+                return {"error": "pass name: an index or a watchlist"}, True
+            return market_lists.market_breadth(db, args["name"], args.get("days") or 365), False
+        companies = args.get("companies")
+        if isinstance(companies, str):
+            companies = [companies]
+        if not companies and not str(args.get("watchlist") or "").strip():
+            return {"error": "pass companies (names or tickers) or a watchlist"}, True
+        with market_http.captured():
+            return market_lists.price_history(db, companies, args.get("watchlist"), args.get("days") or 90,
+                                              **({"fetch": fetch} if fetch else {}), yahoo=yahoo), False
     if name != "get_market_metrics":
         return {"error": f"unknown tool {name!r}"}, True
     companies = args.get("companies")

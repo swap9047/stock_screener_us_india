@@ -6,16 +6,23 @@ knowledge graph on Supabase), where its Q&A pages and Claude chat read them.
     python3 publish_market.py screener   # the snapshot's tickers + their AI write-ups (data-refresh.yml)
     python3 publish_market.py library    # library companies the screener doesn't track (market-library.yml)
     python3 publish_market.py library --min-gap 50   # ... unless they were published under 50 minutes ago
+    python3 publish_market.py watchlists # the tabs, breadth and daily closes (market-breadth.yml)
 
 The library is published hourly by data-refresh.yml (its first run each hour) and at 7 AM / 5 PM ET by
 market-library.yml as the fallback; --min-gap makes whichever run comes second in an hour skip.
 
-What may leave this repo is decided by market_api (a whitelist: never the watchlist a ticker is in,
-notes, flags, Interested or custom columns). Rows go into kg_market, the metric menu into
-kg_market_catalog and the calc settings into kg_market_meta, so the live endpoint (api/market.py)
-computes with the same settings as the snapshot.
+What may leave this repo in a metrics row is decided by market_api (a whitelist: never notes, flags,
+Interested or custom columns). Rows go into kg_market, the metric menu into kg_market_catalog and the calc
+settings into kg_market_meta, so the live endpoint (api/market.py) computes with the same settings as the
+snapshot.
 
-MARKET_DB_URL is the session-pooler URI of the `market_writer` role, which can write only those three
+The watchlists mode publishes the tabs themselves -- holdings included, by the owner's choice (2026-10-23),
+so Claude chat and the library's Q&A can answer "how did my India watchlist do this week?" -- into
+kg_watchlists / kg_watchlist_members; each index's and each watchlist's breadth into kg_breadth_series /
+kg_breadth (breadth_math, the app's own maths); and two years of daily closes of every watchlist stock and
+benchmark into kg_prices. Membership only: still no notes, flags, Interested or custom columns.
+
+MARKET_DB_URL is the session-pooler URI of the `market_writer` role, which can write only those market
 tables and read the listings and which tickers the library discusses. Unset (a fork, or before
 setup) the script says so and exits 0. MARKET_LIMIT (a number) computes only the first N library
 tickers, for a smoke test.
@@ -30,7 +37,7 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import market_api
 import market_lookup
@@ -214,6 +221,192 @@ def publish_library(conn, min_gap=None):
     return 0 if n else 1
 
 
+# ---- watchlists, breadth and closes (the watchlists mode, run by market-breadth.yml after its commit) ----
+
+# market_breadth.json's index blocks, as the research library names them.
+INDEX_SERIES = {"INDIA": "Nifty 500", "US": "S&P 500", "NASDAQ100": "Nasdaq 100"}
+# What a breadth series' "latest" reading carries (the rest of a block is its history).
+BREADTH_LATEST_KEYS = ("above", "below", "total", "pct_above", "pct_above_50", "partial", "live")
+# Daily closes kept in kg_prices: two years, enough for any return or chart a chat asks about.
+PRICE_DAYS = 730
+# Each run rewrites a stored series' last 10 days (a "live" reading redone, a late Yahoo bar) and writes a
+# series that isn't stored yet in full: a few hundred rows an hour instead of ~85k.
+REWRITE_DAYS = 10
+
+
+def watchlist_records(registry, watchlists, groups, group_labels):
+    """[{name, label, kind, benchmark, ord, tickers}]: every tab in markets.json order (kind "watchlist"), then
+    the combined tabs (kind "group": their members' stocks, each once; a benchmark only when every member
+    shares one)."""
+    out = []
+    for i, (key, meta) in enumerate(registry.items()):
+        meta = meta if isinstance(meta, dict) else {}
+        out.append({"name": key, "label": meta.get("label") or key, "kind": "watchlist", "benchmark": meta.get("benchmark"),
+                    "ord": i, "tickers": list(dict.fromkeys(t for t in watchlists.get(key) or [] if t))})
+    by_name = {w["name"]: w for w in out}
+    for j, (key, label) in enumerate(group_labels.items()):
+        members = [m for m in groups.get(key) or [] if m in by_name]
+        if not members:
+            continue
+        benchmarks = {by_name[m]["benchmark"] for m in members}
+        out.append({"name": key, "label": label, "kind": "group",
+                    "benchmark": benchmarks.pop() if len(benchmarks) == 1 else None, "ord": len(registry) + j,
+                    "tickers": list(dict.fromkeys(t for m in members for t in by_name[m]["tickers"]))})
+    return out
+
+
+def _breadth_points(result):
+    """[(date, % above 200d, % above 50d, % at highs, % at lows)] oldest first, from a breadth block or a
+    breadth_math.compute_breadth result (the same keys)."""
+    hist = result.get("history") or {}
+    h50, highs, lows = (result.get(k) or {} for k in ("history_50", "highs_history", "lows_history"))
+    return [(d, hist[d], h50.get(d), highs.get(d), lows.get(d)) for d in sorted(hist)]
+
+
+def breadth_records(breadth, perf, lists):
+    """[{series, label, kind, latest, as_of, points}]: each index block market_breadth.json holds, then each
+    watchlist and group over its stocks' closes in dashboard_perf.json -- breadth_math, the maths of the app's
+    Watchlist Breadth chart, so the two never disagree."""
+    from breadth_math import assemble_closes, compute_breadth
+    out = []
+    for key, label in INDEX_SERIES.items():
+        block = ((breadth or {}).get("markets") or {}).get(key)
+        if not isinstance(block, dict) or not block.get("history"):
+            continue   # a leg that failed keeps the stored series
+        points = _breadth_points(block)
+        latest = {k: block.get(k) for k in BREADTH_LATEST_KEYS if k in block}
+        latest["date"] = points[-1][0]
+        out.append({"series": key, "label": label, "kind": "index", "latest": latest,
+                    "as_of": block.get("as_of") or (breadth or {}).get("as_of"), "points": points})
+    markets = (perf or {}).get("markets") or {}
+    for w in lists:
+        closes, missing = assemble_closes(markets, w["tickers"])
+        result = compute_breadth(closes) if not closes.empty else None
+        if not result or not result.get("history"):
+            continue
+        points = _breadth_points(result)
+        latest = {k: result.get(k) for k in BREADTH_LATEST_KEYS if k in result}
+        latest.update(date=points[-1][0], stocks=len(w["tickers"]), without_prices=len(missing))
+        out.append({"series": w["name"], "label": w["label"], "kind": w["kind"], "latest": latest,
+                    "as_of": (perf or {}).get("as_of"), "points": points})
+    return out
+
+
+def price_series(perf, lists, today=None):
+    """{ticker: [(date, close)]} for the last PRICE_DAYS: every watchlist stock, each watchlist's benchmark and
+    the selectable indexes (dashboard_perf.json's "benchmarks"), each from the first block holding it."""
+    blocks = [(perf or {}).get("benchmarks") or {}] + list(((perf or {}).get("markets") or {}).values())
+    wanted = list(dict.fromkeys([t for w in lists for t in w["tickers"]] + [w["benchmark"] for w in lists if w["benchmark"]]
+                                + list((perf or {}).get("benchmarks") or {})))
+    cutoff = ((today or datetime.now(timezone.utc).date()) - timedelta(days=PRICE_DAYS)).isoformat()
+    out = {}
+    for t in wanted:
+        series = next((b[t] for b in blocks if isinstance(b, dict) and b.get(t)), None)
+        if series:
+            out[t] = [(d, float(c)) for d, c in sorted(series.items()) if d >= cutoff and c is not None]
+    return {t: s for t, s in out.items() if s}
+
+
+def to_write(points, stored):
+    """The points a run writes. `stored` is (newest stored date, stored row count) or None: everything for a
+    series not stored yet, or stored with under 90% of the points (a first run cut off, rows from a test),
+    else the points from REWRITE_DAYS before the newest stored date on."""
+    if not stored or not stored[0] or (stored[1] or 0) < 0.9 * len(points):
+        return list(points)
+    since = (datetime.fromisoformat(str(stored[0])[:10]).date() - timedelta(days=REWRITE_DAYS)).isoformat()
+    return [p for p in points if p[0] >= since]
+
+
+def _stored(conn, table, key):
+    """{key: (newest date, row count)} for kg_breadth by series or kg_prices by ticker."""
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT {key}, max(date), count(*) FROM {table} GROUP BY {key}")
+        return {r[0]: (r[1], r[2]) for r in cur.fetchall()}
+
+
+def write_watchlists(conn, lists):
+    """Every watchlist and its members, replaced in one transaction (a tab removed in the app disappears)."""
+    now = _now()
+    with conn.transaction():
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM kg_watchlist_members")
+            cur.execute("DELETE FROM kg_watchlists")
+            cur.executemany("INSERT INTO kg_watchlists (name, label, kind, benchmark, members, ord, updated_at) "
+                            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                            [(w["name"], w["label"], w["kind"], w["benchmark"], len(w["tickers"]), w["ord"], now) for w in lists])
+            cur.executemany("INSERT INTO kg_watchlist_members (name, ticker) VALUES (%s, %s)",
+                            [(w["name"], t) for w in lists for t in w["tickers"]])
+
+
+def write_breadth(conn, series):
+    """Upsert each series' reading and its new points; drop the series of watchlists that no longer exist
+    (an index series is never dropped: a failed leg keeps its last one). The number of points written."""
+    stored = _stored(conn, "kg_breadth", "series")
+    rows = [(s["series"], *p) for s in series for p in to_write(s["points"], stored.get(s["series"]))]
+    now = _now()
+    with conn.transaction():
+        with conn.cursor() as cur:
+            cur.executemany("INSERT INTO kg_breadth_series (series, label, kind, latest, as_of, updated_at) "
+                            "VALUES (%s, %s, %s, %s::jsonb, %s, %s) ON CONFLICT (series) DO UPDATE SET label = excluded.label, "
+                            "kind = excluded.kind, latest = excluded.latest, as_of = excluded.as_of, updated_at = excluded.updated_at",
+                            [(s["series"], s["label"], s["kind"], json.dumps(s["latest"]), s["as_of"], now) for s in series])
+            cur.executemany("INSERT INTO kg_breadth (series, date, pct_above_200, pct_above_50, pct_highs, pct_lows) "
+                            "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (series, date) DO UPDATE SET "
+                            "pct_above_200 = excluded.pct_above_200, pct_above_50 = excluded.pct_above_50, "
+                            "pct_highs = excluded.pct_highs, pct_lows = excluded.pct_lows", rows)
+            keep = [s["series"] for s in series]
+            cur.execute("DELETE FROM kg_breadth WHERE series IN (SELECT series FROM kg_breadth_series "
+                        "WHERE kind <> 'index' AND NOT (series = ANY(%s)))", (keep,))
+            cur.execute("DELETE FROM kg_breadth_series WHERE kind <> 'index' AND NOT (series = ANY(%s))", (keep,))
+    return len(rows)
+
+
+def write_prices(conn, series, today=None):
+    """Upsert the new closes, drop those older than PRICE_DAYS and the tickers no watchlist holds any more.
+    (rows written, rows deleted)."""
+    stored = _stored(conn, "kg_prices", "ticker")
+    rows = [(t, d, c) for t, pts in series.items() for d, c in to_write(pts, stored.get(t))]
+    cutoff = ((today or datetime.now(timezone.utc).date()) - timedelta(days=PRICE_DAYS)).isoformat()
+    with conn.transaction():
+        with conn.cursor() as cur:
+            cur.executemany("INSERT INTO kg_prices (ticker, date, close) VALUES (%s, %s, %s) "
+                            "ON CONFLICT (ticker, date) DO UPDATE SET close = excluded.close", rows)
+            cur.execute("DELETE FROM kg_prices WHERE date < %s OR NOT (ticker = ANY(%s))", (cutoff, list(series)))
+            deleted = cur.rowcount
+    return len(rows), deleted
+
+
+def _read_json(name):
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), name)) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def publish_watchlists(conn):
+    from watchlist_labels import COMBINED_TAB_LABELS
+    lists = watchlist_records(stock_data.load_markets_registry(), stock_data.load_watchlists(),
+                              stock_data.load_watchlist_groups(), COMBINED_TAB_LABELS)
+    # An empty set means the data files didn't load; publishing it would wipe every list in the database.
+    if not any(w["tickers"] for w in lists):
+        print("::error::No watchlist has any stock -- the data files did not load; nothing published.")
+        return 1
+    perf, breadth = _read_json("dashboard_perf.json"), _read_json("market_breadth.json")
+    write_watchlists(conn, lists)
+    series = breadth_records(breadth, perf, lists)
+    points = write_breadth(conn, series) if series else 0
+    prices = price_series(perf, lists)
+    written, deleted = write_prices(conn, prices) if prices else (0, 0)
+    print(f"Published {sum(w['kind'] == 'watchlist' for w in lists)} watchlist(s) and {sum(w['kind'] == 'group' for w in lists)} "
+          f"group(s) ({len({t for w in lists for t in w['tickers']})} stocks); breadth for "
+          f"{sum(s['kind'] == 'index' for s in series)} index(es) and {sum(s['kind'] != 'index' for s in series)} list(s), "
+          f"{points} point(s) written; closes for {len(prices)} ticker(s), {written} row(s) written, {deleted} removed.")
+    if not perf:
+        print("::warning::dashboard_perf.json missing -- watchlist breadth and closes not refreshed.")
+    return 0
+
+
 def main(argv):
     mode = argv[1] if len(argv) > 1 else ""
     min_gap = None
@@ -223,7 +416,7 @@ def main(argv):
             min_gap = float(argv[i + 1])
         except (IndexError, ValueError):
             mode = ""
-    if mode not in ("screener", "library"):
+    if mode not in ("screener", "library", "watchlists"):
         print(__doc__)
         return 2
     url = os.environ.get("MARKET_DB_URL", "").strip()
@@ -237,6 +430,8 @@ def main(argv):
         print(f"::error::Could not connect to the research library's database ({type(e).__name__}).")
         return 1
     try:
+        if mode == "watchlists":
+            return publish_watchlists(conn)
         return publish_screener(conn) if mode == "screener" else publish_library(conn, min_gap)
     finally:
         conn.close()

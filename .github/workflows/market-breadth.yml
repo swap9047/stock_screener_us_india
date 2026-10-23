@@ -107,6 +107,20 @@ jobs:
           files: market_breadth.json dashboard_perf.json data_snapshot.json
           message: "Update market breadth, dashboard performance & data snapshot [automated]"
 
+      # The research library's copy (owner, 2026-10-23): the tabs and their stocks, each index's and each
+      # watchlist's breadth, and two years of daily closes, so Claude chat and the library's Q&A can answer
+      # "how did my India watchlist do this week?". After the commit and before the verify step (which can
+      # fail the run), and continue-on-error: the library's copy must never cost the breadth commit. Counts
+      # only in the log.
+      - name: Publish watchlists, breadth and closes to the research library
+        continue-on-error: true
+        shell: bash
+        run: |
+          pip install --quiet "psycopg[binary]~=3.3"
+          python -u publish_market.py watchlists 2>&1 | python -u log_redact.py
+        env:
+          MARKET_DB_URL: ${{ secrets.MARKET_DB_URL }}
+
       # Runs AFTER the commit on purpose. A leg that fails still leaves the
       # other market refreshed and worth committing, and refresh_market_breadth.py
       # exits 0 so those steps run -- so this is the only place a failure becomes
