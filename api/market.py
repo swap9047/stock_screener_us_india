@@ -3,7 +3,7 @@
 GET /api/market?q=<company name or ticker>[&q=...]&groups=<group>,<group>[&refresh=1]
 GET /api/market?ticker=<Yahoo ticker>[,<ticker>...]      (the older form, still accepted)
   -> {"results": [{query, ticker, how, company_name, exchange, currency, source, data_end, as_of,
-                   computed_now, groups}],
+                   computed_now, priced_as, groups}],
       "missing": [{query, note}], "seconds": ..., "log": [...]}
 
 Up to market_lookup.MAX_QUERIES per request. groups are market_api.GROUP_NAMES (field-keyed; the
@@ -29,7 +29,8 @@ import market_lookup  # noqa: E402
 MAX_TICKERS = market_lookup.MAX_QUERIES
 
 
-def market_response(queries, groups, refresh=False, db=None, compute=None, yahoo=market_lookup.yahoo_symbol):
+def market_response(queries, groups, refresh=False, db=None, compute=None, yahoo=market_lookup.yahoo_symbol,
+                    search=market_lookup.yahoo_search):
     """The JSON body for one request, and its HTTP status."""
     if not queries:
         return {"error": "pass ?q=<company name or ticker>, e.g. q=Acme or q=ZED.NS"}, 400
@@ -41,7 +42,7 @@ def market_response(queries, groups, refresh=False, db=None, compute=None, yahoo
         db, _ = market_lookup.MarketDB.from_env()
     try:
         with market_http.captured() as log:
-            results = market_lookup.lookup(queries, refresh=refresh, db=db, compute=compute, yahoo=yahoo)
+            results = market_lookup.lookup(queries, refresh=refresh, db=db, compute=compute, yahoo=yahoo, search=search)
     except Exception as e:
         return {"error": f"computation failed: {type(e).__name__}: {e}", "log": log.getvalue().splitlines()[-20:]}, 502
     finally:
@@ -51,7 +52,8 @@ def market_response(queries, groups, refresh=False, db=None, compute=None, yahoo
     for r in results:
         if r["found"]:
             rec = r["record"]
-            found.append({"query": r["query"], "ticker": r["ticker"], "how": r["how"], "computed_now": r["live"]}
+            found.append({"query": r["query"], "ticker": r["ticker"], "how": r["how"], "computed_now": r["live"],
+                          "priced_as": r["priced_as"]}
                          | {k: rec.get(k) for k in ("company_name", "exchange", "currency", "source", "data_end", "as_of")}
                          | {"groups": market_api.select_groups(rec, groups)})
     return {"results": found, "missing": [{"query": r["query"], "note": r["note"]} for r in results if not r["found"]],

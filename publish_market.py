@@ -29,6 +29,7 @@ import sys
 from datetime import datetime, timezone
 
 import market_api
+import market_lookup
 import stock_data
 
 # Below this many rows a snapshot is treated as broken, and screener rows missing from it are kept
@@ -153,14 +154,17 @@ def publish_library(conn):
     yf_logger.handlers, yf_logger.propagate = [logging.StreamHandler(log)], False
     try:
         with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
-            rows = market_api.compute_rows(tickers, settings=settings, ticker_index=stock_data.load_ticker_index())
+            # A BSE listing's "<scrip code>.BO" is priced under Yahoo's SYMBOL.BO (market_lookup.price_symbols),
+            # and an NSE listing too new for the indicators under the same symbol on BSE.
+            rows = market_lookup.compute_priced(tickers, settings, db=market_lookup.MarketDB(conn),
+                                                ticker_index=stock_data.load_ticker_index())
     except Exception as e:
         print(f"::error::Computation failed ({type(e).__name__}); nothing published.")
         return 1
     finally:
         yf_logger.handlers, yf_logger.propagate = saved
     as_of = _now()
-    records = [market_api.public_record(row, "library", as_of=as_of, settings=settings) for row in rows.values()]
+    records = [market_lookup.priced_record(t, row, "library", settings=settings, as_of=as_of) for t, row in rows.items()]
     n = upsert(conn, records) if records else 0
     write_catalog_and_settings(conn, settings)
     failures = sum(1 for line in log.getvalue().splitlines()

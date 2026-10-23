@@ -55,7 +55,8 @@ TOOLS = [
             "EV/EBITDA), ROE/ROCE and growth for any NSE, BSE or US listed stock, computed by the user's own stock "
             "screener from Yahoo Finance daily bars. Use this first for any question about a stock's price, technical "
             "setup or valuation, before web search. Accepts company names as spoken or written ('Acme Industries') or "
-            "Yahoo tickers ('ACME.NS' for NSE, '500001.BO' for BSE, 'ACME' for the US). Returns metrics by group with the screener's definition of "
+            "Yahoo tickers ('ACME.NS' for NSE, 'ACME.BO' for BSE, 'ACME' for the US; a six-digit BSE scrip code "
+            "also works). Returns metrics by group with the screener's definition of "
             "each, and price_date: cite figures as (screener, <price_date>)."),
         "inputSchema": {
             "type": "object",
@@ -80,7 +81,7 @@ TOOLS = [
 ]
 
 
-def call_tool(name, args, db=None, compute=None, yahoo=market_lookup.yahoo_symbol):
+def call_tool(name, args, db=None, compute=None, yahoo=market_lookup.yahoo_symbol, search=market_lookup.yahoo_search):
     """(result dict, is_error) for one tools/call."""
     settings = market_lookup.screener_settings(db)
     if name == "metric_catalog":
@@ -96,7 +97,8 @@ def call_tool(name, args, db=None, compute=None, yahoo=market_lookup.yahoo_symbo
         return {"error": "pass companies: a list of 1-5 names or tickers"}, True
     groups = [g for g in (args.get("groups") or []) if g in market_api.GROUP_NAMES] or None
     with market_http.captured():
-        results = market_lookup.lookup(companies, refresh=bool(args.get("refresh")), db=db, compute=compute, yahoo=yahoo)
+        results = market_lookup.lookup(companies, refresh=bool(args.get("refresh")), db=db, compute=compute, yahoo=yahoo,
+                                       search=search)
     catalog = market_api.catalog(settings)
     return {"results": [market_lookup.labelled(r, groups, settings, catalog) for r in results]}, False
 

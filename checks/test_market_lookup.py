@@ -52,6 +52,7 @@ class FakeDB:
         self.market = market or {}
         self.calc = calc or {}
         self.saved, self.closed = [], False
+        self.symbols = {}
 
     def close(self):
         self.closed = True
@@ -78,6 +79,15 @@ class FakeDB:
     def calc_settings(self):
         return self.calc
 
+    def listings_by_ticker(self, tickers):
+        return {l["ticker"]: l for l in self.listings if l["ticker"] in tickers}
+
+    def yahoo_symbols(self):
+        return dict(self.symbols)
+
+    def save_yahoo_symbols(self, found):
+        self.symbols.update(found)
+
     def save(self, records):
         self.saved += records
         for r in records:
@@ -86,7 +96,9 @@ class FakeDB:
 
 LISTINGS = [
     {"ticker": "ZED.NS", "name": "Zed Industries Limited", "exchange": "NSE"},
-    {"ticker": "500001.BO", "name": "ZED INDUSTRIES LTD.", "exchange": "BSE"},
+    {"ticker": "500001.BO", "name": "ZED INDUSTRIES LTD.", "exchange": "BSE", "isin": "INE0ZED01011"},
+    {"ticker": "500002.BO", "name": "Quill Foods Limited", "exchange": "BSE", "isin": "INE0QUL01012"},
+    {"ticker": "500003.BO", "name": "Orbit Wires Limited", "exchange": "BSE", "isin": ""},
     {"ticker": "ZED", "name": "Zed Holdings Inc. - Common Stock", "exchange": "NASDAQ"},
     {"ticker": "LAURO.NS", "name": "Lauro Labs Limited", "exchange": "NSE"},
     {"ticker": "SYNCOREX.NS", "name": "Syncorex International Limited", "exchange": "NSE"},
@@ -109,6 +121,8 @@ cases = [
     ("500001.bo", ("500001.BO", "ticker"), "a BSE code with its suffix"),
     ("500001", ("500001.BO", "ticker"), "a bare BSE code finds its .BO listing"),
     ("Zeddy", ("ZED.NS", "decision"), "a name decision the library made comes first"),
+    ("newco.bo", ("NEWCO.BO", "ticker"), "a ticker with its suffix is taken as typed, even one the listings don't hold"),
+    ("540999", ("540999.BO", "ticker"), "a bare six-digit number is a BSE scrip code, listed or not"),
     ("Zed Industries", ("ZED.NS", "listing"), "a listing with the same name; NSE over BSE for one company"),
     ("Lauro Laboratories Ltd", ("LAURO.NS", "listing"), "the library's spelling rules apply (Labs = Laboratories)"),
     ("Syncorex Int", ("SYNCOREX.NS", "listing"), "the only company whose name starts with it"),
@@ -126,7 +140,8 @@ check(ml.resolve(db, "Brand New Co", {"Brand New Co": "BNC.NS"}.get) == ("BNC.NS
       "a company outside every listing still resolves through Yahoo")
 check(ml.resolve(db, "  ", no_yahoo) == (None, "") and ml.resolve(db, "Nothing Like It", no_yahoo) == (None, ""),
       "blank or unknown: no ticker")
-check(ml.resolve(None, "acme", no_yahoo) == ("ACME", "ticker") and ml.resolve(None, "Acme Pharma", no_yahoo) == (None, ""),
+check(ml.resolve(None, "acme", no_yahoo) == ("ACME", "ticker") and ml.resolve(None, "Acme Pharma", no_yahoo) == (None, "")
+      and ml.resolve(None, "acme.bo", no_yahoo) == ("ACME.BO", "ticker") and ml.resolve(None, "500001", no_yahoo) == ("500001.BO", "ticker"),
       "without a database a ticker is taken as typed, and a name needs Yahoo")
 
 
@@ -139,6 +154,63 @@ check(ml.resolve(db, "Zeta Industries", no_yahoo) == (None, ""),
       "a name only loosely like a listing (Zeta / Zed Industries) is not taken")
 check(ml.resolve(Broken(LISTINGS), "Syncorx International", {"Syncorx International": "SYNCOREX.NS"}.get)
       == ("SYNCOREX.NS", "yahoo"), "a database without pg_trgm falls back to Yahoo instead of failing")
+
+# --- BSE: Yahoo prices SYMBOL.BO, never the scrip code the library's listings carry -------------------
+searches = []
+
+
+def search(text):
+    searches.append(text)
+    return {"INE0ZED01011": [{"symbol": "ZEDIND.NS", "exchange": "NSI", "quoteType": "EQUITY"},
+                             {"symbol": "500001.BO", "exchange": "BSE", "quoteType": "EQUITY"},
+                             {"symbol": "ZEDIND.BO", "exchange": "BSE", "quoteType": "EQUITY"}],
+            "Orbit Wires Limited": [{"symbol": "ORBITW.BO", "exchange": "BSE", "quoteType": "EQUITY"}],
+            "Quill Foods Limited": [{"symbol": "QUILL.BO", "exchange": "BSE", "quoteType": "EQUITY"}]}.get(text, [])
+
+
+db = FakeDB(LISTINGS)
+got = ml.price_symbols(db, ["500001.BO", "500002.BO", "500003.BO", "ZED.NS", "ACME"], search)
+check(got == {"500001.BO": "ZEDIND.BO", "500002.BO": "500002.BO", "500003.BO": "ORBITW.BO", "ZED.NS": "ZED.NS", "ACME": "ACME"},
+      f"a BSE scrip code is priced under Yahoo's BSE symbol for its ISIN (never a numeric or NSE one); by name only "
+      f"without an ISIN; not found, it stays as it is; other tickers as they are ({got})")
+check(searches == ["INE0ZED01011", "INE0QUL01012", "Orbit Wires Limited"] and db.symbols == {"500001.BO": "ZEDIND.BO", "500003.BO": "ORBITW.BO"},
+      "a listing with an ISIN is searched by ISIN only (a name could find another company); found symbols are remembered")
+searches.clear()
+ml.price_symbols(db, ["500001.BO", "500003.BO", "ZED.NS"], search)
+check(searches == [], "a remembered symbol is not searched again")
+check(ml.price_symbols(None, ["ZED.NS"], search) == {"ZED.NS": "ZED.NS"} and ml.price_symbols(None, ["500001.BO"], search) == {"500001.BO": "500001.BO"},
+      "without a database nothing is searched for a code it can't look up")
+
+priced_calls = []
+
+
+def bse_compute(tickers, settings=None):
+    priced_calls.append(list(tickers))
+    return {t: {"ticker": t, "company_name": f"{t} co", "last_close": 10.0, "data_end": "2026-10-20"}
+            for t in tickers if t not in ("NEWCO.NS", "500002.BO")}
+
+
+rows = ml.compute_priced(["500001.BO", "NEWCO.NS", "ZED.NS", "500002.BO"], {}, db=db, compute=bse_compute, search=search)
+check(priced_calls == [["ZEDIND.BO", "NEWCO.NS", "ZED.NS", "500002.BO"], ["NEWCO.BO"]],
+      f"computed under Yahoo's symbols; an NSE listing that gives no row is tried once on BSE ({priced_calls})")
+check({t: r["priced_as"] for t, r in rows.items()} == {"500001.BO": "ZEDIND.BO", "NEWCO.NS": "NEWCO.BO", "ZED.NS": "ZED.NS"},
+      "rows are keyed by the ticker asked, with the symbol their prices came from")
+rec = ml.priced_record("500001.BO", rows["500001.BO"], "library")
+check(rec["ticker"] == "500001.BO" and (rec["exchange"], rec["currency"]) == ("BSE", "INR")
+      and ml.priced_record("NEWCO.NS", rows["NEWCO.NS"], "live")["exchange"] == "BSE",
+      "the record keeps the library's ticker and names the exchange the prices are really from")
+
+priced_calls.clear()
+db = FakeDB(LISTINGS)
+out = ml.lookup(["500001", "NEWCO.NS", "500002"], db=db, compute=bse_compute, yahoo=no_yahoo, search=search)
+check([(r["ticker"], r["found"], r.get("priced_as")) for r in out]
+      == [("500001.BO", True, "ZEDIND.BO"), ("NEWCO.NS", True, "NEWCO.BO"), ("500002.BO", False, None)]
+      and [r["ticker"] for r in db.saved] == ["500001.BO", "NEWCO.NS"],
+      "lookup: a scrip code is found and saved under it; a BSE code Yahoo has no symbol for is a miss")
+check("try SYMBOL.BO" in out[2]["note"], "...whose note says to try the BSE symbol")
+lab = ml.labelled(out[0], ["price"])
+check(lab["priced_as"] == "ZEDIND.BO" and "Yahoo's ZEDIND.BO (BSE)" in lab["note"] and "priced_as" not in ml.labelled(dict(out[0], priced_as="500001.BO"), ["price"]),
+      "the answer says which Yahoo symbol the prices are from, when it isn't the ticker")
 
 # --- staleness -------------------------------------------------------------------------------------
 check(not ml.is_stale({"as_of": now_iso(1)}) and ml.is_stale({"as_of": now_iso(ml.STALE_HOURS + 1)})
@@ -155,7 +227,7 @@ calls = []
 def compute(tickers, settings=None):
     calls.append((list(tickers), settings))
     return {t: dict(row, ticker=t, company_name=next((l["name"] for l in LISTINGS if l["ticker"] == t), t))
-            for t in tickers if t != "GONE.NS"}
+            for t in tickers if not t.startswith(("GONE.", "NEWCO.NS", "500009"))}
 
 
 fresh_rec = ma.public_record(dict(row, ticker="LAURO.NS"), "screener", as_of=now_iso(1))
@@ -168,8 +240,9 @@ check([r["query"] for r in out] == ["Lauro Labs", "zed", "Zed Industries", "Noth
       "one result per query, in the order asked")
 check(out[0]["found"] and not out[0]["live"] and out[0]["record"]["source"] == "screener",
       "a fresh stored row is used as it is")
-check(len(calls) == 1 and calls[0][0] == ["ZED.NS", "GONE.NS"],
-      f"only stale or missing tickers are computed, each once though asked twice ({[c[0] for c in calls]})")
+check([c[0] for c in calls] == [["ZED.NS", "GONE.NS"], ["GONE.BO"]],
+      f"only stale or missing tickers are computed, each once though asked twice (and the NSE miss once on BSE) "
+      f"({[c[0] for c in calls]})")
 check(calls[0][1]["rsi_period"] == 9 and "not_a_setting" not in calls[0][1],
       "computed with the screener's saved calc settings (unknown keys ignored)")
 zed = out[1]["record"]

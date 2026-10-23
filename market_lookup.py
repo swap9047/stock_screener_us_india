@@ -5,9 +5,12 @@ connector (api/mcp.py): a company name or ticker in, the screener's numbers out.
      a name decision the library made (kg_aliases); a listing with the same name (the library's
      match_key); the only company whose name starts with it; the clearly closest listing name; else
      Yahoo's own symbol search -- so a company the library never discussed still resolves.
+     A suffix is taken as typed (ACME.NS, ACME.BO) and a bare six-digit number is a BSE scrip code.
   2. Use the stored row (kg_market) while it is younger than STALE_HOURS; otherwise compute it now
      with market_api.compute_rows and the screener's saved calc settings (kg_market_meta, written
-     by publish_market.py), so a live number matches the dashboard's, and store it.
+     by publish_market.py), so a live number matches the dashboard's, and store it. A BSE scrip
+     code is priced under Yahoo's SYMBOL.BO, and an NSE listing too new for the indicators under
+     the same symbol on BSE (compute_priced).
 
 The database is optional: without MARKET_DB_URL the lookup still answers, from Yahoo alone with the
 default settings, and stores nothing. Every database call goes through MarketDB, so the checks can
@@ -34,6 +37,9 @@ MAX_QUERIES = 5
 SIMILAR_MIN = 0.7
 SIMILAR_LEAD = 0.1
 TICKER_RE = re.compile(r"^[A-Z0-9&\-]{1,15}(\.(NS|BO))?$")
+BSE_CODE_RE = re.compile(r"^\d{6}\.BO$")
+# kg_market_meta key of {library ticker: Yahoo symbol} for BSE listings (see price_symbols).
+SYMBOLS_KEY = "yahoo_symbols"
 _EXCHANGE_RANK = {"NSE": 0, "BSE": 1}
 # Yahoo's exchange codes for the listings the screener computes (India, then the US venues).
 _YAHOO_EXCHANGES = ("NSI", "BSE", "NMS", "NYQ", "NGM", "NCM", "ASE", "PCX", "BTS")
@@ -108,6 +114,24 @@ class MarketDB:
             out[r["ticker"]] = r
         return out
 
+    def listings_by_ticker(self, tickers):
+        """{ticker: {name, isin}} for listings the library holds."""
+        return {r["ticker"]: r for r in self._all("SELECT ticker, name, isin FROM kg_companies WHERE ticker = ANY(%s)", (tickers,))}
+
+    def yahoo_symbols(self):
+        rows = self._all("SELECT value FROM kg_market_meta WHERE key = %s", (SYMBOLS_KEY,))
+        try:
+            return json.loads(rows[0]["value"]) if rows else {}
+        except (TypeError, ValueError):
+            return {}
+
+    def save_yahoo_symbols(self, found):
+        """Add found {listing ticker: Yahoo symbol} pairs to the stored map (one row, merged as JSON)."""
+        with self.conn.cursor() as cur:
+            cur.execute("INSERT INTO kg_market_meta (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET "
+                        "value = (COALESCE(NULLIF(kg_market_meta.value, ''), '{}')::jsonb || excluded.value::jsonb)::text",
+                        (SYMBOLS_KEY, json.dumps(found)))
+
     def calc_settings(self):
         rows = self._all("SELECT value FROM kg_market_meta WHERE key = 'calc_settings'")
         try:
@@ -155,18 +179,96 @@ def _best_listing(rows):
     return sorted(rows, key=lambda r: (_EXCHANGE_RANK.get(r.get("exchange"), 2), r["ticker"]))[0]["ticker"]
 
 
-def yahoo_symbol(name):
-    """The first equity Yahoo's search finds for a name, on an exchange the screener computes; Indian
-    listings first (the library is mostly NSE/BSE). None when Yahoo finds none or fails."""
+def yahoo_search(text):
+    """Yahoo's symbol search: its quotes ([{symbol, exchange, quoteType, ...}]), [] when it fails."""
     try:
         import yfinance as yf
-        quotes = yf.Search(name, max_results=8).quotes or []
+        return yf.Search(text, max_results=8).quotes or []
     except Exception:
-        return None
-    equities = [q for q in quotes if q.get("quoteType") == "EQUITY" and q.get("exchange") in _YAHOO_EXCHANGES and q.get("symbol")]
+        return []
+
+
+def yahoo_symbol(name, search=yahoo_search):
+    """The first equity Yahoo's search finds for a name, on an exchange the screener computes; Indian
+    listings first (the library is mostly NSE/BSE). None when Yahoo finds none or fails."""
+    equities = [q for q in search(name) if q.get("quoteType") == "EQUITY" and q.get("exchange") in _YAHOO_EXCHANGES
+                and q.get("symbol")]
     if not equities:
         return None
     return sorted(equities, key=lambda q: _YAHOO_EXCHANGES.index(q["exchange"]))[0]["symbol"]
+
+
+def yahoo_bse_symbol(isin, name, search=yahoo_search):
+    """Yahoo's "SYMBOL.BO" for a BSE listing: searched by its ISIN (exact), or by name only when the
+    listing has no ISIN. None when Yahoo has no BSE equity for it."""
+    for text in ([isin] if isin else [name] if name else []):
+        for q in search(text):
+            symbol = str(q.get("symbol") or "")
+            if q.get("quoteType") == "EQUITY" and q.get("exchange") == "BSE" and symbol.endswith(".BO") \
+                    and not BSE_CODE_RE.match(symbol):
+                return symbol
+    return None
+
+
+def price_symbols(db, tickers, search=yahoo_search):
+    """{ticker: the Yahoo symbol to price it with}. Yahoo prices a BSE stock under its trading symbol
+    ("ACME.BO") and has nothing under its numeric scrip code, but the research library's BSE listings
+    come from BSE's own file as "<scrip code>.BO". Such a ticker keeps its code as its key everywhere
+    (the library's views, kg_market) and is priced under the symbol Yahoo's search gives for its ISIN,
+    looked up once and remembered in kg_market_meta. Every other ticker is priced as it is."""
+    out = {t: t for t in tickers}
+    codes = [t for t in tickers if BSE_CODE_RE.match(t)]
+    if not codes:
+        return out
+    known = {}
+    if db is not None:
+        try:
+            known = db.yahoo_symbols()
+        except Exception:
+            known = {}
+    todo = [t for t in codes if not known.get(t)]
+    if todo:
+        try:
+            listings = db.listings_by_ticker(todo) if db is not None else {}
+        except Exception:
+            listings = {}
+        found = {}
+        for t in todo:
+            listing = listings.get(t) or {}
+            symbol = yahoo_bse_symbol(listing.get("isin"), listing.get("name"), search)
+            if symbol:
+                found[t] = symbol
+        if found and db is not None:
+            try:
+                db.save_yahoo_symbols(found)
+            except Exception:
+                pass
+        known = {**known, **found}
+    out.update({t: known[t] for t in codes if known.get(t)})
+    return out
+
+
+def compute_priced(tickers, settings, db=None, compute=None, search=yahoo_search, **compute_kw):
+    """{ticker: row} computed for the asked tickers, each priced under the symbol Yahoo knows
+    (price_symbols). A row carries "priced_as", the symbol its numbers came from; its own "ticker" is
+    that symbol, so public_record names the exchange the prices are really from."""
+    compute = compute or market_api.compute_rows
+    symbols = price_symbols(db, list(dict.fromkeys(tickers)), search)
+    rows = compute(list(dict.fromkeys(symbols.values())), settings=settings, **compute_kw)
+    # An NSE listing with too little history for the indicators (a recent move from BSE's SME board:
+    # a few weeks of NSE bars) gives no row; the same symbol on BSE usually has the years they need.
+    retry = {t: s[:-3] + ".BO" for t, s in symbols.items() if s not in rows and s.endswith(".NS")}
+    if retry:
+        rows.update(compute(list(dict.fromkeys(retry.values())), settings=settings, **compute_kw))
+        symbols.update({t: s for t, s in retry.items() if s in rows})
+    return {t: dict(rows[s], priced_as=s) for t, s in symbols.items() if s in rows}
+
+
+def priced_record(ticker, row, source, settings=None, **record_kw):
+    """market_api.public_record for a compute_priced row, keyed by the asked ticker."""
+    record = market_api.public_record(row, source, settings=settings, **record_kw)
+    record["ticker"] = ticker
+    return record
 
 
 def resolve(db, query, yahoo=yahoo_symbol):
@@ -176,11 +278,15 @@ def resolve(db, query, yahoo=yahoo_symbol):
     if not text:
         return None, ""
     up = text.upper()
+    if TICKER_RE.match(up) and "." in up:
+        return up, "ticker"        # a suffix says exactly which listing: ACME.NS (NSE), ACME.BO (BSE)
+    if re.fullmatch(r"\d{6}", up):
+        return up + ".BO", "ticker"   # a bare six-digit number is a BSE scrip code
     if db is not None:
-        if TICKER_RE.match(up):
+        if TICKER_RE.match(up) and "." not in up:
             # A bare symbol is read as NSE first, like the library's own resolution (a company with
             # an NSE listing and a US ADR under one symbol gets the NSE one).
-            order = [up] if "." in up else [up + ".NS", up + ".BO", up]
+            order = [up + ".NS", up + ".BO", up]
             known = db.known_tickers(order)
             for t in order:
                 if t in known:
@@ -236,28 +342,28 @@ def screener_settings(db):
     return settings
 
 
-def lookup(queries, refresh=False, db=None, compute=None, yahoo=yahoo_symbol):
+def lookup(queries, refresh=False, db=None, compute=None, yahoo=yahoo_symbol, search=yahoo_search):
     """[{query, found, ticker, how, record, live, note}] for up to MAX_QUERIES names or tickers, in the
     order asked; record is market_api.public_record's shape. Never raises for a bad name or a Yahoo
     miss: those come back found=False with a note."""
-    compute = compute or market_api.compute_rows
     queries = [q for q in queries if str(q or "").strip()][:MAX_QUERIES]
     settings = screener_settings(db)
     resolved = [(q, *resolve(db, q, yahoo)) for q in queries]
     tickers = list(dict.fromkeys(t for _, t, _ in resolved if t))
     stored = db.rows(tickers) if db is not None and tickers else {}
     need = [t for t in tickers if refresh or t not in stored or is_stale(stored[t])]
-    fresh = {}
+    fresh, priced_as = {}, {}
     if need:
-        rows = compute(need, settings=settings)
+        rows = compute_priced(need, settings, db=db, compute=compute, search=search)
         for t, row in rows.items():
+            priced_as[t] = row["priced_as"]
             old = stored.get(t) or {}
             sentiment = ((old.get("ai") or {}).get("sentiment") or {}).get("sentiment")
             if sentiment:
                 # A screener ticker's guarded Sentiment, so Expert Take and its reasons match the dashboard's.
                 row["sentiment"] = sentiment
                 row["expert_take"] = market_api.columns_verdict(row)
-            record = market_api.public_record(row, "live", settings=settings)
+            record = priced_record(t, row, "live", settings=settings)
             if not record["ai"] and old.get("ai"):
                 record["ai"] = old["ai"]
             fresh[t] = record
@@ -268,10 +374,11 @@ def lookup(queries, refresh=False, db=None, compute=None, yahoo=yahoo_symbol):
         record = fresh.get(ticker) or stored.get(ticker)
         if record:
             out.append({"query": q, "found": True, "ticker": ticker, "how": how, "record": record,
-                        "live": ticker in fresh, "note": ""})
+                        "live": ticker in fresh, "priced_as": priced_as.get(ticker, ticker), "note": ""})
         else:
-            note = (f"{ticker}: Yahoo returned no price data" if ticker
-                    else "no listed company matches this name; try the ticker (e.g. ABC.NS for NSE, ABC.BO for BSE)")
+            note = (f"{ticker}: Yahoo returned no price data"
+                    + (" (no Yahoo symbol found for this BSE scrip code; try SYMBOL.BO)" if BSE_CODE_RE.match(ticker) else "")
+                    if ticker else "no listed company matches this name; try the ticker (e.g. ABC.NS for NSE, ABC.BO for BSE)")
             out.append({"query": q, "found": False, "ticker": ticker, "how": how, "record": None, "live": False, "note": note})
     return out
 
@@ -303,6 +410,9 @@ def labelled(result, groups=None, settings=None, catalog=None):
                    f"{record.get('currency') or '?'}. Cite figures as (screener, <price_date>)."}
     if market_api.AI_GROUP in picked:
         out["ai_views"] = picked[market_api.AI_GROUP]
+    if result.get("priced_as") and result["priced_as"] != result["ticker"]:
+        out["priced_as"] = result["priced_as"]
+        out["note"] += f" Prices are Yahoo's {result['priced_as']} ({record.get('exchange')})."
     if result["how"] in ("similar", "yahoo"):
         out["matched_by"] = ("closest listed name" if result["how"] == "similar" else "Yahoo symbol search") \
             + f" -- check that {record.get('company_name')} is the company meant"
