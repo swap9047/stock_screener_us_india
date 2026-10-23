@@ -283,6 +283,34 @@ check(not ml.is_stale({"as_of": now_iso(1)}) and ml.is_stale({"as_of": now_iso(m
       and ml.is_stale({"as_of": None}) and ml.is_stale({}) and not ml.is_stale({"as_of": now_iso(1)[:19]}),
       "a row is stale past STALE_HOURS, or with no readable as_of (a naive time is UTC)")
 
+# --- a row a session behind its exchange is recomputed after an hour ----------------------------------
+from datetime import datetime as _dt, timezone as _tz  # noqa: E402
+
+utc = lambda *a: _dt(*a, tzinfo=_tz.utc)  # noqa: E731
+# 2026-10-22 is a Thursday. NSE settles at 15:30 + 30 min IST = 10:30 UTC; New York at 16:00 + 30 min EDT = 20:30 UTC.
+check(ml.last_completed_session("ZED.NS", utc(2026, 10, 22, 10, 29)) == _dt(2026, 10, 21).date()
+      and ml.last_completed_session("ZED.NS", utc(2026, 10, 22, 10, 31)) == _dt(2026, 10, 22).date()
+      and ml.last_completed_session("500001.BO", utc(2026, 10, 23, 1, 40)) == _dt(2026, 10, 22).date(),
+      "the last completed Indian session: today only once the close has settled")
+check(ml.last_completed_session("ACME", utc(2026, 10, 22, 20, 29)) == _dt(2026, 10, 21).date()
+      and ml.last_completed_session("ACME", utc(2026, 10, 23, 1, 0)) == _dt(2026, 10, 22).date(),
+      "a US listing's session in New York time (still 22 Oct there at 01:00 UTC on the 23rd)")
+check(ml.last_completed_session("ZED.NS", utc(2026, 10, 25, 12, 0)) == _dt(2026, 10, 23).date()
+      and ml.last_completed_session("ZED.NS", utc(2026, 10, 26, 3, 0)) == _dt(2026, 10, 23).date(),
+      "weekends are skipped: Sunday, and Monday before the close, both mean Friday's session")
+now = utc(2026, 10, 23, 1, 40)
+behind = {"ticker": "543001.BO", "data_end": "2026-10-21"}
+check(not ml.is_stale(dict(behind, as_of="2026-10-23T01:00:00+00:00"), now)
+      and ml.is_stale(dict(behind, as_of="2026-10-23T00:30:00+00:00"), now),
+      "a row a session behind is reused for an hour (Yahoo may still not have the day), then recomputed")
+check(not ml.is_stale({"ticker": "543001.BO", "data_end": "2026-10-22", "as_of": "2026-10-22T12:00:00+00:00"}, now)
+      and ml.is_stale({"ticker": "543001.BO", "data_end": "2026-10-22", "as_of": "2026-10-22T05:00:00+00:00"}, now),
+      "a current row follows the 20-hour rule only")
+check(not ml.is_stale({"ticker": "ACME", "data_end": "2026-10-21", "as_of": "2026-10-22T20:00:00+00:00"}, utc(2026, 10, 22, 20, 20)),
+      "before the close has settled, yesterday's bar is current")
+check(ml.is_stale({"ticker": "ACME", "data_end": None, "as_of": "2026-10-23T01:00:00+00:00"}, now) is False,
+      "a row without a price date falls back to the 20-hour rule")
+
 # --- lookup: stored while fresh, computed and saved otherwise ---------------------------------------
 row = {"ticker": "ZED.NS", "company_name": "Zed Industries Limited", "last_close": 101.5, "rsi14_weekly": 61.2,
        "trailing_pe": 24.0, "trend": "Uptrend", "tech_uptrend": 3, "ta_rules": "Maintain/Add", "data_end": "2026-10-20",
@@ -296,7 +324,9 @@ def compute(tickers, settings=None):
             for t in tickers if not t.startswith(("GONE.", "NEWCO.NS", "500009"))}
 
 
-fresh_rec = ma.public_record(dict(row, ticker="LAURO.NS"), "screener", as_of=now_iso(1))
+# Fresh: computed an hour ago, with prices through the exchange's last completed session.
+fresh_rec = ma.public_record(dict(row, ticker="LAURO.NS", data_end=str(ml.last_completed_session("LAURO.NS"))), "screener",
+                             as_of=now_iso(1))
 old_rec = ma.public_record(row, "screener", fundamental={"sentiment": "Negative", "reasoning": "r"}, as_of=now_iso(30))
 old_rec["ai"]["expert"] = {"verdict": "AVOID", "headline": "h"}
 db = FakeDB(LISTINGS, market={"LAURO.NS": fresh_rec, "ZED.NS": old_rec}, calc={"rsi_period": 9, "not_a_setting": 1})
