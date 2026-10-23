@@ -44,14 +44,14 @@ def run_script(mod, env, gen_name, apply_ret):
     mod.main()
     return calls
 
-# refresh_fundamentals analyses MAX_CONCURRENT_TICKERS at a time, so the order
-# tickers finish in is not deterministic -- comparing the call list as recorded
-# made this suite flaky (0, 0, 2, 1, 0 failures over five runs). WHICH tickers a
-# limit selects is still deterministic, because the plan is built serially in
-# registry order before any worker starts, so that is what these compare.
-# refresh_expert_views is still serial and keeps the stricter ordered check.
+# Both batch jobs analyse MAX_CONCURRENT_TICKERS at a time (refresh_expert_views
+# since 2026-10-23), so the order tickers finish in is not deterministic --
+# comparing the call list as recorded made this suite flaky (0, 0, 2, 1, 0
+# failures over five runs). WHICH tickers a limit selects is still
+# deterministic, because the plan is built serially in registry order before any
+# worker starts, so that is what these compare.
 def _cmp(mod, got, want):
-    return sorted(got) == sorted(want) if mod is rf else got == want
+    return sorted(got) == sorted(want) and len(got) == len(want)
 
 
 for mod, gen, ret in ((rf, "generate_fundamental_view", (0, "ok")), (rev, "generate_expert_view", (0, 0, "ok"))):
