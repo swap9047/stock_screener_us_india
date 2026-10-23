@@ -1,84 +1,60 @@
-"""Vercel function: the screener's metrics for any ticker, computed live.
+"""Vercel function: the screener's metrics for any company, for the research library's app.
 
-GET /api/market?ticker=<Yahoo ticker>[,<ticker>...]&groups=<group>,<group>
-  -> {"results": [{ticker, company_name, exchange, currency, source, data_end, as_of, groups}],
-      "missing": [tickers Yahoo returned nothing for], "seconds": ..., "log": [...]}
+GET /api/market?q=<company name or ticker>[&q=...]&groups=<group>,<group>[&refresh=1]
+GET /api/market?ticker=<Yahoo ticker>[,<ticker>...]      (the older form, still accepted)
+  -> {"results": [{query, ticker, how, company_name, exchange, currency, source, data_end, as_of,
+                   computed_now, groups}],
+      "missing": [{query, note}], "seconds": ..., "log": [...]}
 
-Up to MAX_TICKERS per request. groups are market_api.GROUP_NAMES; none means all. When the
-MARKET_API_TOKEN environment variable is set, a request must carry it (Authorization: Bearer
-<token>, or ?token=); without it the endpoint is open, which is only for the first smoke test.
-
-The numbers come from market_api.compute_rows -> stock_data.fetch_snapshot, the dashboard's own
-computation (see market_api's docstring). Vercel's Python runtime runs this file's `handler`
-class; vercel.json routes /api/market here and api/requirements.txt lists what it installs.
+Up to market_lookup.MAX_QUERIES per request. groups are market_api.GROUP_NAMES (field-keyed; the
+app labels them from the catalog); none means all. Each query goes through market_lookup.lookup:
+the stored row while fresh, else computed now with the screener's saved settings and stored. When
+MARKET_API_TOKEN is set a request must carry it (Authorization: Bearer <token>, or ?token=).
+Vercel's Python runtime runs this file's `handler` class; vercel.json routes /api/market here.
 """
 
-import contextlib
-import hmac
-import io
 import json
-import logging
 import os
 import sys
 import time
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
-# yfinance keeps a timezone cache under the user's cache dir, which is read-only on Vercel;
-# /tmp is the one writable place. Set before yfinance is imported (by stock_data).
-os.environ.setdefault("XDG_CACHE_HOME", "/tmp")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import market_http  # noqa: E402  (first: sets the runtime up before yfinance is imported)
 import market_api  # noqa: E402
-import yfinance as yf  # noqa: E402
+import market_lookup  # noqa: E402
 
-try:
-    yf.set_tz_cache_location("/tmp/yf-tz-cache")
-except Exception:
-    pass
-
-MAX_TICKERS = 5
+MAX_TICKERS = market_lookup.MAX_QUERIES
 
 
-def _authorized(headers, query):
-    token = os.environ.get("MARKET_API_TOKEN", "")
-    if not token:
-        return True
-    sent = (headers.get("Authorization") or "").removeprefix("Bearer ").strip() or (query.get("token") or [""])[0]
-    return hmac.compare_digest(sent.encode(), token.encode())
-
-
-def market_response(tickers, groups):
+def market_response(queries, groups, refresh=False, db=None, compute=None, yahoo=market_lookup.yahoo_symbol):
     """The JSON body for one request, and its HTTP status."""
-    if not tickers:
-        return {"error": "pass ?ticker=<Yahoo ticker>, e.g. ACME or ZED.NS"}, 400
-    if len(tickers) > MAX_TICKERS:
-        return {"error": f"at most {MAX_TICKERS} tickers per request"}, 400
+    if not queries:
+        return {"error": "pass ?q=<company name or ticker>, e.g. q=Acme or q=ZED.NS"}, 400
+    if len(queries) > MAX_TICKERS:
+        return {"error": f"at most {MAX_TICKERS} companies per request"}, 400
     started = time.time()
-    log = io.StringIO()
-    # fetch_snapshot reports Yahoo's failures by printing, yfinance through its logger (a ticker left
-    # out of a bulk download, a rate limit); keep both for the caller -- the first Vercel test came
-    # back with a ticker missing and an empty log.
-    handler_ = logging.StreamHandler(log)
-    yf_logger = logging.getLogger("yfinance")
-    yf_logger.addHandler(handler_)
+    own_db = db is None
+    if own_db:
+        db, _ = market_lookup.MarketDB.from_env()
     try:
-        with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
-            rows = market_api.compute_rows(tickers)
+        with market_http.captured() as log:
+            results = market_lookup.lookup(queries, refresh=refresh, db=db, compute=compute, yahoo=yahoo)
     except Exception as e:
-        return {"error": f"computation failed: {type(e).__name__}: {e}",
-                "log": log.getvalue().splitlines()[-20:]}, 502
+        return {"error": f"computation failed: {type(e).__name__}: {e}", "log": log.getvalue().splitlines()[-20:]}, 502
     finally:
-        yf_logger.removeHandler(handler_)
-    results = []
-    for t in tickers:
-        row = rows.get(t.strip().upper())
-        if row:
-            record = market_api.public_record(row, "live")
-            results.append({k: record[k] for k in ("ticker", "company_name", "exchange", "currency", "source",
-                                                   "data_end", "as_of")}
-                           | {"groups": market_api.select_groups(record, groups)})
-    return {"results": results, "missing": [t for t in tickers if t.strip().upper() not in rows],
+        if own_db and db is not None:
+            db.close()
+    found = []
+    for r in results:
+        if r["found"]:
+            rec = r["record"]
+            found.append({"query": r["query"], "ticker": r["ticker"], "how": r["how"], "computed_now": r["live"]}
+                         | {k: rec.get(k) for k in ("company_name", "exchange", "currency", "source", "data_end", "as_of")}
+                         | {"groups": market_api.select_groups(rec, groups)})
+    return {"results": found, "missing": [{"query": r["query"], "note": r["note"]} for r in results if not r["found"]],
             "seconds": round(time.time() - started, 1), "log": log.getvalue().splitlines()[-20:]}, 200
 
 
@@ -86,11 +62,13 @@ class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         url = urlparse(self.path)
         query = parse_qs(url.query)
-        if not _authorized(self.headers, query):
+        if not market_http.authorized(self.headers, query, url.path):
             return self._send({"error": "unauthorized"}, 401)
-        tickers = [t for v in query.get("ticker", []) for t in v.split(",") if t.strip()]
+        queries = [q for q in query.get("q", []) if q.strip()]
+        queries += [t for v in query.get("ticker", []) for t in v.split(",") if t.strip()]
         groups = [g for v in query.get("groups", []) for g in v.split(",") if g.strip()]
-        body, status = market_response(tickers, groups)
+        refresh = (query.get("refresh") or [""])[0].lower() in ("1", "true", "yes")
+        body, status = market_response(queries, groups, refresh=refresh)
         self._send(body, status)
 
     def _send(self, body, status):

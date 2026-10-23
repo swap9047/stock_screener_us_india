@@ -1,4 +1,5 @@
 """market_api: what the screener shares with other apps, and api/market.py, the Vercel endpoint.
+(market_lookup.py and api/mcp.py, Claude chat's connector: test_market_lookup.py.)
 
 The research library's Q&A and Claude chat read the screener's metrics from the knowledge graph's
 database, and api/market.py computes a ticker that isn't there yet. What may leave this repo is a
@@ -155,20 +156,23 @@ check(set(rows) == {"ZED.NS", "ACME"} and calls[-2] == (("ZED.NS",), "^CRSLDX"),
       "a ticker left out of the first batch is recovered by the retry")
 check(no_retry == {} and calls[-1] == (("NEW.NS",), "^CRSLDX"), "retry_wait=None asks only once")
 
-# --- api/market.py ---------------------------------------------------------------------------
+# --- api/market.py (the lookup itself is checked in test_market_lookup.py) ------------------------
 import market as endpoint  # noqa: E402
+import market_http  # noqa: E402
 
+yahoo = {"acme": "ACME"}.get
 real_compute = ma.compute_rows
 ma.compute_rows = lambda tickers, **kw: {"ACME": dict(row, ticker="ACME", company_name="Acme Corp")}
 try:
-    body, status = endpoint.market_response(["acme", "NOPE"], ["price"])
-    check(status == 200 and [r["ticker"] for r in body["results"]] == ["ACME"] and body["missing"] == ["NOPE"]
-          and set(body["results"][0]["groups"]) == {"price"},
-          "the endpoint returns the asked groups and lists the tickers it could not compute")
+    body, status = endpoint.market_response(["acme", "NOPE"], ["price"], yahoo=yahoo)
+    check(status == 200 and [r["ticker"] for r in body["results"]] == ["ACME"] and body["results"][0]["query"] == "acme"
+          and [m["query"] for m in body["missing"]] == ["NOPE"] and body["missing"][0]["note"]
+          and set(body["results"][0]["groups"]) == {"price"} and body["results"][0]["computed_now"],
+          "the endpoint returns the asked groups per query and lists, with a reason, the names it could not find")
     check("india_invested" not in json.dumps(body) and "core holding" not in json.dumps(body),
           "the endpoint publishes nothing private either")
     check(endpoint.market_response([], [])[1] == 400 and endpoint.market_response(["A"] * 6, [])[1] == 400,
-          "no ticker, or too many, is a 400")
+          "no company, or too many, is a 400")
 
 
     def boom(tickers, **kw):
@@ -179,7 +183,7 @@ try:
 
 
     ma.compute_rows = boom
-    body, status = endpoint.market_response(["ACME"], [])
+    body, status = endpoint.market_response(["ACME"], [], yahoo=yahoo)
     check(status == 502 and "Yahoo refused" in body["error"] and any("rate limited" in l for l in body["log"])
           and any("1 Failed download" in l for l in body["log"]),
           "a failed computation is a 502 that carries Yahoo's messages, printed and logged by yfinance")
@@ -195,11 +199,15 @@ class Headers(dict):
 import os  # noqa: E402
 
 os.environ.pop("MARKET_API_TOKEN", None)
-check(endpoint._authorized(Headers(), {}), "no token configured: open (first smoke test only)")
+check(market_http.authorized(Headers(), {}), "no token configured: open (first smoke test only)")
 os.environ["MARKET_API_TOKEN"] = "s3cret"
-check(endpoint._authorized(Headers(Authorization="Bearer s3cret"), {}) and endpoint._authorized(Headers(), {"token": ["s3cret"]}),
-      "the token is accepted as a bearer header or ?token=")
-check(not endpoint._authorized(Headers(Authorization="Bearer nope"), {}) and not endpoint._authorized(Headers(), {}),
+check(market_http.authorized(Headers(Authorization="Bearer s3cret"), {})
+      and market_http.authorized(Headers(), {"token": ["s3cret"]})
+      and market_http.authorized(Headers(), {}, "/mcp/s3cret")
+      and market_http.authorized(Headers(**{"x-now-route-matches": "token=s3cret"}), {}, "/api/mcp.py"),
+      "the token is accepted as a bearer header, ?token=, or the connector's /mcp/<token> path (as typed or as Vercel rewrites it)")
+check(not market_http.authorized(Headers(Authorization="Bearer nope"), {}) and not market_http.authorized(Headers(), {})
+      and not market_http.authorized(Headers(), {}, "/mcp/nope") and not market_http.authorized(Headers(), {}, "/api/market"),
       "a wrong or missing token is refused")
 os.environ.pop("MARKET_API_TOKEN", None)
 
@@ -295,7 +303,16 @@ check("redirect_stdout" in src and "print(t" not in src and "print(f\"{t" not in
 
 # --- deployment files ---------------------------------------------------------------------------
 vercel = json.loads((REPO / "vercel.json").read_text())
-check([b["src"] for b in vercel["builds"]] == ["api/market.py"], "Vercel builds only api/market.py")
+check([b["src"] for b in vercel["builds"]] == ["api/market.py", "api/mcp.py"], "Vercel builds only the two functions")
+import re as _re  # noqa: E402
+routes = [(_re.compile(r["src"].replace("(?<", "(?P<")), r["dest"]) for r in vercel["routes"]]
+def _route(path):
+    return next(((m, d) for rx, d in routes for m in [rx.fullmatch(path)] if m), (None, None))
+m, dest = _route("/mcp/s3cret")
+check(dest == "api/mcp.py?token=$token" and m.group("token") == "s3cret" and _route("/api/market")[1] == "api/market.py"
+      and _route("/mcp/s3cret/")[0].group("token") == "s3cret" and _route("/mcp")[1] == "api/mcp.py"
+      and _route("/mcp/a/b")[0] is None,
+      "routes: /api/market to the REST function, /mcp/<token> to the MCP server with the token passed on")
 reqs = (REPO / "api" / "requirements.txt").read_text()
 check("streamlit" not in reqs and "yfinance" in reqs and "pandas" in reqs,
       "the function installs its own slim requirements, not the app's")

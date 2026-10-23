@@ -172,10 +172,26 @@ watchlist a ticker is in, notes, flags, Interested or custom columns.
 
 Without the secret both steps skip quietly.
 
-**Live metrics for any ticker (Vercel).** `api/market.py` computes a ticker on request with the same code
-(`vercel.json`, `api/requirements.txt`). Import this repo into Vercel (Hobby plan, framework "Other") and set
-`MARKET_API_TOKEN` (a long random string) in the project's environment variables; requests then need it as
-`Authorization: Bearer <token>` or `?token=`.
+**Live metrics for any company (Vercel).** Two functions in this repo (`vercel.json`, `api/requirements.txt`) answer a
+company name or ticker with the same lookup (`market_lookup.py`): the stored row while it is under 20 hours old,
+otherwise computed now from Yahoo with the screener's saved settings and stored. A name resolves through the research
+library's listings and name decisions, then Yahoo's own symbol search, so a stock neither the screener nor the library
+knows still works.
+
+- `api/market.py` -- REST, for the transcription app: `GET /api/market?q=<name or ticker>&groups=price,valuation`.
+- `api/mcp.py` -- an MCP server, for Claude chat: `POST /mcp/<token>`, tools `get_market_metrics` and `metric_catalog`.
+
+Set up:
+
+1. Import this repo into Vercel (Hobby plan, framework "Other", root `./`).
+2. In the Vercel project's **Environment Variables** add `MARKET_API_TOKEN` (a long random string of letters and
+   digits -- it goes in a URL) and `MARKET_DB_URL` (the same value as the repo secret above), then redeploy.
+   Until the token is set, both functions answer anyone who has the URL.
+3. Transcription app (Streamlit secrets): `MARKET_API_URL = "https://<project>.vercel.app/api/market"` and the same
+   `MARKET_API_TOKEN`.
+4. Claude (claude.ai -> Settings -> Connectors -> Add custom connector): URL
+   `https://<project>.vercel.app/mcp/<token>`, no OAuth. Turn it on in a chat's tools menu; its tool descriptions tell
+   Claude to use it for prices, technicals and valuation before web search.
 
 ## 9. Push config changes made through the deployed app back to GitHub
 

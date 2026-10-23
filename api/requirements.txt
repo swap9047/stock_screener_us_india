@@ -1,9 +1,12 @@
-# The Vercel function's own dependencies (api/market.py) -- deliberately NOT the app's
+# The Vercel functions' own dependencies (api/market.py, api/mcp.py) -- deliberately NOT the app's
 # requirements.txt: Streamlit and Plotly would triple the bundle and its cold start. Same pins as
 # requirements.txt for the libraries the numbers come from, so a value computed here matches the
 # dashboard's. google-genai only because expert_views (Expert Take from the columns) imports it.
+# psycopg: the stored rows, the listings and the screener's calc settings (market_lookup.MarketDB);
+# only here and in the publishing workflows, never in the app's requirements.txt.
 yfinance~=1.5.0
 pandas~=3.0.5
 numpy~=2.4
 requests~=2.34
 google-genai~=2.14.0
+psycopg[binary]~=3.3
