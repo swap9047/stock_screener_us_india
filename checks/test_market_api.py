@@ -289,7 +289,8 @@ try:
         rc = pm.publish_library(PubConn([[("NEWCO.NS",)], []]))
 finally:
     ma.compute_rows, sd.load_data_snapshot, sd.load_ticker_index = real_compute, real_load2, real_tix
-check("NEWCO" not in out.getvalue() and rc == 1 and "3 error line(s) suppressed" in out.getvalue(),
+# 6 lines: the NSE miss is tried once more on BSE (market_lookup.compute_priced), and complains again.
+check("NEWCO" not in out.getvalue() and rc == 1 and "6 error line(s) suppressed" in out.getvalue(),
       f"the library run never prints a ticker, whatever channel Yahoo's complaint comes through ({out.getvalue()!r})")
 check(_lg.getLogger("yfinance").propagate and not any(isinstance(h, _lg.StreamHandler) and getattr(h, "stream", None) is not None
                                                       and h.stream.__class__ is _io.StringIO for h in _lg.getLogger("yfinance").handlers),
