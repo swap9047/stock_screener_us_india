@@ -8,8 +8,9 @@ GET /api/market?ticker=<Yahoo ticker>[,<ticker>...]      (the older form, still 
 
 Up to market_lookup.MAX_QUERIES per request. groups are market_api.GROUP_NAMES (field-keyed; the
 app labels them from the catalog); none means all. Each query goes through market_lookup.lookup:
-the stored row while fresh, else computed now with the screener's saved settings and stored. When
-MARKET_API_TOKEN is set a request must carry it (Authorization: Bearer <token>, or ?token=).
+the stored row while fresh, else computed now with the screener's saved settings and stored. Every
+request must carry MARKET_API_TOKEN (Authorization: Bearer <token>, or ?token=); without the variable
+the function refuses everything (401).
 Vercel's Python runtime runs this file's `handler` class; vercel.json routes /api/market here.
 """
 

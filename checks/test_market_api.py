@@ -199,7 +199,9 @@ class Headers(dict):
 import os  # noqa: E402
 
 os.environ.pop("MARKET_API_TOKEN", None)
-check(market_http.authorized(Headers(), {}), "no token configured: open (first smoke test only)")
+check(not market_http.authorized(Headers(), {}) and not market_http.authorized(Headers(Authorization="Bearer x"), {})
+      and not market_http.authorized(Headers(), {}, "/mcp/"),
+      "no token configured: closed -- every request refused (2026-10-23; it used to be open)")
 os.environ["MARKET_API_TOKEN"] = "s3cret"
 check(market_http.authorized(Headers(Authorization="Bearer s3cret"), {})
       and market_http.authorized(Headers(), {"token": ["s3cret"]})

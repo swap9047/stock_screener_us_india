@@ -461,6 +461,10 @@ status, batch = mcp.handle_body(json.dumps([{"jsonrpc": "2.0", "id": 1, "method"
                                             {"jsonrpc": "2.0", "method": "notifications/initialized"},
                                             {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}]), **kw)
 check(status == 200 and [m["id"] for m in batch] == [1, 2], "a batch gets one reply per request, none for notifications")
+status, big = mcp.handle_body(json.dumps([{"jsonrpc": "2.0", "id": i, "method": "ping"} for i in range(mcp.MAX_BATCH + 1)]), **kw)
+check(status == 400 and big["error"]["code"] == -32600, f"a batch of more than {mcp.MAX_BATCH} messages is refused")
+status, full = mcp.handle_body(json.dumps([{"jsonrpc": "2.0", "id": i, "method": "ping"} for i in range(mcp.MAX_BATCH)]), **kw)
+check(status == 200 and len(full) == mcp.MAX_BATCH, f"a batch of exactly {mcp.MAX_BATCH} is served")
 
 # --- over HTTP, as Vercel serves it: the token in the path -----------------------------------------
 os.environ.pop("MARKET_DB_URL", None)

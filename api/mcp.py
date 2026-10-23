@@ -30,6 +30,10 @@ import market_api  # noqa: E402
 import market_lookup  # noqa: E402
 
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
+# A JSON-RPC batch may hold this many messages (2026-10-23). Unbounded, one POST could carry any
+# number of tools/call, each computing up to market_lookup.MAX_QUERIES companies live from Yahoo and
+# storing them. Claude sends one message per request; 10 leaves room for any client that batches.
+MAX_BATCH = 10
 SERVER_INFO = {"name": "stock-screener", "title": "Stock screener market data", "version": "1.0"}
 INSTRUCTIONS = (
     "The user's own stock screener. For any question about a listed company's current share price, returns, "
@@ -144,6 +148,9 @@ def handle_body(raw, **kw):
     except ValueError:
         return 400, {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}}
     if isinstance(msg, list):
+        if len(msg) > MAX_BATCH:
+            return 400, {"jsonrpc": "2.0", "id": None,
+                         "error": {"code": -32600, "message": f"batch too large: at most {MAX_BATCH} messages"}}
         replies = [r for r in (handle_message(m, **kw) for m in msg) if r is not None]
         return (200, replies) if replies else (202, None)
     reply = handle_message(msg, **kw)

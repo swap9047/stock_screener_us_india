@@ -187,7 +187,7 @@ Set up:
 1. Import this repo into Vercel (Hobby plan, framework "Other", root `./`).
 2. In the Vercel project's **Environment Variables** add `MARKET_API_TOKEN` (a long random string of letters and
    digits -- it goes in a URL) and `MARKET_DB_URL` (the same value as the repo secret above), then redeploy.
-   Until the token is set, both functions answer anyone who has the URL.
+   Until the token is set, both functions refuse every request (401).
 3. Transcription app (Streamlit secrets): `MARKET_API_URL = "https://<project>.vercel.app/api/market"` and the same
    `MARKET_API_TOKEN`.
 4. Claude (claude.ai -> Settings -> Connectors -> Add custom connector): URL

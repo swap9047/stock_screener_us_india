@@ -39,11 +39,14 @@ def sent_token(headers, query, path=""):
 
 
 def authorized(headers, query, path=""):
-    """True when MARKET_API_TOKEN is unset (open, only for the first smoke test) or the request
-    carries it."""
+    """True only when MARKET_API_TOKEN is set and the request carries it.
+
+    Fails closed (2026-10-23): an unset token used to mean open to anyone with the URL -- meant for
+    the first smoke test -- so a deployment or a preview environment that lost the variable would
+    have served, and written to the library's database for, every caller."""
     token = os.environ.get("MARKET_API_TOKEN", "")
     if not token:
-        return True
+        return False
     return hmac.compare_digest(sent_token(headers, query, path).encode(), token.encode())
 
 
