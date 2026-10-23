@@ -35,7 +35,7 @@ step names, so each key needs a line in the AI steps' `env:` blocks. Every run l
 `[key rotation] N key(s): ...`; if that number is lower than expected, that line is
 missing.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1247
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1361
 offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
@@ -63,7 +63,9 @@ verified by rendering the app headlessly; recipe at the bottom.
 | `weekly_wrapup.py` | 365 | Weekly Discord digest |
 | `custom_columns.py` | 294 | User-defined formula columns |
 | `ticker_notes.py` | 117 | Per-ticker notes and manual flags. (`signal` was retired on 2026-10-04; the ticker dot is Expert Take's colour) |
-| `market_api.py` | 319 | What the screener shares with other apps (the research library's Q&A, Claude chat): the metric catalog by group, the public part of a row (a whitelist: never the watchlist, notes, flags, Interested or custom columns) and `compute_rows`, a live `fetch_snapshot` for any ticker. Served live by `api/market.py` on Vercel (`vercel.json`, its own slim `api/requirements.txt`) |
+| `market_api.py` | 319 | What the screener shares with other apps (the research library's Q&A, Claude chat): the metric catalog by group, the public part of a row (a whitelist: never the watchlist, notes, flags, Interested or custom columns) and `compute_rows`, a live `fetch_snapshot` for any ticker. Served live on Vercel through `market_lookup.py` (`vercel.json`, its own slim `api/requirements.txt`) |
+| `market_lookup.py` | 309 | One lookup for every live caller: a company name or ticker -> a ticker (a known symbol, the research library's name decisions and listings by its `match_key`, the clearly closest listing, then Yahoo's symbol search) -> the stored row while fresh, else computed with the screener's saved settings and stored. All database access goes through `MarketDB`, which checks replace with a fake |
+| `market_http.py` | 62 | What the two Vercel functions share: the token check (bearer, `?token=`, or the `/mcp/<token>` path a Claude connector URL carries) and capturing Yahoo's printed and logged messages. `api/market.py` is REST for the transcription app; `api/mcp.py` is a stateless MCP server (JSON-RPC over POST) for Claude chat |
 | `glossary.py` | 394 | The glossary (`column_definitions`, each column's header tooltip) and the per-signal "why" text (`trend_tooltip`, `tech_uptrend_tooltip`, `ta_rules_tooltip`, `vol_trend_tooltip`). Pure functions, no Streamlit: `app.py` imports them, and `market_api` publishes the same words as metric definitions and its `explain` group, so the screen and the research library never explain a number differently |
 | `watchlist_labels.py` | 46 | Tab labels a watchlist may not take. Kept out of `stock_data.py`, whose code fingerprint (comments and docstrings excluded) marks the snapshot stale on any code edit |
 

@@ -1,5 +1,6 @@
-# Vercel serves only api/market.py, which imports market_api, stock_data, json_store and
-# llm_util. Keep the rest out of the function bundle.
+# Vercel serves only api/market.py and api/mcp.py, which import market_http, market_lookup,
+# market_api, stock_data, glossary, expert_views, json_store and llm_util. Keep the rest out of
+# the function bundle.
 checks/
 docs/
 .github/

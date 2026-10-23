@@ -1,8 +1,11 @@
 {
   "builds": [
-    {"src": "api/market.py", "use": "@vercel/python"}
+    {"src": "api/market.py", "use": "@vercel/python"},
+    {"src": "api/mcp.py", "use": "@vercel/python"}
   ],
   "routes": [
-    {"src": "/api/market", "dest": "api/market.py"}
+    {"src": "/api/market", "dest": "api/market.py"},
+    {"src": "/mcp/(?<token>[^/]+)/?", "dest": "api/mcp.py?token=$token"},
+    {"src": "/mcp/?", "dest": "api/mcp.py"}
   ]
 }
