@@ -5,6 +5,10 @@ knowledge graph on Supabase), where its Q&A pages and Claude chat read them.
 
     python3 publish_market.py screener   # the snapshot's tickers + their AI write-ups (data-refresh.yml)
     python3 publish_market.py library    # library companies the screener doesn't track (market-library.yml)
+    python3 publish_market.py library --min-gap 50   # ... unless they were published under 50 minutes ago
+
+The library is published hourly by data-refresh.yml (its first run each hour) and at 7 AM / 5 PM ET by
+market-library.yml as the fallback; --min-gap makes whichever run comes second in an hour skip.
 
 What may leave this repo is decided by market_api (a whitelist: never the watchlist a ticker is in,
 notes, flags, Interested or custom columns). Rows go into kg_market, the metric menu into
@@ -147,7 +151,29 @@ def library_tickers(conn):
     return sorted(library - screener), len(library & screener)
 
 
-def publish_library(conn):
+def library_published_minutes_ago(conn, now=None):
+    """Minutes since the newest library row was published, or None (no library rows, or a time that
+    can't be read -- then the run publishes)."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT max(updated_at) FROM kg_market WHERE source = 'library'")
+        row = cur.fetchall()
+    try:
+        last = datetime.fromisoformat(str(row[0][0]).replace("Z", "+00:00"))
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+    except (IndexError, TypeError, ValueError):
+        return None
+    return ((now or datetime.now(timezone.utc)) - last).total_seconds() / 60
+
+
+def publish_library(conn, min_gap=None):
+    """Compute and publish the library's companies; with min_gap (minutes), skip when they were published
+    more recently than that -- the hourly step in data-refresh.yml and the 7/17 fallback job both ask."""
+    if min_gap:
+        ago = library_published_minutes_ago(conn)
+        if ago is not None and ago < min_gap:
+            print(f"Library companies were published {ago:.0f} min ago (under {min_gap}); skipped.")
+            return 0
     tickers, tracked = library_tickers(conn)
     limit = os.environ.get("MARKET_LIMIT", "").strip()
     if limit.isdigit() and int(limit) > 0:
@@ -190,6 +216,13 @@ def publish_library(conn):
 
 def main(argv):
     mode = argv[1] if len(argv) > 1 else ""
+    min_gap = None
+    if "--min-gap" in argv:
+        i = argv.index("--min-gap")
+        try:
+            min_gap = float(argv[i + 1])
+        except (IndexError, ValueError):
+            mode = ""
     if mode not in ("screener", "library"):
         print(__doc__)
         return 2
@@ -204,7 +237,7 @@ def main(argv):
         print(f"::error::Could not connect to the research library's database ({type(e).__name__}).")
         return 1
     try:
-        return publish_screener(conn) if mode == "screener" else publish_library(conn)
+        return publish_screener(conn) if mode == "screener" else publish_library(conn, min_gap)
     finally:
         conn.close()
 

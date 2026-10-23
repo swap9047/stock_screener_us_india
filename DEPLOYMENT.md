@@ -161,7 +161,8 @@ It uses `DISCORD_WEBHOOK_URL` and `DATA_REPO_TOKEN` repo secrets.
 
 The transcription app's knowledge graph (Supabase) can show this screener's numbers next to what narrators said, in
 its Q&A and in Claude chat. `data-refresh.yml` publishes the watchlists' tickers after every refresh, and
-`market-library.yml` (7:00 AM and 5:00 PM ET) computes the companies that library discusses which no watchlist tracks.
+the companies that library discusses which no watchlist tracks are computed hourly (the first data refresh each hour) and at
+7:00 AM and 5:00 PM ET by `market-library.yml` as the fallback.
 What is published is `market_api.py`'s list: prices, indicators, valuation, growth and the AI write-ups -- never which
 watchlist a ticker is in, notes, flags, Interested or custom columns.
 
