@@ -23,6 +23,7 @@ import market_api as ma  # noqa: E402
 import market_lookup as ml  # noqa: E402
 import mcp  # noqa: E402
 
+ml.DETAILS_RETRY_WAIT_S = 0   # no real waits; the retry itself is checked below with the real value
 fails = 0
 
 
@@ -211,6 +212,71 @@ check("try SYMBOL.BO" in out[2]["note"], "...whose note says to try the BSE symb
 lab = ml.labelled(out[0], ["price"])
 check(lab["priced_as"] == "ZEDIND.BO" and "Yahoo's ZEDIND.BO (BSE)" in lab["note"] and "priced_as" not in ml.labelled(dict(out[0], priced_as="500001.BO"), ["price"]),
       "the answer says which Yahoo symbol the prices are from, when it isn't the ticker")
+
+# --- Yahoo's company details failing: retried once after 5 s, then the stored values kept -----------
+waits = []
+real_sleep = ml.time.sleep
+ml.time.sleep = waits.append
+attempts = []
+
+
+def flaky_compute(tickers, settings=None):
+    attempts.append(list(tickers))
+    first = len(attempts) == 1
+    out = {}
+    for t in tickers:
+        ok = t == "ZED.NS" or (t == "FLAKY.NS" and not first)
+        out[t] = {"ticker": t, "company_name": f"{t} Limited" if ok else t, "last_close": 50.0, "data_end": "2026-10-20",
+                  **({"trailing_pe": 20.0, "roe": 12.0} if ok else {})}
+    return out
+
+
+try:
+    rows = ml.compute_priced(["ZED.NS", "FLAKY.NS", "DEAD.NS"], {}, compute=flaky_compute, details_retry_wait=5)
+finally:
+    ml.time.sleep = real_sleep
+check(attempts == [["ZED.NS", "FLAKY.NS", "DEAD.NS"], ["FLAKY.NS", "DEAD.NS"]] and waits == [5],
+      f"only the tickers whose details failed are computed again, once, 5 s later ({attempts}, {waits})")
+check(rows["FLAKY.NS"]["trailing_pe"] == 20.0 and not rows["FLAKY.NS"]["details_failed"]
+      and rows["DEAD.NS"]["details_failed"] and not rows["ZED.NS"]["details_failed"],
+      "a retry that got the details is used; one that didn't leaves the row marked")
+check(ml.compute_priced(["DEAD.NS"], {}, compute=lambda t, settings=None: {"DEAD.NS": {"ticker": "DEAD.NS", "company_name": "DEAD.NS"}},
+                        details_retry_wait=None)["DEAD.NS"]["details_failed"], "details_retry_wait=None: no retry")
+
+old_row = {"ticker": "DEAD.NS", "company_name": "Dead Industries Limited",
+           "metrics": {"trailing_pe": 31.0, "roe": 9.5, "roce": 14.0, "reported_qtr": "Q1 FY27", "last_close": 40.0}}
+rec = ml.priced_record("DEAD.NS", rows["DEAD.NS"], "library")
+kept = ml.keep_previous(rec, old_row, True)
+check(rec["company_name"] == "Dead Industries Limited" and rec["metrics"]["trailing_pe"] == 31.0 and rec["metrics"]["roce"] == 14.0
+      and rec["metrics"]["last_close"] == 50.0 and set(kept) == {"trailing_pe", "roe", "roce", "reported_qtr", "company_name"},
+      f"details still missing: the name, valuation and growth come from the stored row; the prices stay new ({kept})")
+rec = {"ticker": "LOSS.NS", "company_name": "Loss Co", "metrics": {"forward_pe": 40.0}}
+kept = ml.keep_previous(rec, {"ticker": "LOSS.NS", "company_name": "Loss Co", "metrics": {"trailing_pe": 18.0, "roce": 7.0}}, False)
+check(kept == ["roce"] and "trailing_pe" not in rec["metrics"] and rec["metrics"]["roce"] == 7.0,
+      "details fine: a blank P/E is Yahoo's answer (a loss-making year) and stays blank; a blank statement figure is kept")
+check(ml.keep_previous({"ticker": "N", "company_name": "N", "metrics": {}}, None, True) == [], "nothing stored: nothing kept")
+
+db = FakeDB(LISTINGS, market={"DEAD.NS": dict(old_row, as_of=now_iso(30), source="library", ai={})})
+out = ml.lookup(["DEAD.NS"], db=db, compute=lambda t, settings=None: {"DEAD.NS": {"ticker": "DEAD.NS", "company_name": "DEAD.NS",
+                                                                                  "last_close": 41.0, "data_end": "2026-10-22"}},
+                yahoo=no_yahoo)
+saved = db.saved[-1]
+check(saved["company_name"] == "Dead Industries Limited" and saved["metrics"]["trailing_pe"] == 31.0 and saved["metrics"]["last_close"] == 41.0,
+      "a live lookup whose details failed twice saves the new prices with the stored name and fundamentals")
+
+import publish_market as pm  # noqa: E402
+
+real_db = pm.market_lookup.MarketDB
+pm.market_lookup.MarketDB = lambda conn: FakeDB(market={"DEAD.NS": old_row})
+try:
+    recs = [{"ticker": "DEAD.NS", "company_name": "DEAD.NS", "metrics": {"last_close": 41.0}},
+            {"ticker": "NEW.NS", "company_name": "New Limited", "metrics": {"last_close": 5.0}}]
+    n_kept = pm.keep_previous_values(object(), recs, {"DEAD.NS": True, "NEW.NS": False})
+finally:
+    pm.market_lookup.MarketDB = real_db
+check(n_kept == 1 and recs[0]["metrics"]["trailing_pe"] == 31.0 and recs[0]["company_name"] == "Dead Industries Limited"
+      and pm.keep_previous_values(object(), [], {}) == 0,
+      "the publish jobs fill blanks from the stored rows and count the tickers that kept something")
 
 # --- staleness -------------------------------------------------------------------------------------
 check(not ml.is_stale({"as_of": now_iso(1)}) and ml.is_stale({"as_of": now_iso(ml.STALE_HOURS + 1)})

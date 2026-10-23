@@ -98,6 +98,16 @@ def screener_records(snapshot, expert_views, fundamentals, settings=None):
     return list(records.values())
 
 
+def keep_previous_values(conn, records, details_missing):
+    """Fill each record's blanks from the row already stored (market_lookup.keep_previous): a run whose
+    calls to Yahoo for company details failed must not blank out the name, valuation and growth the
+    last run stored. The number of tickers that kept something -- counts only, as everything here prints."""
+    if not records:
+        return 0
+    stored = market_lookup.MarketDB(conn).rows([r["ticker"] for r in records])
+    return sum(1 for r in records if market_lookup.keep_previous(r, stored.get(r["ticker"]), details_missing.get(r["ticker"])))
+
+
 def publish_screener(conn):
     from expert_views import load_expert_views
     from fundamentals_eval import load_fundamentals
@@ -107,6 +117,7 @@ def publish_screener(conn):
         return 1
     settings = stock_data.load_settings()
     records = screener_records(snapshot, load_expert_views(), load_fundamentals(), settings)
+    kept = keep_previous_values(conn, records, {r["ticker"]: r["company_name"] == r["ticker"] for r in records})
     n = upsert(conn, records)
     removed = 0
     if len(records) >= MIN_SNAPSHOT_ROWS:
@@ -118,7 +129,8 @@ def publish_screener(conn):
             removed = cur.rowcount
     catalog = write_catalog_and_settings(conn, settings)
     print(f"Published {n} screener ticker(s), {sum(1 for r in records if r['ai'])} with AI write-ups; "
-          f"removed {removed} no longer tracked; catalog {catalog} metric(s).")
+          f"removed {removed} no longer tracked; catalog {catalog} metric(s); {kept} kept earlier values for fields "
+          f"Yahoo left blank.")
     return 0
 
 
@@ -165,11 +177,13 @@ def publish_library(conn):
         yf_logger.handlers, yf_logger.propagate = saved
     as_of = _now()
     records = [market_lookup.priced_record(t, row, "library", settings=settings, as_of=as_of) for t, row in rows.items()]
+    kept = keep_previous_values(conn, records, {t: row.get("details_failed") for t, row in rows.items()})
     n = upsert(conn, records) if records else 0
     write_catalog_and_settings(conn, settings)
     failures = sum(1 for line in log.getvalue().splitlines()
                    if any(w in line.lower() for w in ("error", "failed", "delisted", "rate limit")))
-    print(f"Published {n} of {len(tickers)}; {len(tickers) - n} returned no data from Yahoo ({failures} error line(s) suppressed).")
+    print(f"Published {n} of {len(tickers)}; {len(tickers) - n} returned no data from Yahoo ({failures} error line(s) suppressed); "
+          f"{kept} kept earlier values for fields Yahoo left blank.")
     # Nothing at all computed means Yahoo refused the run: fail, so the slot gate tries again.
     return 0 if n else 1
 

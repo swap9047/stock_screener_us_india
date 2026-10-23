@@ -20,6 +20,7 @@ replace it with an in-memory fake.
 import json
 import os
 import re
+import time
 import unicodedata
 from datetime import datetime, timezone
 
@@ -38,6 +39,17 @@ SIMILAR_MIN = 0.7
 SIMILAR_LEAD = 0.1
 TICKER_RE = re.compile(r"^[A-Z0-9&\-]{1,15}(\.(NS|BO))?$")
 BSE_CODE_RE = re.compile(r"^\d{6}\.BO$")
+# Yahoo's company-details request (yf.Ticker.info: the name, valuation, ROE, the quarter's growth)
+# fails on its own now and then -- throttled, or a stale crumb -- while the price download works, and
+# fetch_snapshot then returns the row with the bare symbol as its name and those fields blank. One
+# library run on GitHub stored 82 of 83 rows that way. Such tickers are computed once more after
+# DETAILS_RETRY_WAIT_S; what is still blank is filled from the stored row (keep_previous).
+DETAILS_RETRY_WAIT_S = 5
+# The fields that request supplies, and the ones the annual/quarterly statements supply (each
+# statement is fetched separately, so any of these can come back blank while the rest is fine).
+INFO_FIELDS = ("trailing_pe", "forward_pe", "pb_ratio", "ev_ebitda", "p_cashflow", "roe",
+               "qtr_profit_growth", "qtr_revenue_growth", "reported_qtr")
+STATEMENT_FIELDS = ("roce", "cfo_op_5yr", "qtr_eps_growth")
 # kg_market_meta key of {library ticker: Yahoo symbol} for BSE listings (see price_symbols).
 SYMBOLS_KEY = "yahoo_symbols"
 _EXCHANGE_RANK = {"NSE": 0, "BSE": 1}
@@ -248,11 +260,22 @@ def price_symbols(db, tickers, search=yahoo_search):
     return out
 
 
-def compute_priced(tickers, settings, db=None, compute=None, search=yahoo_search, **compute_kw):
+def details_failed(row):
+    """True when Yahoo's company-details request failed for a computed row: fetch_snapshot then names
+    the company by its bare symbol."""
+    return str(row.get("company_name") or "").strip() in ("", str(row.get("ticker") or ""))
+
+
+def compute_priced(tickers, settings, db=None, compute=None, search=yahoo_search, details_retry_wait="default",
+                   **compute_kw):
     """{ticker: row} computed for the asked tickers, each priced under the symbol Yahoo knows
     (price_symbols). A row carries "priced_as", the symbol its numbers came from; its own "ticker" is
-    that symbol, so public_record names the exchange the prices are really from."""
+    that symbol, so public_record names the exchange the prices are really from. A row whose company
+    details failed is computed once more after details_retry_wait seconds (None: no retry), and keeps
+    the second result only when that one has them; it is marked "details_failed" if neither did."""
     compute = compute or market_api.compute_rows
+    if details_retry_wait == "default":
+        details_retry_wait = DETAILS_RETRY_WAIT_S   # read at call time, so the checks can set it to 0
     symbols = price_symbols(db, list(dict.fromkeys(tickers)), search)
     rows = compute(list(dict.fromkeys(symbols.values())), settings=settings, **compute_kw)
     # An NSE listing with too little history for the indicators (a recent move from BSE's SME board:
@@ -261,7 +284,36 @@ def compute_priced(tickers, settings, db=None, compute=None, search=yahoo_search
     if retry:
         rows.update(compute(list(dict.fromkeys(retry.values())), settings=settings, **compute_kw))
         symbols.update({t: s for t, s in retry.items() if s in rows})
-    return {t: dict(rows[s], priced_as=s) for t, s in symbols.items() if s in rows}
+    failed = list(dict.fromkeys(s for s in symbols.values() if s in rows and details_failed(rows[s])))
+    if failed and details_retry_wait is not None:
+        time.sleep(details_retry_wait)
+        try:
+            again = compute(failed, settings=settings, **compute_kw)
+        except Exception:
+            again = {}
+        rows.update({s: r for s, r in again.items() if s in rows and not details_failed(r)})
+    return {t: dict(rows[s], priced_as=s, details_failed=details_failed(rows[s]))
+            for t, s in symbols.items() if s in rows}
+
+
+def keep_previous(record, old, details_missing):
+    """Fill what Yahoo didn't return this time from the stored row `old`, in place; the fields kept.
+    Only when the company-details request failed (details_missing) are its name and fields taken
+    from before -- otherwise a blank there is Yahoo's answer (no P/E for a loss-making year) and is
+    left blank. A blank statement field is always taken from before: each statement is fetched on
+    its own, and these figures change once a quarter or a year."""
+    if not old:
+        return []
+    new, prev = record["metrics"], old.get("metrics") or {}
+    fields = (INFO_FIELDS if details_missing else ()) + STATEMENT_FIELDS
+    kept = [f for f in fields if new.get(f) in (None, "") and prev.get(f) not in (None, "")]
+    for f in kept:
+        new[f] = prev[f]
+    old_name = str(old.get("company_name") or "")
+    if details_missing and old_name and old_name != old.get("ticker"):
+        record["company_name"] = old_name
+        kept.append("company_name")
+    return kept
 
 
 def priced_record(ticker, row, source, settings=None, **record_kw):
@@ -364,6 +416,7 @@ def lookup(queries, refresh=False, db=None, compute=None, yahoo=yahoo_symbol, se
                 row["sentiment"] = sentiment
                 row["expert_take"] = market_api.columns_verdict(row)
             record = priced_record(t, row, "live", settings=settings)
+            keep_previous(record, old, row.get("details_failed"))
             if not record["ai"] and old.get("ai"):
                 record["ai"] = old["ai"]
             fresh[t] = record
