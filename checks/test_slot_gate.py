@@ -223,4 +223,54 @@ try:
 finally:
     slot_gate._api = real_api
 check(len(worked) == 1, f"worked_runs finds the satisfying run 21 pages deep ({len(worked)} found, pages={seen[:3]})")
+
+# --- the run history is retried, and a gate that still cannot read it is RED,
+# not a guess (2026-10-23). One 502 on a run's jobs made the 2026-10-13 alerts
+# gate ignore the run that had done the slot and evaluate it a second time.
+import io, os as _os, subprocess as _sp, urllib.error
+GATE_FILE = Path(GATE) / "slot_gate.py"
+slept = []
+real_sleep, real_api = slot_gate.time.sleep, slot_gate._api
+slot_gate.time.sleep = slept.append
+try:
+    attempts = {"n": 0}
+    def flaky(path, token):
+        if "/jobs" in path:
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                raise urllib.error.HTTPError(path, 502, "Bad Gateway", {}, io.BytesIO())
+            return {"jobs": [{"name": "check", "conclusion": "success"}]}
+        return {"workflow_runs": [{"id": 1, "display_title": "Daily Stock Alerts",
+                                   "run_started_at": "2026-10-13T07:32:00Z"}]}
+    slot_gate._api = flaky
+    since = datetime(2026, 10, 12, 0, 0, tzinfo=timezone.utc)
+    worked = slot_gate.worked_runs("o/r", "daily-alerts.yml", "check", "t", since)
+    check(len(worked) == 1 and attempts["n"] == 2 and slept == [2],
+          f"one 502 on a run's jobs is retried and the run still counts ({len(worked)} worked, {attempts['n']} tries)")
+
+    def down(path, token):
+        raise urllib.error.HTTPError(path, 502, "Bad Gateway", {}, io.BytesIO())
+    slot_gate._api = down
+    slept.clear()
+    try:
+        slot_gate.worked_runs("o/r", "daily-alerts.yml", "check", "t", since)
+        check(False, "a history that stays unreadable must raise, not return a guess")
+    except slot_gate.GateUnsure as e:
+        check(slept == [2, 5], f"...after {slot_gate.API_ATTEMPTS} attempts with backoff ({slept}): {e}")
+finally:
+    slot_gate.time.sleep, slot_gate._api = real_sleep, real_api
+
+# End to end: an unreachable API makes the gate exit 1 with an ::error:: and no
+# run=true on stdout (which is $GITHUB_OUTPUT); a dispatched run never asks.
+env = dict(_os.environ, SLOT_HOURS_ET="21", GRACE_HOURS="22", DAYS="", WINDOW="", WORK_JOB="check",
+           WORKFLOW_FILE="daily-alerts.yml", REPO="o/r", RUN_ID="1", GH_TOKEN="t", GITHUB_EVENT_NAME="schedule")
+probe = ("import sys, slot_gate, urllib.error; sys.path.insert(0, '.'); slot_gate.time.sleep = lambda s: None; "
+         "slot_gate._api = lambda p, t: (_ for _ in ()).throw(urllib.error.URLError('unreachable')); slot_gate.main()")
+r = _sp.run([sys.executable, "-c", probe], cwd=GATE, env=env, capture_output=True, text=True)
+check(r.returncode == 1 and "::error::" in r.stderr and "run=" not in r.stdout,
+      f"unreadable history -> red gate, no output (exit {r.returncode}, stdout {r.stdout!r})")
+r = _sp.run([sys.executable, "-c", probe], cwd=GATE, env=dict(env, GITHUB_EVENT_NAME="workflow_dispatch"),
+            capture_output=True, text=True)
+check(r.returncode == 0 and r.stdout.strip() == "run=true",
+      f"a dispatched run is not gated and never reads the history (exit {r.returncode}, stdout {r.stdout!r})")
 print("FAILURES:", fails); sys.exit(fails)
