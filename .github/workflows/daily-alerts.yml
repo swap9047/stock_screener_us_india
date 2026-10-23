@@ -44,7 +44,7 @@ jobs:
     outputs:
       due: ${{ steps.check.outputs.due }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - id: slot
         uses: ./.github/actions/slot-gate
@@ -61,7 +61,7 @@ jobs:
         with:
           token: ${{ secrets.DATA_REPO_TOKEN }}
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         if: steps.slot.outputs.run == 'true'
         with:
           python-version: "3.11"
@@ -86,7 +86,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.due == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Before the migration restore below, so hashFiles sees the data repo's copy.
       - uses: ./.github/actions/load-data
@@ -108,7 +108,7 @@ jobs:
           restore-keys: |
             alert-state-
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 

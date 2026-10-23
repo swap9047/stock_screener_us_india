@@ -41,7 +41,6 @@ like Tech Uptrend); anything else is compared as a case-insensitive string.
 See _coerce_fixed_value below.
 """
 
-import json
 import operator as op
 import os
 

@@ -33,9 +33,12 @@ also load `.env`.
 key is a config change here, but a workflow change too -- Actions only exposes secrets a
 step names, so each key needs a line in the AI steps' `env:` blocks. Every run logs
 `[key rotation] N key(s): ...`; if that number is lower than expected, that line is
-missing.
+missing. A key that hits a per-minute limit sits out 120 s; one that spends its DAILY quota
+for a model (Google's `...PerDay...` quota id) is retired for that model for the rest of the
+run, and once every key is out the ladder steps to its fallback model at once. Before
+2026-10-23 a daily-exhausted key rejoined every 120 s and failed again.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1410
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1473
 offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
@@ -45,28 +48,29 @@ verified by rendering the app headlessly; recipe at the bottom.
 
 ## Module map
 
-~18.1k lines total (the app itself; checks/ adds ~4.9k). The weighting matters: `app.py` is over a third of it.
+~21.2k lines total (the app itself; checks/ adds ~8.7k). The weighting matters: `app.py` is over a third of it.
 
 | File | Lines | What it owns |
 |---|---:|---|
-| `app.py` | 6746 | The entire UI: tabs, tables, sidebar, filters, sort, editors, AI control bars, News + Alert Rules tabs |
-| `stock_data.py` | 3307 | yfinance fetching, all indicator maths, watchlist/markets registry IO, `get_filterable_metrics` |
+| `app.py` | 6596 | The entire UI: tabs, tables, sidebar, filters, sort, editors, AI control bars, News + Alert Rules tabs |
+| `stock_data.py` | 3347 | yfinance fetching, all indicator maths (TradingView-exact RSI/ATR/ADX/VStop, held to bar-by-bar Pine ports by `checks/test_tv_parity.py`), watchlist/markets registry IO, `get_filterable_metrics` |
 | `alerts.py` | 1127 | Alert rule evaluation + Discord message building; every Discord post goes through `send_discord_batch`, which appends the disclaimer |
 | `news_summary.py` | 1022 | The daily news digest (6 AM ET): search and filter (3 stocks at a time, `NEWS_CONCURRENT_TICKERS`), then edit. Dated by its 6 AM ET slot (`news_slot_date`), funds skipped (`is_fund`), the code sets each company header and drops filler lines, the filter drops repeats of the previous digest, and a failed editor falls back to code-formatted bullets |
 | `fundamentals_eval.py` | 1191 | Sentiment ("fundamental view") generation + validation. The model only extracts facts; `score_sentiment` decides the label, weighted toward forward signals (guidance ±15, quoted outlook ±6, guidance vs consensus ±3, named-firm action ±3; the quarter's profit >15% YoY or a beat/miss ±1 only breaks ties; with no forward signal, profit >+25% / <-20% YoY decides alone). The search window is anchored to each company's last results (`search_window_for`) |
 | `github_sync.py` | 715 | Atomic config push, the end-of-run push of edited config (`unpushed_config_files`) + `workflow_dispatch` trigger |
 | `expert_views.py` | 936 | Expert Take. The verdict is decided in code, live, from Trend, Tech Uptrend, TA Rules and Sentiment (`decide_expert_verdict`, `expert_take_for_row`); the nightly model writes the explanation and trade plan, and may lower the verdict one step for a dated material negative event in the last 14 days (`news_risk_active`). Its prompt also gets Sentiment's checked facts for the quarter (section 4) |
 | `filters.py` | 485 | The boolean condition engine — shared by UI filters **and** background alerts |
-| `breadth_charts.py` | 177 | Plotly building blocks for the News tab's breadth / highs-lows / return panels (both views), and the phone behaviour (`is_mobile`: stacked panels, no zoom or drag) |
+| `breadth_charts.py` | 222 | Plotly building blocks for the News tab's breadth / highs-lows / return panels (both views), and the phone behaviour (`is_mobile`: stacked panels, no zoom or drag) |
 | `breadth_math.py` | 167 | Breadth maths (% above the 200-day and 50-day SMAs, 52-week highs/lows, per-day denominators), each over a stock's OWN sessions, so a mixed India + US group counts right — shared by the index-breadth job **and** the app's per-watchlist breadth view; `assemble_closes` builds a watchlist's panel from `dashboard_perf.json` |
-| `llm_util.py` | 679 | Shared Gemini-call plumbing (timeout wrapper, retry/model-ladder logic, `FailureFuse`) for the three AI pipelines |
+| `llm_util.py` | 716 | Shared Gemini-call plumbing (timeout wrapper, retry/model-ladder logic, `FailureFuse`, key rotation) for the three AI pipelines |
 | `weekly_wrapup.py` | 365 | Weekly Discord digest |
 | `custom_columns.py` | 294 | User-defined formula columns |
 | `ticker_notes.py` | 117 | Per-ticker notes and manual flags. (`signal` was retired on 2026-10-04; the ticker dot is Expert Take's colour) |
 | `market_api.py` | 319 | What the screener shares with other apps (the research library's Q&A, Claude chat): the metric catalog by group, the public part of a row (a whitelist: never the watchlist, notes, flags, Interested or custom columns) and `compute_rows`, a live `fetch_snapshot` for any ticker. Served live on Vercel through `market_lookup.py` (`vercel.json`, its own slim `api/requirements.txt`) |
 | `market_lookup.py` | 504 | One lookup for every live caller: a company name or ticker -> a ticker (a suffix as typed, a bare six-digit BSE code, a known symbol, the research library's name decisions and listings by its `match_key`, the clearly closest listing, then Yahoo's symbol search) -> the stored row while fresh, else computed with the screener's saved settings and stored. **Yahoo prices BSE stocks as `SYMBOL.BO`, never the `<scrip code>.BO` the library's BSE listings carry**: `compute_priced` prices those under the symbol Yahoo's search gives for the ISIN (remembered in `kg_market_meta.yahoo_symbols`) and keeps the code as the row's key, and tries an NSE listing too new for the indicators on BSE. A stored row is recomputed after `STALE_HOURS` (20), or after an hour when its prices end before its exchange's last completed session (`last_completed_session`, `BEHIND_RECHECK_MINUTES`). A ticker whose Yahoo company details failed (named by its bare symbol) is computed once more after 5 s; what is still blank is filled from the stored row (`keep_previous`: the name and info fields only when the details failed, statement figures whenever blank), in the live lookup and both publish modes. The library job uses it too. All database access goes through `MarketDB`, which checks replace with a fake |
-| `market_http.py` | 62 | What the two Vercel functions share: the token check (bearer, `?token=`, or the `/mcp/<token>` path a Claude connector URL carries) and capturing Yahoo's printed and logged messages. `api/market.py` is REST for the transcription app; `api/mcp.py` is a stateless MCP server (JSON-RPC over POST) for Claude chat |
+| `market_http.py` | 65 | What the two Vercel functions share: the token check (bearer, `?token=`, or the `/mcp/<token>` path a Claude connector URL carries; fails closed -- no `MARKET_API_TOKEN`, no access), `api/mcp.py`'s batch cap (`MAX_BATCH`) and capturing Yahoo's printed and logged messages. `api/market.py` is REST for the transcription app; `api/mcp.py` is a stateless MCP server (JSON-RPC over POST) for Claude chat |
 | `glossary.py` | 394 | The glossary (`column_definitions`, each column's header tooltip) and the per-signal "why" text (`trend_tooltip`, `tech_uptrend_tooltip`, `ta_rules_tooltip`, `vol_trend_tooltip`). Pure functions, no Streamlit: `app.py` imports them, and `market_api` publishes the same words as metric definitions and its `explain` group, so the screen and the research library never explain a number differently |
+| `refresh_schedule.py` | 58 | When the data is refreshed (the Cloudflare Worker's window, as one rule): the sidebar's stale-data warning counts only scheduled hours (`refresh_hours_since`). `checks/test_refresh_schedule.py` holds it to the breadth gate's real decisions |
 | `watchlist_labels.py` | 46 | Tab labels a watchlist may not take. Kept out of `stock_data.py`, whose code fingerprint (comments and docstrings excluded) marks the snapshot stale on any code edit |
 
 `refresh_*.py` and `*_check.py` are thin entry points that exist only to be run by GitHub
@@ -388,6 +392,11 @@ Three things about it you cannot guess:
   given) is titled "partial run" by the workflow's `run-name` and never counts -- one tab's
   "Re-analyze All" must not stand in for the nightly full run. Runs are listed without
   `?status=completed`, a filter that lagged and let the alerts slot be worked twice.
+- **A history the gate cannot read is a RED gate, never a guess.** Each API call is
+  retried 3 times; then the gate exits 1 and the next wake-up asks again. It used to treat
+  an unreadable run as not done -- one 502 on 2026-10-13 re-ran the alerts slot (run #254),
+  re-posting every "full"-mode rule to Discord. A `workflow_dispatch` run is not gated at
+  all (every work job runs on one anyway), so an API blip never blocks the Worker's runs.
 - **The gate always works the LATEST slot**, so a `grace-hours` longer than the gap
   between slots never lets a run do an older one -- the window just ends when the next
   slot starts. Breadth's hourly slots therefore use a 1 h grace: a run only ever works
@@ -404,8 +413,9 @@ Three things about it you cannot guess:
 **An "hourly" cron is not hourly.** GitHub throttles it to 4-6 runs a day, 2-5 hours
 apart (measured on `data-refresh.yml`, 2026-09-07..10). That is still several chances per
 slot, which is the point, but it means a slot's work can start hours after the slot -- so
-`grace-hours` has to be generous (22-23 h) and
-`SNAPSHOT_STALE_WARN_HOURS = 6` sits close to the real gap between data refreshes.
+`grace-hours` has to be generous (22-23 h). The data refresh no longer depends on it (the
+Worker, below), and `SNAPSHOT_STALE_WARN_HOURS = 6` counts only hours inside the Worker's
+schedule (`refresh_schedule.py`), so a weekend or the evening pause does not warn.
 
 **A Cloudflare Worker is the real clock for `data-refresh.yml` and `market-breadth.yml`**
 (owner, 2026-10-21; deployed by hand in the Cloudflare dashboard, its code is not in this
@@ -435,6 +445,11 @@ by its own exchange. The dashboard and `refresh_data.py` leave it off to show li
 skip the rest (those keep their previous views) and exit 1. A red Sentiment or Expert Take
 run with `::error::Stopped early` almost always means dead keys or an exhausted quota; the
 gate retries the slot, and each retry now costs minutes rather than a 2-hour grind.
+Expert Views analyses 3 tickers at a time (`MAX_CONCURRENT_TICKERS`, like Sentiment and the
+news digest) -- serial runs had reached 4-6 h against GitHub's 360-minute job limit -- and a
+SCHEDULED full run resumes: it skips tickers with a valid view written since tonight's 1 AM
+ET slot (`slot_start_utc`, `written_since`), so a retry after the fuse or the 6-hour cap does
+not redo finished work. Manual, scoped and limited runs redo everything.
 
 `alerts.ALLOWED_HOURS` must match the alert gate's `slots`, or the app's schedule picker
 would offer an hour nothing wakes up for. `daily-alerts.yml`'s gate also asks

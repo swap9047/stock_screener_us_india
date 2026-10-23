@@ -11,7 +11,6 @@ import time
 from datetime import datetime, timezone
 import llm_util
 from json_store import DataFileError
-from google import genai
 from stock_data import load_data_snapshot, load_watchlists
 from fundamentals_eval import (
     load_fundamentals, save_fundamentals, generate_fundamental_view,

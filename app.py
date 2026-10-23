@@ -70,7 +70,7 @@ import llm_util
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE,
                      send_discord_batch, build_discord_messages_for_rule, describe_schedule, DISCLAIMER,
                      NOTIFY_MODES, NOTIFY_MODE_LABELS, notify_mode, describe_notify_mode,
-                     DAY_CODES, DAY_LABELS, DEFAULT_DAYS, ALLOWED_HOURS, HOUR_LABELS,
+                     DAY_CODES, DEFAULT_DAYS, ALLOWED_HOURS, HOUR_LABELS,
                      compute_rule_truth, RULE_COLOR_HEX, _metrics_used_in_conditions,
                      active_alerts_for_prompt, alerts_text_for)
 
@@ -91,15 +91,15 @@ from github_sync import (get_github_config, get_data_repo_config, bootstrap_data
                          push_all_config, trigger_github_workflow, pull_generated_files, SYNCABLE_FILES, WORKFLOW_GENERATED_FILES,
                          push_json_entry_changes, read_remote_json, read_remote_bytes, refresh_snapshot_from_repo,
                          unpushed_config_files)
-from news_summary import (load_news_summary, MARKET_LABELS, get_gemini_api_key,
-                          get_gemini_api_keys, resolve_news_scope, DEFAULT_NEWS_SCOPE_GROUP)
+from news_summary import (load_news_summary, MARKET_LABELS, get_gemini_api_keys, resolve_news_scope, DEFAULT_NEWS_SCOPE_GROUP)
 from expert_views import (load_expert_views, save_expert_views, analyze_single_ticker,
                           generate_expert_view, _is_valid_view, is_pending_view, apply_regenerated_view,
                           VERDICT_RULES, NEWS_RISK_RULES, EXPERT_NEWS_WINDOW_DAYS, EXPERT_STALE_DAYS,
                           expert_take_for_row, _view_age_days, EXPERT_TAKE_EMOJI,
                           expert_view_has_news as _expert_view_has_news)
 # The glossary and the per-signal "why" text, shared with market_api (what the research library reads).
-from glossary import (ema_col_labels, column_definitions, _mark, trend_tooltip, ta_rules_tooltip,
+from refresh_schedule import in_refresh_window, refresh_hours_since
+from glossary import (ema_col_labels, column_definitions, trend_tooltip, ta_rules_tooltip,
                       vol_trend_tooltip, tech_uptrend_tooltip)
 from fundamentals_eval import (
     load_fundamentals, save_fundamentals, _validate_sentiment, SENTIMENT_STALE_DAYS,
@@ -112,7 +112,7 @@ from custom_columns import (
 )
 from ticker_notes import (
     load_ticker_notes, save_ticker_notes, set_ticker_note, get_ticker_note, get_ticker_flag,
-    apply_notes_to_rows, flag_marker_html, FLAG_CHOICES, FLAG_EMOJI, TICKER_NOTES_FILE,
+    apply_notes_to_rows, FLAG_CHOICES, FLAG_EMOJI, TICKER_NOTES_FILE,
 )
 import json
 import os
@@ -683,14 +683,17 @@ EXPERT_FILTER_VALUES = {
 }
 
 
-# How old a snapshot may be before the sidebar warns. The hourly refresh means
-# anything past a few hours is a broken pipeline or a stale checkout, not a
-# quiet market.
+# How many hours INSIDE the refresh schedule (refresh_schedule.py: Sunday 22:00
+# to Friday 17:00 ET, never 17:30-21:30) may pass without a new snapshot before
+# the sidebar warns. Inside the schedule the Worker refreshes every 30 minutes,
+# so 6 of those hours is a broken pipeline or a stale checkout. Measured against
+# the raw age (until 2026-10-23), this warned every weekend and blamed "the
+# hourly refresh" for a pause that is on purpose.
 SNAPSHOT_STALE_WARN_HOURS = 6
 
 
-def snapshot_age_hours(as_of):
-    """Hours since the snapshot's as_of, or None if it can't be parsed.
+def snapshot_stamp(as_of):
+    """The snapshot's as_of as an aware datetime, or None if it can't be parsed.
 
     as_of is written as "YYYY-MM-DD HH:MM ET" (see save_data_snapshot), i.e.
     exchange-local wall clock with a literal suffix rather than an offset, so
@@ -700,10 +703,17 @@ def snapshot_age_hours(as_of):
     try:
         text = str(as_of).replace(" ET", "").strip()
         naive = datetime.strptime(text, "%Y-%m-%d %H:%M")
-        stamped = naive.replace(tzinfo=ZoneInfo("America/New_York"))
-        return (datetime.now(timezone.utc) - stamped).total_seconds() / 3600
+        return naive.replace(tzinfo=ZoneInfo("America/New_York"))
     except Exception:
         return None
+
+
+def snapshot_age_hours(as_of):
+    """Hours since the snapshot's as_of, or None if it can't be parsed."""
+    stamped = snapshot_stamp(as_of)
+    if stamped is None:
+        return None
+    return (datetime.now(timezone.utc) - stamped).total_seconds() / 3600
 
 
 def sentiment_flag_note(flag, as_of):
@@ -2797,7 +2807,7 @@ def render_shared_column_picker(labels, active_market=None, active_market_label=
             "Applies to both the US and India tables. Ticker and Last always show first. "
             "Saved to column_prefs.json and pushed to the data repo automatically."
         )
-        from stock_data import load_settings, save_settings
+        from stock_data import load_settings
         fund_settings = load_settings()
         show_fundamentals = st.checkbox(
             "Show fundamental columns (Sentiment, Qtr Profit/Revenue Growth %)",
@@ -3442,7 +3452,7 @@ def render_expert_analysis_control_bar(market, results, combined_markets=None):
     # pushed the watchlist table below the fold on every visit. The loads and
     # the stale-ticker cleanup above stay outside -- they are side effects that
     # must run whether or not the panel is open.
-    from stock_data import load_settings, save_settings
+    from stock_data import load_settings
     settings_now = load_settings()
 
     # No gemma-4-31b-it: it answered 0 of ~63 calls and was taken out of every
@@ -4887,14 +4897,18 @@ st.sidebar.caption(f"Data as of: {as_of} ({source_label})")
 # age, and a warning past SNAPSHOT_STALE_WARN_HOURS, does not.
 _snap_age_h = snapshot_age_hours(as_of)
 if _snap_age_h is not None:
-    if _snap_age_h >= SNAPSHOT_STALE_WARN_HOURS:
+    _now_utc = datetime.now(timezone.utc)
+    _scheduled_h = refresh_hours_since(snapshot_stamp(as_of), _now_utc)
+    if _scheduled_h >= SNAPSHOT_STALE_WARN_HOURS:
         st.sidebar.warning(
-            f"⚠️ Snapshot is {_snap_age_h:.0f}h old. The hourly refresh may have stopped, "
+            f"⚠️ Snapshot is {_snap_age_h:.0f}h old, {_scheduled_h:.0f}h of it inside the refresh "
+            "schedule (Sun 10 PM – Fri 5 PM ET, every 30 min). The scheduled refresh may have stopped, "
             "or this app may be serving a stale checkout -- try Refresh Data, "
             "or reboot the app from Streamlit Cloud."
         )
     else:
-        st.sidebar.caption(f"↻ {_snap_age_h:.1f}h old · sync: {_pull_note}")
+        _paused = "" if in_refresh_window(_now_utc) else " · refresh paused (outside the schedule)"
+        st.sidebar.caption(f"↻ {_snap_age_h:.1f}h old · sync: {_pull_note}{_paused}")
 # Set by the end-of-run push below when it failed; that push retries on every
 # run, so this clears itself once GitHub accepts the files.
 if st.session_state.get("_config_push_error"):
@@ -5302,7 +5316,6 @@ with tab_news:
         st.divider()
 
         from plotly.subplots import make_subplots
-        import plotly.graph_objects as go
 
         # We will build a single 3x2 subplot figure so hover spikes sync perfectly across all rows.
         with st.spinner("Loading Dashboards..."):

@@ -43,7 +43,7 @@ jobs:
     outputs:
       run: ${{ steps.slot.outputs.run }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - id: slot
         uses: ./.github/actions/slot-gate
@@ -62,14 +62,14 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - uses: ./.github/actions/load-data
         with:
           token: ${{ secrets.DATA_REPO_TOKEN }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: 'pip'

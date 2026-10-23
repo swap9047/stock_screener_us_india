@@ -36,7 +36,7 @@ jobs:
     outputs:
       run: ${{ steps.slot.outputs.run }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - id: slot
         uses: ./.github/actions/slot-gate
@@ -54,7 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # settings.json (the calc settings) and ticker_index.json (each ticker's index); the
       # watchlists also let log_redact.py mask what is held.
@@ -62,7 +62,7 @@ jobs:
         with:
           token: ${{ secrets.DATA_REPO_TOKEN }}
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 

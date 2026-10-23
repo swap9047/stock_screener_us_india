@@ -17,7 +17,7 @@ Run: python3 weekly_wrapup_check.py [--dry-run]
 """
 
 import sys
-from datetime import date, datetime
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from json_store import DataFileError

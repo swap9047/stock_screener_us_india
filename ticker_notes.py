@@ -21,7 +21,6 @@ and alert conditions -- and to the headless alert_check.py/refresh_data.py
 scripts too, not just the interactive app.
 """
 
-import json
 import os
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))

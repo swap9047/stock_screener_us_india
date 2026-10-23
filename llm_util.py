@@ -357,6 +357,23 @@ def _is_quota_error(exc):
     return any(m in text for m in QUOTA_ERROR_MARKERS)
 
 
+def _is_daily_quota_error(exc):
+    """A 429 for a PER-DAY quota (Google names it in the error details, e.g.
+    quotaId "GenerateRequestsPerDayPerProjectPerModel-FreeTier"), as opposed to
+    the per-minute limits a 120 s cooldown is enough for.
+
+    The distinction matters because a daily quota does not come back within the
+    run. With only the cooldown, a key that had spent its day's quota rejoined
+    the rotation every 120 s and failed again, and on 2026-10-13, -15 and -20 the
+    nightly AI jobs spent hours that way before the FailureFuse stopped them.
+    Matched with separators removed, so "PerDay", "per_day" and "per day" all
+    count."""
+    if not _is_quota_error(exc):
+        return False
+    squashed = re.sub(r"[^a-z]", "", f"{exc}".lower())
+    return "perday" in squashed
+
+
 def _key_names(st_secrets=None):
     """Every secret/env name that looks like a Gemini key, primary and backup
     first. GitHub upper-cases secret names (GEMINI_API_KEY_BACKUP_B) while a
@@ -441,6 +458,11 @@ class RotatingGeminiClient:
         self._cooldown_until = {}
         # Keys that returned an auth error this run -- see AUTH_ERROR_MARKERS.
         self._dead = set()
+        # (key name, model) pairs that spent their DAILY quota this run -- see
+        # _is_daily_quota_error. Per model, not per key: Google counts the daily
+        # quota per project and model, so the key still serves the ladder's
+        # other models.
+        self._exhausted = set()
         self._lock = threading.Lock()
         # Diagnostic only. NOT safe for per-call attribution: it is shared by
         # every thread, and generate_with_timeout's `_key_out` is what callers
@@ -473,15 +495,17 @@ class RotatingGeminiClient:
             self._clients[key] = client
         return client
 
-    def _pick(self, avoid=None):
+    def _pick(self, avoid=None, model=None):
         """A key, at random. `avoid` names one to skip if there is an
         alternative -- the ladder passes the key the previous rung just failed
         on, so a same-model retry genuinely changes something. Ignored when it
         is the only key left, because a retry on the same key still beats no
-        retry."""
+        retry. A key that spent its daily quota for `model` is never picked for
+        that model again this run (None when every key has)."""
         now = time.time()
         with self._lock:
-            usable = [(n, k) for n, k in self._keys if n not in self._dead]
+            usable = [(n, k) for n, k in self._keys
+                      if n not in self._dead and (n, model) not in self._exhausted]
             if not usable:
                 return None, None
             live = [(n, k) for n, k in usable if self._cooldown_until.get(n, 0) <= now]
@@ -524,7 +548,14 @@ class RotatingGeminiClient:
                  for n, c, f in rows]
         return "  [key rotation] " + "; ".join(parts)
 
-    def _mark_quota_error(self, name):
+    def _mark_quota_error(self, name, exc=None, model=None):
+        if exc is not None and _is_daily_quota_error(exc):
+            with self._lock:
+                self._exhausted.add((name, model))
+                left = len([n for n, _ in self._keys if n not in self._dead and (n, model) not in self._exhausted])
+            print(f"  [key rotation] {name} spent its daily quota for {model} -- retired for that model "
+                  f"for the rest of this run; {left} key(s) left for it")
+            return
         with self._lock:
             self._cooldown_until[name] = time.time() + KEY_COOLDOWN_SECONDS
         print(f"  [key rotation] {name} hit a quota/rate limit -- skipping it for {KEY_COOLDOWN_SECONDS}s")
@@ -553,8 +584,9 @@ class _RotatingModels:
         # with keys picked at random one bad key abandoned ~half of all
         # tickers (93/200 in a stubbed two-key test) though the other key worked.
         last_exc = None
+        model = kwargs.get("model")
         for _ in range(len(self._parent._keys)):
-            name, client = self._parent._pick(avoid=_avoid_key)
+            name, client = self._parent._pick(avoid=_avoid_key, model=model)
             if client is None:
                 break
             if _key_out is not None:
@@ -581,11 +613,16 @@ class _RotatingModels:
                     # when every key is cooling _pick falls back to using them
                     # all rather than hard-failing. Bounded by the enclosing
                     # `for _ in range(len(keys))`.
-                    self._parent._mark_quota_error(name)
+                    self._parent._mark_quota_error(name, e, model)
                     continue
                 raise
         if last_exc is not None:
             raise last_exc
+        if any(m == model for _, m in self._parent._exhausted):
+            # Every live key has spent today's quota for this model. Shaped as a
+            # 429 so the ladder treats it as retryable and steps to its fallback
+            # model at once, instead of stopping as it would on an auth failure.
+            raise RuntimeError(f"429 RESOURCE_EXHAUSTED: every usable key has spent its daily quota for {model} this run")
         raise RuntimeError("No usable Gemini API key left (every configured key failed authentication)")
 
 

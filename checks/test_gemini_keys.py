@@ -330,4 +330,65 @@ for mod in ("fundamentals_eval.py", "expert_views.py"):
     check("SEARCH_FALLBACK_MODEL" not in src,
           f"{mod} has no search fallback model left to drift")
 
+
+# --- a key that spends its DAILY quota is retired for that model, for the run
+# (2026-10-23). The 120 s cooldown alone let an exhausted key rejoin and fail
+# again every two minutes, which is how the 13/15/20 Oct AI runs ground on for
+# hours before the FailureFuse stopped them.
+DAILY = ("429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota', "
+         "'details': [{'violations': [{'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier'}]}]}}")
+MINUTE = ("429 RESOURCE_EXHAUSTED. {'details': [{'violations': [{'quotaId': "
+          "'GenerateRequestsPerMinutePerProjectPerModel-FreeTier'}]}]}")
+check(llm_util._is_daily_quota_error(RuntimeError(DAILY)), "a PerDay quotaId reads as a daily quota")
+check(not llm_util._is_daily_quota_error(RuntimeError(MINUTE)), "a PerMinute quotaId does not")
+check(not llm_util._is_daily_quota_error(RuntimeError("500 INTERNAL per day")), "a non-quota error never counts as daily")
+
+served = []
+class DayStub:
+    def __init__(self, key): self.key = key; self.models = self
+    def generate_content(self, **kw):
+        if self.key == "dead-for-flash" and kw.get("model") == "flash":
+            raise RuntimeError(DAILY)
+        served.append((self.key, kw.get("model"))); return "ok"
+c9 = llm_util.RotatingGeminiClient([("A", "dead-for-flash"), ("B", "fine")])
+c9._client_for = lambda key: DayStub(key)
+for _ in range(30):
+    c9.models.generate_content(model="flash", contents="x")
+check(("A", "flash") in c9._exhausted, "the key that spent its flash quota is retired for flash")
+check(c9.call_counts["A"] <= 1, f"...and is not tried for flash again this run ({c9.call_counts['A']} call(s) on A)")
+check(c9._cooldown_until.get("A", 0) == 0, "a daily quota retires the pair instead of a 120 s cooldown")
+for _ in range(10):
+    c9.models.generate_content(model="pro", contents="x")
+check(any(k == "dead-for-flash" and m == "pro" for k, m in served), "the same key still serves the ladder's other models")
+
+class AllDay:
+    def __init__(self, key): self.models = self
+    def generate_content(self, **kw): raise RuntimeError(DAILY)
+c10 = llm_util.RotatingGeminiClient([("A", "a"), ("B", "b")])
+c10._client_for = lambda key: AllDay(key)
+try:
+    c10.models.generate_content(model="flash", contents="x"); check(False, "every key exhausted must raise")
+except RuntimeError as e:
+    first = e
+try:
+    c10.models.generate_content(model="flash", contents="x")
+except RuntimeError as e:
+    second = e
+check(c10._exhausted == {("A", "flash"), ("B", "flash")}, f"both keys retired for flash: {c10._exhausted}")
+check(llm_util.is_retryable(second) and llm_util._is_quota_error(second),
+      f"once every key is out, the error is a retryable 429, so the ladder steps to its fallback: {second}")
+check(sum(c10.call_counts.values()) == 2, f"...without another API call ({c10.call_counts})")
+
+# The ladder really does reach the fallback model when the primary's quota is spent everywhere.
+class LadderStub:
+    def __init__(self, key): self.models = self
+    def generate_content(self, **kw):
+        if kw.get("model") == "primary": raise RuntimeError(DAILY)
+        return "fallback answer"
+c11 = llm_util.RotatingGeminiClient([("A", "a"), ("B", "b")])
+c11._client_for = lambda key: LadderStub(key)
+res, used = llm_util.run_model_ladder(c11, "p", [("primary", 0), ("primary", 0), ("fallback", 0)],
+                                      config_for=lambda m: None, label="t", subject="ACME")
+check(res == "fallback answer" and used == "fallback", f"the ladder falls through to the fallback model ({used})")
+
 print("FAILURES:", fails); sys.exit(fails)

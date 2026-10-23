@@ -20,6 +20,7 @@ on stdout for $GITHUB_OUTPUT; the reasoning goes to stderr.
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta
@@ -90,6 +91,19 @@ def decide(now_et, slot_hours, grace_hours, days, worked_at, window=None):
     return True, f"slot {slot:%a %Y-%m-%d %H:%M} ET, {age.total_seconds() / 3600:.1f}h ago, not done yet"
 
 
+# The run-history lookups are retried before the gate gives up (2026-10-23). A
+# single 502 on one run's jobs used to be "ignored" -- that run treated as not
+# done -- and on 2026-10-13 the alerts slot of 10-12 was evaluated a second time
+# 13.5 h after the first (run #254), which re-posts every "full"-mode rule's
+# Discord report. For the AI jobs it would re-spend hours of Gemini calls.
+API_ATTEMPTS = 3
+API_BACKOFF_SECONDS = (2, 5)
+
+
+class GateUnsure(Exception):
+    """The run history could not be read even after retries."""
+
+
 def _api(path, token):
     req = urllib.request.Request(f"{API}{path}", headers={
         "Accept": "application/vnd.github+json",
@@ -97,6 +111,21 @@ def _api(path, token):
     })
     with urllib.request.urlopen(req, timeout=20) as resp:
         return json.load(resp)
+
+
+def _api_retrying(path, token):
+    """_api with retries on a failed request (a 5xx, a timeout, a reset). Raises
+    GateUnsure once every attempt has failed; never returns a guess."""
+    last = None
+    for attempt in range(API_ATTEMPTS):
+        try:
+            return _api(path, token)
+        except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
+            last = e
+            if attempt < API_ATTEMPTS - 1:
+                print(f"GitHub API {path.split('?')[0]} failed ({e}) -- retrying", file=sys.stderr)
+                time.sleep(API_BACKOFF_SECONDS[min(attempt, len(API_BACKOFF_SECONDS) - 1)])
+    raise GateUnsure(f"{path.split('?')[0]}: {last}")
 
 
 # run-name of a workflow_dispatch run given `markets` or `limit` (see the
@@ -120,8 +149,12 @@ def worked_runs(repo, workflow, work_job, token, since, exclude_run_id=None):
     worked twice. The work job's own conclusion already excludes a run still in
     progress (its conclusion is null), so the filter added nothing but that lag.
 
-    Never raises: on an API failure it returns [] with a note, so the gate errs
-    toward running. A duplicate run is cheap; a silently skipped slot is not.
+    Raises GateUnsure when the history cannot be read even after retries
+    (_api_retrying). It used to return [] -- or, for one run's jobs, skip that
+    run -- so the gate erred toward running, on the view that a duplicate run is
+    cheap. It is not: a second alerts run re-posts "full" rules to Discord and a
+    second AI run re-spends hours of quota. main() turns GateUnsure into a red
+    gate instead, which is not silent either, and the next wake-up retries.
     """
     # Page until the runs are older than `since`, rather than trusting one page:
     # an hourly wake-up makes ~24 runs a day while the window can be 22 h, so the
@@ -129,18 +162,14 @@ def worked_runs(repo, workflow, work_job, token, since, exclude_run_id=None):
     # would redo the work (for expert-views, hours of Gemini spend). MAX_PAGES
     # bounds it at ~300 runs, far beyond any window this gate uses.
     candidates = []
-    try:
-        for page in range(1, MAX_PAGES + 1):
-            batch = (_api(f"/repos/{repo}/actions/workflows/{workflow}/runs"
-                          f"?per_page={PER_PAGE}&page={page}", token)
-                     .get("workflow_runs") or [])
-            candidates.extend(batch)
-            oldest = batch[-1].get("run_started_at") or batch[-1].get("created_at") if batch else None
-            if len(batch) < PER_PAGE or (oldest and datetime.fromisoformat(oldest.replace("Z", "+00:00")) < since):
-                break
-    except (urllib.error.URLError, ValueError, KeyError) as e:
-        print(f"could not list runs ({e}) -- assuming the slot is not done", file=sys.stderr)
-        return []
+    for page in range(1, MAX_PAGES + 1):
+        batch = (_api_retrying(f"/repos/{repo}/actions/workflows/{workflow}/runs"
+                               f"?per_page={PER_PAGE}&page={page}", token)
+                 .get("workflow_runs") or [])
+        candidates.extend(batch)
+        oldest = batch[-1].get("run_started_at") or batch[-1].get("created_at") if batch else None
+        if len(batch) < PER_PAGE or (oldest and datetime.fromisoformat(oldest.replace("Z", "+00:00")) < since):
+            break
     out = []
     for run in candidates:
         if str(run.get("id")) == str(exclude_run_id):
@@ -153,11 +182,7 @@ def worked_runs(repo, workflow, work_job, token, since, exclude_run_id=None):
         started_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
         if started_dt < since:
             continue
-        try:
-            jobs = _api(f"/repos/{repo}/actions/runs/{run['id']}/jobs", token)
-        except (urllib.error.URLError, ValueError, KeyError) as e:
-            print(f"could not read jobs of run {run.get('id')} ({e}) -- ignoring it", file=sys.stderr)
-            continue
+        jobs = _api_retrying(f"/repos/{repo}/actions/runs/{run['id']}/jobs", token)
         if any(j.get("name") == work_job and j.get("conclusion") == "success" for j in jobs.get("jobs") or []):
             out.append(started_dt)
     return out
@@ -169,10 +194,25 @@ def main():
     days = [d.strip().upper() for d in os.environ.get("DAYS", "").split(",") if d.strip()]
     window = parse_window(os.environ.get("WINDOW", ""))
     now_et = datetime.now(ET)
+    if os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
+        # Every gated work job runs on a dispatch whatever this says (its `if:`
+        # starts with github.event_name == 'workflow_dispatch'), so do not read
+        # the history at all: a red gate would block the dispatched run -- the
+        # Cloudflare Worker's hourly breadth run among them.
+        print(f"now {now_et:%a %Y-%m-%d %H:%M} ET | a dispatched run works regardless; history not read", file=sys.stderr)
+        print("run=true")
+        return
     # Look back far enough to cover the window, whichever slot we land on.
     since = (now_et - timedelta(hours=grace_hours + 24)).astimezone(ZoneInfo("UTC"))
-    worked = worked_runs(os.environ["REPO"], os.environ["WORKFLOW_FILE"], os.environ["WORK_JOB"],
-                         os.environ["GH_TOKEN"], since, os.environ.get("RUN_ID"))
+    try:
+        worked = worked_runs(os.environ["REPO"], os.environ["WORKFLOW_FILE"], os.environ["WORK_JOB"],
+                             os.environ["GH_TOKEN"], since, os.environ.get("RUN_ID"))
+    except GateUnsure as e:
+        # Red, not a guess: running could work a finished slot twice, and the
+        # next wake-up asks again.
+        print(f"::error::slot gate could not read this workflow's run history ({e}) -- "
+              f"not running; the next wake-up retries", file=sys.stderr)
+        sys.exit(1)
     run, reason = decide(now_et, slot_hours, grace_hours, days, worked, window)
     print(f"now {now_et:%a %Y-%m-%d %H:%M} ET | {reason}", file=sys.stderr)
     print(f"run={'true' if run else 'false'}")
