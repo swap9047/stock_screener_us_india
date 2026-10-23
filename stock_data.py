@@ -857,18 +857,46 @@ def mansfield_rs(stock_close, bench_close, lookback):
     return round(float(rsm), 1)
 
 
-def compute_atr(ohlc_df, length=14):
-    """Wilder's ATR: RMA (alpha=1/length) of True Range -- see
-    wilder_smooth() for the seeding convention (same fix as RSI)."""
+def true_range(ohlc_df, first_bar_high_low=True):
+    """True Range per bar. Bar 0 has no previous close: with
+    `first_bar_high_low` it is that bar's High-Low (Pine's ta.tr(true), which
+    ta.atr uses), otherwise NaN (Pine's plain ta.tr)."""
     high, low, close = ohlc_df["High"], ohlc_df["Low"], ohlc_df["Close"]
     prev_close = close.shift(1)
     tr = pd.concat([
         high - low,
         (high - prev_close).abs(),
         (low - prev_close).abs(),
-    ], axis=1).max(axis=1)
-    tr.iloc[0] = np.nan  # first bar has no prev_close -- match RSI's .diff() convention
-    return wilder_smooth(tr, length)
+    ], axis=1).max(axis=1)   # skips NaN, so bar 0 is High-Low
+    if not first_bar_high_low and len(tr):
+        tr.iloc[0] = np.nan
+    return tr
+
+
+def compute_atr(ohlc_df, length=14):
+    """TradingView's ta.atr: Wilder's RMA (alpha=1/length) of True Range, where
+    bar 0's TR is its High-Low and the RMA is seeded with the plain mean of the
+    first `length` TRs (bars 0..length-1), so the first ATR lands on bar
+    length-1.
+
+    Until 2026-10-23 this dropped bar 0 and seeded from bars 1..length, RSI's
+    convention -- right for RSI (ta.change is na on bar 0) but not for ta.atr.
+    The two converge (2% apart at 30 bars, 0.26% at 60, nothing by 120), so it
+    only mattered on short histories. The weekly VStop needs 52 bars before it is
+    shown at all (VSTOP_MIN_HISTORY_WEEKS), and at 60 its last flip landed on a
+    different week from TradingView's in 1 of 40 synthetic series (15 of 40 at 30
+    bars), through this seed and the warm-up compute_vstop_tv now also follows.
+    checks/test_tv_parity.py compares bar by bar against a port of the Pine
+    built-ins."""
+    tr = true_range(ohlc_df)
+    if len(tr) < length:
+        return pd.Series(np.nan, index=ohlc_df.index)
+    seed = tr.iloc[:length].mean()
+    tail = pd.concat([pd.Series([seed]), tr.iloc[length:]], ignore_index=True)
+    smoothed_tail = tail.ewm(alpha=1 / length, adjust=False).mean()
+    result = pd.Series(np.nan, index=ohlc_df.index)
+    result.iloc[length - 1:] = smoothed_tail.values
+    return result
 
 
 def compute_vstop(ohlc_df, length=VSTOP_LENGTH, factor=VSTOP_FACTOR):
@@ -941,13 +969,21 @@ def compute_vstop_tv(ohlc_df, length=VSTOP_LENGTH, factor=VSTOP_FACTOR):
       * On a flip the running max/min reset to the current close, so the
         new stop starts right at close +/- factor*ATR and re-ratchets.
       * ATR is Pine's ta.atr (Wilder RMA seeded with the SMA of the first
-        `length` true ranges) -- same convention as compute_atr().
+        `length` true ranges, bar 0's being its High-Low) -- compute_atr().
+      * Before the ATR exists the stop runs on the plain True Range, from bar 0,
+        as Pine's nz(atr * factor, ta.tr) does.
 
     Returns (vstop_series, direction_series) with the same 1/-1 direction
     convention as compute_vstop(), so downstream flip/Up/Down logic is
     shared.
     """
     atr = compute_atr(ohlc_df, length) * factor
+    # Pine: atrM = nz(ta.atr(len) * factor, ta.tr). Until the ATR exists the stop
+    # runs on the bar's plain True Range (na on bar 0), so the state machine
+    # starts on bar 0 -- not, as it did until 2026-10-23, on the first bar with
+    # an ATR. On a short history (a recent listing) the flip dates then differ
+    # from TradingView's; see compute_atr.
+    tr_plain = true_range(ohlc_df, first_bar_high_low=False).to_numpy(dtype=float)
     close = ohlc_df["Close"].to_numpy(dtype=float)
     atr_np = atr.to_numpy(dtype=float)
     n = len(ohlc_df)
@@ -956,39 +992,32 @@ def compute_vstop_tv(ohlc_df, length=VSTOP_LENGTH, factor=VSTOP_FACTOR):
     direction = np.full(n, np.nan)
 
     rmax = rmin = None
-    stop = None
-    uptrend = True
-    started = False
+    stop = np.nan
+    uptrend = True        # nz(uptrend[1], true)
 
     for i in range(n):
         src = close[i]
-        a = atr_np[i]
-        if np.isnan(a):
-            if rmax is not None:
-                rmax = max(rmax, src)
-                rmin = min(rmin, src)
-            continue
+        if np.isnan(src):
+            continue      # Pine: `if not na(src)`
+        a = atr_np[i] if not np.isnan(atr_np[i]) else tr_plain[i]
 
-        if not started:
-            started = True
+        if rmax is None:  # `var max = src`, `var min = src` on the first bar
             rmax = rmin = src
-            stop = src - a
-            vstop[i] = stop
-            direction[i] = 1
-            continue
-
-        prev_stop = stop
         prev_uptrend = uptrend
         rmax = max(rmax, src)
         rmin = min(rmin, src)
 
-        if prev_uptrend:
-            stop = max(prev_stop, rmax - a)
+        # stop := nz(uptrend ? max(stop, max - atrM) : min(stop, min + atrM), src)
+        # Pine's math.max/min return na when either side is na -- on bar 0
+        # (no stop yet, and ta.tr is na) the stop therefore starts at the close.
+        if np.isnan(stop) or np.isnan(a):
+            stop = src
+        elif prev_uptrend:
+            stop = max(stop, rmax - a)
         else:
-            stop = min(prev_stop, rmin + a)
+            stop = min(stop, rmin + a)
 
         # Trend is read off the stop JUST ratcheted, as Pine's volStop does:
-        #     stop := uptrend ? max(stop, max - atrM) : min(stop, min + atrM)
         #     uptrend := src - stop >= 0.0
         # This used to test `src - prev_stop` before ratcheting. Because the stop
         # only ever moves in the trend's favour, that test is more forgiving: a
@@ -2920,18 +2949,29 @@ def code_text_fingerprint(source):
     return hashlib.sha256(norm.encode("utf-8")).hexdigest()[:16]
 
 
+_CODE_FINGERPRINT = None
+
+
 def _code_fingerprint():
     """Fingerprint of this module's CODE (code_text_fingerprint), used to detect
     when a snapshot was computed by a since-replaced version of the calc code
     (e.g. an EMA/SMA switch or a vstop parameter change) even if settings.json
     didn't change. Deliberately avoids the `git` CLI/`.git` dir -- not reliably
     available in every deploy sandbox (e.g. Streamlit Cloud), which silently
-    disabled an earlier version of this guard."""
-    try:
-        with open(__file__, encoding="utf-8") as f:
-            return code_text_fingerprint(f.read())
-    except Exception:
-        return "unknown"
+    disabled an earlier version of this guard.
+
+    Computed once per process (2026-10-23): tokenizing and parsing this ~3,300
+    line file took ~76 ms, and the app called it on every rerun -- every click --
+    for an answer that cannot change while the process runs (a code change is a
+    redeploy, which is a new process)."""
+    global _CODE_FINGERPRINT
+    if _CODE_FINGERPRINT is None:
+        try:
+            with open(__file__, encoding="utf-8") as f:
+                _CODE_FINGERPRINT = code_text_fingerprint(f.read())
+        except Exception:
+            return "unknown"   # not cached: a transient read failure must not stick
+    return _CODE_FINGERPRINT
 
 
 def save_data_snapshot(as_of, per_market, settings=None, merge=False, short_history=None,
