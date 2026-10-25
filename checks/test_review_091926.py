@@ -237,6 +237,11 @@ app_src = (REPO / "app.py").read_text()
 fn = next(n for n in ast.walk(ast.parse(app_src))
           if isinstance(n, ast.FunctionDef) and n.name == "build_column_defs")
 column_keys = {n.value for n in ast.walk(fn) if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+# The Stage Analysis columns are spliced in from stage_analysis.COLUMN_DEFS (`*STAGE_COLUMN_DEFS`),
+# the same list get_filterable_metrics reads its labels from, so they cannot be filterable
+# without a column; test_stage_analysis.py pins that the splice is there.
+import stage_analysis
+column_keys |= {key for key, _label in stage_analysis.COLUMN_DEFS}
 # Fields shown under a DIFFERENT column key (the display cell is built in the
 # render path and bridged back by _sort_label_to_field) -- see AGENTS.md. Each
 # must still map to a real column. last_close is the fixed "Last" column.

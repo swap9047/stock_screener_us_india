@@ -177,6 +177,35 @@ def column_definitions(settings, labels):
             "'Unknown' means the view is stale, predates a confirmed earnings report, or had no hard evidence to "
             "stand on -- not that sentiment is neutral."
         ),
+        "Stage": (
+            "TheWrap Stage Analysis: the current market stage -- S1 Accumulation (sideways, often at the bottom of "
+            "a downtrend), S2 Advancing (higher highs and higher lows), S3 Distribution (momentum slows, sideways "
+            "at the top), S4 Decline (lower highs and lower lows). Read from the indicator's CSV export, uploaded in "
+            "the sidebar's 'Stage Analysis upload': the screener does not compute it. Every Stage Analysis column reflects the "
+            "latest full closed week, so it moves once a week, not daily. 'Unknown' means the indicator "
+            "had too little history. The cell reads 'S1 → S2 Advancing · Developing 8w': previous stage, current stage, "
+            "confidence and weeks in the stage. Filters and sorting use the current stage."
+        ),
+        "Stage Mom": (
+            "Momentum, from TheWrap Stage Analysis indicator (the MOM column of its export): Strong ↑, Recovering ↑, "
+            "Weakening ↓ or Weak ↓. Taken as exported, not computed here."
+        ),
+        "CE": "Cheat Entry (Yes / No), from TheWrap Stage Analysis indicator. Taken as exported, not computed here.",
+        "PEAD": (
+            "Post-Earnings Announcement Drift, from TheWrap Stage Analysis indicator: Strong, Mod (moderate), Weak or "
+            "No. Taken as exported, not computed here."
+        ),
+        "Prev Stage": "The stage before the current one, from the same upload as Stage.",
+        "Stage Conf": (
+            "How well-formed the current stage is (the indicator's confidence rating): New (recently identified, just "
+            "beginning to form), Developing (gaining momentum and becoming more defined), Established (well-defined and "
+            "has persisted long enough to be reliable), Mature (long-standing, with demonstrated persistence). Rises "
+            "with the weeks in Stage Weeks."
+        ),
+        "Stage Weeks": (
+            "How many weeks the current stage has lasted (the indicator's 'P' is a weekly bar, counted to the latest full closed week). "
+            "Blank when the stage is Unknown."
+        ),
         "Qtr Profit Growth %": "Year-over-year net income growth for the most recent reported quarter, vs. the same quarter a year ago (Yahoo Finance). Ignores share count -- compare against Qtr EPS Growth % to spot dilution.",
         "Qtr EPS Growth %": "Year-over-year growth in DILUTED earnings per share for the most recent reported quarter, vs. the same quarter a year ago. Same profit figure as Qtr Profit Growth % but divided by share count, so growth funded by issuing equity (QIP, warrant conversion) shows up lower here -- a materially smaller number than Qtr Profit Growth % means shareholders were diluted. Blank when Yahoo has fewer than 5 quarters of statements or the year-ago quarter was loss-making (growth undefined), which is why it is sparser than Qtr Profit Growth %.",
         "Qtr Revenue Growth %": "Year-over-year revenue growth for the most recent reported quarter, vs. the same quarter a year ago (Yahoo Finance).",
@@ -342,6 +371,26 @@ def ta_rules_tooltip(row):
             if broken:
                 break
     lines.append(f"→ {row.get('ta_rules') or '—'}")
+    return "\n".join(lines)
+
+
+def stage_tooltip(row):
+    """Hover text for a Stage cell, from the fields stage_analysis attached: the
+    stage before, how long this one has run and how well-formed it is, and the day
+    the CSV carrying it was uploaded (the indicator is not live here, so an old
+    upload should read as old)."""
+    if not row.get("stage"):
+        return "No Stage Analysis upload covers this ticker yet."
+    if row["stage"] == "Unknown":
+        return "The indicator had too little history to place this ticker in a stage."
+    lines = [f"Stage: {row['stage']}"]
+    if row.get("stage_prev"):
+        lines.append(f"Previous stage: {row['stage_prev']}")
+    if row.get("stage_weeks") is not None:
+        conf = f" ({row['stage_conf']})" if row.get("stage_conf") else ""
+        lines.append(f"In this stage for {row['stage_weeks']} weeks{conf}")
+    if row.get("stage_uploaded"):
+        lines.append(f"Uploaded: {row['stage_uploaded']}")
     return "\n".join(lines)
 
 

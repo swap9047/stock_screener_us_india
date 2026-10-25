@@ -44,6 +44,7 @@ See _coerce_fixed_value below.
 import operator as op
 import os
 
+from stage_analysis import CATEGORICAL_FIELDS as STAGE_CATEGORICAL_METRICS
 from ticker_notes import FLAG_CHOICES
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -97,6 +98,10 @@ CATEGORICAL_METRICS = {
     # two, or None). It was a plain text metric, so it got a free-text box
     # instead of a dropdown and sorted alphabetically -- Negative first.
     "net_volume_10d_dir": ["Positive", "Negative"],
+    # TheWrap Stage Analysis, uploaded from the indicator's CSV export
+    # (stage_analysis.py): Stage / Prev Stage / Stage Conf / Stage Mom / CE / PEAD.
+    # Declared best-first there. Stage Periods is a count, so it is not here.
+    **STAGE_CATEGORICAL_METRICS,
 }
 
 

@@ -92,7 +92,7 @@ work, up to 22 hours late (23 h for news; for breadth, until the next slot). See
 
 | Kind | Files | Who writes them |
 |---|---|---|
-| **Your configuration** (edited in the UI) | `watchlist.json`, `markets.json`, `watchlist_groups.json`, `interested.json`, `alerts_config.json`, `custom_filters.json`, `custom_columns.json`, `ticker_notes.json`, `settings.json`, `column_prefs.json`, `ticker_index.json` | The app |
+| **Your configuration** (edited in the UI) | `watchlist.json`, `markets.json`, `watchlist_groups.json`, `interested.json`, `alerts_config.json`, `custom_filters.json`, `custom_columns.json`, `ticker_notes.json`, `stage_analysis.json`, `settings.json`, `column_prefs.json`, `ticker_index.json` | The app |
 | **Generated data** (written by jobs) | `data_snapshot.json`, `expert_views.json`, `fundamentals.json`, `news_summary.json`, `market_breadth.json`, `dashboard_perf.json`, `alert_state.json`, `weekly_wrapup_state.json` | The workflows. The app also writes the first three in narrow, guarded ways |
 | **Local only** (never pushed) | `auth_config.json`, `discord_config.json`, `.data_sync_state.json`, `.env` | You / the container |
 

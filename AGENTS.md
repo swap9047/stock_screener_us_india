@@ -38,7 +38,7 @@ for a model (Google's `...PerDay...` quota id) is retired for that model for the
 run, and once every key is out the ladder steps to its fallback model at once. Before
 2026-10-23 a daily-exhausted key rejoined every 120 s and failed again.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1537
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1600
 offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
@@ -66,6 +66,7 @@ verified by rendering the app headlessly; recipe at the bottom.
 | `weekly_wrapup.py` | 365 | Weekly Discord digest |
 | `custom_columns.py` | 294 | User-defined formula columns |
 | `ticker_notes.py` | 117 | Per-ticker notes and manual flags. (`signal` was retired on 2026-10-04; the ticker dot is Expert Take's colour) |
+| `stage_analysis.py` | 243 | TheWrap Stage Analysis, uploaded not computed: the sidebar's "Stage Analysis upload" takes the indicator's CSV export (`Ticker, Exchange, Stage, MOM, CE, PEAD, ...`) into `stage_analysis.json` and the Stage / Stage Mom / CE / PEAD columns (plus Prev Stage, Stage Conf, Stage Weeks, hidden). The `Stage` cell `S1 - S2 (Developing 8P)` reads previous - current (confidence, weeks; every value is the latest FULL CLOSED week, so upload weekly): on every row it agrees with Trend, and `S? - S?` is Unknown. The export has bare symbols, so rows are matched to the tickers the watchlists hold through its Exchange column (NSE <-> `.NS`, BSE <-> `.BO`, else no suffix); the preview names what matched nothing. An upload MERGES (tickers in the file are replaced, the rest kept, each dated). Stdlib-only (`json_store`): `filters.py` imports its value lists, so the alert gate must be able to import it. `COLUMN_DEFS` is the one list `build_column_defs` and `get_filterable_metrics` both read |
 | `market_api.py` | 319 | What the screener shares with other apps (the research library's Q&A, Claude chat): the metric catalog by group, the public part of a row (a whitelist: never notes, flags, Interested or custom columns; which tabs hold a ticker is published separately, by `publish_market.py watchlists`) and `compute_rows`, a live `fetch_snapshot` for any ticker. Served live on Vercel through `market_lookup.py` (`vercel.json`, its own slim `api/requirements.txt`) |
 | `market_lists.py` | 260 | The screener's lists for Claude chat's connector (`api/mcp.py`'s `list_watchlists`, `get_watchlist`, `get_market_breadth`, `get_price_history`), read from what `publish_market.py watchlists` stores: a tab as a table (a row per stock with the groups asked for, sortable, a summary of each return over the whole list), an index's or a tab's breadth day by day, daily closes (a ticker not stored is fetched from Yahoo, its still-trading bar dropped). Loose names (`find_watchlist`: "my India holdings"; an ambiguous one answers with the choices); a big reply is thinned to every Nth session |
 | `market_lookup.py` | 504 | One lookup for every live caller: a company name or ticker -> a ticker (a suffix as typed, a bare six-digit BSE code, a known symbol, the research library's name decisions and listings by its `match_key`, the clearly closest listing, then Yahoo's symbol search) -> the stored row while fresh, else computed with the screener's saved settings and stored. **Yahoo prices BSE stocks as `SYMBOL.BO`, never the `<scrip code>.BO` the library's BSE listings carry**: `compute_priced` prices those under the symbol Yahoo's search gives for the ISIN (remembered in `kg_market_meta.yahoo_symbols`) and keeps the code as the row's key, and tries an NSE listing too new for the indicators on BSE. A stored row is recomputed after `STALE_HOURS` (20), or after an hour when its prices end before its exchange's last completed session (`last_completed_session`, `BEHIND_RECHECK_MINUTES`). A ticker whose Yahoo company details failed (named by its bare symbol) is computed once more after 5 s; what is still blank is filled from the stored row (`keep_previous`: the name and info fields only when the details failed, statement figures whenever blank), in the live lookup and both publish modes. The library job uses it too. All database access goes through `MarketDB`, which checks replace with a fake |
@@ -117,8 +118,8 @@ stale copy must not overwrite the repo. The "Push to GitHub" button is the manua
 The authoritative list is `SYNCABLE_FILES` in `github_sync.py`:
 `watchlist.json`, `markets.json`, `interested.json`, `custom_filters.json`,
 `settings.json`, `alerts_config.json`, `column_prefs.json`, `custom_columns.json`,
-`ticker_notes.json`, `expert_views.json`, `fundamentals.json`, `ticker_index.json`,
-`data_snapshot.json`, `watchlist_groups.json`.
+`ticker_notes.json`, `stage_analysis.json`, `expert_views.json`, `fundamentals.json`,
+`ticker_index.json`, `data_snapshot.json`, `watchlist_groups.json`.
 
 Three of those are also class 2 (`WORKFLOW_GENERATED_FILES`), and the app must never push
 them wholesale from its own disk. The container's copy can be older than a workflow
@@ -199,7 +200,7 @@ ticker, and *when* a field lands on it decides what you can do with it.
 | Stage | Fields | Usable for |
 |---|---|---|
 | From the snapshot | prices, all indicators, `index_name`, `company_name`, `data_end`, `reported_qtr`, valuation metrics (`trailing_pe`, `roce`, …), `trend`, `volume_trend`, `tech_uptrend`, `flag`, `note` | filter, sort, display |
-| Attached in the enrichment loop (module level, before tabs **and** before the sidebar) | custom columns, notes/flags, `interested`, `sentiment`, `expert_take` (live, from the columns) | filter, sort, display |
+| Attached in the enrichment loop (module level, before tabs **and** before the sidebar) | custom columns, notes/flags, `interested`, `sentiment`, `expert_take` (live, from the columns), the Stage Analysis fields (`stage`, `stage_mom`, `cheat_entry`, `pead`, ...; from `stage_analysis.json`) | filter, sort, display |
 | Built inside `render_market_tab`, **after** filtering | `matched_alerts`, the `fundamentals` display cell, `tech_uptrend_label` | display only |
 
 **The rule: if you want a field filterable or sortable, attach it in the enrichment loop.**
@@ -293,7 +294,7 @@ Each of these has actually bitten this codebase.
 - **A corrupt user-data file is loud, not empty.** `stock_data.read_json_strict` raises
   `DataFileError` for `watchlist.json`, `markets.json`, `settings.json`, `interested.json`,
   `watchlist_groups.json`, `ticker_index.json`, `alerts_config.json`, `custom_filters.json`,
-  `custom_columns.json`, `ticker_notes.json` -- an empty default is indistinguishable from
+  `custom_columns.json`, `ticker_notes.json`, `stage_analysis.json` -- an empty default is indistinguishable from
   real emptiness, and the next save (or "Push to GitHub") would write it over the data repo.
   `app.py` reads them all once in a preflight block and stops with the filename. Regenerable
   state (`alert_state.json`, `weekly_wrapup_state.json`) is the opposite: it falls back to
