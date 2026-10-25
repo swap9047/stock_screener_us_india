@@ -5,7 +5,10 @@ POST /mcp/<token>   (vercel.json routes it here; the token is MARKET_API_TOKEN)
 Streamable HTTP, stateless: every POST carries JSON-RPC (one message or a batch) and gets a JSON
 reply -- no sessions, no server-sent events, which is all a request/response tool server needs and
 all a serverless function can hold. Methods: initialize, ping, tools/list, tools/call; notifications
-get 202. GET is 405 (no event stream).
+get 202. GET is 405 (no event stream). HEAD answers 200 (401 without the token): Gemini's custom apps
+check a server with a HEAD before anything else, and BaseHTTPRequestHandler answers a method it has no
+do_ for with 501, which Gemini reported as "the MCP server could not be reached" (2026-10-25). OPTIONS
+answers a browser's CORS preflight, in case a client checks from the page.
 
 Tools:
   get_market_metrics  price, technicals and valuation for 1-5 companies by name or ticker, with the
@@ -286,6 +289,27 @@ class handler(BaseHTTPRequestHandler):
         self.send_header("Allow", "POST")
         self.end_headers()
 
+    def do_HEAD(self):
+        self.send_response(200 if self._authorized() else 401)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Allow", "POST, HEAD, OPTIONS")
+        self._cors()
+        self.end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self._cors()
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.end_headers()
+
+    def _cors(self):
+        # The token in the URL is the only credential, so allowing any origin exposes nothing a caller
+        # without it could read.
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "POST, GET, HEAD, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers",
+                         "Content-Type, Accept, Authorization, Mcp-Session-Id, Mcp-Protocol-Version")
+
     def do_DELETE(self):
         self.send_response(405)
         self.send_header("Allow", "POST")
@@ -297,6 +321,7 @@ class handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         data = json.dumps(body, default=str).encode()
+        self._cors()
         self.send_header("Content-Type", "application/json")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(data)))

@@ -520,6 +520,27 @@ try:
     except urllib.error.HTTPError as e:
         get_status = e.code
     check(get_status == 405, "GET (an event stream) is 405: this server only answers POSTs")
+
+    def head(path):
+        try:
+            with opener.open(urllib.request.Request(base + path, method="HEAD"), timeout=10) as resp:
+                return resp.status, resp.read(), resp.headers
+        except urllib.error.HTTPError as e:
+            return e.code, e.read(), e.headers
+    h_status, h_body, h_headers = head("/mcp/s3cret")
+    check(h_status == 200 and h_body == b"" and head("/mcp/wrong")[0] == 401 and head("/mcp")[0] == 401,
+          "HEAD /mcp/<token>: 200 with no body, 401 without the token (Gemini checks a server with a HEAD first; "
+          "it used to get 501 and called the server unreachable)")
+    with opener.open(urllib.request.Request(base + "/mcp/s3cret", method="OPTIONS",
+                                            headers={"Origin": "https://gemini.google.com",
+                                                     "Access-Control-Request-Method": "POST"}), timeout=10) as resp:
+        o_status, o_headers = resp.status, resp.headers
+    check(o_status == 204 and o_headers.get("Access-Control-Allow-Origin") == "*"
+          and "POST" in o_headers.get("Access-Control-Allow-Methods", "")
+          and "Content-Type" in o_headers.get("Access-Control-Allow-Headers", ""),
+          "OPTIONS: a CORS preflight is answered 204 with the allowed methods and headers")
+    check(post("/mcp/s3cret", {"jsonrpc": "2.0", "id": 1, "method": "ping"})[0] == 200,
+          "...and the POST after it is still served")
 finally:
     server.shutdown()
     os.environ.pop("MARKET_API_TOKEN", None)
