@@ -109,7 +109,8 @@ def watchlist_table(db, name, groups=None, sort_by=None, descending=True, limit=
         return {"query": name, "found": False, "available": choices,
                 "note": "No single watchlist matches; pass one of the available names."}
     meta = next(w for w in lists if w["name"] == wl)
-    groups = [g for g in (groups or DEFAULT_GROUPS) if g in market_api.METRIC_GROUPS] or list(DEFAULT_GROUPS)
+    groups = market_api.with_companions([g for g in (groups or DEFAULT_GROUPS) if g in market_api.METRIC_GROUPS]
+                                        or list(DEFAULT_GROUPS))
     catalog = market_api.catalog(settings)
     by_field = {c["field"]: c for c in catalog}
     fields = [f for g in groups for f, *_ in market_api.METRIC_GROUPS[g][1]]

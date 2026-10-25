@@ -56,7 +56,7 @@ INSTRUCTIONS = (
     "any window get_price_history. Use web search for news, results and guidance, which these tools do not have.")
 
 GROUP_HELP = ("price, returns, moving_averages, momentum (RSI, ADX), relative_strength (Mansfield RS vs Nifty 500 / "
-              "S&P 500), trend (Trend, Tech Uptrend, TA Rules, Expert Take, weekly VStop), volume, range (52-week, "
+              "S&P 500), trend (Trend, Tech Uptrend, TA Rules, Expert Take, weekly VStop; always comes with stage), volume, range (52-week, "
               "5-year high, breakouts), valuation (P/E TTM and forward, P/B, EV/EBITDA, P/Cashflow), quality_growth "
               "(ROE, ROCE, cash conversion, latest quarter's growth), stage (TheWrap Stage Analysis: Stage, Stage Mom, CE, "
               "PEAD, previous stage, confidence, weeks in stage, upload date; screener stocks only, weekly), explain (why each signal reads as it does, "
@@ -116,7 +116,7 @@ TOOLS = [
             "properties": {
                 "name": {"type": "string", "description": "The watchlist, as named in list_watchlists or loosely."},
                 "groups": {"type": "array", "items": {"type": "string", "enum": list(market_api.METRIC_GROUPS)},
-                           "description": f"Metric groups per stock (default price, returns, trend): {GROUP_HELP}."},
+                           "description": f"Metric groups per stock (default price, returns, trend and its stage): {GROUP_HELP}."},
                 "sort_by": {"type": "string", "description": "A metric field or label to sort by, e.g. pct_change_1d, perf_1w, perf_ytd, rsi14_daily."},
                 "descending": {"type": "boolean", "description": "Largest first (default true)."},
                 "limit": {"type": "integer", "minimum": 1, "description": "Rows to return after sorting (default all)."},
