@@ -105,6 +105,14 @@ check(set(picked) == {"price", "valuation"} and picked["price"] == {"last_close"
 check(set(ma.select_groups(rec, [])) == {"price", "momentum", "valuation", "trend", "explain", "ai_views"},
       "no groups asked means every group that has values")
 check("ai_views" not in ma.select_groups(dict(rec, ai={}), ["ai_views", "price"]), "no write-ups, no ai_views group")
+check(ma.with_companions(["price", "trend", "valuation"]) == ["price", "trend", "stage", "valuation"]
+      and ma.with_companions(["stage", "trend"]) == ["stage", "trend"] and ma.with_companions(["price"]) == ["price"],
+      "trend brings stage, right after it and only once; nothing else changes")
+_staged = dict(rec, metrics=dict(rec["metrics"], stage="S2 Advancing", pead="Mod"))
+check(ma.select_groups(_staged, ["trend"]).get("stage") == {"stage": "S2 Advancing", "pead": "Mod"}
+      and "stage" not in ma.select_groups(_staged, ["price"]) and "stage" not in ma.select_groups(rec, ["trend"]),
+      "asking for trend returns the stage group too (Claude chat asked for 'technical data' and skipped it); a stock "
+      "without stage values gets none")
 
 # --- benchmarks and the live computation ----------------------------------------------------
 check(ma.benchmark_for("ZED.NS") == ("Nifty 500", sd.INDEX_DEFINITIONS["Nifty 500"])

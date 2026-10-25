@@ -142,6 +142,9 @@ check([r["ticker"] for r in body["rows"]] == ["ACME.NS", "ACME", "ZED.NS"], "a s
 body, err = mcp.call_tool("get_watchlist", {"name": "my holdings"}, db=db)
 check(not err and body["found"] is False and "India Invested" in body["available"], "an ambiguous name: found false with the choices")
 check(mcp.call_tool("get_watchlist", {}, db=db)[1] is True, "no name: an error the model can read")
+check(mcp.call_tool("get_watchlist", {"name": "India Watchlist", "groups": ["trend"]}, db=db)[0]["groups"] == ["trend", "stage"]
+      and mcp.call_tool("get_watchlist", {"name": "India Watchlist"}, db=db)[0]["groups"] == ["price", "returns", "trend", "stage"],
+      "a watchlist table with trend carries stage too, the default one included")
 check(mcp.call_tool("list_watchlists", {}, db=None)[1] is True, "no database: an error, not an exception")
 
 # --- get_market_breadth -------------------------------------------------------------------------------------

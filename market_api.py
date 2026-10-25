@@ -264,10 +264,27 @@ def public_record(row, source, expert_view=None, fundamental=None, as_of=None, s
             "ai": ai_views(expert_view, fundamental)}
 
 
+# A group that always comes with another: a caller asking for the technical picture names "trend" and
+# leaves "stage" out (Claude chat did, 2026-10-25: "technical data" got every signal but TheWrap Stage
+# Analysis), so trend brings stage along. A stock outside the weekly upload just has no stage block.
+COMPANION_GROUPS = {"trend": ("stage",)}
+
+
+def with_companions(groups):
+    """groups with each COMPANION_GROUPS follower added right after its leader, order kept, no repeats."""
+    out = []
+    for g in groups:
+        for x in (g,) + tuple(COMPANION_GROUPS.get(g, ())):
+            if x not in out:
+                out.append(x)
+    return out
+
+
 def select_groups(record, groups=None):
     """The record with only the asked groups' metrics: {group: {label: value}}, plus ai_views when
-    asked. Unknown group names are ignored; none asked means every group."""
-    wanted = [g for g in (groups or GROUP_NAMES) if g in GROUP_NAMES] or list(GROUP_NAMES)
+    asked. Unknown group names are ignored; none asked means every group; trend brings stage
+    (COMPANION_GROUPS)."""
+    wanted = with_companions([g for g in (groups or GROUP_NAMES) if g in GROUP_NAMES]) or list(GROUP_NAMES)
     metrics = record.get("metrics") or {}
     out = {}
     for group in wanted:
