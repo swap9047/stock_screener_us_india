@@ -403,10 +403,11 @@ check(mcp.handle_body(json.dumps({"jsonrpc": "2.0", "method": "notifications/ini
 status, listed = mcp.handle_body(json.dumps({"jsonrpc": "2.0", "id": "a", "method": "tools/list"}), **kw)
 tools = {t["name"]: t for t in listed["result"]["tools"]}
 desc = tools["get_market_metrics"]["description"]
-check(set(tools) == {"get_market_metrics", "metric_catalog"} and all(w in desc for w in ("NSE", "BSE", "price", "RSI", "before web search")),
+check(set(tools) == {"get_market_metrics", "metric_catalog", "list_watchlists", "get_watchlist", "get_market_breadth",
+                     "get_price_history"} and all(w in desc for w in ("NSE", "BSE", "price", "RSI", "before web search")),
       "tools/list: the description says what it is for, so Claude picks it outside a Project too")
 check(tools["get_market_metrics"]["inputSchema"]["properties"]["groups"]["items"]["enum"] == list(ma.GROUP_NAMES)
-      and all(t["annotations"]["readOnlyHint"] for t in tools.values()), "groups are the published ones; both tools read-only")
+      and all(t["annotations"]["readOnlyHint"] for t in tools.values()), "groups are the published ones; every tool read-only")
 check(not any(w in json.dumps(listed) for w in ("ZED", "LAURO", "SYNCOREX")), "no ticker in the tool list (this repo is public)")
 
 dbs.clear()
