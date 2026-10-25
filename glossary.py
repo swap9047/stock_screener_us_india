@@ -187,18 +187,20 @@ def column_definitions(settings, labels):
             "well-formed it is."
         ),
         "Stage Mom": (
-            "The indicator's momentum read for the stage (Strong ↑, Recovering ↑, Weakening ↓, Weak ↓), as exported. "
-            "Not computed here."
+            "Momentum, from TheWrap Stage Analysis indicator (the MOM column of its export): Strong ↑, Recovering ↑, "
+            "Weakening ↓ or Weak ↓. Taken as exported, not computed here."
         ),
-        "CE": "The indicator's Cheat Entry flag (Yes / No), as exported. Not computed here.",
+        "CE": "Cheat Entry (Yes / No), from TheWrap Stage Analysis indicator. Taken as exported, not computed here.",
         "PEAD": (
-            "The indicator's post-earnings announcement drift read (Strong / Mod = moderate / Weak / No), as "
-            "exported. Not computed here."
+            "Post-Earnings Announcement Drift, from TheWrap Stage Analysis indicator: Strong, Mod (moderate), Weak or "
+            "No. Taken as exported, not computed here."
         ),
         "Prev Stage": "The stage before the current one, from the same upload as Stage.",
         "Stage Conf": (
-            "How well-formed the current stage is: New (just forming), Developing (gaining definition), Established "
-            "(has persisted long enough to be reliable), Mature (long-standing). Rises with the weeks in Stage Weeks."
+            "How well-formed the current stage is (the indicator's confidence rating): New (recently identified, just "
+            "beginning to form), Developing (gaining momentum and becoming more defined), Established (well-defined and "
+            "has persisted long enough to be reliable), Mature (long-standing, with demonstrated persistence). Rises "
+            "with the weeks in Stage Weeks."
         ),
         "Stage Weeks": (
             "How many weeks the current stage has lasted (the indicator's 'P' is a weekly bar, counted to the latest full closed week). "
