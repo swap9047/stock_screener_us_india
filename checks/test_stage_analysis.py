@@ -4,8 +4,8 @@ the screener's tickers, storing it, and the columns it feeds.
 The fixture has the real export's header and cell shapes with invented tickers
 (ACME, ZED.NS, KAPPA.BO ...). What it pins:
 
-  - "S1 - S2 (Developing 8P)" is previous - current (confidence, periods); "S? - S?"
-    is Unknown with no confidence or periods, whatever "(Mature 0P)" follows it.
+  - "S1 - S2 (Developing 8P)" is previous - current (confidence, weeks); "S? - S?"
+    is Unknown with no confidence or weeks, whatever "(Mature 0P)" follows it.
   - The export's bare symbols are matched to the tickers the watchlists hold through
     the Exchange column (NSE <-> .NS, BSE <-> .BO, anything else <-> no suffix), so one
     symbol on two exchanges is two different tickers.
@@ -69,10 +69,10 @@ UNIVERSE = ["ACME", "ZED.NS", "KAPPA.BO", "NEWCO.NS", "DUP.NS", "DUP", "STRANGE"
 # --- parsing ------------------------------------------------------------------
 cell = sa.parse_stage_cell("S1 - S2 (Developing 8P)")
 check(cell == {"stage": "S2 Advancing", "stage_prev": "S1 Accumulation", "stage_conf": "Developing",
-               "stage_periods": 8}, f"previous - current: the SECOND stage is the current one ({cell})")
+               "stage_weeks": 8}, f"previous - current: the SECOND stage is the current one ({cell})")
 cell = sa.parse_stage_cell("S? - S? (Mature 0P)")
-check(cell["stage"] == "Unknown" and cell["stage_conf"] is None and cell["stage_periods"] is None,
-      "S? - S? is Unknown with no confidence and no periods")
+check(cell["stage"] == "Unknown" and cell["stage_conf"] is None and cell["stage_weeks"] is None,
+      "S? - S? is Unknown with no confidence and no weeks")
 check(sa.parse_stage_cell("S3 - S4  ( New   1P )")["stage"] == "S4 Decline", "whitespace inside the cell is tolerated")
 check(sa.parse_stage_cell("S5 - S2 (New 1P)") is None and sa.parse_stage_cell("") is None
       and sa.parse_stage_cell(None) is None, "a cell that is not a stage is None, never a guess")
@@ -143,7 +143,7 @@ stored = second
 rows = [{"ticker": "ACME"}, {"ticker": "ZED.NS"}, {"ticker": "HELD.NS"}]
 sa.apply_stage_to_rows(rows, stored)
 check(rows[1]["stage"] == "S2 Advancing" and rows[1]["stage_mom"] == "Weak ↓" and rows[1]["cheat_entry"] == "Yes"
-      and rows[1]["pead"] == "Weak" and rows[1]["stage_periods"] == 8, "a stored ticker gets every field")
+      and rows[1]["pead"] == "Weak" and rows[1]["stage_weeks"] == 8, "a stored ticker gets every field")
 check(all(rows[2][f] is None for f in sa.ROW_FIELDS) and "stage" in rows[2],
       "an unstored ticker gets the keys with None, never a missing key")
 
@@ -159,8 +159,8 @@ for key, label in sa.COLUMN_DEFS:
 check(set(sa.CATEGORICAL_FIELDS) <= set(filters.CATEGORICAL_METRICS)
       and all(filters.CATEGORICAL_METRICS[k] == v for k, v in sa.CATEGORICAL_FIELDS.items()),
       "every categorical Stage field has its dropdown")
-check("stage_periods" not in filters.CATEGORICAL_METRICS and "stage" in filters.TEXT_METRICS
-      and "stage_periods" not in filters.TEXT_METRICS, "Stage Periods stays numeric, the labels stay text")
+check("stage_weeks" not in filters.CATEGORICAL_METRICS and "stage" in filters.TEXT_METRICS
+      and "stage_weeks" not in filters.TEXT_METRICS, "Stage Weeks stays numeric, the labels stay text")
 check(filters.CATEGORICAL_METRICS["stage"][0] == "S2 Advancing" and filters.CATEGORICAL_METRICS["stage"][-1] == "Unknown"
       and filters.CATEGORICAL_METRICS["stage_mom"][0] == "Strong ↑" and filters.CATEGORICAL_METRICS["pead"][0] == "Strong"
       and filters.CATEGORICAL_METRICS["cheat_entry"][0] == "Yes", "every categorical is declared best-first")
@@ -170,12 +170,12 @@ check(filters.passes_filter(row, {"metric_a": "stage", "operator": "in", "compar
                                   "value": ["S2 Advancing", "S1 Accumulation"]}), "Stage in [S2, S1] matches an S2 row")
 check(not filters.passes_filter(row, {"metric_a": "stage", "operator": "in", "compare_type": "value",
                                       "value": ["S4 Decline"]}), "...and not an S4 filter")
-check(filters.passes_filter(row, {"metric_a": "stage_periods", "operator": ">=", "compare_type": "value", "value": 5}),
-      "Stage Periods >= 5 compares as a number")
-blank = {"ticker": "HELD.NS", "stage": None, "stage_periods": None}
+check(filters.passes_filter(row, {"metric_a": "stage_weeks", "operator": ">=", "compare_type": "value", "value": 5}),
+      "Stage Weeks >= 5 compares as a number")
+blank = {"ticker": "HELD.NS", "stage": None, "stage_weeks": None}
 check(not filters.passes_filter(blank, {"metric_a": "stage", "operator": "in", "compare_type": "value",
                                         "value": ["S2 Advancing"]})
-      and not filters.passes_filter(blank, {"metric_a": "stage_periods", "operator": ">", "compare_type": "value",
+      and not filters.passes_filter(blank, {"metric_a": "stage_weeks", "operator": ">", "compare_type": "value",
                                             "value": 0}), "a ticker with no upload fails a Stage filter closed, never raises")
 
 # --- the rest of the registry --------------------------------------------------------
@@ -190,8 +190,8 @@ defs = glossary.column_definitions(dict(sd.DEFAULT_SETTINGS), {"w_fast": "10 WEM
 check(all(label in defs and len(defs[label]) > 20 for _key, label in sa.COLUMN_DEFS),
       "every column has a glossary definition")
 tip = glossary.stage_tooltip({"stage": "S2 Advancing", "stage_prev": "S1 Accumulation", "stage_conf": "Developing",
-                              "stage_periods": 8, "stage_uploaded": "2026-10-25"})
-check("S1 Accumulation" in tip and "8 periods (Developing)" in tip and "2026-10-25" in tip, f"the Stage tooltip: {tip!r}")
+                              "stage_weeks": 8, "stage_uploaded": "2026-10-25"})
+check("S1 Accumulation" in tip and "8 weeks (Developing)" in tip and "2026-10-25" in tip, f"the Stage tooltip: {tip!r}")
 check("No Stage Analysis upload" in glossary.stage_tooltip({"stage": None})
       and "too little history" in glossary.stage_tooltip({"stage": "Unknown"}), "...and its two empty states")
 
@@ -200,7 +200,7 @@ fn = next(n for n in ast.walk(app_tree) if isinstance(n, ast.FunctionDef) and n.
 check(any(isinstance(n, ast.Starred) and getattr(n.value, "id", "") == "STAGE_COLUMN_DEFS" for n in ast.walk(fn)),
       "build_column_defs lists the Stage columns from the same list the filters use")
 check(sa.DEFAULT_VISIBLE_KEYS == ("stage", "stage_mom", "cheat_entry", "pead")
-      and sa.DEFAULT_HIDDEN_LABELS == {"Prev Stage", "Stage Conf", "Stage Periods"}
+      and sa.DEFAULT_HIDDEN_LABELS == {"Prev Stage", "Stage Conf", "Stage Weeks"}
       and [k for k, _l in sa.COLUMN_DEFS[:4]] == list(sa.DEFAULT_VISIBLE_KEYS),
       "stage, mom, CE and PEAD show by default; the three parts of the Stage cell start hidden")
 

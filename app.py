@@ -1004,7 +1004,7 @@ REL_PCT_COLS = ["1D Ret vs Index", "1W Ret vs Index", "1M Ret vs Index", "6M Ret
 # no sense either.
 DIST_PCT_COLS = ["26WH Distance", "52WH Distance", "Overhead Supply", "5Y High Distance"]
 # A count of trading days, not a price or a ratio -- whole numbers only.
-COUNT_COLS = ["Breakout Window", "52W High Age", "Stage Periods"]
+COUNT_COLS = ["Breakout Window", "52W High Age", "Stage Weeks"]
 # Stored as a raw ratio (e.g. 0.85), unlike PCT_COLS' ROE %/ROCE % which are
 # pre-multiplied by 100 at computation time (stock_data.py) -- formatted here
 # with Python's native "%" presentation type so the display multiplies by
@@ -3215,6 +3215,7 @@ def render_stage_analysis_upload():
         st.caption(
             "Upload the CSV exported from TheWrap Stage Analysis indicator (columns Ticker, Exchange, "
             "Stage, MOM, CE, PEAD...). Tickers it lists replace their stored values; the rest are kept. "
+            "The indicator reads the latest full closed week, so upload once a week, after it closes. "
             "Saved to stage_analysis.json and pushed to the data repo."
         )
         nonce = st.session_state.get("stage_upload_nonce", 0)

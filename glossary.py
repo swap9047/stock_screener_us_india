@@ -181,7 +181,8 @@ def column_definitions(settings, labels):
             "TheWrap Stage Analysis: the current market stage -- S1 Accumulation (sideways, often at the bottom of "
             "a downtrend), S2 Advancing (higher highs and higher lows), S3 Distribution (momentum slows, sideways "
             "at the top), S4 Decline (lower highs and lower lows). Read from the indicator's CSV export, uploaded in "
-            "the sidebar's 'Stage Analysis upload': the screener does not compute it. 'Unknown' means the indicator "
+            "the sidebar's 'Stage Analysis upload': the screener does not compute it. Every Stage Analysis column reflects the "
+            "latest full closed week, so it moves once a week, not daily. 'Unknown' means the indicator "
             "had too little history. Hover a cell for the previous stage, how long the stage has run and how "
             "well-formed it is."
         ),
@@ -197,10 +198,10 @@ def column_definitions(settings, labels):
         "Prev Stage": "The stage before the current one, from the same upload as Stage.",
         "Stage Conf": (
             "How well-formed the current stage is: New (just forming), Developing (gaining definition), Established "
-            "(has persisted long enough to be reliable), Mature (long-standing). Rises with the periods in Stage Periods."
+            "(has persisted long enough to be reliable), Mature (long-standing). Rises with the weeks in Stage Weeks."
         ),
-        "Stage Periods": (
-            "How many periods (bars of the timeframe the indicator was exported on) the current stage has lasted. "
+        "Stage Weeks": (
+            "How many weeks the current stage has lasted (the indicator's 'P' is a weekly bar, counted to the latest full closed week). "
             "Blank when the stage is Unknown."
         ),
         "Qtr Profit Growth %": "Year-over-year net income growth for the most recent reported quarter, vs. the same quarter a year ago (Yahoo Finance). Ignores share count -- compare against Qtr EPS Growth % to spot dilution.",
@@ -383,9 +384,9 @@ def stage_tooltip(row):
     lines = [f"Stage: {row['stage']}"]
     if row.get("stage_prev"):
         lines.append(f"Previous stage: {row['stage_prev']}")
-    if row.get("stage_periods") is not None:
+    if row.get("stage_weeks") is not None:
         conf = f" ({row['stage_conf']})" if row.get("stage_conf") else ""
-        lines.append(f"In this stage for {row['stage_periods']} periods{conf}")
+        lines.append(f"In this stage for {row['stage_weeks']} weeks{conf}")
     if row.get("stage_uploaded"):
         lines.append(f"Uploaded: {row['stage_uploaded']}")
     return "\n".join(lines)

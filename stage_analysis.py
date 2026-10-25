@@ -2,7 +2,8 @@
 TheWrap Stage Analysis: the sidebar CSV upload and the columns it feeds.
 
 The indicator itself runs on TradingView; its screener export is uploaded here and
-stored per ticker in stage_analysis.json. Nothing is computed -- the file is the
+stored per ticker in stage_analysis.json. Every value is read off the latest FULL CLOSED
+week (the indicator is weekly), so it only changes once a week: upload after a week closes. Nothing is computed -- the file is the
 source, so every value is exactly what the indicator showed.
 
 The export's header is: Ticker, Exchange, Watchlists, Close, Stage, RS, Benchmark,
@@ -10,7 +11,7 @@ MOM, AvgVol, MCap, Fast, Med, Slow, Beta, Bal, CE, PEAD. Four of those become
 columns (plus three parts of the Stage cell, offered hidden):
 
   Stage  "S1 - S2 (Developing 8P)"  = previous stage - current stage (confidence,
-         periods in that stage). Read as previous-then-current because on every row
+         weeks in that stage; the "P" is a weekly bar). Read as previous-then-current because on every row
          it agrees with the screener's own Trend (an Uptrend row ends in S2 and a
          Strong Downtrend row in S4). "S? - S?" is a ticker with too little history.
   MOM    Strong / Recovering / Weakening / Weak, with an arrow.
@@ -49,7 +50,7 @@ STAGE_MOM_VALUES = ["Strong ↑", "Recovering ↑", "Weakening ↓", "Weak ↓"]
 CE_VALUES = ["Yes", "No"]
 PEAD_VALUES = ["Strong", "Mod", "Weak", "No"]
 
-# row field -> the values it may hold, for filters.CATEGORICAL_METRICS. stage_periods
+# row field -> the values it may hold, for filters.CATEGORICAL_METRICS. stage_weeks
 # is a count, so it is not here.
 CATEGORICAL_FIELDS = {
     "stage": STAGE_VALUES,
@@ -61,7 +62,7 @@ CATEGORICAL_FIELDS = {
 }
 
 # The fields a stored ticker entry carries, in the order they are attached to rows.
-ROW_FIELDS = ("stage", "stage_prev", "stage_conf", "stage_periods", "stage_mom", "cheat_entry", "pead")
+ROW_FIELDS = ("stage", "stage_prev", "stage_conf", "stage_weeks", "stage_mom", "cheat_entry", "pead")
 
 # (row field, column label) in display order. ONE list, so the table's column
 # registry (app.build_column_defs) and the filter registry
@@ -76,10 +77,10 @@ COLUMN_DEFS = [
     ("pead", "PEAD"),
     ("stage_prev", "Prev Stage"),
     ("stage_conf", "Stage Conf"),
-    ("stage_periods", "Stage Periods"),
+    ("stage_weeks", "Stage Weeks"),
 ]
 DEFAULT_VISIBLE_KEYS = ("stage", "stage_mom", "cheat_entry", "pead")
-DEFAULT_HIDDEN_LABELS = {"Prev Stage", "Stage Conf", "Stage Periods"}
+DEFAULT_HIDDEN_LABELS = {"Prev Stage", "Stage Conf", "Stage Weeks"}
 METRIC_LABELS = {label: key for key, label in COLUMN_DEFS}
 
 _STAGE_CELL = re.compile(r"^S([1-4?])\s*-\s*S([1-4?])\s*\(\s*([A-Za-z]+)\s+(\d+)\s*P\s*\)$")
@@ -94,23 +95,23 @@ def _clean(text):
 
 
 def parse_stage_cell(text):
-    """{"stage", "stage_prev", "stage_conf", "stage_periods"} from a cell like
+    """{"stage", "stage_prev", "stage_conf", "stage_weeks"} from a cell like
     "S1 - S2 (Developing 8P)", or None if it is not that shape. A "S? - S?" cell is
-    an Unknown stage with no confidence or periods: the "(Mature 0P)" the export
+    an Unknown stage with no confidence or weeks: the "(Mature 0P)" the export
     prints beside it describes nothing."""
     m = _STAGE_CELL.match(_clean(text))
     if not m:
         return None
-    prev, cur, conf, periods = m.groups()
+    prev, cur, conf, weeks = m.groups()
     if cur == "?":
         return {"stage": "Unknown", "stage_prev": _stage_label(prev),
-                "stage_conf": None, "stage_periods": None}
+                "stage_conf": None, "stage_weeks": None}
     conf = conf.capitalize()
     return {
         "stage": _stage_label(cur),
         "stage_prev": _stage_label(prev),
         "stage_conf": conf if conf in STAGE_CONF_VALUES else None,
-        "stage_periods": int(periods),
+        "stage_weeks": int(weeks),
     }
 
 

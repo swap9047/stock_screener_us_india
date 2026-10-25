@@ -57,9 +57,9 @@ json.dump({t: {"index": "S&P 500", "benchmark": "SPY"} for t in TICKERS}, open("
 json.dump({"meta": {"uploaded_at": "2026-10-25T12:00:00Z", "source": "all.csv"},
            "tickers": {
                "ACME": {"stage": "S2 Advancing", "stage_prev": "S4 Decline", "stage_conf": "Mature",
-                        "stage_periods": 24, "stage_mom": "Weakening ↓", "cheat_entry": "No", "pead": "Strong",
+                        "stage_weeks": 24, "stage_mom": "Weakening ↓", "cheat_entry": "No", "pead": "Strong",
                         "uploaded": "2026-10-25"},
-               "ZED": {"stage": "Unknown", "stage_prev": "Unknown", "stage_conf": None, "stage_periods": None,
+               "ZED": {"stage": "Unknown", "stage_prev": "Unknown", "stage_conf": None, "stage_weeks": None,
                        "stage_mom": "Weak ↓", "cheat_entry": "Yes", "pead": "No", "uploaded": "2026-10-25"},
            }}, open("stage_analysis.json", "w"))
 
@@ -150,8 +150,8 @@ if run(at, "fresh render"):
     order = [c for c in cols[s + 1:s + 5]]
     check(order[0].startswith("Stage") and order[1].startswith("Stage Mom") and order[2].startswith("CE")
           and order[3].startswith("PEAD"), f"R1: Stage, Stage Mom, CE, PEAD follow Sentiment ({[o.split(chr(32))[0] + (chr(32) + o.split(chr(32))[1] if o.startswith('Stage Mom') else '') for o in order]})")
-    check(not any(c.startswith(("Prev Stage", "Stage Conf", "Stage Periods")) for c in cols),
-          "R1: Prev Stage / Stage Conf / Stage Periods are hidden by default")
+    check(not any(c.startswith(("Prev Stage", "Stage Conf", "Stage Weeks")) for c in cols),
+          "R1: Prev Stage / Stage Conf / Stage Weeks are hidden by default")
 
     # A cell's visible text: the <summary> of a hover-wrapped cell, else the cell itself.
     def shown(cell):
@@ -169,7 +169,7 @@ if run(at, "fresh render"):
     check(stage_cells("QUX") == ["—", "—", "—", "—"],
           f"R2: the ticker no upload covers shows dashes, not 'None' or 'nan' ({stage_cells('QUX')})")
     raw_acme = " ".join(row_cells(html, "ACME")).replace("&#10;", "\n")
-    check("Previous stage: S4 Decline" in raw_acme and "24 periods (Mature)" in raw_acme
+    check("Previous stage: S4 Decline" in raw_acme and "24 weeks (Mature)" in raw_acme
           and "Uploaded: 2026-10-25" in raw_acme,
           "R2: the Stage cell's hover carries the previous stage, how long it has run and the upload date")
 
