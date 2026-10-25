@@ -227,6 +227,31 @@ check(recs[0]["ai"]["sentiment"]["sentiment"] == "Neutral" and recs[0]["as_of"] 
 check(not any(w in json.dumps(recs) for w in ("india_invested", "india_watchlist", "us_watchlist", "core holding")),
       "no watchlist name or note reaches the database")
 
+# TheWrap Stage Analysis: uploaded weekly (stage_analysis.json), never computed, so the publish reads the file --
+# an upload lands between snapshot refreshes, and the snapshot's copy of the fields can be a week behind it.
+import glossary as _gl  # noqa: E402
+import stage_analysis as _sa  # noqa: E402
+_stage_cat = [c for c in cat if c["group"] == "stage"]
+_defs = _gl.column_definitions(settings, _gl.ema_col_labels(settings))
+check([c["field"] for c in _stage_cat] == [f for f, _ in _sa.COLUMN_DEFS] + ["stage_uploaded"]
+      and [c["label"] for c in _stage_cat][:7] == [lbl for _, lbl in _sa.COLUMN_DEFS]
+      and all(c["description"] == _defs[c["label"]] for c in _stage_cat[:7]) and "uploaded" in _stage_cat[7]["description"],
+      "the stage group carries the seven Stage Analysis columns (the dashboard's labels and glossary text) and the upload date")
+_stage_file = {"meta": {}, "tickers": {"ZED.NS": {"stage": "S2 Advancing", "stage_prev": "S1 Accumulation", "stage_conf": "Developing",
+                                                   "stage_weeks": 8, "stage_mom": "Strong ↑", "cheat_entry": "No", "pead": "Mod",
+                                                   "uploaded": "2026-10-25"}}}
+_snap_stale = {"generated_at": "2026-10-25T04:55:00+00:00", "per_market": {
+    "india_invested": [dict(row, stage=None, stage_mom=None)],
+    "us_watchlist": [{"ticker": "ACME", "company_name": "Acme Corp", "last_close": 5.0, "stage": "S4 Decline"}]}}
+_srecs = {r["ticker"]: r for r in pm.screener_records(_snap_stale, {}, {}, stage=_stage_file)}
+check(_srecs["ZED.NS"]["metrics"]["stage"] == "S2 Advancing" and _srecs["ZED.NS"]["metrics"]["pead"] == "Mod"
+      and _srecs["ZED.NS"]["metrics"]["stage_weeks"] == 8 and _srecs["ZED.NS"]["metrics"]["stage_uploaded"] == "2026-10-25"
+      and _srecs["ACME"]["metrics"]["stage"] is None and _snap_stale["per_market"]["india_invested"][0]["stage"] is None,
+      "the publish takes the Stage fields from the uploaded file, not the snapshot (a ticker the upload lacks gets none), "
+      "and leaves the snapshot rows untouched")
+check(pm.screener_records(_snap_stale, {}, {})[1]["metrics"]["stage"] == "S4 Decline",
+      "without the file the snapshot's own fields are published, as before")
+
 
 class FakeCur:
     def __init__(self, results):

@@ -84,6 +84,20 @@ METRIC_GROUPS = {
         ("vstop_weekly_direction", "VStop Dir", "", "Up or Down."),
         ("vstop_weekly_weeks_since_change", "VStop Weeks Ago", "", "Weeks since the weekly VStop last flipped."),
     ]),
+    # TheWrap Stage Analysis: uploaded weekly as a CSV in the dashboard's sidebar (stage_analysis.py), never
+    # computed, so only screener tickers in the latest upload have it. The labels are stage_analysis.COLUMN_DEFS',
+    # so the definitions come from the same glossary entries as the column tooltips.
+    "stage": ("Stage Analysis (weekly upload)", [
+        ("stage", "Stage", "", "TheWrap Stage Analysis stage: S1 Accumulation, S2 Advancing, S3 Distribution, S4 Decline."),
+        ("stage_mom", "Stage Mom", "", "The indicator's momentum: Strong, Recovering, Weakening or Weak."),
+        ("cheat_entry", "CE", "", "Cheat Entry: Yes or No."),
+        ("pead", "PEAD", "", "Post-earnings announcement drift: Strong, Mod, Weak or No."),
+        ("stage_prev", "Prev Stage", "", "The stage before the current one."),
+        ("stage_conf", "Stage Conf", "", "How well-formed the current stage is: New, Developing, Established, Mature."),
+        ("stage_weeks", "Stage Weeks", "", "Weeks the current stage has lasted."),
+        ("stage_uploaded", "Stage Uploaded", "", "When the CSV carrying these values was uploaded. Every value is the latest "
+                                                  "full closed week as of then, so an older upload means older stages."),
+    ]),
     "volume": ("Volume", [
         ("avg_volume_10d", "Vol 10D", "", "Average daily volume, last 10 sessions."),
         ("avg_volume_20d", "Vol 20D", "", "Average daily volume, last 20 sessions."),
