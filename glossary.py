@@ -183,8 +183,8 @@ def column_definitions(settings, labels):
             "at the top), S4 Decline (lower highs and lower lows). Read from the indicator's CSV export, uploaded in "
             "the sidebar's 'Stage Analysis upload': the screener does not compute it. Every Stage Analysis column reflects the "
             "latest full closed week, so it moves once a week, not daily. 'Unknown' means the indicator "
-            "had too little history. Hover a cell for the previous stage, how long the stage has run and how "
-            "well-formed it is."
+            "had too little history. The cell reads 'S1 → S2 Advancing · Developing 8w': previous stage, current stage, "
+            "confidence and weeks in the stage. Filters and sorting use the current stage."
         ),
         "Stage Mom": (
             "Momentum, from TheWrap Stage Analysis indicator (the MOM column of its export): Strong ↑, Recovering ↑, "

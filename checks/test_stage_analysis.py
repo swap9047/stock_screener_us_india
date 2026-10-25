@@ -138,6 +138,13 @@ except sd.DataFileError as e:
 Path(sa.STAGE_ANALYSIS_FILE).write_text(json.dumps([1, 2]))
 check(sa.load_stage_analysis() == {"meta": {}, "tickers": {}}, "a file of the wrong shape reads as empty")
 
+# --- the Stage cell shows everything -----------------------------------------------
+check(sa.stage_label({"stage": "S2 Advancing", "stage_prev": "S1 Accumulation", "stage_conf": "Developing",
+                      "stage_weeks": 8}) == "S1 → S2 Advancing · Developing 8w", "the Stage cell: previous → current · confidence weeks")
+check(sa.stage_label({"stage": "S4 Decline", "stage_prev": "Unknown"}) == "S? → S4 Decline"
+      and sa.stage_label({"stage": "Unknown"}) == "Unknown" and sa.stage_label({"stage": None}) == "—",
+      "...an unknown previous stage, an Unknown stage and an uncovered ticker")
+
 # --- rows ---------------------------------------------------------------------------
 stored = second
 rows = [{"ticker": "ACME"}, {"ticker": "ZED.NS"}, {"ticker": "HELD.NS"}]

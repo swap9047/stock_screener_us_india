@@ -162,7 +162,7 @@ if run(at, "fresh render"):
         """The four default Stage Analysis cells of a row, as displayed."""
         return [shown(c) for c in row_cells(html, ticker)[s + 1:s + 5]]
 
-    check(stage_cells("ACME") == ["S2 Advancing", "Weakening ↓", "No", "Strong"],
+    check(stage_cells("ACME") == ["S4 → S2 Advancing · Mature 24w", "Weakening ↓", "No", "Strong"],
           f"R2: ACME shows its stored stage, momentum, CE and PEAD ({stage_cells('ACME')})")
     check(stage_cells("ZED") == ["Unknown", "Weak ↓", "Yes", "No"],
           f"R2: an Unknown stage, and CE Yes, render ({stage_cells('ZED')})")

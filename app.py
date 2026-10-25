@@ -102,7 +102,7 @@ from refresh_schedule import in_refresh_window, refresh_hours_since
 from glossary import (ema_col_labels, column_definitions, trend_tooltip, ta_rules_tooltip,
                       vol_trend_tooltip, tech_uptrend_tooltip, stage_tooltip)
 from stage_analysis import (
-    load_stage_analysis, save_stage_analysis, parse_stage_csv, match_to_universe, merge_upload,
+    load_stage_analysis, save_stage_analysis, parse_stage_csv, stage_label, match_to_universe, merge_upload,
     STAGE_ANALYSIS_FILE, COLUMN_DEFS as STAGE_COLUMN_DEFS, DEFAULT_VISIBLE_KEYS as STAGE_VISIBLE_KEYS,
     DEFAULT_HIDDEN_LABELS as STAGE_HIDDEN_LABELS,
 )
@@ -619,8 +619,10 @@ def style_row(row, ema_labels):
                 styles[i] = f"color:{color};font-weight:600"
         elif col in ("Stage", "Prev Stage") and isinstance(val, str):
             # Stage 2 is the one worth owning, 4 the one to avoid; 1 and 3 are the
-            # transitions either side of it.
-            color = STAGE_COLORS.get(val)
+            # transitions either side of it. The Stage cell reads "S1 → S2 Advancing
+            # · Developing 8w": it is coloured by the stage AFTER the arrow.
+            current = val.split("→")[-1].split("·")[0].strip()
+            color = next((c for name, c in STAGE_COLORS.items() if current.startswith(name)), None)
             if color:
                 styles[i] = f"color:{color};font-weight:700"
         elif col == "Stage Mom" and isinstance(val, str):
@@ -4471,7 +4473,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         # Stage Analysis: the cell is the label, the hover is the previous stage, how
         # long this one has run and the upload date. A ticker no upload covers shows a
         # dash (a missing value, not a stage called None).
-        raw_df["stage"] = [with_tooltip(r.get("stage") or "—", stage_tooltip(r), nowrap=True) for r in filtered]
+        raw_df["stage"] = [with_tooltip(stage_label(r), stage_tooltip(r), nowrap=True) for r in filtered]
         for _stage_key in ("stage_mom", "cheat_entry", "pead", "stage_prev", "stage_conf"):
             raw_df[_stage_key] = [r.get(_stage_key) or "—" for r in filtered]
 
@@ -4519,6 +4521,8 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
                 return r.get("index_name", "")
             if key == "tech_uptrend_label":
                 return "Yes" if r.get("tech_uptrend") else "No"
+            if key == "stage":
+                return stage_label(r) if r.get("stage") else ""
             if key == "interested_label":
                 return "Yes" if r.get("interested") else "No"
             if key == "vstop_change":

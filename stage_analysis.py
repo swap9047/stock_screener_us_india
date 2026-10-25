@@ -115,6 +115,23 @@ def parse_stage_cell(text):
     }
 
 
+def stage_label(row):
+    """The Stage cell's text: everything the export's Stage cell said, previous stage
+    first -- "S1 → S2 Advancing · Developing 8w". The parts stay separate fields on the
+    row (that is what filters and sorting read); this is only how they are shown. A
+    ticker no upload covers is a dash, a stage the indicator could not place "Unknown"."""
+    stage = row.get("stage")
+    if not stage:
+        return "—"
+    if stage == "Unknown":
+        return "Unknown"
+    prev = (row.get("stage_prev") or "Unknown")[:2] if row.get("stage_prev") != "Unknown" else "S?"
+    text = f"{prev} → {stage}"
+    detail = " ".join(str(p) for p in (row.get("stage_conf"),
+                                       f"{row['stage_weeks']}w" if row.get("stage_weeks") is not None else None) if p)
+    return f"{text} · {detail}" if detail else text
+
+
 def ticker_region(ticker):
     """(bare symbol, region) of a screener ticker: ".NS" is NSE, ".BO" is BSE and a
     ticker with neither suffix is a US/other listing."""
