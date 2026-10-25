@@ -100,7 +100,12 @@ from expert_views import (load_expert_views, save_expert_views, analyze_single_t
 # The glossary and the per-signal "why" text, shared with market_api (what the research library reads).
 from refresh_schedule import in_refresh_window, refresh_hours_since
 from glossary import (ema_col_labels, column_definitions, trend_tooltip, ta_rules_tooltip,
-                      vol_trend_tooltip, tech_uptrend_tooltip)
+                      vol_trend_tooltip, tech_uptrend_tooltip, stage_tooltip)
+from stage_analysis import (
+    load_stage_analysis, save_stage_analysis, parse_stage_csv, match_to_universe, merge_upload,
+    STAGE_ANALYSIS_FILE, COLUMN_DEFS as STAGE_COLUMN_DEFS, DEFAULT_VISIBLE_KEYS as STAGE_VISIBLE_KEYS,
+    DEFAULT_HIDDEN_LABELS as STAGE_HIDDEN_LABELS,
+)
 from fundamentals_eval import (
     load_fundamentals, save_fundamentals, _validate_sentiment, SENTIMENT_STALE_DAYS,
     analyze_single_ticker_sentiment, _is_valid_view as _is_valid_sentiment_view,
@@ -546,6 +551,14 @@ TA_RULES_COLORS = {
 }
 
 
+# Stage Analysis cell colours (see style_row): green for Stage 2 / strong momentum,
+# red for Stage 4 / weak, amber in between.
+STAGE_COLORS = {"S2 Advancing": "#1e8449", "S1 Accumulation": "#9a7d0a",
+                "S3 Distribution": "#d35400", "S4 Decline": "#c0392b"}
+STAGE_MOM_COLORS = {"Strong ↑": "#1e8449", "Recovering ↑": "#138d75",
+                    "Weakening ↓": "#d35400", "Weak ↓": "#c0392b"}
+
+
 def style_row(row, ema_labels):
     styles = [""] * len(row)
     # If there are duplicate 'Last' columns, row["Last"] might be a Series.
@@ -559,7 +572,7 @@ def style_row(row, ema_labels):
         # Access by index rather than label to avoid returning a Series
         # when duplicate column names exist in the DataFrame.
         val = row.iloc[i]
-        if col in ("Trend", "Vol Trend", "Tech Uptrend", "Net Vol 10D", "TA Rules"):
+        if col in ("Trend", "Vol Trend", "Tech Uptrend", "Net Vol 10D", "TA Rules", "Stage"):
             val = _plain_text(val)
         if col in ema_cols and pd.notna(val):
             styles[i] = "color:#c0392b;font-weight:600" if last < val else "color:#1e8449;font-weight:600"
@@ -604,6 +617,18 @@ def style_row(row, ema_labels):
             color = net_colors.get(val)
             if color:
                 styles[i] = f"color:{color};font-weight:600"
+        elif col in ("Stage", "Prev Stage") and isinstance(val, str):
+            # Stage 2 is the one worth owning, 4 the one to avoid; 1 and 3 are the
+            # transitions either side of it.
+            color = STAGE_COLORS.get(val)
+            if color:
+                styles[i] = f"color:{color};font-weight:700"
+        elif col == "Stage Mom" and isinstance(val, str):
+            color = STAGE_MOM_COLORS.get(val)
+            if color:
+                styles[i] = f"color:{color};font-weight:600"
+        elif col in ("CE", "PEAD") and val in ("Yes", "Strong"):
+            styles[i] = "color:#1e8449;font-weight:700"
         elif col == "Alerts" and isinstance(val, str) and val not in ("—", ""):
             styles[i] = "color:#8e44ad;font-weight:600"
         elif col == "Expert Take" and isinstance(val, str):
@@ -979,7 +1004,7 @@ REL_PCT_COLS = ["1D Ret vs Index", "1W Ret vs Index", "1M Ret vs Index", "6M Ret
 # no sense either.
 DIST_PCT_COLS = ["26WH Distance", "52WH Distance", "Overhead Supply", "5Y High Distance"]
 # A count of trading days, not a price or a ratio -- whole numbers only.
-COUNT_COLS = ["Breakout Window", "52W High Age"]
+COUNT_COLS = ["Breakout Window", "52W High Age", "Stage Periods"]
 # Stored as a raw ratio (e.g. 0.85), unlike PCT_COLS' ROE %/ROCE % which are
 # pre-multiplied by 100 at computation time (stock_data.py) -- formatted here
 # with Python's native "%" presentation type so the display multiplies by
@@ -2255,6 +2280,8 @@ def build_column_defs(labels, custom_columns=None):
         ("net_volume_10d_dir", "Net Vol 10D"),
         ("tech_uptrend_label", "Tech Uptrend"),
         ("fundamentals", "Sentiment"),
+        # TheWrap Stage Analysis, from the sidebar CSV upload: right after Sentiment.
+        *STAGE_COLUMN_DEFS,
         ("qtr_profit_growth", "Qtr Profit Growth %"),
         ("qtr_eps_growth", "Qtr EPS Growth %"),
         ("qtr_revenue_growth", "Qtr Revenue Growth %"),
@@ -2314,7 +2341,7 @@ def build_column_defs(labels, custom_columns=None):
                       "Overhead Supply",
                       "5Y High", "5Y High Distance", "ADX-W", "ADX-M", "RSI-M (12)",
                       "VStop-W (14)", "1M Ret vs Index", "6M Ret vs Index",
-                      "PAT Growth TTM %", "Revenue Growth TTM %"}
+                      "PAT Growth TTM %", "Revenue Growth TTM %"} | STAGE_HIDDEN_LABELS
     default_visible = [lbl for lbl in all_labels if lbl not in default_hidden]
     return optional_defs, label_by_key, key_by_label, all_labels, default_visible
 
@@ -2805,6 +2832,23 @@ def render_shared_column_picker(labels, active_market=None, active_market_label=
     if inserted:
         save_column_prefs(st.session_state[SHARED_ORDER_KEY])
 
+    # The Stage Analysis columns: a saved order is the list of VISIBLE columns, so a
+    # layout saved before they existed would never show them. Placed once, right
+    # after Sentiment, and recorded in column_prefs.json -- unlike the fundamentals
+    # loop above, which re-adds a column on every run, this one must not bring back
+    # a column that was hidden on purpose afterwards.
+    _prefs_now = load_column_prefs_full()
+    if not _prefs_now.get("stage_columns_added"):
+        order = st.session_state[SHARED_ORDER_KEY]
+        at = order.index("fundamentals") + 1 if "fundamentals" in order else len(order)
+        for key in STAGE_VISIBLE_KEYS:
+            if key in label_by_key and key not in order:
+                order.insert(at, key)
+                at += 1
+        _prefs_now["order"] = order
+        _prefs_now["stage_columns_added"] = True
+        atomic_write_json(COLUMN_PREFS_FILE, _prefs_now)
+
     with st.sidebar.expander("Columns to show / reorder", expanded=False):
         st.caption(
             "Applies to both the US and India tables. Ticker and Last always show first. "
@@ -2868,6 +2912,7 @@ def render_shared_column_picker(labels, active_market=None, active_market_label=
     render_metric_glossary(labels, custom_columns, key_by_label)
     render_ta_rules_flowchart()
     render_custom_columns_manager()
+    render_stage_analysis_upload()
     render_ticker_notes_manager()
 
     return st.session_state[SHARED_ORDER_KEY], label_by_key, key_by_label
@@ -3140,6 +3185,73 @@ def render_custom_columns_manager():
                 "enabled": True,
             })
             save_custom_columns(custom_columns)
+            st.rerun()
+
+
+def render_stage_analysis_upload():
+    """Sidebar 'Stage Analysis upload': import the CSV exported from TheWrap Stage
+    Analysis indicator (see stage_analysis.py) into the Stage, Stage Mom, CE and PEAD
+    columns. Nothing is written until 'Import' is pressed, and the preview says what
+    matched first -- the export carries bare symbols, so a ticker held under another
+    exchange suffix would otherwise just stay blank."""
+    stored = load_stage_analysis()
+    if not os.path.exists(STAGE_ANALYSIS_FILE):
+        # Eager-write, like ticker_notes.json: push_all_config fails the WHOLE push
+        # when a targeted file is missing, and this one is in SYNCABLE_FILES.
+        save_stage_analysis(stored)
+
+    with st.sidebar.expander("Stage Analysis upload", expanded=False):
+        notice = st.session_state.pop("stage_upload_notice", None)
+        if notice:
+            (st.warning if "failed" in notice or "not pushed" in notice else st.success)(notice)
+        meta = stored["meta"]
+        if stored["tickers"]:
+            st.caption(
+                f"{len(stored['tickers'])} tickers stored · last upload {meta.get('uploaded_at', 'unknown')[:10]}"
+                + (f" ({meta['source']})" if meta.get("source") else "")
+            )
+        else:
+            st.caption("Nothing uploaded yet.")
+        st.caption(
+            "Upload the CSV exported from TheWrap Stage Analysis indicator (columns Ticker, Exchange, "
+            "Stage, MOM, CE, PEAD...). Tickers it lists replace their stored values; the rest are kept. "
+            "Saved to stage_analysis.json and pushed to the data repo."
+        )
+        nonce = st.session_state.get("stage_upload_nonce", 0)
+        uploaded = st.file_uploader("Stage Analysis CSV", type=["csv"], key=f"stage_upload_{nonce}",
+                                    label_visibility="collapsed")
+        if uploaded is None:
+            return
+        try:
+            records, report = parse_stage_csv(uploaded.getvalue())
+        except ValueError as e:
+            st.error(str(e))
+            return
+        universe = sorted({t for tickers in load_watchlists().values() for t in tickers})
+        matched, unmatched, missing = match_to_universe(records, universe)
+        st.write(f"**{len(matched)}** of your {len(universe)} tickers found in the file.")
+        if report["bad_stage"]:
+            st.warning(f"{report['bad_stage']} row(s) skipped: the Stage cell was not in the expected "
+                       "'S1 - S2 (Developing 8P)' form.")
+        for column, values in report["bad_values"].items():
+            st.warning(f"{column}: unrecognised value(s) {', '.join(values)} were left blank.")
+        if unmatched:
+            st.caption("In the file but on none of your watchlists: " + ", ".join(unmatched))
+        if missing:
+            st.caption("On your watchlists but not in the file (kept as they were): " + ", ".join(missing))
+        if st.button(f"Import {len(matched)} tickers", key="stage_upload_import", disabled=not matched,
+                     type="primary"):
+            save_stage_analysis(merge_upload(stored, matched, uploaded.name))
+            st.session_state["stage_upload_nonce"] = nonce + 1
+            gh_token, gh_repo, gh_branch = get_data_repo_config(st.secrets)
+            if gh_token and gh_repo and not os.environ.get("SKIP_GITHUB_PULL"):
+                ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=["stage_analysis.json"],
+                                          message="Update Stage Analysis")
+                st.session_state["stage_upload_notice"] = (
+                    f"Imported {len(matched)} tickers and pushed to GitHub." if ok
+                    else f"Imported {len(matched)} tickers, but the push to GitHub failed: {msg}")
+            else:
+                st.session_state["stage_upload_notice"] = f"Imported {len(matched)} tickers (not pushed: no data-repo token)."
             st.rerun()
 
 
@@ -4355,6 +4467,12 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             )
 
         raw_df["fundamentals"] = [_fundamentals_cell(r["ticker"]) for r in filtered]
+        # Stage Analysis: the cell is the label, the hover is the previous stage, how
+        # long this one has run and the upload date. A ticker no upload covers shows a
+        # dash (a missing value, not a stage called None).
+        raw_df["stage"] = [with_tooltip(r.get("stage") or "—", stage_tooltip(r), nowrap=True) for r in filtered]
+        for _stage_key in ("stage_mom", "cheat_entry", "pead", "stage_prev", "stage_conf"):
+            raw_df[_stage_key] = [r.get(_stage_key) or "—" for r in filtered]
 
         # Column visibility/order is chosen ONCE via the shared sidebar
         # picker (render_shared_column_picker) and passed in, so US and
@@ -4647,7 +4765,9 @@ try:
                        # hours of API time, and the refresh loops rewrite the whole
                        # file from what they loaded -- so a corrupt one must stop
                        # here with its name, not surface as a stack trace mid-tab.
-                       load_expert_views, load_fundamentals):
+                       load_expert_views, load_fundamentals,
+                       # An upload is not regenerable without the CSV it came from.
+                       load_stage_analysis):
         _preflight()
 except DataFileError as _e:
     st.error(f"{_e}")
@@ -4864,6 +4984,7 @@ from stock_data import load_interested as _load_interested_now
 interested_now = _load_interested_now()
 fundamentals_now_global = load_fundamentals()
 expert_views_now_global = load_expert_views()
+stage_analysis_now = load_stage_analysis()
 for _market_rows in per_market.values():
     apply_custom_columns_to_rows(_market_rows, custom_columns_now)
     # Notes/flags change far more often than custom columns (edited
@@ -4879,7 +5000,8 @@ for _market_rows in per_market.values():
     # filterable and sortable (AGENTS.md's row-dict contract), and via the SAME
     # function fetch_all_markets uses, so the nightly alert job evaluates them
     # identically -- see stock_data.apply_view_fields_to_rows.
-    apply_view_fields_to_rows(_market_rows, fundamentals_now_global, expert_views_now_global, interested_now)
+    apply_view_fields_to_rows(_market_rows, fundamentals_now_global, expert_views_now_global, interested_now,
+                              stage_analysis_now)
     # The age behind the "haven't updated in 3+ days" caption is stored at
     # fetch time; recomputed here so it keeps counting when the refresh stops.
     refresh_data_end_age(_market_rows)

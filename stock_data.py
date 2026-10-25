@@ -52,6 +52,8 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
+from stage_analysis import METRIC_LABELS as STAGE_METRIC_LABELS, apply_stage_to_rows
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 WATCHLIST_FILE = os.path.join(SCRIPT_DIR, "watchlist.json")
 SETTINGS_FILE = os.path.join(SCRIPT_DIR, "settings.json")
@@ -554,6 +556,9 @@ def get_filterable_metrics(settings=None):
         # glossary and the condition-builder caption resolve through them.
         "Interested": "interested",
         "Sentiment": "sentiment",
+        # TheWrap Stage Analysis (uploaded CSV, stage_analysis.py). The labels come
+        # from the same list the table's column registry uses.
+        **STAGE_METRIC_LABELS,
         "Index": "index_name",
         "Company Name": "company_name",
         "Data Thru": "data_end",
@@ -2863,10 +2868,11 @@ def refresh_data_end_age(rows, today=None):
     return rows
 
 
-def apply_view_fields_to_rows(rows, fundamentals=None, expert_views=None, interested=None):
+def apply_view_fields_to_rows(rows, fundamentals=None, expert_views=None, interested=None, stage=None):
     """Attach `interested`, `sentiment`, `expert_take` and `expert_news_backed`
     to every row, in place -- the fields that come from interested.json and the
-    two AI result files rather than from prices.
+    two AI result files rather than from prices -- and the Stage Analysis fields
+    from stage_analysis.json (`stage`, `stage_mom`, `cheat_entry`, `pead`, ...).
 
     ONE implementation for every consumer. These used to be attached only in
     app.py's enrichment loop, so the dashboard's rows had them and
@@ -2900,6 +2906,7 @@ def apply_view_fields_to_rows(rows, fundamentals=None, expert_views=None, intere
         view = expert_views.get(ticker, {})
         row["expert_take"] = expert_take_for_row(row, view)["verdict"].title()
         row["expert_news_backed"] = "Yes" if expert_view_has_news(view) else "No"
+    apply_stage_to_rows(rows, stage)
     return rows
 
 

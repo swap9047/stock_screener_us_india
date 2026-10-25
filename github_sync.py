@@ -64,6 +64,7 @@ SYNCABLE_FILES = [
     ("column_prefs.json", "Column order / visibility"),
     ("custom_columns.json", "Custom computed columns"),
     ("ticker_notes.json", "Per-ticker notes and flags"),
+    ("stage_analysis.json", "TheWrap Stage Analysis (uploaded CSV)"),
     ("expert_views.json", "AI Expert Views"),
     ("fundamentals.json", "AI Fundamental Views"),
     ("ticker_index.json", "Per-ticker index assignment"),
