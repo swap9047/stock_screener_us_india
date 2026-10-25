@@ -42,6 +42,7 @@ from datetime import datetime, timedelta, timezone
 import market_api
 import market_lookup
 import stock_data
+from stage_analysis import apply_stage_to_rows, load_stage_analysis
 
 # Below this many rows a snapshot is treated as broken, and screener rows missing from it are kept
 # rather than deleted from the database.
@@ -91,9 +92,12 @@ def write_catalog_and_settings(conn, settings):
     return len(entries)
 
 
-def screener_records(snapshot, expert_views, fundamentals, settings=None):
+def screener_records(snapshot, expert_views, fundamentals, settings=None, stage=None):
     """One record per snapshot ticker (a ticker in two watchlists once). Its Sentiment label is the
-    guarded one the row carries (what the dashboard shows), not the raw model output."""
+    guarded one the row carries (what the dashboard shows), not the raw model output. The Stage
+    Analysis fields are taken from stage_analysis.json (`stage`) when given, not from the snapshot:
+    an upload lands between refreshes (and on a weekend, when none run), so the snapshot's copy can
+    be a week behind the file."""
     as_of = snapshot.get("generated_at") or _now()
     records = {}
     for rows in (snapshot.get("per_market") or {}).values():
@@ -101,6 +105,8 @@ def screener_records(snapshot, expert_views, fundamentals, settings=None):
             t = row.get("ticker")
             if not t or t in records:
                 continue
+            if stage is not None:
+                row = apply_stage_to_rows([dict(row)], stage)[0]
             fundamental = dict(fundamentals.get(t) or {})
             if fundamental and row.get("sentiment"):
                 fundamental["sentiment"] = row["sentiment"]
@@ -127,7 +133,7 @@ def publish_screener(conn):
         print("No data_snapshot.json -- nothing to publish.")
         return 1
     settings = stock_data.load_settings()
-    records = screener_records(snapshot, load_expert_views(), load_fundamentals(), settings)
+    records = screener_records(snapshot, load_expert_views(), load_fundamentals(), settings, load_stage_analysis())
     kept = keep_previous_values(conn, records, {r["ticker"]: r["company_name"] == r["ticker"] for r in records})
     n = upsert(conn, records)
     removed = 0

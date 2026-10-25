@@ -43,7 +43,8 @@ MAX_BATCH = 10
 SERVER_INFO = {"name": "stock-screener", "title": "Stock screener market data", "version": "1.0"}
 INSTRUCTIONS = (
     "The user's own stock screener. For any question about a listed company's current share price, returns, "
-    "moving averages, RSI, relative strength, trend signals (Trend, Tech Uptrend, TA Rules, Expert Take), volume, "
+    "moving averages, RSI, relative strength, trend signals (Trend, Tech Uptrend, TA Rules, Expert Take), TheWrap "
+    "Stage Analysis (Stage, Stage Mom, CE, PEAD: the stage group, weekly, say its upload date), volume, "
     "52-week range or valuation multiples, call get_market_metrics before searching the web, and cite each figure "
     "with its price_date as (screener, <date>). Explain a signal with the tool's explain group and definitions, "
     "which are the screener's own rules. For the user's watchlists and holdings (how a list did today or this week, its "
@@ -54,7 +55,8 @@ INSTRUCTIONS = (
 GROUP_HELP = ("price, returns, moving_averages, momentum (RSI, ADX), relative_strength (Mansfield RS vs Nifty 500 / "
               "S&P 500), trend (Trend, Tech Uptrend, TA Rules, Expert Take, weekly VStop), volume, range (52-week, "
               "5-year high, breakouts), valuation (P/E TTM and forward, P/B, EV/EBITDA, P/Cashflow), quality_growth "
-              "(ROE, ROCE, cash conversion, latest quarter's growth), explain (why each signal reads as it does, "
+              "(ROE, ROCE, cash conversion, latest quarter's growth), stage (TheWrap Stage Analysis: Stage, Stage Mom, CE, "
+              "PEAD, previous stage, confidence, weeks in stage, upload date; screener stocks only, weekly), explain (why each signal reads as it does, "
               "condition by condition), ai_views (the screener's own Expert Take and Sentiment write-ups, watchlist "
               "stocks only)")
 
@@ -64,7 +66,8 @@ TOOLS = [
         "title": "Stock price, technicals and valuation",
         "description": (
             "Current share price, returns, moving averages, RSI, relative strength, trend signals (Trend, Tech Uptrend, "
-            "TA Rules, Expert Take) with the reasons behind each, volume, 52-week range, valuation multiples (P/E, P/B, "
+            "TA Rules, Expert Take) with the reasons behind each, TheWrap Stage Analysis (Stage, Stage Mom, CE, PEAD; "
+            "watchlist stocks, uploaded weekly), volume, 52-week range, valuation multiples (P/E, P/B, "
             "EV/EBITDA), ROE/ROCE and growth for any NSE, BSE or US listed stock, computed by the user's own stock "
             "screener from Yahoo Finance daily bars. Use this first for any question about a stock's price, technical "
             "setup or valuation, before web search. Accepts company names as spoken or written ('Acme Industries') or "

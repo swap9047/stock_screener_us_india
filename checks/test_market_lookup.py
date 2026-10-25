@@ -255,6 +255,15 @@ kept = ml.keep_previous(rec, {"ticker": "LOSS.NS", "company_name": "Loss Co", "m
 check(kept == ["roce"] and "trailing_pe" not in rec["metrics"] and rec["metrics"]["roce"] == 7.0,
       "details fine: a blank P/E is Yahoo's answer (a loss-making year) and stays blank; a blank statement figure is kept")
 check(ml.keep_previous({"ticker": "N", "company_name": "N", "metrics": {}}, None, True) == [], "nothing stored: nothing kept")
+_live = {"ticker": "ZED.NS", "company_name": "Zed Ltd", "metrics": {"last_close": 10.0, "stage": None, "pead": None}}
+_kept = ml.keep_previous(_live, {"ticker": "ZED.NS", "company_name": "Zed Ltd",
+                                 "metrics": {"stage": "S2 Advancing", "pead": "Mod", "stage_uploaded": "2026-10-25"}}, False)
+check(_live["metrics"]["stage"] == "S2 Advancing" and _live["metrics"]["stage_uploaded"] == "2026-10-25"
+      and {"stage", "pead", "stage_uploaded"} <= set(_kept),
+      "a live recompute keeps the stored Stage Analysis fields (only the weekly upload has them)")
+_live2 = {"ticker": "ZED.NS", "company_name": "Zed Ltd", "metrics": {"stage": "S3 Distribution"}}
+ml.keep_previous(_live2, {"ticker": "ZED.NS", "metrics": {"stage": "S2 Advancing"}}, False)
+check(_live2["metrics"]["stage"] == "S3 Distribution", "...but never over a value the new record has")
 
 db = FakeDB(LISTINGS, market={"DEAD.NS": dict(old_row, as_of=now_iso(30), source="library", ai={})})
 out = ml.lookup(["DEAD.NS"], db=db, compute=lambda t, settings=None: {"DEAD.NS": {"ticker": "DEAD.NS", "company_name": "DEAD.NS",
@@ -401,6 +410,12 @@ check(mcp.handle_body(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initiali
 check(mcp.handle_body(json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}), **kw) == (202, None),
       "a notification is accepted with no body")
 status, listed = mcp.handle_body(json.dumps({"jsonrpc": "2.0", "id": "a", "method": "tools/list"}), **kw)
+_gmm = next(t for t in listed["result"]["tools"] if t["name"] == "get_market_metrics")
+_gw = next(t for t in listed["result"]["tools"] if t["name"] == "get_watchlist")
+check("stage" in _gmm["inputSchema"]["properties"]["groups"]["items"]["enum"]
+      and "stage" in _gw["inputSchema"]["properties"]["groups"]["items"]["enum"]
+      and "Stage Analysis" in _gmm["description"] and "Stage Analysis" in mcp.INSTRUCTIONS,
+      "the connector offers the stage group (Stage, Stage Mom, CE, PEAD) on both tools and says so")
 tools = {t["name"]: t for t in listed["result"]["tools"]}
 desc = tools["get_market_metrics"]["description"]
 check(set(tools) == {"get_market_metrics", "metric_catalog", "list_watchlists", "get_watchlist", "get_market_breadth",

@@ -56,6 +56,9 @@ DETAILS_RETRY_WAIT_S = 5
 INFO_FIELDS = ("trailing_pe", "forward_pe", "pb_ratio", "ev_ebitda", "p_cashflow", "roe",
                "qtr_profit_growth", "qtr_revenue_growth", "reported_qtr")
 STATEMENT_FIELDS = ("roce", "cfo_op_5yr", "qtr_eps_growth")
+# TheWrap Stage Analysis: uploaded weekly in the dashboard, never computed here, so a live recompute of a
+# screener ticker (a stored row past STALE_HOURS) keeps the stored values instead of blanking them.
+STAGE_FIELDS = tuple(f for f, *_ in market_api.METRIC_GROUPS["stage"][1])
 # kg_market_meta key of {library ticker: Yahoo symbol} for BSE listings (see price_symbols).
 SYMBOLS_KEY = "yahoo_symbols"
 _EXCHANGE_RANK = {"NSE": 0, "BSE": 1}
@@ -333,11 +336,12 @@ def keep_previous(record, old, details_missing):
     Only when the company-details request failed (details_missing) are its name and fields taken
     from before -- otherwise a blank there is Yahoo's answer (no P/E for a loss-making year) and is
     left blank. A blank statement field is always taken from before: each statement is fetched on
-    its own, and these figures change once a quarter or a year."""
+    its own, and these figures change once a quarter or a year. The Stage Analysis fields are always taken
+    from before when blank: only the screener's publish has them (from the weekly upload)."""
     if not old:
         return []
     new, prev = record["metrics"], old.get("metrics") or {}
-    fields = (INFO_FIELDS if details_missing else ()) + STATEMENT_FIELDS
+    fields = (INFO_FIELDS if details_missing else ()) + STATEMENT_FIELDS + STAGE_FIELDS
     kept = [f for f in fields if new.get(f) in (None, "") and prev.get(f) not in (None, "")]
     for f in kept:
         new[f] = prev[f]
