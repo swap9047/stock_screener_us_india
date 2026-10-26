@@ -1931,6 +1931,9 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
         roe = cfo_op_5yr = roce = None
         perf_1w = perf_ytd = perf_1m = perf_3m = perf_6m = perf_1y = perf_3y = None
         trailing_pe = forward_pe = pb_ratio = ev_ebitda = p_cashflow = reported_qtr = None
+        # Reset too: market_cap is read inside the try below, so a ticker whose details fetch
+        # raised would otherwise publish the previous ticker's market cap.
+        market_cap = shares_outstanding = None
         # Reset per ticker like everything above. If yf.Ticker() below raised,
         # the statements block used to read the PREVIOUS ticker's object and
         # store that company's ROCE/growth figures under this symbol.
@@ -1953,6 +1956,10 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
 
             p_cashflow = None
             market_cap = info.get("marketCap") or info.get("nonDilutedMarketCap")
+            # Shares outstanding, so the market cap can be taken at the screener's own close
+            # (results.append): Yahoo's marketCap is at its live quote, which disagrees with
+            # Last Close, and the research library's Q&A works out upside and IRR from it.
+            shares_outstanding = info.get("sharesOutstanding") or info.get("impliedSharesOutstanding")
             ocf = info.get("operatingCashflow")
             if market_cap and ocf and ocf != 0:
                 p_cashflow = round(market_cap / ocf, 2)
@@ -2611,6 +2618,9 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
                 "pb_ratio": pb_ratio,
                 "ev_ebitda": ev_ebitda,
                 "p_cashflow": p_cashflow,
+                "shares_outstanding": int(shares_outstanding) if shares_outstanding else None,
+                "market_cap": (round(shares_outstanding * last_close) if shares_outstanding
+                               else round(market_cap) if market_cap else None),
                 "roe": roe,
                 "cfo_op_5yr": cfo_op_5yr,
                 "roce": roce,

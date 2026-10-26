@@ -47,6 +47,9 @@ check(not mismatched, f"labels match the screener's own (get_filterable_metrics)
 # --- the whitelist keeps what is held private ----------------------------------------
 PRIVATE = ("market", "note", "flag", "flag_reason", "interested", "custom_w52dist", "matched_alerts")
 check(not set(PRIVATE) & set(ma.PUBLIC_FIELDS), "no private field is in the catalog")
+_val = {f: u for f, _l, u, _d in ma.METRIC_GROUPS["valuation"][1]}
+check(_val.get("market_cap") == "money" and "shares_outstanding" in _val,
+      "the valuation group carries the market cap (unit money) and shares outstanding")
 row = {"ticker": "ZED.NS", "company_name": "Zed Industries Limited", "last_close": 101.5, "pct_change_1d": float("nan"),
        "rsi14_weekly": 61.234567, "trailing_pe": 24.0, "trend": "Uptrend", "data_end": "2026-10-20",
        "market": "india_invested", "note": "core holding", "flag": "Green", "flag_reason": "manual",

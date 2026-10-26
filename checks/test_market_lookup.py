@@ -261,6 +261,14 @@ _kept = ml.keep_previous(_live, {"ticker": "ZED.NS", "company_name": "Zed Ltd",
 check(_live["metrics"]["stage"] == "S2 Advancing" and _live["metrics"]["stage_uploaded"] == "2026-10-25"
       and {"stage", "pead", "stage_uploaded"} <= set(_kept),
       "a live recompute keeps the stored Stage Analysis fields (only the weekly upload has them)")
+_mc = {"ticker": "ZED.NS", "company_name": "ZED.NS", "metrics": {"last_close": 12.0, "market_cap": None}}
+_kept = ml.keep_previous(_mc, {"ticker": "ZED.NS", "company_name": "Zed Ltd",
+                               "metrics": {"last_close": 10.0, "shares_outstanding": 1000, "market_cap": 10000}}, True)
+check(_mc["metrics"]["shares_outstanding"] == 1000 and _mc["metrics"]["market_cap"] == 12000 and "market_cap" in _kept,
+      "details missing: the share count is kept and the market cap worked out again at today's close, not the stored one")
+_mc2 = {"ticker": "ZED.NS", "company_name": "Zed Ltd", "metrics": {"last_close": 12.0, "market_cap": None}}
+ml.keep_previous(_mc2, {"ticker": "ZED.NS", "metrics": {"shares_outstanding": 1000, "market_cap": 10000}}, False)
+check(_mc2["metrics"].get("market_cap") is None, "...details fine: a blank market cap is Yahoo's answer and stays blank")
 _live2 = {"ticker": "ZED.NS", "company_name": "Zed Ltd", "metrics": {"stage": "S3 Distribution"}}
 ml.keep_previous(_live2, {"ticker": "ZED.NS", "metrics": {"stage": "S2 Advancing"}}, False)
 check(_live2["metrics"]["stage"] == "S3 Distribution", "...but never over a value the new record has")

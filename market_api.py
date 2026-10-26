@@ -22,7 +22,8 @@ import stock_data
 
 # group -> (title, [(field, label, unit, description)]). Labels follow stock_data.
 # get_filterable_metrics (the moving-average ones are filled in from the settings by catalog()).
-# Units: "price" is in the listing's currency, "%" a percent, "pp" percentage points, "x" a
+# Units: "price" is in the listing's currency, "money" a large amount in that currency (a market cap,
+# in rupees or dollars, never crore or millions), "%" a percent, "pp" percentage points, "x" a
 # multiple, "" a label or count.
 METRIC_GROUPS = {
     "price": ("Price", [
@@ -123,6 +124,9 @@ METRIC_GROUPS = {
         ("pb_ratio", "P/B", "x", "Price to book (Yahoo Finance)."),
         ("ev_ebitda", "EV/EBITDA", "x", "Enterprise value to EBITDA (Yahoo Finance)."),
         ("p_cashflow", "P/Cashflow", "x", "Market cap / operating cash flow."),
+        ("market_cap", "Market Cap", "money", "Shares outstanding x the last close, in the listing's currency as a "
+                                              "plain number (rupees, not crore; dollars, not millions)."),
+        ("shares_outstanding", "Shares Out", "", "Shares outstanding (Yahoo Finance)."),
     ]),
     "quality_growth": ("Quality and growth", [
         ("roe", "ROE %", "%", "Return on equity, TTM (Yahoo Finance)."),
