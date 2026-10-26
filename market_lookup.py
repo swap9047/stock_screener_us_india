@@ -54,7 +54,7 @@ DETAILS_RETRY_WAIT_S = 5
 # The fields that request supplies, and the ones the annual/quarterly statements supply (each
 # statement is fetched separately, so any of these can come back blank while the rest is fine).
 INFO_FIELDS = ("trailing_pe", "forward_pe", "pb_ratio", "ev_ebitda", "p_cashflow", "roe",
-               "qtr_profit_growth", "qtr_revenue_growth", "reported_qtr")
+               "qtr_profit_growth", "qtr_revenue_growth", "reported_qtr", "shares_outstanding")
 STATEMENT_FIELDS = ("roce", "cfo_op_5yr", "qtr_eps_growth")
 # TheWrap Stage Analysis: uploaded weekly in the dashboard, never computed here, so a live recompute of a
 # screener ticker (a stored row past STALE_HOURS) keeps the stored values instead of blanking them.
@@ -345,6 +345,11 @@ def keep_previous(record, old, details_missing):
     kept = [f for f in fields if new.get(f) in (None, "") and prev.get(f) not in (None, "")]
     for f in kept:
         new[f] = prev[f]
+    # The share count changes rarely, the price daily: a market cap is worked out again at today's close
+    # from the kept count rather than kept from the stored row's older close.
+    if "shares_outstanding" in kept and new.get("market_cap") in (None, "") and new.get("last_close"):
+        new["market_cap"] = round(new["shares_outstanding"] * new["last_close"])
+        kept.append("market_cap")
     old_name = str(old.get("company_name") or "")
     if details_missing and old_name and old_name != old.get("ticker"):
         record["company_name"] = old_name

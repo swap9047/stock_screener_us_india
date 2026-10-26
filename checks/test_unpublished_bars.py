@@ -127,7 +127,9 @@ check(not sd.official_close(raw, "ZED.NS", {"regularMarketPrice": 1.0, "regularM
 # --- through fetch_snapshot ---------------------------------------------------------------------------
 class FakeTicker:
     def __init__(self, t):
-        self.info = {"longName": "Zed Industries Limited", "regularMarketPrice": 208.5, "regularMarketTime": at_close}
+        self.info = {"longName": "Zed Industries Limited", "regularMarketPrice": 208.5, "regularMarketTime": at_close,
+                     # Yahoo's marketCap is at its own live quote; the row's must be at the screener's close.
+                     "sharesOutstanding": 2_000_000, "marketCap": 999}
         self.cash_flow = self.income_stmt = self.balance_sheet = self.quarterly_income_stmt = pd.DataFrame()
 
 
@@ -154,6 +156,9 @@ check(row.get("data_end") == "2026-10-22" and row.get("last_close") == 208.5,
       f"fetch_snapshot: the rebuilt day is the row's latest, closing at the quote's price ({row.get('data_end')}, {row.get('last_close')})")
 check(row.get("pct_change_1d") == round((208.5 / prev - 1) * 100, 2) or row.get("pct_change_1d") == round((208.5 / prev - 1) * 100, 1),
       f"...and the day's change is against the previous close ({row.get('pct_change_1d')})")
+
+check(row.get("shares_outstanding") == 2_000_000 and row.get("market_cap") == round(2_000_000 * 208.5),
+      f"market cap = shares outstanding x the screener's own close, not Yahoo's marketCap ({row.get('market_cap')})")
 
 print(f"\n{'FAILED' if fails else 'OK'}: {fails} failure(s)")
 sys.exit(1 if fails else 0)
