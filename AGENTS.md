@@ -356,7 +356,7 @@ Each of these has actually bitten this codebase.
 
 | Workflow | Runs | Commits (to the data repo) | Slot (ET) | Stale after |
 |---|---|---|---|---|
-| `data-refresh.yml` | `refresh_data.py`, then `publish_market.py screener` and (first run each hour) `publish_market.py library --min-gap 50` | `data_snapshot.json` | every 15 minutes, no gate (GitHub throttles it far below that) | n/a |
+| `data-refresh.yml` | `refresh_data.py`, then `publish_market.py screener` and (first run each hour) `publish_market.py library --min-gap 50` | `data_snapshot.json` | the Worker's dispatches every 30 min inside Sun 22:00 - Fri 17:00 ET, not 17:30-21:30 (ungated). GitHub's */15 cron is the fallback, gated to the same hourly slots and window as breadth (owner, 2026-10-28) | n/a |
 | `news-summary.yml` | `news_check.py` | `news_summary.json` | 6:00 AM | 23 h |
 | `fundamentals.yml` | `refresh_fundamentals.py` | `fundamentals.json` | 9:00 PM | 22 h |
 | `daily-alerts.yml` | `alert_check.py` | `alert_state.json` | 9:00 PM | 22 h |
@@ -380,11 +380,13 @@ data and does not log in -- the login form already counts as a visit -- so `test
 exempts it from the load-data / commit-data rules and asserts it uses only that secret.
 
 **Every workflow wakes hourly (`cron: "0 * * * *"`) and a `gate` job decides whether this
-run does the work** (`data-refresh.yml` every 15 minutes) -- `.github/actions/slot-gate`, inputs `slots` (ET hours), `grace-hours`,
+run does the work** (`data-refresh.yml`'s fallback is hourly, in breadth's window) -- `.github/actions/slot-gate`, inputs `slots` (ET hours), `grace-hours`,
 optional `days`, and `work-job`. It finds the most recent slot in New York time, skips it
 when it is older than `grace-hours`, and otherwise asks the GitHub API whether an earlier
-run of the same workflow has already done it. `data-refresh.yml` needs no gate: every hour
-is a real run.
+run of the same workflow has already done it. `data-refresh.yml`'s Worker dispatches skip the
+gate, and its scheduled fallback is gated exactly like breadth's: any full run of the workflow,
+a dispatch included, counts as done for its slot, so the fallback works only when the Worker
+has not.
 
 Three things about it you cannot guess:
 
@@ -427,7 +429,9 @@ inside Sunday 22:00 ET to Friday 17:00 ET, and not between 17:30 and 21:30 ET on
 `data-refresh.yml` every 30 minutes, `market-breadth.yml` at :00 only. A dispatch skips `market-breadth.yml`'s gate
 (`github.event_name == 'workflow_dispatch'`), so the Worker enforces the window itself;
 keep it equal to the gate's `window` and `slots`, which are the fallback if the Worker is down. The
-GitHub `*/15` cron on `data-refresh.yml` stays as a throttled backup. Every successful
+GitHub `*/15` cron on `data-refresh.yml` is a backup, gated to the same slots and window as
+`market-breadth.yml` (owner, 2026-10-28; the ungated cron had run through the quiet evening, 19:34 and
+21:53 ET on 2026-10-21, and each run committed). Every successful
 snapshot write is stamped `generated_at = now`, so every run commits to the data repo --
 that is why the Worker is limited to the window and not left running around the clock.
 

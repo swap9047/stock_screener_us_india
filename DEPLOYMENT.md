@@ -119,7 +119,7 @@ A few things worth knowing:
 
 ## 8. Data refresh (faster page loads)
 
-A third GitHub Actions workflow, `.github/workflows/data-refresh.yml`, fetches all watchlist tickers via yfinance and saves the result to `data_snapshot.json`. It runs **every 15 minutes, around the clock** (GitHub throttles scheduled runs well below that in practice) — not just during US market hours, since India trades roughly 23:45-06:00 ET and a daytime-only window would sample that session exactly never. It's a single cron with no EDT/EST pair or gate job needed (an hourly cron fires correctly in both seasons), and idle hours cost nothing extra: the commit step no-ops when the snapshot is byte-identical to the last run. The app loads this snapshot on open instead of hitting yfinance live every session — much faster, and avoids every visitor re-fetching identical data.
+A third GitHub Actions workflow, `.github/workflows/data-refresh.yml`, fetches all watchlist tickers via yfinance and saves the result to `data_snapshot.json`. It is driven by the Cloudflare Worker, every 30 minutes inside Sunday 22:00 ET to Friday 17:00 ET (not 17:30-21:30 ET on weekdays), which covers India's session of roughly 23:45-06:00 ET. A GitHub cron every 15 minutes is the fallback for when the Worker is down, and a slot gate limits it to one run an hour in that same window (the same slots as the breadth workflow). Idle hours cost nothing extra: the commit step no-ops when the snapshot is byte-identical to the last run. The app loads this snapshot on open instead of hitting yfinance live every session — much faster, and avoids every visitor re-fetching identical data.
 
 No new secret needed beyond `DATA_REPO_TOKEN` — it commits `data_snapshot.json` to the private data repo.
 

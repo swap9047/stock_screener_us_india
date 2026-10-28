@@ -51,7 +51,7 @@ commit their output.
 
 | When (slot) | Job | What it produces |
 |---|---|---|
-| Every 15 minutes, around the clock (GitHub runs it far less often) | Data refresh | `data_snapshot.json`: prices plus every indicator, for every ticker |
+| Every 30 minutes, Sunday 10 PM to Friday 5 PM ET (none 5:30-9:30 PM ET on weekdays); GitHub's hourly fallback covers a Worker outage | Data refresh | `data_snapshot.json`: prices plus every indicator, for every ticker |
 | 6:00 AM | News digest | `news_summary.json` + one Discord digest per watchlist in scope |
 | 1:00 AM, 7:00 AM, 1:00 PM and 7:00 PM, Mon-Fri | Market breadth + performance (1 AM: India intraday; 1 PM: US intraday) | `market_breadth.json`, `dashboard_perf.json` |
 | 9:00 PM | Sentiment (fundamentals) | `fundamentals.json`: the AI earnings and guidance read per ticker |
@@ -817,7 +817,8 @@ GitHub drops or delays no longer costs a day.
 
 | Workflow | Work | Slot | Notes |
 |---|---|---|---|
-| `data-refresh.yml` | `refresh_data.py` | every wake-up (every 15 min, throttled by GitHub) | no gate |
+| `data-refresh.yml` | `refresh_data.py` | every 30 min from the Cloudflare Worker, inside its window | not gated |
+| `data-refresh.yml` (fallback) | `refresh_data.py` | every hour in the window, if the Worker did not run that hour | slot gate (the same slots and window as `market-breadth.yml`) |
 | `news-summary.yml` | `news_check.py` | 06:00 | `markets` and `limit` inputs make a partial, silent run |
 | `fundamentals.yml` | `refresh_fundamentals.py` | 21:00 | `markets` and `limit` inputs |
 | `daily-alerts.yml` | `alert_check.py` | 21:00 | the gate also asks whether any rule is due that day |
