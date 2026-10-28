@@ -639,10 +639,14 @@ tickers de-duplicated. You edit tickers on the real tabs.
 ### News tab
 This tab is rendered only while it is open.
 - **Market breadth (6 months, 1, 2 or 5 years; 2 years by default).** For the Nifty 500
-  and, by the **US index** switch, the S&P 500 or Nasdaq 100: % of stocks above their
+  on the left and, by the **Right-hand index** dropdown, the S&P 500 (default), Nasdaq
+  100, Nifty 50, Nifty Midcap 150 or Nifty Smallcap 250 on the right: % of stocks above their
   200-day SMA (0-20% and 80-100% faintly shaded; **Show % above 50-day SMA** adds the
   shorter-term line in amber, on this view and the watchlist one), and 52-week highs (bars
-  up) against lows (bars down). The US Invested return curve follows the switch too. **🔄 Refresh Charts** starts
+  up) against lows (bars down). The right-hand return curve follows the dropdown too:
+  US Invested against a US index, India Invested against an Indian one. The three Nifty
+  indexes are computed from the Nifty 500's own downloads (they are inside it), so they
+  cost the job almost nothing. **🔄 Refresh Charts** starts
   the market-breadth workflow, which also refreshes the watchlist tabs' prices; the
   charts update about five minutes after it finishes. On a phone the panels stack in one
   column and tapping only shows values (no zoom).
@@ -666,7 +670,8 @@ This tab is rendered only while it is open.
   by side -- India Invested vs Nifty 500 on the left and US Invested vs S&P 500 on the right
   by default, each with its own pickers: % of its stocks above their 200-day SMA (with the
   index's line overlaid), % at 52-week highs and lows, and its return against that index
-  (Nifty 500, S&P 500 or Nasdaq 100). The benchmark defaults to the exchange most of its
+  (any of the six: Nifty 500, Nifty 50, Nifty Midcap 150, Nifty Smallcap 250, S&P 500,
+  Nasdaq 100; a dropdown). The benchmark defaults to the exchange most of its
   stocks list on and is remembered per side and watchlist. Each breadth panel's legend
   (under it) names %200d / %50d; the hover reads "% stocks above 200d SMA". It is computed in the app from `dashboard_perf.json` (6 years of closes)
   with `breadth_math`, the same maths as the index charts. A small list moves in big
@@ -823,7 +828,7 @@ GitHub drops or delays no longer costs a day.
 | `fundamentals.yml` | `refresh_fundamentals.py` | 21:00 | `markets` and `limit` inputs |
 | `daily-alerts.yml` | `alert_check.py` | 21:00 | the gate also asks whether any rule is due that day |
 | `expert-views.yml` | `refresh_data.py`, then `refresh_expert_views.py` | 01:00 | `markets` and `limit` inputs |
-| `market-breadth.yml` | breadth (S&P 500, Nifty 500, Nasdaq 100) + dashboard performance + the watchlist snapshot | every hour, Sun 22:00 ET to Fri 17:00 ET, none 18:00-21:00 ET (GitHub throttles the real cadence); also the app's Refresh Charts | refreshes only a market short of its latest session by the exchange clock, or holding a live (intraday) reading ("unchanged" otherwise; "live" mid-session); a part-published day is "partial", an unpublished one "awaiting", and both fail the run so the gate retries; downloads 50 stocks at a time, 5 s apart, then retries each failure on its own, 5 s apart, up to 3 rounds; fails loudly if a market's breadth didn't refresh |
+| `market-breadth.yml` | breadth (every `index_registry` index: Nifty 500, Nifty 50, Nifty Midcap 150, Nifty Smallcap 250, S&P 500, Nasdaq 100) + dashboard performance + the watchlist snapshot | every hour, Sun 22:00 ET to Fri 17:00 ET, none 18:00-21:00 ET (GitHub throttles the real cadence); also the app's Refresh Charts | refreshes only a market short of its latest session by the exchange clock, or holding a live (intraday) reading ("unchanged" otherwise; "live" mid-session); a part-published day is "partial", an unpublished one "awaiting", and both fail the run so the gate retries; downloads 50 stocks at a time, 5 s apart, then retries each failure on its own, 5 s apart, up to 3 rounds; fails loudly if a market's breadth didn't refresh |
 | `weekly-wrapup.yml` | `weekly_wrapup_check.py` | Sunday 21:00 | |
 | `checks.yml` | `checks/run_all.py` (offline) | every push | needs no secrets or data |
 

@@ -34,6 +34,7 @@ from urllib.parse import parse_qs, urlparse
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import market_http  # noqa: E402  (first: sets the runtime up before yfinance is imported)
+import index_registry  # noqa: E402
 import market_api  # noqa: E402
 import market_lists  # noqa: E402
 import market_lookup  # noqa: E402
@@ -52,7 +53,7 @@ INSTRUCTIONS = (
     "with its price_date as (screener, <date>). Explain a signal with the tool's explain group and definitions, "
     "which are the screener's own rules. For the user's watchlists and holdings (how a list did today or this week, its "
     "best and worst stocks), call list_watchlists, then get_watchlist with the groups and sort you need; for market "
-    "breadth (Nifty 500, S&P 500, Nasdaq 100 or a watchlist) get_market_breadth; for a price chart or a return over "
+    f"breadth ({index_registry.label_list()} or a watchlist) get_market_breadth; for a price chart or a return over "
     "any window get_price_history. Use web search for news, results and guidance, which these tools do not have.")
 
 GROUP_HELP = ("price, returns, moving_averages, momentum (RSI, ADX), relative_strength (Mansfield RS vs Nifty 500 / "
@@ -129,13 +130,14 @@ TOOLS = [
         "name": "get_market_breadth",
         "title": "Market breadth, day by day",
         "description": (
-            "Market breadth from the user's screener for an index (Nifty 500, S&P 500, Nasdaq 100) or one of the user's "
+            f"Market breadth from the user's screener for an index ({index_registry.label_list()}) or one of the user's "
             "watchlists: each trading day, the % of its stocks above their 200-day and 50-day simple moving averages and "
             "at 52-week highs and lows, plus the latest counts. The same numbers as the screener's breadth charts."),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "An index ('Nifty 500', 'S&P 500', 'Nasdaq 100') or a watchlist."},
+                "name": {"type": "string", "description": "An index (" + ", ".join(f"'{x}'" for x in index_registry.LABELS)
+                         + ") or a watchlist."},
                 "days": {"type": "integer", "minimum": 1, "maximum": market_lists.MAX_BREADTH_DAYS,
                          "description": "Calendar days of history (default 365)."},
             },
@@ -148,7 +150,7 @@ TOOLS = [
         "title": "Daily closing prices",
         "description": (
             "Daily closes for a watchlist's stocks and its benchmark, or for up to 10 companies or indexes by name or "
-            "ticker (Nifty 500, S&P 500, Nasdaq 100 work too), over the last N days (up to 730). For returns over a "
+            f"ticker ({index_registry.label_list()} work too), over the last N days (up to 730). For returns over a "
             "window the returns group does not have, or to compare stocks over the same dates. Watchlist stocks are "
             "stored; any other listed stock is fetched from Yahoo."),
         "inputSchema": {
