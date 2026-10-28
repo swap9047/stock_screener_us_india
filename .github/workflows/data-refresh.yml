@@ -9,20 +9,24 @@ env:
 # redundant identical fetches across visitors. The app's "Refresh Data"
 # button still fetches live data on demand regardless of this snapshot.
 #
-# Scheduled every 15 minutes, every hour of every day (owner, 2026-10-15; it was
-# hourly). GitHub does not honour that: it throttled the hourly cron to 4-6 runs a
-# day, 2-5 hours apart (September 2026, AGENTS.md's GitHub Actions section), and a
-# 15-minute cron is only more chances, not a guarantee. Each run that changes the
-# ~0.75 MB snapshot is a commit to the data repo, so watch that repo's size.
+# Two triggers, one job:
+#  - The Cloudflare Worker (owner, 2026-10-21) dispatches this workflow every
+#    30 minutes (:00 and :30 UTC) inside its window: Sunday 22:00 ET to Friday
+#    17:00 ET, and not 17:30-21:30 ET on weekdays. A dispatch skips the gate
+#    below, so the Worker enforces the window itself. Every successful run writes
+#    the snapshot, which is a commit to the data repo.
+#  - GitHub's own cron (every 15 minutes) is the fallback for when the Worker is
+#    down. It works the same slots and window as market-breadth.yml, through the
+#    slot gate: the first run in each hour inside the window does the work, and
+#    the others skip. Outside the window it does nothing (owner, 2026-10-28: the
+#    old ungated cron ran through the quiet evening and the weekend). GitHub
+#    starts scheduled runs hours late and drops some, so this is a canary, not a
+#    clock. The gate counts any full run of this workflow, Worker dispatches
+#    included, as done for its slot, so while the Worker is healthy the fallback
+#    skips every slot.
 #
-# This replaces six fixed ET slots (7, 10, 13, 16, 19, 22 ET) selected by a
-# gate job. The gate existed only to map those slots onto UTC crons across
-# DST -- an hourly cron needs none of that machinery, since every hour fires
-# correctly in both seasons and there is no cron pair that could double-fire.
-#
-# Running around the clock is deliberate, not laziness: India trades roughly
-# 23:45-06:00 ET, so the old 7 AM - 11 PM ET window sampled the entire Indian
-# session exactly never -- it only ever saw those prices after the close.
+# India trades roughly 23:45-06:00 ET, which falls inside the window from Sunday
+# night to Friday afternoon, so the Worker's runs cover the whole Indian session.
 #
 # Cost is zero (public repo = free Actions minutes), and an idle hour costs
 # nothing downstream either: the commit step below skips when the snapshot is
@@ -32,8 +36,8 @@ env:
 # so Expert Views always work from same-day data.
 on:
   schedule:
-    - cron: "*/15 * * * *"
-  workflow_dispatch: {}    # run manually from the Actions tab anytime
+    - cron: "*/15 * * * *"  # the fallback; the gate below decides whether a run works
+  workflow_dispatch: {}    # run manually from the Actions tab anytime, or by the Worker
 
 concurrency:
   group: ${{ github.workflow }}
@@ -41,9 +45,35 @@ concurrency:
 
 permissions:
   contents: read   # data is committed to the private data repo, never to this public one
+  actions: read    # the slot gate reads this workflow's own run history
 
 jobs:
+  # The same slots and window as market-breadth.yml's gate (owner, 2026-10-21 and
+  # 2026-10-28): hourly from Sunday 10 PM ET to Friday 5 PM ET, none at 6-9 PM ET.
+  # A run landing outside the window, or in an hour already done, skips the work.
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.slot.outputs.run }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - id: slot
+        uses: ./.github/actions/slot-gate
+        with:
+          slots: "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,22,23"
+          grace-hours: "1"
+          window: "SUN:22-FRI:17"
+          work-job: refresh
+          workflow-file: data-refresh.yml
+          token: ${{ github.token }}
+
   refresh:
+    needs: gate
+    # A dispatch (the Worker's, or a manual run) always works; the gate only decides
+    # the scheduled fallback.
+    if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
