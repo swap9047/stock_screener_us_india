@@ -220,3 +220,103 @@ def plotly_config(mobile):
     if mobile:
         return {"displayModeBar": False, "scrollZoom": False, "doubleClick": False, "displaylogo": False}
     return {"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "select2d", "autoScale2d"]}
+
+
+# --- quarterly results (2026-10-28) ---------------------------------------------------
+# The fourth row: per quarter, the median company's revenue, profit and EPS
+# growth as grouped bars (StockScans' blue / teal / purple), and its OPM
+# (operating margin) as an amber line on a second axis -- each one shown or
+# hidden by the News tab's field picker. A quarter still being reported
+# (quarterly_results' "season") is drawn faded and hatched, so half a season is
+# not read as the final number.
+TEAL = "#1abc9c"
+PURPLE = "#9b59b6"
+RESULT_SERIES = (("rev", "Revenue growth", BLUE), ("ni", "Profit growth", TEAL), ("eps", "EPS growth", PURPLE))
+
+
+def _signed(v):
+    return "--" if v is None else f"{v:+.1f}%"
+
+
+def _level(v):
+    return "--" if v is None else f"{v:.1f}%"
+
+
+def add_results(fig, rows, row, col, basis_label, compare=None, compare_name=None, legend=True,
+                show=("rev", "ni", "eps", "margin")):
+    """`rows` from quarterly_results.summarize (oldest first). `compare` (the
+    same shape, e.g. the benchmark index's) is named in each bar's hover.
+    `legend`: draw this panel's series in the figure legend (once per figure;
+    the legend groups toggle every panel's matching series). `show`: which of
+    the four fields to draw ("rev", "ni", "eps", "margin")."""
+    x = [r["label"] for r in rows]
+    cmp = {r["q"]: r for r in (compare or [])}
+    season = [r["season"] for r in rows]
+    for key, name, colour in RESULT_SERIES:
+        if key not in show:
+            continue
+        hover = []
+        for r in rows:
+            text = f"{name} {basis_label}: {_signed(r[key])} (median of {r['n'][key]})"
+            if compare_name is not None:
+                text += f" -- {compare_name} {_signed((cmp.get(r['q']) or {}).get(key))}"
+            if r["season"]:
+                text += " -- still being reported"
+            hover.append(text)
+        fig.add_trace(go.Bar(x=x, y=[r[key] for r in rows], name=name, legendgroup=key, showlegend=legend,
+                             marker=dict(color=colour, line_width=0, opacity=[0.45 if s else 1 for s in season],
+                                         pattern=dict(shape=["/" if s else "" for s in season], fgcolor="white",
+                                                      size=6, solidity=0.25)),
+                             hovertext=hover, hovertemplate="%{hovertext}<extra></extra>"),
+                      row=row, col=col, secondary_y=False)
+    mg = [r["margin"] for r in rows]
+    if "margin" in show and any(v is not None for v in mg):
+        hover = []
+        for r in rows:
+            text = f"OPM: {_level(r['margin'])} (median of {r['n']['margin']})"
+            if compare_name is not None:
+                text += f" -- {compare_name} {_level((cmp.get(r['q']) or {}).get('margin'))}"
+            hover.append(text)
+        fig.add_trace(go.Scatter(x=x, y=mg, name="OPM", legendgroup="margin", showlegend=legend,
+                                 mode="lines+markers", line=dict(color=AMBER, width=2),
+                                 marker=dict(size=7, color=AMBER, line=dict(color="white", width=1.5)),
+                                 connectgaps=True, hovertext=hover, hovertemplate="%{hovertext}<extra></extra>"),
+                      row=row, col=col, secondary_y=True)
+    fig.add_hline(y=0, line_color="rgba(128,128,128,0.55)", line_width=1, row=row, col=col,
+                  exclude_empty_subplots=False)
+    fig.update_yaxes(ticksuffix="%", row=row, col=col, secondary_y=False)
+    # OPM's axis from 0 to a round step above its highest point, so the line sits
+    # in the upper part of the panel, clear of the bars' labels; plotly's default
+    # put ticks like 0.03% and 17.58% there.
+    top = max([v for v in mg if v is not None] or [0])
+    step = 5 if top <= 30 else 10
+    edge = step * (int(top * 1.25 // step) + 1)
+    fig.update_yaxes(ticksuffix="%", showgrid=False, range=[0, edge], dtick=step * (2 if edge > 4 * step else 1),
+                     tickformat=".0f", row=row, col=col, secondary_y=True)
+
+
+def style_results(fig, height, mobile):
+    """style()'s look for the quarterly results figure: category quarters on
+    the x axis (style() sets a date range), grouped bars, and one legend under
+    the panels, below the quarter labels."""
+    fig.update_layout(
+        height=height,
+        hovermode="x unified",
+        barmode="group",
+        bargap=0.28,
+        bargroupgap=0.06,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=0, r=0, t=55, b=10),
+        modebar=dict(orientation="v", bgcolor="rgba(0,0,0,0)"),
+        hoverlabel=dict(font_size=12),
+        dragmode=False if mobile else "zoom",
+        showlegend=True,
+        legend=dict(orientation="h", x=0, y=-0.12, xanchor="left", yanchor="top", traceorder="normal",
+                    bgcolor="rgba(0,0,0,0)", font=dict(size=11),
+                    **({"itemclick": False, "itemdoubleclick": False} if mobile else {})),
+    )
+    fig.update_annotations(font_size=13)
+    fig.update_xaxes(type="category", showgrid=False, showline=False, fixedrange=mobile)
+    fig.update_yaxes(gridcolor=FAINT, zeroline=False, fixedrange=mobile)
+    return fig
