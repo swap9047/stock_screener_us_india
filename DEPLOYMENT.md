@@ -151,6 +151,8 @@ Yahoo publishes a day's closes late, often hours after the close and a few stock
 
 No new secret needed beyond `DATA_REPO_TOKEN`.
 
+`.github/workflows/quarterly-results.yml` (2026-10-28) fetches Yahoo's quarterly income statements for every index on the News tab and every watchlist stock, once a day at **4 AM ET** (hourly wake-up, slot gate), into `quarterly_results.json` for the News tab's quarterly results rows. It fetches only the companies that are due, stops itself after 100 minutes and saves, and goes red only when Yahoo refuses most of a run (the gate retries). It needs only `DATA_REPO_TOKEN`.
+
 ## 8e. Weekly wrap-up digest
 
 A seventh GitHub Actions workflow, `.github/workflows/weekly-wrapup.yml`, runs once a week on **Sunday at 9:00 PM ET** (Monday 01:00 / 02:00 UTC, ~6:30 AM IST before Monday's India market open). It runs `weekly_wrapup_check.py` to evaluate all rules against Friday's weekly close, formats active alerts and roll-up metrics, sends the weekly wrap-up digest to Discord, and commits state (`weekly_wrapup_state.json`) to the private data repo.

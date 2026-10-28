@@ -1,0 +1,84 @@
+name: Quarterly Results Updater
+
+# Yahoo's quarterly income statements for every index the News tab charts and
+# every watchlist stock, into quarterly_results.json (2026-10-28). Only the
+# companies that are due are fetched (quarterly_results.is_due): the first run
+# fetches all ~1,100, a day in results season a few hundred, a quiet day a few
+# dozen.
+on:
+  # ONE hourly wake-up; the slot gate decides whether this run does the work, so
+  # a cron line GitHub drops or fires hours late does not cost the day.
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read   # data is committed to the private data repo, never to this public one
+  actions: read    # the slot gate reads this workflow's own run history
+
+jobs:
+  # One slot a day, 4 AM ET: after the Indian companies' results of the day
+  # before (filed during the IST afternoon and evening) and the US after-close
+  # reports. grace-hours 22, like the other one-slot-a-day workflows.
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.slot.outputs.run }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - id: slot
+        uses: ./.github/actions/slot-gate
+        with:
+          slots: "4"
+          grace-hours: "22"
+          work-job: update_results
+          workflow-file: quarterly-results.yml
+          token: ${{ github.token }}
+
+  update_results:
+    needs: gate
+    if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    # The script stops itself after 100 minutes (TIME_BUDGET_SECONDS) and saves;
+    # this is the backstop.
+    timeout-minutes: 150
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - uses: ./.github/actions/load-data
+        with:
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # The script exits 1 when Yahoo refused most of the run; `shell: bash` runs
+      # with pipefail, so the pipe through log_redact.py keeps that exit code.
+      - name: Fetch quarterly results
+        shell: bash
+        run: |
+          python -u refresh_quarterly_results.py 2>&1 | python -u log_redact.py
+
+      # always(): a run that stopped early still saved what it fetched.
+      - name: Commit and push changes
+        if: always()
+        uses: ./.github/actions/commit-data
+        with:
+          files: quarterly_results.json
+          message: "Update quarterly results [automated]"

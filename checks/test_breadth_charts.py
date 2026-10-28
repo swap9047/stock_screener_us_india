@@ -152,8 +152,10 @@ check('key="breadth_refresh_charts"' in APP and 'trigger_github_workflow(token, 
 check('st.toggle("Show % above 50-day SMA", value=True, key="breadth_show_50d")' in APP
       and APP.count("show_50=show_50") == 2 and '"breadth_show_50d"' in APP,
       "C7: one toggle, on by default, shows the 50-day on both views and survives leaving the tab")
-check("breadth_charts.is_mobile(st.context.headers" in APP and APP.count("breadth_charts.plotly_config(_mobile)") == 2,
-      "C6: both charts get the phone behaviour")
+# Three call sites: the index chart, the watchlist chart and the quarterly results
+# rows' render_results_row (drawn under each, 2026-10-28).
+check("breadth_charts.is_mobile(st.context.headers" in APP and APP.count("breadth_charts.plotly_config(_mobile)") == 3,
+      "C6: every chart gets the phone behaviour")
 WF = (REPO / ".github/workflows/market-breadth.yml").read_text()
 step = WF[WF.index("- name: Refresh data snapshot"):WF.index("- name: Commit and push changes")]
 check("continue-on-error: true" in step and "refresh_data.py" in step and "log_redact.py" in step,

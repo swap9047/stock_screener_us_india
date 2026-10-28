@@ -93,7 +93,7 @@ work, up to 22 hours late (23 h for news; for breadth, until the next slot). See
 | Kind | Files | Who writes them |
 |---|---|---|
 | **Your configuration** (edited in the UI) | `watchlist.json`, `markets.json`, `watchlist_groups.json`, `interested.json`, `alerts_config.json`, `custom_filters.json`, `custom_columns.json`, `ticker_notes.json`, `stage_analysis.json`, `settings.json`, `column_prefs.json`, `ticker_index.json` | The app |
-| **Generated data** (written by jobs) | `data_snapshot.json`, `expert_views.json`, `fundamentals.json`, `news_summary.json`, `market_breadth.json`, `dashboard_perf.json`, `alert_state.json`, `weekly_wrapup_state.json` | The workflows. The app also writes the first three in narrow, guarded ways |
+| **Generated data** (written by jobs) | `data_snapshot.json`, `expert_views.json`, `fundamentals.json`, `news_summary.json`, `market_breadth.json`, `dashboard_perf.json`, `quarterly_results.json`, `alert_state.json`, `weekly_wrapup_state.json` | The workflows. The app also writes the first three in narrow, guarded ways |
 | **Local only** (never pushed) | `auth_config.json`, `discord_config.json`, `.data_sync_state.json`, `.env` | You / the container |
 
 The table above shows `data_snapshot.json`, `expert_views.json` and `fundamentals.json`
@@ -676,6 +676,24 @@ This tab is rendered only while it is open.
   (under it) names %200d / %50d; the hover reads "% stocks above 200d SMA". It is computed in the app from `dashboard_perf.json` (6 years of closes)
   with `breadth_math`, the same maths as the index charts. A small list moves in big
   steps: with 13 stocks, each one is about 8 points.
+- **Quarterly results** (a fourth row under each set of charts, 2026-10-28). For each index
+  column and each watchlist side: per quarter, the **median company's** revenue growth %,
+  profit growth % (reported PAT, one-offs included) and EPS growth % (grouped blue / teal /
+  purple bars) and its OPM % (operating profit after depreciation over revenue; amber
+  line, right axis). **Quarterly results growth** switches YoY (on the same quarter a year
+  earlier, the default) and QoQ (on the quarter before) for every row, and **Quarterly
+  results fields** shows or hides each of the four. Hover shows each figure, how many
+  companies it is the median of, and on a watchlist the benchmark index's median beside it.
+  Quarters are calendar quarters (an Indian Q2 FY27 is Sep '26). A company with a loss or
+  zero in the base quarter is left out of that growth figure, and one whose diluted share
+  count moved more than 1.5x (a bonus issue or split Yahoo did not adjust the older EPS
+  for) out of EPS growth; banks have no operating income on Yahoo, so no OPM. A quarter fewer than half as many companies have reported as the one
+  before is still in its results season: drawn faded and hatched, its hover says so.
+  The statements come from `quarterly_results.json`, which `quarterly-results.yml` builds
+  daily at 4 AM ET; its log counts, per market, how many companies' latest quarter has
+  each field. Yahoo serves about five quarters per company, so the job keeps every quarter
+  it has seen: YoY has one quarter from day one and fills in one per results season (six
+  after about a year); QoQ has four from day one.
 - **The news digest**, with the scope picker, model pickers, and **🔄 Refresh News**,
   which starts a full background run.
 
@@ -830,6 +848,7 @@ GitHub drops or delays no longer costs a day.
 | `expert-views.yml` | `refresh_data.py`, then `refresh_expert_views.py` | 01:00 | `markets` and `limit` inputs |
 | `market-breadth.yml` | breadth (every `index_registry` index: Nifty 500, Nifty 50, Nifty Midcap 150, Nifty Smallcap 250, S&P 500, Nasdaq 100) + dashboard performance + the watchlist snapshot | every hour, Sun 22:00 ET to Fri 17:00 ET, none 18:00-21:00 ET (GitHub throttles the real cadence); also the app's Refresh Charts | refreshes only a market short of its latest session by the exchange clock, or holding a live (intraday) reading ("unchanged" otherwise; "live" mid-session); a part-published day is "partial", an unpublished one "awaiting", and both fail the run so the gate retries; downloads 50 stocks at a time, 5 s apart, then retries each failure on its own, 5 s apart, up to 3 rounds; fails loudly if a market's breadth didn't refresh |
 | `weekly-wrapup.yml` | `weekly_wrapup_check.py` | Sunday 21:00 | |
+| `quarterly-results.yml` | `refresh_quarterly_results.py` | 04:00 | fetches only the companies that are due (never fetched, results expected this season, or 14 days old); stops itself after 100 minutes; red when Yahoo refuses most of a run |
 | `checks.yml` | `checks/run_all.py` (offline) | every push | needs no secrets or data |
 
 **Every step that runs Python** in these jobs pipes its output through `log_redact.py`,

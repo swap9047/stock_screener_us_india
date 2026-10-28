@@ -67,6 +67,7 @@ from watchlist_labels import COMBINED_TAB_LABELS, watchlist_label_error
 from breadth_math import compute_breadth, assemble_closes
 import breadth_charts
 import index_registry
+import quarterly_results
 import llm_util
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE,
                      send_discord_batch, build_discord_messages_for_rule, describe_schedule, DISCLAIMER,
@@ -5235,7 +5236,7 @@ with tab_news:
         # these would reset every time you left the tab. Re-assigning keeps them.
         for _k in ("time_horizon_filter", "breadth_us_index", "breadth_show_50d", "news_scope_select", "news_search_model_select",
                    "news_reasoning_model_select", "news_reasoning_budget_select",
-                   "breadth_watchlist_left", "breadth_watchlist_right",
+                   "breadth_watchlist_left", "breadth_watchlist_right", "results_growth_basis", "results_fields",
                    *[k for k in st.session_state if str(k).startswith("breadth_benchmark_")]):
             if _k in st.session_state:
                 st.session_state[_k] = st.session_state[_k]
@@ -5276,6 +5277,16 @@ with tab_news:
             # SMA, the shorter-term read, in amber under the 200-day's green. On by
             # default (owner, 2026-10-15).
             show_50 = st.toggle("Show % above 50-day SMA", value=True, key="breadth_show_50d")
+            # The quarterly results rows (2026-10-28): growth on the same quarter a
+            # year earlier (YoY, the default -- owner) or the quarter before (QoQ),
+            # for both rows. Deselecting the pill reads as YoY.
+            results_basis = st.segmented_control("Quarterly results growth", ["YoY", "QoQ"], default="YoY",
+                                                 key="results_growth_basis") or "YoY"
+            # Which of the four fields the rows draw (owner, 2026-10-28: all four
+            # by default, each one can be hidden).
+            results_fields = st.pills("Quarterly results fields", list(quarterly_results.FIELDS),
+                                      selection_mode="multi", default=list(quarterly_results.FIELDS),
+                                      format_func=quarterly_results.FIELD_LABELS.get, key="results_fields") or []
         
         with col_refresh:
             # Starts the market-breadth workflow (2026-10-15): breadth, the
@@ -5431,6 +5442,92 @@ with tab_news:
                 perf_as_of = perf_data.get("as_of")
             except Exception:
                 perf_data = {}
+
+        # Quarterly results (2026-10-28), from quarterly_results.json -- built by
+        # quarterly-results.yml, no live fetch. Regenerable data: a missing or
+        # torn file just means the rows say there is nothing yet.
+        results_data = {}
+        try:
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                   quarterly_results.QUARTERLY_RESULTS_FILE)) as f:
+                results_data = json.load(f)
+            if not isinstance(results_data, dict):
+                results_data = {}
+        except (OSError, ValueError):
+            results_data = {}
+        _results_tickers = results_data.get("tickers") or {}
+        _results_members = results_data.get("members") or {}
+        _results_cache = {}
+
+        def _results_rows(tickers):
+            """(quarters, companies with stored results) for a group, under the toggle's basis."""
+            key = (results_basis, tuple(tickers))
+            if key not in _results_cache:
+                _results_cache[key] = quarterly_results.summarize(_results_tickers, tickers,
+                                                                  basis=results_basis.lower())
+            return _results_cache[key]
+
+        # Short names for a title's latest-quarter figures, in field order.
+        _results_short = {"rev": "Rev", "ni": "Profit", "eps": "EPS", "margin": "OPM"}
+
+        def _results_title(name, rows, total):
+            if not rows:
+                return f"{name}: Quarterly Results ({results_basis}, median company)"
+            r = rows[-1]
+
+            def fmt(key):
+                v = r[key]
+                if v is None:
+                    return "--"
+                return f"{v:.1f}%" if key == "margin" else f"{v:+.1f}%"
+            figures = ", ".join(f"{_results_short[k]} {fmt(k)}" for k in quarterly_results.FIELDS
+                                if k in results_fields)
+            # Two lines: one line ran past a half-width panel and was clipped.
+            return (f"{name}: Quarterly Results ({results_basis}, median)<br>{r['label']}"
+                    + (f": {figures}" if figures else "") + f"; {r['reported']} of {total} reported")
+
+        def _results_empty(name, companies):
+            if not results_fields:
+                return "Pick a field to show above (Revenue growth, Profit growth, EPS growth, OPM)"
+            if not results_data:
+                return "No quarterly results yet - stored by the first quarterly-results run"
+            if not companies:
+                return f"No stored results for {name}'s stocks yet"
+            if results_basis == "YoY":
+                return "No YoY quarter yet - one fills in each results season as quarters are stored"
+            return "Not enough quarters stored yet"
+
+        def render_results_row(panels, chart_key):
+            """The fourth row: one quarterly results panel per (name, tickers,
+            compare tickers or None, compare name) -- side by side, or stacked on a phone."""
+            n = len(panels)
+            built = []
+            for name, tickers, cmp_tickers, cmp_name in panels:
+                rows, companies = _results_rows(tickers)
+                cmp_rows = _results_rows(cmp_tickers)[0] if cmp_tickers else None
+                built.append((name, rows, companies, len(dict.fromkeys(tickers)), cmp_rows, cmp_name))
+            titles = [_results_title(nm, rows, tot) for nm, rows, _, tot, _, _ in built]
+            if _mobile:
+                fig_r = make_subplots(rows=n, cols=1, vertical_spacing=0.18,
+                                      specs=[[{"secondary_y": True}] for _ in range(n)],
+                                      subplot_titles=titles)
+                pos = [(i + 1, 1) for i in range(n)]
+            else:
+                fig_r = make_subplots(rows=1, cols=n, horizontal_spacing=0.07,
+                                      specs=[[{"secondary_y": True} for _ in range(n)]],
+                                      subplot_titles=titles)
+                pos = [(1, i + 1) for i in range(n)]
+            legend_drawn = False
+            for (name, rows, companies, total, cmp_rows, cmp_name), (rr, cc) in zip(built, pos):
+                if rows and results_fields:
+                    breadth_charts.add_results(fig_r, rows, rr, cc, results_basis, compare=cmp_rows,
+                                               compare_name=cmp_name, legend=not legend_drawn,
+                                               show=results_fields)
+                    legend_drawn = True
+                else:
+                    breadth_charts.no_data(fig_r, rr, cc, _results_empty(name, companies))
+            breadth_charts.style_results(fig_r, height=(380 * n) if _mobile else 380, mobile=_mobile)
+            st.plotly_chart(fig_r, width="stretch", key=chart_key, config=breadth_charts.plotly_config(_mobile))
 
         def _closes_from_perf(market):
             series_map = perf_data.get("markets", {}).get(market, {})
@@ -5642,6 +5739,12 @@ with tab_news:
             st.plotly_chart(fig, width="stretch", key="breadth_index_chart",
                             config=breadth_charts.plotly_config(_mobile))
 
+            # Row four (2026-10-28): each column's index, its members as the
+            # quarterly job last stored them.
+            render_results_row([("Nifty 500", _results_members.get("INDIA") or [], None, None),
+                                (right_index_label, _results_members.get(right_breadth_key) or [], None, None)],
+                               "breadth_index_results_chart")
+
         # --- Watchlist breadth (2026-10-14; split in two 2026-10-15) --------------
         # The same three charts as above, over the stocks of a watchlist or
         # combined group, against any index_registry index -- twice, side by
@@ -5687,7 +5790,8 @@ with tab_news:
                                            key=_bench_key)
             bench, bench_market = _wb_benchmarks[bench_label]
             name = _wb_labels.get(wb_key, wb_key)
-            out = {"name": name, "bench_label": bench_label, "radio_key": f"breadth_benchmark_{side}_{wb_key}"}
+            out = {"name": name, "bench_label": bench_label, "radio_key": f"breadth_benchmark_{side}_{wb_key}",
+                   "tickers": tickers, "bench_market": bench_market}
             closes, missing = assemble_closes(_perf_markets, tickers)
             wb = compute_breadth(closes, since=_wb_cutoff) if not closes.empty else None
             if not tickers:
@@ -5776,6 +5880,18 @@ with tab_news:
                      "hindsight view of today's members, like the curves above.")
         st.plotly_chart(fig_wb, width="stretch", key="breadth_watchlist_chart",
                         config=breadth_charts.plotly_config(_mobile))
+        # Row four for each watchlist, its benchmark index's median in the hover.
+        render_results_row([(sd["name"], sd["tickers"], _results_members.get(sd["bench_market"]) or None,
+                             sd["bench_label"]) for sd in _sides], "breadth_watchlist_results_chart")
+        st.caption("Quarterly results: each bar is the MEDIAN company's growth -- revenue, profit (reported, "
+                   "one-offs included) and EPS -- on the same quarter a year earlier (YoY) or the quarter before "
+                   "(QoQ); the amber line is the median OPM, operating profit after depreciation over revenue "
+                   "(right axis). Quarters are calendar quarters (an Indian company's Q2 FY27 is Sep '26). A "
+                   "company with a loss or zero in the base quarter is left out of that growth figure, and one "
+                   "whose share count jumped (a bonus issue or split) out of EPS growth; banks have no OPM on "
+                   "Yahoo. A faded, hatched quarter is still being reported. Yahoo serves about five quarters "
+                   "per company, so YoY fills in one quarter per results season as they are stored."
+                   + (f" Results as of {results_data.get('as_of')}." if results_data.get("as_of") else ""))
 
         st.divider()
         st.subheader("Watchlist news digest")
