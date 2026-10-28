@@ -80,16 +80,23 @@ check(sorted(qr.merge(many, {})) == sorted(many)[-12:], "Q2: the last 12 quarter
 
 # --- Q3 ------------------------------------------------------------------------------
 T = date(2026, 10, 28)
+DONE = {"rev": 1.0, "ni": 1.0}   # a reported quarter: revenue and profit in
 check(qr.is_due(None, T) and qr.is_due({}, T), "Q3: never fetched -> due")
 check(not qr.is_due({"fetched": "2026-10-28", "q": {}}, T), "Q3: fetched today -> not due")
-check(qr.is_due({"fetched": "2026-10-27", "q": {"2026-06-30": {}}}, T),
+check(qr.is_due({"fetched": "2026-10-27", "q": {"2026-06-30": DONE}}, T),
       "Q3: the Sep quarter is expected (ended 28 days ago) and not stored -> due daily")
-check(not qr.is_due({"fetched": "2026-10-27", "q": {"2026-09-30": {}}}, T),
+check(not qr.is_due({"fetched": "2026-10-27", "q": {"2026-09-30": DONE}}, T),
       "Q3: the Sep quarter is stored -> not due until 14 days pass")
-check(qr.is_due({"fetched": "2026-10-14", "q": {"2026-09-30": {}}}, T), "Q3: 14 days since the last fetch -> due")
-check(not qr.is_due({"fetched": "2026-10-27", "q": {"2026-03-31": {}}}, T),
+check(qr.is_due({"fetched": "2026-10-14", "q": {"2026-09-30": DONE}}, T), "Q3: 14 days since the last fetch -> due")
+check(not qr.is_due({"fetched": "2026-10-27", "q": {"2026-03-31": DONE}}, T),
       "Q3: a company far behind (past the results wait) drops back to the 14-day cadence")
 check(not qr.is_due({"fetched": "2026-10-27", "q": {}}, T), "Q3: a company with no statements (a fund): 14-day cadence")
+partial = {"fetched": "2026-10-27", "q": {"2026-06-30": {"rev": 1.0, "ni": 1.0, "eps": 1.0},
+                                         "2026-09-30": {"rev": None, "ni": None, "eps": 1.2, "sh": 5.0}}}
+check(qr.is_due(partial, T),
+      "Q3: a Sep quarter with EPS but no revenue or profit yet (Yahoo files the release first) -> still due daily")
+check(not qr.is_due({**partial, "q": {**partial["q"], "2026-09-30": {"rev": 2.0, "ni": 1.5, "eps": 1.2}}}, T),
+      "Q3: ...and once its revenue and profit are in, it is not")
 
 # --- Q4 ------------------------------------------------------------------------------
 def rec(rev, op, ni, eps):
@@ -169,13 +176,13 @@ def job(previous, watch, fetch, members=None, budget=None, clock=None):
     return out, code, fetched
 
 
-prev = {"tickers": {"IN1.NS": {"fetched": "2026-10-27", "q": {"2026-09-30": {"rev": 1.0}}},
-                    "U1": {"fetched": "2026-10-27", "q": {"2026-06-30": {"rev": 5.0}}}},
+prev = {"tickers": {"IN1.NS": {"fetched": "2026-10-27", "q": {"2026-09-30": {"rev": 1.0, "ni": 1.0}}},
+                    "U1": {"fetched": "2026-10-27", "q": {"2026-06-30": {"rev": 5.0, "ni": 2.0}}}},
         "members": {"US": ["U1", "U9"]}}
 out, code, fetched = job(prev, ["ACME", "U1"], lambda t: STMT)
 check(sorted(fetched) == ["ACME", "IN2.NS", "U1"] and code == 0,
       f"Q5: only the due companies are fetched (IN1.NS has Sep stored) ({sorted(fetched)})")
-check(set(out["tickers"]) == {"IN1.NS", "IN2.NS", "U1", "ACME"} and out["tickers"]["U1"]["q"]["2026-06-30"] == {"rev": 5.0}
+check(set(out["tickers"]) == {"IN1.NS", "IN2.NS", "U1", "ACME"} and out["tickers"]["U1"]["q"]["2026-06-30"] == {"rev": 5.0, "ni": 2.0}
       and out["tickers"]["U1"]["q"]["2026-09-30"]["rev"] == 110.0 and out["tickers"]["ACME"]["fetched"] == "2026-10-28",
       "Q5: a new quarter is added to the stored ones; index members and watchlist stocks are both covered")
 out, code, _ = job(prev, [], lambda t: None if t == "U1" else STMT)

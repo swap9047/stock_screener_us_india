@@ -51,6 +51,51 @@ try:
 except Exception:
     pass
 
+
+# --- Never mix a new app.py with old modules (2026-10-28) --------------------
+# Streamlit re-reads this script on every run, but a module it imports stays in
+# sys.modules until something reloads it. After the #24 deploy the running app
+# took the new app.py with the OLD breadth_charts -- no style_results -- and
+# every News tab load raised AttributeError until the app was rebooted. So:
+# when any of the app's own modules (files next to this one) has changed on
+# disk since this process last looked, ALL of them are dropped from
+# sys.modules, and the imports below load the current files, in their own
+# order, as on a fresh start. All of them, not only the changed ones: a module
+# that did `from x import y` would otherwise keep the old x's y. Costs one stat
+# per module per run; a reload happens only after a deploy.
+import os as _os
+import sys as _sys
+
+_APP_DIR = _os.path.dirname(_os.path.abspath(__file__))
+
+
+@st.cache_resource
+def _local_source_stamps():
+    """{module name: source mtime}, kept for the life of the server process."""
+    return {}
+
+
+def _drop_stale_local_modules():
+    stamps = _local_source_stamps()
+    local = {}
+    for name, mod in list(_sys.modules.items()):
+        path = getattr(mod, "__file__", None)
+        if name != "__main__" and path and _os.path.dirname(_os.path.abspath(path)) == _APP_DIR:
+            try:
+                local[name] = _os.path.getmtime(path)
+            except OSError:
+                local[name] = None
+    if any(name in stamps and stamps[name] != mtime for name, mtime in local.items()):
+        for name in local:
+            _sys.modules.pop(name, None)
+        stamps.clear()
+        return True
+    stamps.update(local)
+    return False
+
+
+_drop_stale_local_modules()
+
 from streamlit_sortables import sort_items
 
 from stock_data import (
@@ -5695,8 +5740,11 @@ with tab_news:
                                     subplot_titles=[t.replace(" (", "<br>(", 1) for _, _, t in _panels])
             else:
                 _pos = {(kind, m): (i // 2 + 1, i % 2 + 1) for i, (kind, m, _) in enumerate(_panels)}
+                # Two lines on desktop too (2026-10-28): with "Nifty Smallcap 250" on
+                # the right, one-line titles ran into each other on a narrow window.
                 fig = make_subplots(rows=3, cols=2, shared_xaxes="all", vertical_spacing=0.08,
-                                    horizontal_spacing=0.05, subplot_titles=[t for _, _, t in _panels])
+                                    horizontal_spacing=0.05,
+                                    subplot_titles=[t.replace(" (", "<br>(", 1) for _, _, t in _panels])
 
             # An index the job has never stored (Nasdaq 100 until its first run
             # after 2026-10-15, the three Nifty indexes after 2026-10-28) is not a
@@ -5847,8 +5895,8 @@ with tab_news:
             if "titles" not in sd:
                 return [f"{sd['name']}: % Above 200-Day SMA", f"{sd['name']}: 52-Week Highs vs Lows",
                         f"{sd['name']} vs {sd['bench_label']}"][i]
-            t = sd["titles"][i]
-            return t.replace(" (", "<br>(", 1) if _mobile else t
+            # Two lines on desktop too, like the index charts (2026-10-28).
+            return sd["titles"][i].replace(" (", "<br>(", 1)
 
         # Desktop: a 3x2 grid, one side per column. Phone: six panels stacked,
         # the left side's three first.
