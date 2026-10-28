@@ -13,6 +13,9 @@ row, and the job that stores the statements.
       operating income has no margin; YoY (the default) needs the quarter a year
       before; a bonus/split-sized jump in the share count drops that EPS growth;
       a quarter still being reported is flagged; the last 6 quarters.
+  Q4b a figure from fewer than 5 companies, or under 30% of those that reported
+      the quarter, is left out (and named in "thin"); a quarter with nothing
+      left is not drawn; the YoY default applies without the rule's arguments.
   Q5  the job: fetches only what is due, keeps what a failed fetch or a failed
       member list would lose, stops on a time budget (exit 0) and when Yahoo
       refuses most of the run (exit 1, after saving).
@@ -99,6 +102,11 @@ check(not qr.is_due({**partial, "q": {**partial["q"], "2026-09-30": {"rev": 2.0,
       "Q3: ...and once its revenue and profit are in, it is not")
 
 # --- Q4 ------------------------------------------------------------------------------
+# The maths checks below use 1-4 invented companies, far under the thin-figure
+# rule (Q4b checks that rule on its own), so they turn it off.
+ALL = dict(min_companies=1, min_share=0)
+
+
 def rec(rev, op, ni, eps):
     return {"rev": rev, "op": op, "ni": ni, "eps": eps}
 
@@ -111,7 +119,7 @@ data = {
     "DUSK": {"q": {Q[4]: rec(80, 8, 6, 0.6)}},                                         # not reported Sep yet
     "ZED.NS": {"q": {}},                                                               # a fund
 }
-rows, companies = qr.summarize({**data, "ZED.NS": {"q": {}}}, ["ACME", "BOLT", "CORE", "DUSK", "ZED.NS"], "qoq")
+rows, companies = qr.summarize({**data, "ZED.NS": {"q": {}}}, ["ACME", "BOLT", "CORE", "DUSK", "ZED.NS"], "qoq", **ALL)
 last = rows[-1]
 want_rev = median([(110 / 100 - 1) * 100, (45 / 50 - 1) * 100, (260 / 200 - 1) * 100])
 want_ni = median([(12 / 10 - 1) * 100, (5 / 4 - 1) * 100])          # CORE's loss base left out
@@ -126,21 +134,21 @@ check(last["n"] == {"rev": 3, "ni": 2, "eps": 2, "margin": 2},
 check(last["reported"] == 3 and last["season"] is False,
       "Q4: 3 of the 4 reported Sep (DUSK has not) -- most of June's 4, so not 'still being reported'")
 early = {t: {"q": {q: v for q, v in d["q"].items() if q != Q[5] or t == "ACME"}} for t, d in data.items()}
-rows_e, _ = qr.summarize(early, list(data), "qoq")
+rows_e, _ = qr.summarize(early, list(data), "qoq", **ALL)
 check(rows_e[-1]["q"] == Q[5] and rows_e[-1]["season"] is True and rows_e[-1]["reported"] == 1,
       "Q4: one of four reported -> the quarter is flagged as still being reported")
-rows_y, _ = qr.summarize(data, list(data), "yoy")
+rows_y, _ = qr.summarize(data, list(data), "yoy", **ALL)
 check(rows_y == [], "Q4: YoY with no quarter a year before -> no rows (the chart says why)")
 yoy_data = {"ACME": {"q": {"2025-09-30": rec(100, 10, 10, 1.0), "2026-06-30": rec(130, 13, 13, 1.3),
                            "2026-09-30": rec(150, 15, 12, 1.2)}}}
-rows_y, _ = qr.summarize(yoy_data, ["ACME"], "yoy")
+rows_y, _ = qr.summarize(yoy_data, ["ACME"], "yoy", **ALL)
 check([r["q"] for r in rows_y] == ["2026-09-30"] and rows_y[0]["rev"] == 50.0 and rows_y[0]["ni"] == 20.0,
       f"Q4: YoY compares with the same quarter a year earlier, not the one before ({rows_y})")
 bonus = {"ACME": {"q": {"2025-09-30": dict(rec(100, 10, 10, 2.0), sh=1e6),
                          "2026-09-30": dict(rec(120, 12, 12, 1.2), sh=2e6)}},     # a 1:1 bonus
          "BOLT": {"q": {"2025-09-30": dict(rec(100, 10, 10, 1.0), sh=1e6),
                         "2026-09-30": dict(rec(110, 11, 11, 1.1), sh=1.1e6)}}}   # 10% dilution
-rows_b, _ = qr.summarize(bonus, ["ACME", "BOLT"])
+rows_b, _ = qr.summarize(bonus, ["ACME", "BOLT"], **ALL)
 check(rows_b[-1]["n"]["eps"] == 1 and rows_b[-1]["eps"] == 10.0 and rows_b[-1]["n"]["ni"] == 2,
       f"Q4: YoY by default; a 1:1 bonus's EPS (-40% unadjusted) is left out, ordinary dilution is kept "
       f"({rows_b[-1]['eps']}, n={rows_b[-1]['n']})")
@@ -148,9 +156,35 @@ check(qr.FIELDS == ("rev", "ni", "eps", "margin")
       and [qr.FIELD_LABELS[f] for f in qr.FIELDS] == ["Revenue growth", "Profit growth", "EPS growth", "OPM"],
       "Q4: the four fields, in display order")
 long = {"ACME": {"q": {qr.shift("2026-09-30", -i): rec(100 + i, 10, 10, 1.0) for i in range(10)}}}
-rows_l, _ = qr.summarize(long, ["ACME"], "qoq")
+rows_l, _ = qr.summarize(long, ["ACME"], "qoq", **ALL)
 check(len(rows_l) == 6 and rows_l[-1]["q"] == "2026-09-30" and rows_l[0]["label"] == "Jun '25",
       "Q4: the last six quarters, oldest first")
+
+# --- Q4b the thin-figure rule ------------------------------------------------------------
+def co(prev_ni, ni, rev=(100.0, 110.0)):
+    return {"q": {"2025-09-30": rec(rev[0], 10, prev_ni, 1.0), "2026-09-30": rec(rev[1], 12, ni, 1.1)}}
+
+
+# 20 companies reported Sep '26; 12 have revenue growth, only 4 a positive year-ago profit.
+thin = {f"T{i}": co(-5.0 if i >= 4 else 10.0, 12.0) for i in range(12)}
+thin.update({f"N{i}": {"q": {"2026-09-30": rec(50, 5, 5, 0.5)}} for i in range(8)})
+rows_t, _ = qr.summarize(thin, list(thin))
+r = rows_t[-1]
+check(r["reported"] == 20 and r["rev"] == 10.0 and r["n"]["rev"] == 12,
+      f"Q4b: revenue growth from 12 of 20 reported (>= 5 and >= 30%) is kept ({r['rev']}, n={r['n']['rev']})")
+check(r["ni"] is None and r["n"]["ni"] == 4 and "ni" in r["thin"] and "rev" not in r["thin"],
+      f"Q4b: profit growth from 4 companies is left out and named thin ({r['ni']}, {r['thin']})")
+big = {f"B{i}": co(10.0, 12.0) for i in range(40)}
+big.update({f"M{i}": {"q": {"2026-09-30": rec(50, 5, 5, 0.5)}} for i in range(60)})
+rows_b2, _ = qr.summarize(big, list(big))
+check(rows_b2 and rows_b2[-1]["n"]["rev"] == 40 and rows_b2[-1]["rev"] == 10.0,
+      "Q4b: 40 of 100 reported (40%) is kept")
+few = {f"B{i}": co(10.0, 12.0) for i in range(20)}
+few.update({f"M{i}": {"q": {"2026-09-30": rec(50, 5, 5, 0.5)}} for i in range(80)})
+check(qr.summarize(few, list(few))[0] == [],
+      "Q4b: 20 of 100 reported (20%, like the S&P 500's Mar '26 at 27 of 502) leaves the quarter out")
+check(qr.summarize({"A": co(10, 12)}, ["A"])[0] == [] and qr.summarize({"A": co(10, 12)}, ["A"], **ALL)[0],
+      "Q4b: a single company's quarter is left out by default (India Invested's Sep '26 +435%)")
 
 # --- Q5 ------------------------------------------------------------------------------
 STMT = {"2026-09-30": {"Total Revenue": 110.0, "Operating Income": 11.0, "Net Income": 9.0, "Diluted EPS": 0.9}}

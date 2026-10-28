@@ -227,8 +227,10 @@ def plotly_config(mobile):
 # growth as grouped bars (StockScans' blue / teal / purple), and its OPM
 # (operating margin) as an amber line on a second axis -- each one shown or
 # hidden by the News tab's field picker. A quarter still being reported
-# (quarterly_results' "season") is drawn faded and hatched, so half a season is
-# not read as the final number.
+# (quarterly_results' "season") is drawn light with its colour as an outline,
+# so half a season is not read as the final number. It used to be hatched: a
+# white hatch over a faded bar rendered as near-white in the live app, so those
+# bars all but vanished (2026-10-28).
 TEAL = "#1abc9c"
 PURPLE = "#9b59b6"
 RESULT_SERIES = (("rev", "Revenue growth", BLUE), ("ni", "Profit growth", TEAL), ("eps", "EPS growth", PURPLE))
@@ -264,9 +266,8 @@ def add_results(fig, rows, row, col, basis_label, compare=None, compare_name=Non
                 text += " -- still being reported"
             hover.append(text)
         fig.add_trace(go.Bar(x=x, y=[r[key] for r in rows], name=name, legendgroup=key, showlegend=legend,
-                             marker=dict(color=colour, line_width=0, opacity=[0.45 if s else 1 for s in season],
-                                         pattern=dict(shape=["/" if s else "" for s in season], fgcolor="white",
-                                                      size=6, solidity=0.25)),
+                             marker=dict(color=colour, opacity=[0.4 if s else 1 for s in season],
+                                         line=dict(color=colour, width=[1.5 if s else 0 for s in season])),
                              hovertext=hover, hovertemplate="%{hovertext}<extra></extra>"),
                       row=row, col=col, secondary_y=False)
     mg = [r["margin"] for r in rows]
