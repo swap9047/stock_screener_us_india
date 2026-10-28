@@ -5531,13 +5531,18 @@ with tab_news:
             return (f"{name}: Quarterly Results ({results_basis}, median)<br>{r['label']}"
                     + (f": {figures}" if figures else "") + f"; {r['reported']} of {total} reported")
 
-        def _results_empty(name, companies):
+        def _results_empty(name, companies, tickers):
             if not results_fields:
                 return "Pick a field to show above (Revenue growth, Profit growth, EPS growth, OPM)"
             if not results_data:
                 return "No quarterly results yet - stored by the first quarterly-results run"
             if not companies:
                 return f"No stored results for {name}'s stocks yet"
+            # Quarters exist, but every figure came from too few companies.
+            if quarterly_results.summarize(_results_tickers, tickers, basis=results_basis.lower(),
+                                           min_companies=1, min_share=0)[0]:
+                return (f"Too few companies per figure - each needs {quarterly_results.MIN_COMPANIES}+ "
+                        f"with both quarters stored")
             if results_basis == "YoY":
                 return "No YoY quarter yet - one fills in each results season as quarters are stored"
             return "Not enough quarters stored yet"
@@ -5550,8 +5555,8 @@ with tab_news:
             for name, tickers, cmp_tickers, cmp_name in panels:
                 rows, companies = _results_rows(tickers)
                 cmp_rows = _results_rows(cmp_tickers)[0] if cmp_tickers else None
-                built.append((name, rows, companies, len(dict.fromkeys(tickers)), cmp_rows, cmp_name))
-            titles = [_results_title(nm, rows, tot) for nm, rows, _, tot, _, _ in built]
+                built.append((name, rows, companies, len(dict.fromkeys(tickers)), cmp_rows, cmp_name, tickers))
+            titles = [_results_title(nm, rows, tot) for nm, rows, _, tot, _, _, _ in built]
             if _mobile:
                 fig_r = make_subplots(rows=n, cols=1, vertical_spacing=0.18,
                                       specs=[[{"secondary_y": True}] for _ in range(n)],
@@ -5563,14 +5568,14 @@ with tab_news:
                                       subplot_titles=titles)
                 pos = [(1, i + 1) for i in range(n)]
             legend_drawn = False
-            for (name, rows, companies, total, cmp_rows, cmp_name), (rr, cc) in zip(built, pos):
+            for (name, rows, companies, total, cmp_rows, cmp_name, tickers), (rr, cc) in zip(built, pos):
                 if rows and results_fields:
                     breadth_charts.add_results(fig_r, rows, rr, cc, results_basis, compare=cmp_rows,
                                                compare_name=cmp_name, legend=not legend_drawn,
                                                show=results_fields)
                     legend_drawn = True
                 else:
-                    breadth_charts.no_data(fig_r, rr, cc, _results_empty(name, companies))
+                    breadth_charts.no_data(fig_r, rr, cc, _results_empty(name, companies, tickers))
             breadth_charts.style_results(fig_r, height=(380 * n) if _mobile else 380, mobile=_mobile)
             st.plotly_chart(fig_r, width="stretch", key=chart_key, config=breadth_charts.plotly_config(_mobile))
 
@@ -5937,7 +5942,8 @@ with tab_news:
                    "(right axis). Quarters are calendar quarters (an Indian company's Q2 FY27 is Sep '26). A "
                    "company with a loss or zero in the base quarter is left out of that growth figure, and one "
                    "whose share count jumped (a bonus issue or split) out of EPS growth; banks have no OPM on "
-                   "Yahoo. A faded, hatched quarter is still being reported. Yahoo serves about five quarters "
+                   "Yahoo. A figure from fewer than 5 companies, or under 30% of those that reported the quarter, "
+                   "is left out. A light, outlined quarter is still being reported. Yahoo serves about five quarters "
                    "per company, so YoY fills in one quarter per results season as they are stored."
                    + (f" Results as of {results_data.get('as_of')}." if results_data.get("as_of") else ""))
 

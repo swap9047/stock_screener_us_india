@@ -687,8 +687,11 @@ This tab is rendered only while it is open.
   Quarters are calendar quarters (an Indian Q2 FY27 is Sep '26). A company with a loss or
   zero in the base quarter is left out of that growth figure, and one whose diluted share
   count moved more than 1.5x (a bonus issue or split Yahoo did not adjust the older EPS
-  for) out of EPS growth; banks have no operating income on Yahoo, so no OPM. A quarter fewer than half as many companies have reported as the one
-  before is still in its results season: drawn faded and hatched, its hover says so.
+  for) out of EPS growth; banks have no operating income on Yahoo, so no OPM. A figure
+  from fewer than 5 companies, or under 30% of those that reported the quarter, is left
+  out, so a small watchlist shows fewer bars rather than one company's swing. A quarter
+  fewer than half as many companies have reported as the one before is still in its
+  results season: drawn light, its hover says so.
   The statements come from `quarterly_results.json`, which `quarterly-results.yml` builds
   daily at 4 AM ET; its log counts, per market, how many companies' latest quarter has
   each field. Yahoo serves about five quarters per company, so the job keeps every quarter

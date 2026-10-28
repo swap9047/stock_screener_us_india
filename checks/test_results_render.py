@@ -56,13 +56,18 @@ for k in ("DATA_REPO_TOKEN", "GITHUB_TOKEN", "DISCORD_WEBHOOK_URL", "GEMINI_API_
     os.environ[k] = ""
 os.environ["SKIP_GITHUB_PULL"] = "1"
 
-IND, US = ["ZED.NS", "QUX.NS"], ["ACME", "BOLT"]
+# Six stocks a side: a figure needs 5+ companies (quarterly_results.MIN_COMPANIES).
+# TINY has two, for the "too few companies" message.
+IND = [f"W{i}.NS" for i in range(6)]
+US = [f"V{i}" for i in range(6)]
+TINY = ["T0.NS", "T1.NS"]
 json.dump({"india_invested": {"label": "India Invested", "benchmark": "^CRSLDX"},
-           "us_invested": {"label": "US Invested", "benchmark": "SPY"}}, open("markets.json", "w"))
-json.dump({"india_invested": IND, "us_invested": US}, open("watchlist.json", "w"))
+           "us_invested": {"label": "US Invested", "benchmark": "SPY"},
+           "tiny": {"label": "Tiny", "benchmark": "^CRSLDX"}}, open("markets.json", "w"))
+json.dump({"india_invested": IND, "us_invested": US, "tiny": TINY}, open("watchlist.json", "w"))
 json.dump({"all_invested": ["india_invested", "us_invested"], "all_watchlist": ["india_invested"]},
           open("watchlist_groups.json", "w"))
-json.dump({**{t: {"index": "Nifty 500", "benchmark": "^CRSLDX"} for t in IND},
+json.dump({**{t: {"index": "Nifty 500", "benchmark": "^CRSLDX"} for t in IND + TINY},
            **{t: {"index": "S&P 500", "benchmark": "SPY"} for t in US}}, open("ticker_index.json", "w"))
 
 import yfinance as yf
@@ -143,8 +148,8 @@ def _rec(rev, op, ni, eps):
 
 
 Q = [qr.shift("2026-09-30", -i) for i in range(5, -1, -1)]   # Jun '25 .. Sep '26
-IN_IDX = [f"IX{i}.NS" for i in range(6)]
-US_IDX = [f"UX{i}" for i in range(4)]
+IN_IDX = [f"IX{i}.NS" for i in range(12)]
+US_IDX = [f"UX{i}" for i in range(8)]
 
 
 def _company(seed, last=True, first=0):
@@ -156,12 +161,13 @@ def _company(seed, last=True, first=0):
     return {"fetched": "2026-10-27", "q": out}
 
 
-TICKERS = {t: _company(i) for i, t in enumerate(IN_IDX + US_IDX + IND + US)}
+TICKERS = {t: _company(i) for i, t in enumerate(IN_IDX + US_IDX + IND + US + TINY)}
 # The US watchlist's stocks have four quarters stored, Dec '25 on (no YoY yet).
 for t in US:
     TICKERS[t] = _company(US.index(t) + 50, first=2)
-# Only one of the six India index companies has reported Sep: still being reported there.
-for t in IN_IDX[1:]:
+# Five of the twelve India index companies have reported Sep: still being reported
+# there (5 < half of June's 12), and still enough companies (5) to be drawn.
+for t in IN_IDX[5:]:
     TICKERS[t] = _company(IN_IDX.index(t), last=False)
 RESULTS = {"as_of": "2026-10-28 08:00 UTC", "tickers": TICKERS,
            "members": {"INDIA": IN_IDX, "US": US_IDX}, "status": {}}
@@ -217,7 +223,7 @@ if at:
     rows_us, _ = qr.summarize(TICKERS, US_IDX, "yoy")
     li, lu = rows_in[-1], rows_us[-1]
     want_in = (f"Nifty 500: Quarterly Results (YoY, median)<br>{li['label']}: Rev {sig(li['rev'])}, "
-               f"Profit {sig(li['ni'])}, EPS {sig(li['eps'])}, OPM {lvl(li['margin'])}; {li['reported']} of 6 reported")
+               f"Profit {sig(li['ni'])}, EPS {sig(li['eps'])}, OPM {lvl(li['margin'])}; {li['reported']} of 12 reported")
     want_us = f"S&P 500: Quarterly Results (YoY, median)<br>{lu['label']}: Rev {sig(lu['rev'])}"
     check(want_in in t and any(x.startswith(want_us) for x in t),
           f"R2: YoY by default, and the index row's titles carry summarize's medians ({t[:2]})")
@@ -230,9 +236,11 @@ if at:
     check(opm_in.get("yaxis") != rev_in.get("yaxis"), "R2: OPM is on its own (second) axis")
     check(rev_in["x"] == ["Jun '26", "Sep '26"],
           f"R2: YoY shows only the quarters with the same quarter a year before stored ({rev_in['x']})")
-    check(rev_in["marker"]["opacity"] == [1, 0.45] and "still being reported" in rev_in["hovertext"][-1]
-          and "median of" in rev_in["hovertext"][-1],
-          f"R3: Sep '26, reported by 1 of 6, is drawn faded and its hover says so ({rev_in['hovertext'][-1]})")
+    check(rev_in["marker"]["opacity"] == [1, 0.4] and rev_in["marker"]["line"]["width"] == [0, 1.5]
+          and "pattern" not in rev_in["marker"]
+          and "still being reported" in rev_in["hovertext"][-1] and "median of 5" in rev_in["hovertext"][-1],
+          f"R3: Sep '26, reported by 5 of 12, is drawn light with an outline (no hatch, which rendered "
+          f"white) and its hover says so ({rev_in['hovertext'][-1]})")
     wl_r = specs[3]
     hov = " ".join(h for tr in wl_r["data"] for h in (tr.get("hovertext") or []))
     wt = " | ".join(titles(wl_r))
@@ -270,6 +278,19 @@ if at:
     t = " | ".join(titles(specs[1]) + titles(specs[3]))
     check(t.count("Pick a field to show above") == 4 and not names(specs[1]),
           "R6: with no field picked, every results panel says to pick one")
+
+at = AppTest.from_file(os.path.join(APP, "app.py"), default_timeout=600)
+at.session_state["authenticated"] = True
+at.session_state["main_tabs"] = "News"
+at.session_state["breadth_watchlist_left"] = "tiny"
+json.dump(RESULTS, open("quarterly_results.json", "w"))
+at.run()
+if not at.exception:
+    t = " | ".join(titles(charts(at)[3]))
+    check("Too few companies per figure - each needs 5+ with both quarters stored" in t,
+          f"R6b: a 2-stock list says its figures need 5+ companies, not 'no YoY quarter yet' ({t[:160]})")
+else:
+    check(False, f"R6b render: {[str(e.value)[:200] for e in at.exception]}")
 
 at = render(with_file=False)
 if at:

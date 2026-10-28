@@ -56,6 +56,14 @@ REFETCH_DAYS = 14
 # A quarter fewer companies have reported than this share of the quarter
 # before it is still in its results season: drawn faded, and said so.
 SEASON_SHARE = 0.5
+# A figure needs at least this many companies, and this share of those that
+# reported the quarter, or it is left out (owner, 2026-10-28). A small list's
+# medians came from 1-6 companies: US Invested's Mar '26 profit growth was one
+# company, India Invested's Sep '26 +435% was one company and stretched the
+# axis to 400%. Yahoo's ~5 quarters also leave most companies without a
+# year-ago quarter in the oldest YoY bar (S&P 500 Mar '26: 27 of 502).
+MIN_COMPANIES = 5
+MIN_SHARE = 0.3
 # A diluted share count this many times larger or smaller than the base
 # quarter's is a bonus issue or split, not dilution: that EPS growth is skipped.
 SHARE_JUMP = 1.5
@@ -190,14 +198,18 @@ def margin(rec):
     return op / rev * 100
 
 
-def summarize(data, tickers, basis="yoy", quarters=SHOW_QUARTERS):
+def summarize(data, tickers, basis="yoy", quarters=SHOW_QUARTERS, min_companies=MIN_COMPANIES,
+              min_share=MIN_SHARE):
     """The group's quarters, oldest first: [{"q", "label", "rev", "ni", "eps",
     "margin" (medians, %, or None), "n": {metric: companies counted},
+    "thin": [metrics left out for too few companies],
     "reported": companies with the quarter, "season": still being reported}].
 
-    `data` is quarterly_results.json's "tickers"; `tickers` the group. A quarter
-    is shown once any company has a growth figure for it; the last `quarters`
-    of those. Also returns how many of `tickers` have any stored results.
+    `data` is quarterly_results.json's "tickers"; `tickers` the group. A figure
+    from fewer than `min_companies` companies, or under `min_share` of those
+    that reported the quarter, is None (and named in "thin"). A quarter is shown
+    once any growth figure survives that; the last `quarters` of those. Also
+    returns how many of `tickers` have any stored results.
     """
     lag = 1 if basis == "qoq" else 4
     stored = {t: (data.get(t) or {}).get("q") or {} for t in dict.fromkeys(tickers)}
@@ -224,12 +236,14 @@ def summarize(data, tickers, basis="yoy", quarters=SHOW_QUARTERS):
                 g = growth(cur.get(m), base.get(m))
                 if g is not None:
                     vals[m].append(g)
-        if not any(vals[m] for m in METRICS):
+        need = max(min_companies, min_share * reported[q])
+        figures = {m: (round(median(v), 1) if v and len(v) >= need else None) for m, v in vals.items()}
+        if all(figures[m] is None for m in METRICS):
             continue
         prev = reported.get(shift(q, -1), 0)
-        rows.append({"q": q, "label": label(q),
-                     **{m: (round(median(v), 1) if v else None) for m, v in vals.items()},
+        rows.append({"q": q, "label": label(q), **figures,
                      "n": {m: len(v) for m, v in vals.items()},
+                     "thin": [m for m, v in vals.items() if v and figures[m] is None],
                      "reported": reported[q],
                      "season": bool(prev) and reported[q] < SEASON_SHARE * prev})
     return rows[-quarters:], len(stored)
