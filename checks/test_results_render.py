@@ -15,6 +15,10 @@ a synthetic quarterly_results.json.
       the panels say so;
   R7  no file yet -> each panel says the first quarterly-results run stores it;
   R8  a phone stacks the panels and renders cleanly.
+  R9  a deploy never mixes the new app.py with an old module (2026-10-28): with
+      an old breadth_charts in memory (no style_results), the News tab raised
+      AttributeError until the app was rebooted; once a module file changes on
+      disk, the next run loads every module fresh.
 """
 
 import json
@@ -281,6 +285,30 @@ if at:
     check(len(specs) == 4 and idx_r["layout"].get("dragmode") is False
           and idx_r["layout"]["yaxis"]["domain"][0] > idx_r["layout"].get("yaxis3", {}).get("domain", [1, 1])[1] - 0.01,
           "R8: on a phone the results panels stack, with no drag-to-zoom")
+
+# --- R9: an old module left in memory by a deploy ----------------------------------
+import time as _time
+
+mod = sys.modules["breadth_charts"]
+real = mod.style_results
+del mod.style_results                       # the running process's old copy
+at = AppTest.from_file(os.path.join(APP, "app.py"), default_timeout=600)
+at.session_state["authenticated"] = True
+at.session_state["main_tabs"] = "News"
+at.run()
+check(any("style_results" in str(e.value) for e in at.exception),
+      "R9: reproduced -- the old module in memory makes the News tab raise AttributeError")
+path = os.path.join(APP, "breadth_charts.py")
+st_ = os.stat(path)
+os.utime(path, (st_.st_atime, st_.st_mtime + 5))   # the deploy rewrites the file
+at = render()
+fresh = sys.modules.get("breadth_charts")
+check(at is not None and fresh is not mod and hasattr(fresh, "style_results"),
+      "R9: once the file changes on disk, the next run loads the modules fresh and renders")
+same = sys.modules.get("breadth_charts")
+render()
+check(sys.modules.get("breadth_charts") is same, "R9: with nothing changed, nothing is reloaded")
+mod.style_results = real
 
 shutil.rmtree(APP, ignore_errors=True)
 print("FAILURES:", fails)

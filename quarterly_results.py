@@ -152,7 +152,14 @@ def is_due(entry, today):
         return False
     if (today - fetched).days >= REFETCH_DAYS:
         return True
-    qs = sorted(entry.get("q") or {})
+    # The latest COMPLETE quarter: one with revenue and profit. Yahoo files a
+    # quarter's EPS and share count from the earnings release days before its
+    # revenue and net income -- on 2026-10-28 ~60 US companies had a Sep quarter
+    # with EPS only -- and counting that as reported left the company unfetched
+    # for REFETCH_DAYS, out of revenue and profit growth for two weeks. Such a
+    # quarter keeps the company due daily until the rest arrives.
+    qs = sorted(q for q, rec in (entry.get("q") or {}).items()
+                if (rec or {}).get("rev") is not None and (rec or {}).get("ni") is not None)
     if not qs:
         return False
     nxt = date.fromisoformat(shift(qs[-1], 1))

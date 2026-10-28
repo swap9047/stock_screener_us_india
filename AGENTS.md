@@ -38,7 +38,7 @@ for a model (Google's `...PerDay...` quota id) is retired for that model for the
 run, and once every key is out the ladder steps to its fallback model at once. Before
 2026-10-23 a daily-exhausted key rejoined every 120 s and failed again.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1708
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 1713
 offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
@@ -273,6 +273,13 @@ Each of these has actually bitten this codebase.
   after the model calls finished, and no check noticed because none clicks a button that
   calls Gemini. `checks/test_review_091926.py` (T0) now runs pyflakes over every module
   and fails on any undefined name.
+- **A deploy can leave an OLD module in memory under a NEW `app.py`.** Streamlit re-reads the
+  script every run but keeps imported modules in `sys.modules`: after the 2026-10-28 deploy
+  the app ran the new `app.py` with the old `breadth_charts` (no `style_results`) and the
+  News tab raised AttributeError until a reboot. `_drop_stale_local_modules` (top of
+  `app.py`, before any local import) drops EVERY module of this folder once any of their
+  files changed on disk, so the imports reload them all in order (`checks/test_results_render.py`
+  R9). Keep local imports below it.
 - **Nothing in `app.py` may load a data file before the `bootstrap_data_files` block.**
   The loaders create an empty default for a missing file. On a fresh container, the next
   save would then push those blanks over the real data. The block stops the app instead.
