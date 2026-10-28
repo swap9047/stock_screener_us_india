@@ -39,6 +39,7 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 
+import index_registry
 import market_api
 import market_lookup
 import stock_data
@@ -229,8 +230,8 @@ def publish_library(conn, min_gap=None):
 
 # ---- watchlists, breadth and closes (the watchlists mode, run by market-breadth.yml after its commit) ----
 
-# market_breadth.json's index blocks, as the research library names them.
-INDEX_SERIES = {"INDIA": "Nifty 500", "US": "S&P 500", "NASDAQ100": "Nasdaq 100"}
+# market_breadth.json's index blocks, as the research library names them: every index_registry entry.
+INDEX_SERIES = {ix["key"]: ix["label"] for ix in index_registry.INDEXES}
 # What a breadth series' "latest" reading carries (the rest of a block is its history).
 BREADTH_LATEST_KEYS = ("above", "below", "total", "pct_above", "pct_above_50", "partial", "live")
 # Daily closes kept in kg_prices: two years, enough for any return or chart a chat asks about.

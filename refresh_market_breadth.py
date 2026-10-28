@@ -8,6 +8,7 @@ import pandas as pd
 import yfinance as yf
 
 from breadth_math import compute_breadth
+import index_registry
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BREADTH_FILE = os.path.join(SCRIPT_DIR, "market_breadth.json")
@@ -46,6 +47,15 @@ SETTLE_MINUTES = 30
 # needs_refresh. Under MIN_COVERAGE_FRACTION the day is too thin to compute and
 # is held back as unpublished (calculate_breadth).
 PUBLISHED_MIN_SHARE = 0.9
+
+# Closes already downloaded in this main() run, by ticker, and the tickers that
+# failed every attempt (2026-10-28). Nifty 50, Midcap 150 and Smallcap 250 are
+# all inside Nifty 500, and Nasdaq 100 is almost all inside the S&P 500, so a
+# later leg takes those closes instead of downloading them again: the three Nifty
+# legs cost almost nothing. A leg still fails on its own -- a ticker the earlier
+# leg could not get is simply missing from both. None outside main(), so a direct
+# call (the checks) always downloads.
+_RUN_CACHE = None
 
 
 def _download_one(ticker):
@@ -131,12 +141,36 @@ def get_nasdaq100_tickers():
         raise ValueError(f"Nasdaq-100 list has only {len(tickers)} names from either source")
     return tickers
 
-def get_nifty500_tickers():
-    url = 'https://nsearchives.nseindia.com/content/indices/ind_nifty500list.csv'
+def get_nse_index_tickers(list_name, size=None):
+    """An NSE index's members, as Yahoo symbols, from NSE's own list CSV
+    (index_registry's nse_list). Fewer than 80% of `size` names is a broken
+    download (an HTML error page parses as a one-column table), not a
+    membership change, so it raises and the leg keeps its stored block."""
+    url = f'https://nsearchives.nseindia.com/content/indices/{list_name}'
     headers = {'User-Agent': 'Mozilla/5.0'}
     r = requests.get(url, headers=headers, timeout=30)
     df = pd.read_csv(io.StringIO(r.text))
-    return [f"{sym}.NS" for sym in df['Symbol'].tolist()]
+    tickers = [f"{str(sym).strip()}.NS" for sym in df['Symbol'].tolist()]
+    if size and len(tickers) < 0.8 * size:
+        raise ValueError(f"{list_name} has only {len(tickers)} names (expected about {size})")
+    return tickers
+
+def get_nifty500_tickers():
+    return get_nse_index_tickers("ind_nifty500list.csv", 500)
+
+
+# The member lists that are not an NSE CSV, by index key. Looked up by name when
+# a leg runs, so the checks can replace any of them.
+MEMBER_SOURCES = {"US": "get_sp500_tickers", "NASDAQ100": "get_nasdaq100_tickers",
+                  "INDIA": "get_nifty500_tickers"}
+
+
+def members_getter(ix):
+    """A no-argument function returning index_registry entry `ix`'s members."""
+    name = MEMBER_SOURCES.get(ix["key"])
+    if name:
+        return lambda: globals()[name]()
+    return lambda: get_nse_index_tickers(ix["nse_list"], ix.get("size"))
 
 def expected_session(tz, open_hhmm, now=None):
     """The latest session that has STARTED by now, from the exchange's own
@@ -219,6 +253,14 @@ def calculate_breadth(tickers, label, tz, close_hhmm):
     import io
     from contextlib import redirect_stderr
 
+    cache = _RUN_CACHE
+    requested = list(dict.fromkeys(tickers))
+    if cache is not None:
+        reused = [t for t in requested if t in cache["closes"]]
+        tickers = [t for t in requested if t not in cache["closes"] and t not in cache["failed"]]
+        if len(tickers) < len(requested):
+            print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {label}: {len(reused)} of {len(requested)} "
+                  f"already downloaded this run, {len(requested) - len(reused) - len(tickers)} already failed")
     print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Downloading 6y data (for 5y breadth + SMA warmup) for {len(tickers)} {label} tickers...")
     batch_size = 50
     all_data = []
@@ -276,6 +318,13 @@ def calculate_breadth(tickers, label, tz, close_hhmm):
         # masking just the held ones among them would reveal which are held.
         print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Final failures that could not be downloaded: {len(failed_tickers)}")
         
+    if cache is not None:
+        for frame in all_data:
+            for col in frame.columns:
+                cache["closes"][col] = frame[col]
+        cache["failed"].update(failed_tickers)
+        all_data = [cache["closes"][t].to_frame() for t in requested if t in cache["closes"]]
+
     print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] Calculating Historical Metrics...")
     # Today's still-forming bar is KEPT (owner, 2026-10-14: follow the latest
     # fetch, not the day close); main() marks such a reading live. It used to be
@@ -350,15 +399,35 @@ def main():
         "status": {},
     }
 
-    # (key, members, label, exchange timezone, regular-session open, close)
-    legs = [
-        ("US", get_sp500_tickers, "S&P 500", "America/New_York", (9, 30), (16, 0)),
-        ("INDIA", get_nifty500_tickers, "Nifty 500", "Asia/Kolkata", (9, 15), (15, 30)),
-        # ~100 names, almost all also in the S&P 500 -- downloaded again rather
-        # than shared, so each leg stays independent (one failing keeps the other).
-        ("NASDAQ100", get_nasdaq100_tickers, "Nasdaq 100", "America/New_York", (9, 30), (16, 0)),
-    ]
+    # (key, members, label, exchange timezone, regular-session open, close), one
+    # per index_registry entry, in its order: Nifty 500 ahead of the three Nifty
+    # indexes inside it and the S&P 500 ahead of Nasdaq 100, so _RUN_CACHE has
+    # their closes by then.
+    legs = [(ix["key"], members_getter(ix), ix["label"], *index_registry.SESSIONS[ix["region"]])
+            for ix in index_registry.INDEXES]
 
+    global _RUN_CACHE
+    _RUN_CACHE = {"closes": {}, "failed": set()}
+    try:
+        _run_legs(legs, results, now)
+    finally:
+        _RUN_CACHE = None
+
+    # Atomic: this file is committed to the data repo, and a run cancelled
+    # mid-dump would push a truncated one.
+    from json_store import atomic_write_json
+    atomic_write_json(BREADTH_FILE, results)
+
+    print(f"Saved to {BREADTH_FILE}")
+    print(f"Status: {results['status']}")
+
+    # Deliberately exits 0 even on a failed leg. The workflow still has to run
+    # refresh_dashboard_perf.py and commit, and bailing here would throw away the
+    # market that DID refresh. The loud signal is a verify step after the commit.
+
+
+def _run_legs(legs, results, now):
+    """Each leg into results["markets"] / results["status"] (main's loop)."""
     for key, get_tickers, label, tz, open_hhmm, close_hhmm in legs:
         kept = results["markets"].get(key)
         expected = expected_session(tz, open_hhmm)
@@ -453,18 +522,6 @@ def main():
             results["status"][key] = "live"
         else:
             results["status"][key] = "ok"
-
-    # Atomic: this file is committed to the data repo, and a run cancelled
-    # mid-dump would push a truncated one.
-    from json_store import atomic_write_json
-    atomic_write_json(BREADTH_FILE, results)
-
-    print(f"Saved to {BREADTH_FILE}")
-    print(f"Status: {results['status']}")
-
-    # Deliberately exits 0 even on a failed leg. The workflow still has to run
-    # refresh_dashboard_perf.py and commit, and bailing here would throw away the
-    # market that DID refresh. The loud signal is a verify step after the commit.
 
 if __name__ == "__main__":
     main()

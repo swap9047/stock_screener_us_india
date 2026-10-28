@@ -66,6 +66,7 @@ from stock_data import (
 from watchlist_labels import COMBINED_TAB_LABELS, watchlist_label_error
 from breadth_math import compute_breadth, assemble_closes
 import breadth_charts
+import index_registry
 import llm_util
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE,
                      send_discord_batch, build_discord_messages_for_rule, describe_schedule, DISCLAIMER,
@@ -5254,12 +5255,23 @@ with tab_news:
             time_filter = st.selectbox("Time Horizon", list(_horizon_months), index=2,
                                        key="time_horizon_filter")
             months = _horizon_months.get(time_filter, 18)
-            # The right-hand column's index (2026-10-15): its breadth, highs/lows and
-            # the US Invested return curve all follow this. Keys are
-            # market_breadth.json's blocks and the benchmark ticker.
-            _us_indexes = {"S&P 500": ("US", "SPY"), "Nasdaq 100": ("NASDAQ100", "QQQ")}
-            us_index_label = st.radio("US index", list(_us_indexes), horizontal=True, key="breadth_us_index")
-            us_breadth_key, us_bench_ticker = _us_indexes.get(us_index_label, ("US", "SPY"))
+            # The right-hand column's index (2026-10-15: S&P 500 or Nasdaq 100; a
+            # dropdown of every index_registry index but the left's Nifty 500 since
+            # 2026-10-28, S&P 500 the default -- owner). Its breadth, highs/lows and
+            # return curve all follow this; the return curve is the invested
+            # watchlist of the index's own market (India Invested against an
+            # Indian index), so it always compares like with like. The key keeps
+            # its 2026-10-15 name: a choice made before the change still holds.
+            # US first (the right column was the US one), then the Nifty indexes, large to small cap.
+            _right_indexes = {ix["label"]: ix for ix in sorted(index_registry.INDEXES, key=lambda ix: ix["region"] != "US")
+                              if ix["key"] != "INDIA"}
+            if st.session_state.get("breadth_us_index") not in (None, *_right_indexes):
+                del st.session_state["breadth_us_index"]
+            right_index_label = st.selectbox("Right-hand index", list(_right_indexes),
+                                             index=list(_right_indexes).index("S&P 500"), key="breadth_us_index")
+            _right_ix = _right_indexes.get(right_index_label) or index_registry.BY_KEY["US"]
+            right_breadth_key, right_bench_ticker = _right_ix["key"], _right_ix["benchmark"]
+            right_watchlist_key = "india_invested" if _right_ix["region"] == "INDIA" else "us_invested"
             # A second line on every breadth chart (2026-10-15): % above the 50-day
             # SMA, the shorter-term read, in amber under the 200-day's green. On by
             # default (owner, 2026-10-15).
@@ -5440,7 +5452,7 @@ with tab_news:
         # "US"/"INDIA" keys below, which represent national S&P 500/Nifty 500
         # breadth and are unrelated to the watchlist registry (see that lookup's
         # own comment).
-        us_tickers = watchlists_now.get("us_invested", [])
+        right_tickers = watchlists_now.get(right_watchlist_key, [])
         ind_tickers = watchlists_now.get("india_invested", [])
 
         st.divider()
@@ -5456,20 +5468,21 @@ with tab_news:
                 if closes_ind is not None and "^CRSLDX" in closes_ind.columns:
                     df_perf_ind = calculate_portfolio_returns(closes_ind, ind_tickers, "^CRSLDX", weights=None, filter_months=months)
             
-            closes_us = None
-            df_perf_us = None
-            if us_tickers:
-                closes_us = _closes_from_perf("us_invested")
-                # The block stores the market's own benchmark (SPY); another index
-                # comes from dashboard_perf.json's "benchmarks" (QQQ for Nasdaq 100).
-                if closes_us is not None and us_bench_ticker not in closes_us.columns:
-                    _bench_series = (perf_data.get("benchmarks") or {}).get(us_bench_ticker)
+            closes_right = None
+            df_perf_right = None
+            if right_tickers:
+                closes_right = _closes_from_perf(right_watchlist_key)
+                # The block stores the market's own benchmark (SPY, ^CRSLDX); another
+                # index comes from dashboard_perf.json's "benchmarks" (QQQ for Nasdaq
+                # 100, ^NSEI for Nifty 50, ...).
+                if closes_right is not None and right_bench_ticker not in closes_right.columns:
+                    _bench_series = (perf_data.get("benchmarks") or {}).get(right_bench_ticker)
                     if _bench_series:
-                        _b = pd.Series(_bench_series, dtype=float, name=us_bench_ticker)
+                        _b = pd.Series(_bench_series, dtype=float, name=right_bench_ticker)
                         _b.index = pd.to_datetime(_b.index)
-                        closes_us = closes_us.join(_b, how="outer")
-                if closes_us is not None and us_bench_ticker in closes_us.columns:
-                    df_perf_us = calculate_portfolio_returns(closes_us, us_tickers, us_bench_ticker, weights=None, filter_months=months)
+                        closes_right = closes_right.join(_b, how="outer")
+                if closes_right is not None and right_bench_ticker in closes_right.columns:
+                    df_perf_right = calculate_portfolio_returns(closes_right, right_tickers, right_bench_ticker, weights=None, filter_months=months)
             
             if perf_as_of:
                 st.caption(
@@ -5485,7 +5498,7 @@ with tab_news:
             # registry -- NOT renamed alongside markets.json/watchlist.json, so
             # these stay as the literal keys refresh_market_breadth.py writes.
             df_ema_ind, df_hl_ind = format_json_breadth(breadth_data.get("markets", {}).get("INDIA"), months)
-            df_ema_us, df_hl_us = format_json_breadth(breadth_data.get("markets", {}).get(us_breadth_key), months)
+            df_ema_right, df_hl_right = format_json_breadth(breadth_data.get("markets", {}).get(right_breadth_key), months)
 
             # A phone or tablet, from the request's User-Agent (no header -> desktop).
             try:
@@ -5536,15 +5549,15 @@ with tab_news:
                 return get_last_date(df) + (" intraday" if _breadth_block(market_key).get("live") else "")
 
             total_ind = _breadth_block("INDIA").get("total", "--")
-            total_us = _breadth_block(us_breadth_key).get("total", "--")
+            total_right = _breadth_block(right_breadth_key).get("total", "--")
             stale_ind = _stale_suffix("INDIA")
-            stale_us = _stale_suffix(us_breadth_key)
+            stale_right = _stale_suffix(right_breadth_key)
             
             title_ema_ind = f"Nifty 500: % Above 200-Day SMA ({_when(df_ema_ind, 'INDIA')}: {get_val(df_ema_ind, '% Above 200d SMA')}%{_fifty(df_ema_ind)}, Captured: {total_ind}){stale_ind}"
-            title_ema_us = f"{us_index_label}: % Above 200-Day SMA ({_when(df_ema_us, us_breadth_key)}: {get_val(df_ema_us, '% Above 200d SMA')}%{_fifty(df_ema_us)}, Captured: {total_us}){stale_us}"
+            title_ema_right = f"{right_index_label}: % Above 200-Day SMA ({_when(df_ema_right, right_breadth_key)}: {get_val(df_ema_right, '% Above 200d SMA')}%{_fifty(df_ema_right)}, Captured: {total_right}){stale_right}"
         
             title_hl_ind = f"Nifty 500: 52-Week Highs vs Lows ({_when(df_hl_ind, 'INDIA')}: Highs {get_val(df_hl_ind, '% New Highs')}%, Lows {get_val(df_hl_ind, '% New Lows')}%){stale_ind}"
-            title_hl_us = f"{us_index_label}: 52-Week Highs vs Lows ({_when(df_hl_us, us_breadth_key)}: Highs {get_val(df_hl_us, '% New Highs')}%, Lows {get_val(df_hl_us, '% New Lows')}%){stale_us}"
+            title_hl_right = f"{right_index_label}: 52-Week Highs vs Lows ({_when(df_hl_right, right_breadth_key)}: Highs {get_val(df_hl_right, '% New Highs')}%, Lows {get_val(df_hl_right, '% New Lows')}%){stale_right}"
         
             def get_perf(df):
                 if df is not None and not df.empty and 'Portfolio' in df.columns and 'Benchmark' in df.columns:
@@ -5562,23 +5575,24 @@ with tab_news:
                 return "--"
             
             _ind_display_label = markets_registry_now.get("india_invested", {}).get("label", "India Invested")
-            _us_display_label = markets_registry_now.get("us_invested", {}).get("label", "US Invested")
+            _right_display_label = markets_registry_now.get(right_watchlist_key, {}).get(
+                "label", "India Invested" if right_watchlist_key == "india_invested" else "US Invested")
             # These used to read markets.json's "benchmark", which holds the TICKER,
             # so the title said "India Invested vs ^CRSLDX". The panels below
-            # always plot ^CRSLDX and the chosen US index, so name those directly.
+            # always plot ^CRSLDX and the chosen right-hand index, so name those directly.
             _ind_bench_label = "Nifty 500"
-            _us_bench_label = us_index_label
+            _right_bench_label = right_index_label
             title_perf_ind = f"{_ind_display_label} vs {_ind_bench_label} ({get_perf(df_perf_ind)})"
-            title_perf_us = f"{_us_display_label} vs {_us_bench_label} ({get_perf(df_perf_us)})"
+            title_perf_right = f"{_right_display_label} vs {_right_bench_label} ({get_perf(df_perf_right)})"
 
             # Phones get the six panels stacked in one column (two side by side
             # are unreadable at that width), titles broken before their figures,
             # and no zoom or drag -- a tap only shows values (2026-10-15).
-            _panels = [("ema", "ind", title_ema_ind), ("ema", "us", title_ema_us),
-                       ("hl", "ind", title_hl_ind), ("hl", "us", title_hl_us),
-                       ("perf", "ind", title_perf_ind), ("perf", "us", title_perf_us)]
+            _panels = [("ema", "ind", title_ema_ind), ("ema", "right", title_ema_right),
+                       ("hl", "ind", title_hl_ind), ("hl", "right", title_hl_right),
+                       ("perf", "ind", title_perf_ind), ("perf", "right", title_perf_right)]
             if _mobile:
-                _panels = [p_ for m in ("ind", "us") for p_ in _panels if p_[1] == m]
+                _panels = [p_ for m in ("ind", "right") for p_ in _panels if p_[1] == m]
                 _pos = {(kind, m): (i + 1, 1) for i, (kind, m, _) in enumerate(_panels)}
                 fig = make_subplots(rows=6, cols=1, shared_xaxes="all", vertical_spacing=0.05,
                                     subplot_titles=[t.replace(" (", "<br>(", 1) for _, _, t in _panels])
@@ -5588,26 +5602,26 @@ with tab_news:
                                     horizontal_spacing=0.05, subplot_titles=[t for _, _, t in _panels])
 
             # An index the job has never stored (Nasdaq 100 until its first run
-            # after 2026-10-15) is not a failed refresh -- say so.
-            _us_missing_text = (f"No {us_index_label} data yet - stored by the next breadth run"
-                                if not _breadth_block(us_breadth_key) else "No data - last refresh failed")
-            # Same for the return panel: the chosen index's prices not stored yet
-            # (QQQ until the performance job's first run after 2026-10-15).
-            _us_perf_missing_text = (f"No {us_index_label} prices yet - stored by the next breadth run"
-                                     if closes_us is not None and us_bench_ticker not in closes_us.columns
-                                     else "No data - last refresh failed")
+            # after 2026-10-15, the three Nifty indexes after 2026-10-28) is not a
+            # failed refresh -- say so.
+            _right_missing_text = (f"No {right_index_label} data yet - stored by the next breadth run"
+                                   if not _breadth_block(right_breadth_key) else "No data - last refresh failed")
+            # Same for the return panel: the chosen index's prices not stored yet.
+            _right_perf_missing_text = (f"No {right_index_label} prices yet - stored by the next breadth run"
+                                        if closes_right is not None and right_bench_ticker not in closes_right.columns
+                                        else "No data - last refresh failed")
 
             # An empty panel is indistinguishable from a panel whose data is all
             # zero. Say why it is blank -- the S&P breadth charts sat empty for 8
             # days because a refresh leg was failing silently, and nothing on screen
             # pointed at the refresh job.
             _ind_label = markets_registry_now.get("india_invested", {}).get("label", "India Invested")
-            _us_label = markets_registry_now.get("us_invested", {}).get("label", "US Invested")
+            _right_label = _right_display_label
             for _m, _ema, _hl, _perf, _name, _bench, _missing in (
                     ("ind", df_ema_ind, df_hl_ind, df_perf_ind, _ind_label, _ind_bench_label,
                      "No data - last refresh failed"),
-                    ("us", df_ema_us, df_hl_us, df_perf_us, _us_label, _us_bench_label, _us_missing_text)):
-                _perf_missing = _us_perf_missing_text if _m == "us" else "No data - last refresh failed"
+                    ("right", df_ema_right, df_hl_right, df_perf_right, _right_label, _right_bench_label, _right_missing_text)):
+                _perf_missing = _right_perf_missing_text if _m == "right" else "No data - last refresh failed"
                 _r, _c = _pos[("ema", _m)]
                 if _ema is not None and not _ema.empty:
                     breadth_charts.add_breadth(fig, _ema, _r, _c, show_50=show_50)
@@ -5630,7 +5644,7 @@ with tab_news:
 
         # --- Watchlist breadth (2026-10-14; split in two 2026-10-15) --------------
         # The same three charts as above, over the stocks of a watchlist or
-        # combined group, against Nifty 500, S&P 500 or Nasdaq 100 -- twice, side by
+        # combined group, against any index_registry index -- twice, side by
         # side like the index view: India Invested on the left and US Invested on
         # the right by default (owner, 2026-10-15), each with its own pickers.
         # Built from dashboard_perf.json's closes (every watchlist's tickers, 6
@@ -5641,8 +5655,9 @@ with tab_news:
         _wb_labels = {k: v.get("label", k) for k, v in markets_registry_now.items()}
         _wb_labels.update(combined_display_label_by_key)
         _wb_options = list(_wb_labels)
-        _wb_benchmarks = {"Nifty 500": ("^CRSLDX", "INDIA"), "S&P 500": ("SPY", "US"),
-                          "Nasdaq 100": ("QQQ", "NASDAQ100")}
+        # {label: (benchmark ticker, market_breadth.json key)}, every index_registry
+        # index (Nifty 50, Midcap 150 and Smallcap 250 joined on 2026-10-28).
+        _wb_benchmarks = {ix["label"]: (ix["benchmark"], ix["key"]) for ix in index_registry.INDEXES}
         _perf_markets = perf_data.get("markets") or {}
         # dashboard_perf.json's "benchmarks" holds every selectable index once
         # (QQQ is in no market block); a market block's own copy is a fallback.
@@ -5661,11 +5676,15 @@ with tab_news:
                 tickers = list(dict.fromkeys(t for m in members for t in watchlists_now.get(m, []) if t))
                 # Keyed per side and watchlist, so each keeps its own choice; the
                 # default is the index of the exchange most of its stocks list on
-                # (Nifty 500 for India Invested, S&P 500 for US Invested).
+                # (Nifty 500 for India Invested, S&P 500 for US Invested). A
+                # dropdown since 2026-10-28: six radio buttons do not fit half a page.
                 india_share = sum(t.endswith((".NS", ".BO")) for t in tickers) / max(len(tickers), 1)
-                bench_label = st.radio("Benchmark", list(_wb_benchmarks), horizontal=True,
-                                       index=0 if india_share > 0.5 else 1,
-                                       key=f"breadth_benchmark_{side}_{wb_key}")
+                _bench_key = f"breadth_benchmark_{side}_{wb_key}"
+                if st.session_state.get(_bench_key) not in (None, *_wb_benchmarks):
+                    del st.session_state[_bench_key]
+                bench_label = st.selectbox("Benchmark", list(_wb_benchmarks),
+                                           index=list(_wb_benchmarks).index("Nifty 500" if india_share > 0.5 else "S&P 500"),
+                                           key=_bench_key)
             bench, bench_market = _wb_benchmarks[bench_label]
             name = _wb_labels.get(wb_key, wb_key)
             out = {"name": name, "bench_label": bench_label, "radio_key": f"breadth_benchmark_{side}_{wb_key}"}

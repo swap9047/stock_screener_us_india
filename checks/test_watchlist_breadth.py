@@ -140,8 +140,8 @@ check('key=f"breadth_watchlist_{side}"' in APP and "_wb_options = list(_wb_label
 check('_watchlist_side("left", "india_invested", col_left)' in APP
       and '_watchlist_side("right", "us_invested", col_right)' in APP,
       "W4: split in two -- India Invested on the left, US Invested on the right by default (2026-10-15)")
-check('key=f"breadth_benchmark_{side}_{wb_key}"' in APP and "index=0 if india_share > 0.5 else 1" in APP
-      and '"Nifty 500": ("^CRSLDX", "INDIA"), "S&P 500": ("SPY", "US")' in APP,
+check('_bench_key = f"breadth_benchmark_{side}_{wb_key}"' in APP
+      and 'index=list(_wb_benchmarks).index("Nifty 500" if india_share > 0.5 else "S&P 500")' in APP,
       "W4: a benchmark per side and watchlist, defaulting to the list's exchange (Nifty 500 / S&P 500)")
 check("compute_breadth(closes, since=_wb_cutoff)" in APP and "assemble_closes(_perf_markets, tickers)" in APP,
       "W4: the view computes through breadth_math, from dashboard_perf.json")
@@ -164,7 +164,7 @@ check(keep({"2026-01-05": 1.0}, {"2026-01-05": 1.0, "2026-01-06": 1.1}, today=da
       "W4: an old stored tail (a delisted ticker) is not carried")
 check(keep({}, old) == {} and keep(new, None) == new, "W4: nothing to merge -> the download as is")
 
-# --- dashboard_perf.json "benchmarks" (2026-10-15: SPY, QQQ, ^CRSLDX once) ------------
+# --- dashboard_perf.json "benchmarks" (every index_registry index once) -------------
 import json, tempfile, os
 def run_perf(previous, fail=()):
     d = tempfile.mkdtemp()
@@ -185,7 +185,10 @@ def run_perf(previous, fail=()):
     finally:
         rdp.OUT_FILE, rdp._download_series, rdp.load_watchlists, rdp.load_settings, rdp.get_benchmarks = saved
 out = run_perf(None)
-check(sorted(out["benchmarks"]) == ["QQQ", "SPY", "^CRSLDX"] and out["status"]["benchmarks"] == "ok"
+import index_registry
+check(sorted(out["benchmarks"]) == sorted(index_registry.BENCHMARK_TICKERS)
+      and {"QQQ", "SPY", "^CRSLDX", "^NSEI", "NIFTYMIDCAP150.NS", "NIFTYSMLCAP250.NS"} == set(out["benchmarks"])
+      and out["status"]["benchmarks"] == "ok"
       and max(out["benchmarks"]["QQQ"]) == "2026-10-14",
       f"perf: every selectable index is stored once under benchmarks ({sorted(out['benchmarks'])})")
 check(sorted(out["markets"]["us_one"]) == ["ACME", "BOLT", "SPY"], "perf: market blocks are unchanged (own benchmark kept)")
@@ -195,9 +198,11 @@ check(out["benchmarks"]["QQQ"] == {"2026-10-13": 9.0} and out["status"]["benchma
       "perf: a failed benchmark download keeps the stored series, and says so")
 
 APP2 = (REPO / "app.py").read_text()
-check('"Nasdaq 100": ("NASDAQ100", "QQQ")' in APP2 and 'key="breadth_us_index"' in APP2,
-      "app: the US column switches between S&P 500 and Nasdaq 100")
-check('"Nasdaq 100": ("QQQ", "NASDAQ100")' in APP2, "app: the watchlist view offers Nasdaq 100 as a benchmark")
+check('if ix["key"] != "INDIA"}' in APP2 and "_right_indexes = {ix[\"label\"]: ix for ix in sorted(index_registry.INDEXES" in APP2
+      and 'key="breadth_us_index"' in APP2,
+      "app: the right-hand column switches between every index but the left's Nifty 500")
+check('_wb_benchmarks = {ix["label"]: (ix["benchmark"], ix["key"]) for ix in index_registry.INDEXES}' in APP2,
+      "app: the watchlist view offers every index as a benchmark")
 check('perf_data.get("benchmarks")' in APP2 and APP2.count('perf_data.get("benchmarks")') >= 2,
       "app: both charts take a benchmark the market block lacks from dashboard_perf.json's benchmarks")
 

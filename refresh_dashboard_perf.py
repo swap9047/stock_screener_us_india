@@ -23,7 +23,7 @@ Each market's own benchmark ticker (from markets.json) is stored as a normal
 column within its market, matching what the app's calculate_portfolio_returns()
 expects. "benchmarks" holds BENCHMARK_SERIES once, for the charts that let you
 pick the index -- a US watchlist against the Nasdaq 100 needs QQQ, which no
-market block stores (2026-10-15).
+market block stores (2026-10-15); every index_registry entry has one.
 
 Closes are PRICE return (auto_adjust=False -> split-adjusted, dividends not
 reinvested). The India benchmark ^CRSLDX is a price index, so dividend-adjusted
@@ -41,14 +41,15 @@ from datetime import datetime, timezone
 import pandas as pd
 import yfinance as yf
 
+import index_registry
 from stock_data import load_watchlists, load_settings, get_benchmarks
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 OUT_FILE = os.path.join(SCRIPT_DIR, "dashboard_perf.json")
 PERIOD = "6y"
-# The indexes the app's charts can be switched between: S&P 500, Nasdaq 100,
-# Nifty 500.
-BENCHMARK_SERIES = ["SPY", "QQQ", "^CRSLDX"]
+# The indexes the app's charts can be switched between -- every index_registry
+# entry (Nifty 50, Midcap 150 and Smallcap 250 joined on 2026-10-28).
+BENCHMARK_SERIES = list(index_registry.BENCHMARK_TICKERS)
 
 
 def _download_series(tickers):

@@ -16,15 +16,14 @@ import re
 from datetime import datetime, timedelta, timezone
 from statistics import mean, median
 
+import index_registry
 import market_api
 import market_lookup
 
-# market_breadth.json's indexes, by the words people use for them.
-INDEX_ALIASES = {
-    "INDIA": ("nifty", "nifty 500", "nifty500", "india", "nse", "indian market"),
-    "US": ("s&p", "s&p 500", "sp500", "spx", "s and p 500", "us", "us market"),
-    "NASDAQ100": ("nasdaq", "nasdaq 100", "nasdaq100", "ndx"),
-}
+# market_breadth.json's indexes, by the words people use for them (index_registry's aliases).
+INDEX_ALIASES = {ix["key"]: ix["aliases"] for ix in index_registry.INDEXES}
+# Each index's price series, the ticker dashboard_perf.json stores it under.
+INDEX_BENCHMARKS = {ix["key"]: ix["benchmark"] for ix in index_registry.INDEXES}
 DEFAULT_GROUPS = ("price", "returns", "trend")
 MAX_BREADTH_DAYS = 1830
 MAX_PRICE_DAYS = 730
@@ -163,7 +162,7 @@ def market_breadth(db, name, days=365):
         key, _ = find_watchlist(db.watchlists(), name)
     if not key or key not in series:
         return {"query": name, "found": False, "available": [s["label"] for s in series.values()],
-                "note": "Pass an index (Nifty 500, S&P 500, Nasdaq 100) or one of the watchlists."}
+                "note": f"Pass an index ({index_registry.label_list()}) or one of the watchlists."}
     meta = series[key]
     since = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
     points = [[p["date"], p["pct_above_200"], p["pct_above_50"], p["pct_highs"], p["pct_lows"]]
@@ -241,7 +240,7 @@ def price_history(db, companies=None, watchlist=None, days=90, fetch=yahoo_close
         # becomes its benchmark; anything else goes through the screener's name lookup.
         held = set(db.prices([q.strip().upper() for q in names], since))
         for q in names:
-            index_benchmark = {"INDIA": "^CRSLDX", "US": "SPY", "NASDAQ100": "QQQ"}.get(_index_series(q) or "")
+            index_benchmark = INDEX_BENCHMARKS.get(_index_series(q) or "")
             up = q.strip().upper()
             t = index_benchmark or (up if up in held or up.startswith("^") else market_lookup.resolve(db, q, yahoo)[0])
             if not t and market_lookup.TICKER_RE.match(up):
@@ -266,5 +265,5 @@ def price_history(db, companies=None, watchlist=None, days=90, fetch=yahoo_close
                sampled=f"every {step}th session, counting back from the latest" if step > 1 else None,
                note="Daily closes from the user's stock screener (split-adjusted, dividends not added). Watchlist stocks "
                     "and benchmarks are stored two years back; other tickers are fetched from Yahoo on request. "
-                    "Benchmarks: ^CRSLDX Nifty 500, SPY S&P 500, QQQ Nasdaq 100.")
+                    "Benchmarks: " + ", ".join(f"{ix['benchmark']} {ix['label']}" for ix in index_registry.INDEXES) + ".")
     return {k: v for k, v in out.items() if v not in (None, [], {})} | {"found": bool(series)}
