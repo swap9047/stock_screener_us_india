@@ -7,5 +7,6 @@
     {"src": "/api/market", "dest": "api/market.py"},
     {"src": "/mcp/(?<token>[^/]+)/?", "dest": "api/mcp.py?token=$token"},
     {"src": "/mcp/?", "dest": "api/mcp.py"}
-  ]
+  ],
+  "ignoreCommand": "[ \"$VERCEL_GIT_COMMIT_REF\" != \"main\" ] || git diff --quiet \"${VERCEL_GIT_PREVIOUS_SHA:-HEAD^}\" HEAD -- api vercel.json .vercelignore requirements.txt alerts.py custom_columns.py expert_views.py filters.py fundamentals_eval.py glossary.py index_registry.py json_store.py llm_util.py market_api.py market_http.py market_lists.py market_lookup.py news_summary.py stage_analysis.py stock_data.py ticker_notes.py || exit 1"
 }
