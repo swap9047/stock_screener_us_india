@@ -5333,9 +5333,9 @@ with tab_news:
             results_fields = st.pills("Quarterly results fields", list(quarterly_results.FIELDS),
                                       selection_mode="multi", default=list(quarterly_results.FIELDS),
                                       format_func=quarterly_results.FIELD_LABELS.get, key="results_fields") or []
-            # How many quarters the rows show (2026-10-29): the job keeps every
-            # quarter Yahoo has returned, so the history outgrows the default 6.
-            results_quarters = st.selectbox("Quarters shown", [6, 8, 12], index=0, key="results_quarters")
+            # How many quarters the rows show (2026-10-29): the job keeps three
+            # years of quarters, so YoY builds to two years (8 bars), the default.
+            results_quarters = st.selectbox("Quarters shown", [4, 6, 8], index=2, key="results_quarters")
         
         with col_refresh:
             # Starts the market-breadth workflow (2026-10-15): breadth, the
@@ -5949,8 +5949,8 @@ with tab_news:
                    "whose share count jumped (a bonus issue or split) out of EPS growth; banks have no OPM on "
                    "Yahoo. A figure from fewer than 5 companies, or under 30% of those that reported the quarter, "
                    "is left out. A light, outlined quarter is still being reported. Yahoo serves about five quarters "
-                   "per company, and every quarter it returns is kept, so YoY fills in one quarter per results "
-                   "season and the history keeps growing (Quarters shown: up to 12)."
+                   "per company; three years of quarters are kept, so YoY fills in one quarter per results "
+                   "season up to two years of bars (8)."
                    + (f" Results as of {results_data.get('as_of')}." if results_data.get("as_of") else ""))
 
         st.divider()

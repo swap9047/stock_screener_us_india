@@ -6,7 +6,7 @@ row, and the job that stores the statements.
       September's, one ending 31 Jan December's); shift and label.
   Q2  normalize takes Yahoo's rows with fallbacks, drops NaN, keeps the later of
       two periods in one bucket; merge lays a new fetch over the stored quarters
-      without a blank erasing a figure, and keeps every quarter (never trimmed).
+      without a blank erasing a figure, and keeps three years (12 quarters).
   Q3  is_due: never fetched, results expected this season, or 14 days old.
   Q4  summarize: the median of the companies' own growth rates, worked out here
       independently; a loss or zero base is left out; a company without
@@ -79,9 +79,9 @@ check(m["2026-06-30"] == {"rev": 100.0, "op": 9.9, "ni": 8.0, "eps": 0.7} and m[
       and "2026-09-30" in m,
       "Q2: a newer fetch wins per figure, a blank never erases a stored one, older quarters stay")
 many = {qr.shift("2026-09-30", -i): {"rev": float(i)} for i in range(20)}
-check(sorted(qr.merge(many, {})) == sorted(many) and len(qr.merge(many, {})) == 20,
-      "Q2: every stored quarter is kept -- the history keeps building (owner, 2026-10-29)")
-check(sorted(qr.merge(many, {}, keep=12)) == sorted(many)[-12:], "Q2: ...a `keep` still trims when asked")
+check(sorted(qr.merge(many, {})) == sorted(many)[-12:],
+      "Q2: the last 12 quarters (three years) are kept -- two years of YoY bars (owner, 2026-10-29)")
+check(len(qr.merge(many, {}, keep=None)) == 20, "Q2: ...keep=None keeps them all")
 
 # --- Q3 ------------------------------------------------------------------------------
 T = date(2026, 10, 28)
@@ -159,8 +159,8 @@ check(qr.FIELDS == ("rev", "ni", "eps", "margin")
       "Q4: the four fields, in display order")
 long = {"ACME": {"q": {qr.shift("2026-09-30", -i): rec(100 + i, 10, 10, 1.0) for i in range(10)}}}
 rows_l, _ = qr.summarize(long, ["ACME"], "qoq", **ALL)
-check(len(rows_l) == 6 and rows_l[-1]["q"] == "2026-09-30" and rows_l[0]["label"] == "Jun '25",
-      "Q4: the last six quarters, oldest first")
+check(len(rows_l) == 8 and rows_l[-1]["q"] == "2026-09-30" and rows_l[0]["label"] == "Dec '24",
+      f"Q4: the last eight quarters (two years) by default, oldest first ({len(rows_l)}, {rows_l[0]['label']})")
 
 # --- Q4b the thin-figure rule ------------------------------------------------------------
 def co(prev_ni, ni, rev=(100.0, 110.0)):

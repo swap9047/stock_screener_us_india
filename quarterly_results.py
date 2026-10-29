@@ -41,13 +41,12 @@ from statistics import median
 
 QUARTERLY_RESULTS_FILE = "quarterly_results.json"
 
-# Quarters kept per company: all of them (owner, 2026-10-29: store Yahoo's
-# quarters so the history keeps building). This trimmed to the last 12 until
-# then, which would have capped YoY at three years. ~1,100 companies x 4
-# quarters x 5 figures a year is well under 1 MB a year.
-MAX_QUARTERS = None
-# Quarters a chart shows (StockScans' default view).
-SHOW_QUARTERS = 6
+# Quarters kept per company: three years (owner, 2026-10-29: Yahoo's quarters
+# are stored from now on, three years of them, so YoY has two years of bars --
+# each of the last 8 quarters against the one 4 before it).
+MAX_QUARTERS = 12
+# Quarters a chart shows by default: two years.
+SHOW_QUARTERS = 8
 # Days after a quarter ends before its results are looked for, and how long a
 # company still missing them keeps being looked for daily. Indian companies
 # have 45 days (60 for Q4), US ones ~40; past the wait a company that never
