@@ -41,8 +41,11 @@ from statistics import median
 
 QUARTERLY_RESULTS_FILE = "quarterly_results.json"
 
-# Quarters kept per company: three years, more than any chart shows.
-MAX_QUARTERS = 12
+# Quarters kept per company: all of them (owner, 2026-10-29: store Yahoo's
+# quarters so the history keeps building). This trimmed to the last 12 until
+# then, which would have capped YoY at three years. ~1,100 companies x 4
+# quarters x 5 figures a year is well under 1 MB a year.
+MAX_QUARTERS = None
 # Quarters a chart shows (StockScans' default view).
 SHOW_QUARTERS = 6
 # Days after a quarter ends before its results are looked for, and how long a
@@ -141,14 +144,16 @@ def normalize(periods):
 
 def merge(old, new, keep=MAX_QUARTERS):
     """`old` quarters with `new` laid over them (a newer fetch wins per figure,
-    a blank never erases a stored one), the last `keep` quarters."""
+    a blank never erases a stored one); the last `keep` quarters, or all of
+    them when `keep` is None."""
     out = {q: dict(v) for q, v in (old or {}).items()}
     for q, rec in (new or {}).items():
         cur = out.setdefault(q, {})
         for k, v in rec.items():
             if v is not None or k not in cur:
                 cur[k] = v
-    return {q: out[q] for q in sorted(out)[-keep:]}
+    qs = sorted(out)
+    return {q: out[q] for q in (qs if keep is None else qs[-keep:])}
 
 
 def is_due(entry, today):

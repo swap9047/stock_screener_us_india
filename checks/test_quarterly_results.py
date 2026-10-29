@@ -6,7 +6,7 @@ row, and the job that stores the statements.
       September's, one ending 31 Jan December's); shift and label.
   Q2  normalize takes Yahoo's rows with fallbacks, drops NaN, keeps the later of
       two periods in one bucket; merge lays a new fetch over the stored quarters
-      without a blank erasing a figure, and keeps the last 12.
+      without a blank erasing a figure, and keeps every quarter (never trimmed).
   Q3  is_due: never fetched, results expected this season, or 14 days old.
   Q4  summarize: the median of the companies' own growth rates, worked out here
       independently; a loss or zero base is left out; a company without
@@ -79,7 +79,9 @@ check(m["2026-06-30"] == {"rev": 100.0, "op": 9.9, "ni": 8.0, "eps": 0.7} and m[
       and "2026-09-30" in m,
       "Q2: a newer fetch wins per figure, a blank never erases a stored one, older quarters stay")
 many = {qr.shift("2026-09-30", -i): {"rev": float(i)} for i in range(20)}
-check(sorted(qr.merge(many, {})) == sorted(many)[-12:], "Q2: the last 12 quarters are kept")
+check(sorted(qr.merge(many, {})) == sorted(many) and len(qr.merge(many, {})) == 20,
+      "Q2: every stored quarter is kept -- the history keeps building (owner, 2026-10-29)")
+check(sorted(qr.merge(many, {}, keep=12)) == sorted(many)[-12:], "Q2: ...a `keep` still trims when asked")
 
 # --- Q3 ------------------------------------------------------------------------------
 T = date(2026, 10, 28)
@@ -219,6 +221,10 @@ check(sorted(fetched) == ["ACME", "IN2.NS", "U1"] and code == 0,
 check(set(out["tickers"]) == {"IN1.NS", "IN2.NS", "U1", "ACME"} and out["tickers"]["U1"]["q"]["2026-06-30"] == {"rev": 5.0, "ni": 2.0}
       and out["tickers"]["U1"]["q"]["2026-09-30"]["rev"] == 110.0 and out["tickers"]["ACME"]["fetched"] == "2026-10-28",
       "Q5: a new quarter is added to the stored ones; index members and watchlist stocks are both covered")
+gone = {**prev, "tickers": {**prev["tickers"], "OLDCO": {"fetched": "2026-09-01", "q": {"2026-06-30": DONE}}}}
+out, _, fetched = job(gone, [], lambda t: STMT)
+check(out["tickers"]["OLDCO"] == gone["tickers"]["OLDCO"] and "OLDCO" not in fetched,
+      "Q5: a company no longer in any index or watchlist keeps its stored quarters, and is not fetched")
 out, code, _ = job(prev, [], lambda t: None if t == "U1" else STMT)
 check(out["tickers"]["U1"] == prev["tickers"]["U1"] and code == 0,
       "Q5: a failed fetch keeps the stored quarters and the fetch date (so it is due again)")

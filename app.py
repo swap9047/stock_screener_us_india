@@ -5282,6 +5282,7 @@ with tab_news:
         for _k in ("time_horizon_filter", "breadth_us_index", "breadth_show_50d", "news_scope_select", "news_search_model_select",
                    "news_reasoning_model_select", "news_reasoning_budget_select",
                    "breadth_watchlist_left", "breadth_watchlist_right", "results_growth_basis", "results_fields",
+                   "results_quarters",
                    *[k for k in st.session_state if str(k).startswith("breadth_benchmark_")]):
             if _k in st.session_state:
                 st.session_state[_k] = st.session_state[_k]
@@ -5332,6 +5333,9 @@ with tab_news:
             results_fields = st.pills("Quarterly results fields", list(quarterly_results.FIELDS),
                                       selection_mode="multi", default=list(quarterly_results.FIELDS),
                                       format_func=quarterly_results.FIELD_LABELS.get, key="results_fields") or []
+            # How many quarters the rows show (2026-10-29): the job keeps every
+            # quarter Yahoo has returned, so the history outgrows the default 6.
+            results_quarters = st.selectbox("Quarters shown", [6, 8, 12], index=0, key="results_quarters")
         
         with col_refresh:
             # Starts the market-breadth workflow (2026-10-15): breadth, the
@@ -5506,10 +5510,11 @@ with tab_news:
 
         def _results_rows(tickers):
             """(quarters, companies with stored results) for a group, under the toggle's basis."""
-            key = (results_basis, tuple(tickers))
+            key = (results_basis, results_quarters, tuple(tickers))
             if key not in _results_cache:
                 _results_cache[key] = quarterly_results.summarize(_results_tickers, tickers,
-                                                                  basis=results_basis.lower())
+                                                                  basis=results_basis.lower(),
+                                                                  quarters=results_quarters)
             return _results_cache[key]
 
         # Short names for a title's latest-quarter figures, in field order.
@@ -5944,7 +5949,8 @@ with tab_news:
                    "whose share count jumped (a bonus issue or split) out of EPS growth; banks have no OPM on "
                    "Yahoo. A figure from fewer than 5 companies, or under 30% of those that reported the quarter, "
                    "is left out. A light, outlined quarter is still being reported. Yahoo serves about five quarters "
-                   "per company, so YoY fills in one quarter per results season as they are stored."
+                   "per company, and every quarter it returns is kept, so YoY fills in one quarter per results "
+                   "season and the history keeps growing (Quarters shown: up to 12)."
                    + (f" Results as of {results_data.get('as_of')}." if results_data.get("as_of") else ""))
 
         st.divider()

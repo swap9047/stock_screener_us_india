@@ -106,7 +106,10 @@ def run(previous, watch_tickers, today, fetch=fetch_statement, members_fn=index_
     members, members_failed = members_fn(previous.get("members") or {})
     universe = list(dict.fromkeys([t for m in members.values() for t in m] + list(watch_tickers)))
     stored = previous.get("tickers") or {}
-    tickers = {t: stored[t] for t in universe if t in stored}
+    # Every stored company is kept, in the universe or not (owner, 2026-10-29: the
+    # history keeps building): one that leaves an index or a watchlist is no
+    # longer fetched, but its quarters are there if it comes back.
+    tickers = dict(stored)
     due = [t for t in universe if qr.is_due(stored.get(t), today)]
     print(f"{len(universe)} companies ({len(watch_tickers)} from watchlists); {len(due)} due today")
     start = clock()

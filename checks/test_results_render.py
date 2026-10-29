@@ -251,6 +251,9 @@ if at:
     check(any("Quarterly results growth" in str(getattr(e, "proto", "")) for e in at.get("button_group"))
           and any("Quarterly results fields" in str(getattr(e, "proto", "")) for e in at.get("button_group")),
           "R5/R6: the YoY / QoQ toggle and the field picker are drawn")
+    qs = next((x for x in at.selectbox if x.key == "results_quarters"), None)
+    check(qs is not None and list(qs.options) == ["6", "8", "12"] and qs.value == 6,
+          f"R5b: 'Quarters shown' offers 6, 8 and 12, 6 by default ({qs and list(qs.options)})")
 
 at = render("QoQ")
 if at:
