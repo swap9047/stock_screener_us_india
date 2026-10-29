@@ -7,5 +7,6 @@
     {"src": "/api/market", "dest": "api/market.py"},
     {"src": "/mcp/(?<token>[^/]+)/?", "dest": "api/mcp.py?token=$token"},
     {"src": "/mcp/?", "dest": "api/mcp.py"}
-  ]
+  ],
+  "ignoreCommand": "sh scripts/vercel-ignore.sh"
 }
