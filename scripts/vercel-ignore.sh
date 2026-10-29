@@ -12,6 +12,9 @@
 # import, directly or through another. checks/test_vercel_deploys.py computes that import closure and fails
 # when a module is missing here -- add it when api/*.py starts importing a new one.
 #
+# Why a script: Vercel rejects an ignoreCommand longer than 256 characters ("ignoreCommand should NOT be longer
+# than 256 characters": the first, 417-character one-liner failed its deployment with that message on 2026-10-29).
+#
 # The comparison is with the last deployed commit (VERCEL_GIT_PREVIOUS_SHA), so a push of several commits still
 # deploys when an earlier one changed the functions; without it, with the parent. Any failure to compare (a
 # commit the clone doesn't have, no parent) builds: a needless deployment is cheaper than a missing one.

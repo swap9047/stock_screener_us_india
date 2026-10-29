@@ -60,6 +60,7 @@ while todo:
 missing = sorted(f for f in needed if f not in watched and not f.startswith("api/"))
 check("api" in watched and not missing,
       f"the watched files cover every module the two functions import ({len(needed) - 2} of them)" + (f"; missing {missing}" if missing else ""))
+check(len(cmd) <= 256, f"the ignoreCommand is {len(cmd)} characters: Vercel rejects one over 256 and fails the deployment")
 check(all(f in watched for f in ("vercel.json", ".vercelignore", "requirements.txt")),
       "a change to the Vercel config or the dependency list deploys")
 check(all((REPO / f).exists() for f in watched), "every watched path exists (a renamed file would silently stop deploying)")
