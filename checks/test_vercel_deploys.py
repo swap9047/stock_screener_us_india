@@ -1,4 +1,4 @@
-"""Which pushes deploy to Vercel (vercel.json's ignoreCommand), 2026-10-29.
+"""Which pushes deploy to Vercel (vercel.json's ignoreCommand, scripts/vercel-ignore.sh), 2026-10-29.
 
 Vercel's Git integration deployed every commit on every branch: 27 PRs in 11 days, each push a copy of the
 two Python functions (pandas, numpy, yfinance, ...), until the free team's Function Storage hit 75% of 10 GB
@@ -30,11 +30,14 @@ def check(ok, label):
 
 cfg = json.loads((REPO / "vercel.json").read_text())
 cmd = cfg.get("ignoreCommand", "")
-check(bool(cmd) and [b["src"] for b in cfg["builds"]] == ["api/market.py", "api/mcp.py"],
-      "vercel.json has an ignoreCommand and still builds only the two functions")
+SCRIPT = REPO / "scripts" / "vercel-ignore.sh"
+check(cmd == "sh scripts/vercel-ignore.sh" and SCRIPT.exists() and [b["src"] for b in cfg["builds"]] == ["api/market.py", "api/mcp.py"],
+      "vercel.json's ignoreCommand runs the script (not a long one-liner) and still builds only the two functions")
 
 # --- the watched paths cover everything the functions import ---------------------------------
-watched = shlex.split(cmd.split(" -- ", 1)[1].rsplit(" || exit 1", 1)[0]) if " -- " in cmd else []
+import re
+_w = re.search(r'^WATCHED="([^"]*)"', SCRIPT.read_text(), re.M)
+watched = shlex.split(_w.group(1)) if _w else []
 local = {p.stem for p in REPO.glob("*.py")}
 
 def imported(path):
@@ -83,8 +86,13 @@ def decide(cwd, ref, previous=None):
         env["VERCEL_GIT_PREVIOUS_SHA"] = previous
     return subprocess.run(["sh", "-c", cmd], cwd=cwd, env=env, capture_output=True, text=True).returncode
 
+def with_script(cwd):
+    Path(cwd, "scripts").mkdir(exist_ok=True)
+    Path(cwd, "scripts", "vercel-ignore.sh").write_text(SCRIPT.read_text())
+
 with tempfile.TemporaryDirectory() as d:
     run("git", "init", "-q", "-b", "main", cwd=d)
+    with_script(d)
     base = commit(d, {"api/market.py": "1", "market_lookup.py": "1", "app.py": "1", "README.md": "1", "checks/t.py": "1",
                       "vercel.json": "{}", "requirements.txt": "x"}, "base")
     c_app = commit(d, {"app.py": "2"}, "dashboard only")
@@ -109,6 +117,7 @@ with tempfile.TemporaryDirectory() as d:
     check(decide(d, "main", previous="0" * 40) == 1, "a previous commit the clone doesn't have: deploys (the safe answer)")
 with tempfile.TemporaryDirectory() as d:
     run("git", "init", "-q", "-b", "main", cwd=d)
+    with_script(d)
     commit(d, {"app.py": "1"}, "first commit")
     check(decide(d, "main") == 1, "main with no parent commit to compare to: deploys (the safe answer)")
     check(decide(d, "") == 0, "a build with no branch name is not main: skipped")
