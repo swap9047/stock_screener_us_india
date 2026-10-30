@@ -16,6 +16,10 @@ row, and the job that stores the statements.
   Q4b a figure from fewer than 5 companies, or under 30% of those that reported
       the quarter, is left out (and named in "thin"); a quarter with nothing
       left is not drawn; the YoY default applies without the rule's arguments.
+  Q4c a company whose history spans the base quarter but lacks it (a hole in
+      Yahoo's data: most Indian companies' Sep '25) is left out of that 30%,
+      and the quarter says how many ("gap"); a company too new to have the base
+      still counts against it.
   Q5  the job: fetches only what is due, keeps what a failed fetch or a failed
       member list would lose, stops on a time budget (exit 0) and when Yahoo
       refuses most of the run (exit 1, after saving).
@@ -187,6 +191,27 @@ check(qr.summarize(few, list(few))[0] == [],
       "Q4b: 20 of 100 reported (20%, like the S&P 500's Mar '26 at 27 of 502) leaves the quarter out")
 check(qr.summarize({"A": co(10, 12)}, ["A"])[0] == [] and qr.summarize({"A": co(10, 12)}, ["A"], **ALL)[0],
       "Q4b: a single company's quarter is left out by default (India Invested's Sep '26 +435%)")
+
+# --- Q4c a hole in Yahoo's data at the base quarter -------------------------------------
+# 100 companies reported Sep '26: 20 have Sep '25; 70 have Jun '25 and Dec '25 but
+# not Sep '25 (Yahoo's hole); 10 listed too recently to have any year-ago quarter.
+hole = {f"B{i}": co(10.0, 12.0) for i in range(20)}
+hole.update({f"H{i}": {"q": {"2025-06-30": rec(90, 9, 9, 0.9), "2025-12-31": rec(95, 9, 9, 0.9),
+                             "2026-09-30": rec(50, 5, 5, 0.5)}} for i in range(70)})
+hole.update({f"N{i}": {"q": {"2026-09-30": rec(50, 5, 5, 0.5)}} for i in range(10)})
+rows_h, _ = qr.summarize(hole, list(hole))
+r = rows_h[-1] if rows_h else {}
+# By hand: 20 of the 100 reporters have both quarters (20% < 30%), but leaving the 70
+# holes out leaves 30, and 20 of 30 clears max(5, 0.3 * 30 = 9).
+check(r.get("q") == "2026-09-30" and r["rev"] == 10.0 and r["ni"] == 20.0 and r["n"]["rev"] == 20 and r["gap"] == 70,
+      f"Q4c: 20 of 100 kept when 70 lack Sep '25 inside their history ({r.get('rev')}, gap={r.get('gap')})")
+check(r and r["margin"] is not None and r["n"]["margin"] == 100,
+      "Q4c: OPM needs no base quarter, so it counts every reporter")
+young = {f"B{i}": co(10.0, 12.0) for i in range(20)}
+young.update({f"N{i}": {"q": {"2026-09-30": rec(50, 5, 5, 0.5)}} for i in range(80)})
+check(qr.summarize(young, list(young))[0] == [],
+      "Q4c: companies too new for a year-ago quarter are no hole -- 20 of 100 is still left out")
+check(rows_b2[-1]["gap"] == 0, f"Q4c: a quarter that passes the 30% on its own reports gap 0 ({rows_b2[-1]['gap']})")
 
 # --- Q5 ------------------------------------------------------------------------------
 STMT = {"2026-09-30": {"Total Revenue": 110.0, "Operating Income": 11.0, "Net Income": 9.0, "Diluted EPS": 0.9}}

@@ -15,6 +15,8 @@ a synthetic quarterly_results.json.
       the panels say so;
   R7  no file yet -> each panel says the first quarterly-results run stores it;
   R8  a phone stacks the panels and renders cleanly.
+  R3b a quarter kept although Yahoo lacks many companies' base quarter ("gap")
+      is drawn light too, and its hover says how many were missing;
   R9  a deploy never mixes the new app.py with an old module (2026-10-28): with
       an old breadth_charts in memory (no style_results), the News tab raised
       AttributeError until the app was rebooted; once a module file changes on
@@ -309,6 +311,19 @@ if at:
     check(len(specs) == 4 and idx_r["layout"].get("dragmode") is False
           and idx_r["layout"]["yaxis"]["domain"][0] > idx_r["layout"].get("yaxis3", {}).get("domain", [1, 1])[1] - 0.01,
           "R8: on a phone the results panels stack, with no drag-to-zoom")
+
+# --- R3b: a base-quarter hole in Yahoo's data ------------------------------------------
+from plotly.subplots import make_subplots as _ms
+
+_row = {"q": "2026-09-30", "label": "Sep '26", "rev": 18.4, "ni": 25.0, "eps": 26.3, "margin": 15.6,
+        "n": {"rev": 51, "ni": 50, "eps": 49, "margin": 180}, "thin": [], "reported": 188, "season": False,
+        "gap": 119}
+_fig = _ms(rows=1, cols=1, specs=[[{"secondary_y": True}]])
+breadth_charts.add_results(_fig, [dict(_row, q="2026-06-30", label="Jun '26", gap=0), _row], 1, 1, "YoY")
+_bar = next(tr for tr in _fig.data if tr.name == "Revenue growth")
+check(list(_bar.marker.opacity) == [1, 0.4] and "119 companies' base quarter missing on Yahoo" in _bar.hovertext[1]
+      and "missing" not in _bar.hovertext[0],
+      f"R3b: a gap quarter (not in season) is drawn light and its hover names the 119 missing ({_bar.hovertext[1]})")
 
 # --- R9: an old module left in memory by a deploy ----------------------------------
 import time as _time
