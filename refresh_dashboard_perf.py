@@ -100,28 +100,32 @@ def _download_series(tickers):
 MIN_COVERAGE_FRACTION = 0.5
 
 
-# Days a stored close may be carried over when a fresh download ends before it.
-KEEP_TAIL_DAYS = 5
+# Days a stored close may be carried over when a fresh download lacks it.
+KEEP_RECENT_DAYS = 5
 
 
-def keep_recent_tail(new, old, today=None):
-    """`new` ({"YYYY-MM-DD": close}) plus any of `old`'s closes dated after
-    new's last day and within KEEP_TAIL_DAYS of `today`.
+def keep_recent_closes(new, old, today=None):
+    """`new` ({"YYYY-MM-DD": close}) plus any of `old`'s closes within
+    KEEP_RECENT_DAYS of `today` on a day `new` does not have. A day `new` has
+    always keeps the fresh close (a live bar updated, a close corrected).
 
-    Yahoo blanks the latest daily row for hours at a time: at 12:30 AM IST on
+    Yahoo blanks recent daily rows for hours at a time: at 12:30 AM IST on
     2026-10-15 every Indian ticker's Oct 14 close came back empty, though an
-    earlier run had stored it. Written over wholesale, that run would have
-    dropped India's latest day from the performance curves and the watchlist
-    breadth view. Only recent days are carried, so a delisted ticker's old
-    closes never linger.
+    earlier run had stored it. This used to carry only days AFTER the
+    download's last one, which missed a hole in the middle: on 2026-10-30 Yahoo
+    served India's forming Oct 30 bar but had blanked Oct 29 again, and three
+    runs in a row wrote the blanks over the stored closes -- India Invested's Oct
+    29 went from 31 of 31 stocks to 11, then 10, and the watchlist breadth for
+    that day was computed from 10 stocks. Only recent days are carried, so a
+    delisted ticker's old closes never linger, and a carried close drops out on
+    its own once it is older than KEEP_RECENT_DAYS.
     """
     if not new or not old:
         return new
-    last = max(new)
     today = today or datetime.now(timezone.utc).date()
-    floor = (pd.Timestamp(today) - pd.Timedelta(days=KEEP_TAIL_DAYS)).strftime("%Y-%m-%d")
-    tail = {d: v for d, v in old.items() if d > last and d >= floor}
-    return {**new, **tail} if tail else new
+    floor = (pd.Timestamp(today) - pd.Timedelta(days=KEEP_RECENT_DAYS)).strftime("%Y-%m-%d")
+    kept = {d: v for d, v in old.items() if d >= floor and d not in new}
+    return dict(sorted({**new, **kept}.items())) if kept else new
 
 
 def load_previous():
@@ -166,7 +170,7 @@ def main():
             for col, s in series.items()
         }
         prev_block = prev_markets.get(market) or {}
-        outer = {col: keep_recent_tail(closes, prev_block.get(col)) for col, closes in outer.items()}
+        outer = {col: keep_recent_closes(closes, prev_block.get(col)) for col, closes in outer.items()}
         if len(outer) < MIN_COVERAGE_FRACTION * len(all_tickers):
             # Not a reading. Keep the previous block if there is one; a market
             # with no previous block stays absent, which is honest -- an empty
@@ -195,7 +199,7 @@ def main():
         new = {d.strftime("%Y-%m-%d"): round(float(v), 4) for d, v in bench_series[t].items()} \
             if t in bench_series else None
         if new:
-            benchmarks_out[t] = keep_recent_tail(new, prev_bench.get(t))
+            benchmarks_out[t] = keep_recent_closes(new, prev_bench.get(t))
         elif prev_bench.get(t):
             benchmarks_out[t] = prev_bench[t]
             print(f"::warning::[benchmarks] {t} failed to download -- kept the stored series")
