@@ -66,6 +66,13 @@ SEASON_SHARE = 0.5
 # year-ago quarter in the oldest YoY bar (S&P 500 Mar '26: 27 of 502).
 MIN_COMPANIES = 5
 MIN_SHARE = 0.3
+# A company whose stored history spans the base quarter but lacks it is a hole
+# in Yahoo's data, not a company too new to compare: Yahoo serves most Indian
+# companies' Jun '25 and Dec '25 but not Sep '25 (236 of 501 Nifty 500
+# companies on 2026-10-30), so only 40 of the 188 that had reported Sep '26
+# had a year-ago quarter and the bar fell under MIN_SHARE. Such companies are
+# left out of MIN_SHARE's count (owner, 2026-10-30: show the bar, marked);
+# the figure is drawn light and its hover names how many were missing.
 # A diluted share count this many times larger or smaller than the base
 # quarter's is a bonus issue or split, not dilution: that EPS growth is skipped.
 SHARE_JUMP = 1.5
@@ -207,13 +214,16 @@ def summarize(data, tickers, basis="yoy", quarters=SHOW_QUARTERS, min_companies=
     """The group's quarters, oldest first: [{"q", "label", "rev", "ni", "eps",
     "margin" (medians, %, or None), "n": {metric: companies counted},
     "thin": [metrics left out for too few companies],
-    "reported": companies with the quarter, "season": still being reported}].
+    "reported": companies with the quarter, "season": still being reported,
+    "gap": companies whose base quarter is a hole in Yahoo's data, when a
+    figure was kept only by leaving them out of the share (else 0)}].
 
     `data` is quarterly_results.json's "tickers"; `tickers` the group. A figure
     from fewer than `min_companies` companies, or under `min_share` of those
-    that reported the quarter, is None (and named in "thin"). A quarter is shown
-    once any growth figure survives that; the last `quarters` of those. Also
-    returns how many of `tickers` have any stored results.
+    that reported the quarter (less the "gap" companies, for a growth figure),
+    is None (and named in "thin"). A quarter is shown once any growth figure
+    survives that; the last `quarters` of those. Also returns how many of
+    `tickers` have any stored results.
     """
     lag = 1 if basis == "qoq" else 4
     stored = {t: (data.get(t) or {}).get("q") or {} for t in dict.fromkeys(tickers)}
@@ -224,6 +234,7 @@ def summarize(data, tickers, basis="yoy", quarters=SHOW_QUARTERS, min_companies=
     for q in all_q:
         base_q = shift(q, -lag)
         vals = {m: [] for m in (*METRICS, "margin")}
+        holes = 0
         for qs in stored.values():
             cur, base = qs.get(q), qs.get(base_q)
             if cur is None:
@@ -232,6 +243,7 @@ def summarize(data, tickers, basis="yoy", quarters=SHOW_QUARTERS, min_companies=
             if mg is not None:
                 vals["margin"].append(mg)
             if base is None:
+                holes += min(qs) < base_q
                 continue
             jump = share_jump(cur, base)
             for m in METRICS:
@@ -241,13 +253,18 @@ def summarize(data, tickers, basis="yoy", quarters=SHOW_QUARTERS, min_companies=
                 if g is not None:
                     vals[m].append(g)
         need = max(min_companies, min_share * reported[q])
-        figures = {m: (round(median(v), 1) if v and len(v) >= need else None) for m, v in vals.items()}
+        # Growth needs the base quarter, so a hole there is left out of its share.
+        need_growth = max(min_companies, min_share * (reported[q] - holes))
+        figures = {m: (round(median(v), 1) if v and len(v) >= (need if m == "margin" else need_growth) else None)
+                   for m, v in vals.items()}
         if all(figures[m] is None for m in METRICS):
             continue
+        gap_kept = any(figures[m] is not None and len(vals[m]) < need for m in METRICS)
         prev = reported.get(shift(q, -1), 0)
         rows.append({"q": q, "label": label(q), **figures,
                      "n": {m: len(v) for m, v in vals.items()},
                      "thin": [m for m, v in vals.items() if v and figures[m] is None],
                      "reported": reported[q],
-                     "season": bool(prev) and reported[q] < SEASON_SHARE * prev})
+                     "season": bool(prev) and reported[q] < SEASON_SHARE * prev,
+                     "gap": holes if gap_kept else 0})
     return rows[-quarters:], len(stored)

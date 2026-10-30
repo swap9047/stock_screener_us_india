@@ -230,7 +230,9 @@ def plotly_config(mobile):
 # (quarterly_results' "season") is drawn light with its colour as an outline,
 # so half a season is not read as the final number. It used to be hatched: a
 # white hatch over a faded bar rendered as near-white in the live app, so those
-# bars all but vanished (2026-10-28).
+# bars all but vanished (2026-10-28). A quarter kept although Yahoo lacks many
+# companies' base quarter (quarterly_results' "gap") is drawn the same way,
+# and its hover says how many were missing.
 TEAL = "#1abc9c"
 PURPLE = "#9b59b6"
 RESULT_SERIES = (("rev", "Revenue growth", BLUE), ("ni", "Profit growth", TEAL), ("eps", "EPS growth", PURPLE))
@@ -253,7 +255,7 @@ def add_results(fig, rows, row, col, basis_label, compare=None, compare_name=Non
     the four fields to draw ("rev", "ni", "eps", "margin")."""
     x = [r["label"] for r in rows]
     cmp = {r["q"]: r for r in (compare or [])}
-    season = [r["season"] for r in rows]
+    light = [r["season"] or bool(r.get("gap")) for r in rows]
     for key, name, colour in RESULT_SERIES:
         if key not in show:
             continue
@@ -264,10 +266,12 @@ def add_results(fig, rows, row, col, basis_label, compare=None, compare_name=Non
                 text += f" -- {compare_name} {_signed((cmp.get(r['q']) or {}).get(key))}"
             if r["season"]:
                 text += " -- still being reported"
+            if r.get("gap"):
+                text += f" -- {r['gap']} companies' base quarter missing on Yahoo"
             hover.append(text)
         fig.add_trace(go.Bar(x=x, y=[r[key] for r in rows], name=name, legendgroup=key, showlegend=legend,
-                             marker=dict(color=colour, opacity=[0.4 if s else 1 for s in season],
-                                         line=dict(color=colour, width=[1.5 if s else 0 for s in season])),
+                             marker=dict(color=colour, opacity=[0.4 if s else 1 for s in light],
+                                         line=dict(color=colour, width=[1.5 if s else 0 for s in light])),
                              hovertext=hover, hovertemplate="%{hovertext}<extra></extra>"),
                       row=row, col=col, secondary_y=False)
     mg = [r["margin"] for r in rows]

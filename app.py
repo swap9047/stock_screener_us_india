@@ -5948,7 +5948,10 @@ with tab_news:
                    "company with a loss or zero in the base quarter is left out of that growth figure, and one "
                    "whose share count jumped (a bonus issue or split) out of EPS growth; banks have no OPM on "
                    "Yahoo. A figure from fewer than 5 companies, or under 30% of those that reported the quarter, "
-                   "is left out. A light, outlined quarter is still being reported. Yahoo serves about five quarters "
+                   "is left out; a company whose base quarter is missing on Yahoo (a hole in its data, such as "
+                   "Sep '25 for most Indian companies) is left out of that 30%, and the quarter is then drawn "
+                   "light, the hover saying how many. A light, outlined quarter is still being reported. "
+                   "Yahoo serves about five quarters "
                    "per company; three years of quarters are kept, so YoY fills in one quarter per results "
                    "season up to two years of bars (8)."
                    + (f" Results as of {results_data.get('as_of')}." if results_data.get("as_of") else ""))
