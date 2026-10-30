@@ -6,6 +6,10 @@ copy of the repo (as test_stage_render.py), over synthetic prices.
       its breadth and compares India Invested (not US Invested) with ^NSEI; an
       index not stored yet says so for its breadth and its prices; both
       watchlist sides offer all six benchmarks, defaulting by exchange.
+  X6  the drawdown row (2026-10-30): an index block with the series draws four
+      lines and names each level's latest share in its title; a block stored
+      before the series says the next breadth run adds it; each watchlist side
+      draws its own four lines with its benchmark's 20% line dotted under them.
 """
 
 import json
@@ -106,8 +110,16 @@ def _block(pct):
             "highs_history": {d: 3.0 for d in days}, "lows_history": {d: 1.0 for d in days}}
 
 
+def _with_drawdown(block):
+    days = list(block["history"])
+    block["drawdown_history"] = {"10": {d: 72.5 for d in days}, "20": {d: 40.5 for d in days},
+                                 "30": {d: 21.5 for d in days}, "50": {d: 4.5 for d in days}}
+    return block
+
+
+# INDIA with the drawdown series; US stored before it (2026-10-30).
 json.dump({"as_of": "2026-10-28 12:00", "status": {},
-           "markets": {"INDIA": _block(41.0), "US": _block(52.0), "NIFTY50": _block(63.0)}},
+           "markets": {"INDIA": _with_drawdown(_block(41.0)), "US": _block(52.0), "NIFTY50": _block(63.0)}},
           open("market_breadth.json", "w"))
 json.dump({"as_of": "2026-10-28 12:00 UTC", "period": "6y",
            "markets": {"india_invested": {t: _series(t) for t in IND + ["^CRSLDX"]},
@@ -160,6 +172,27 @@ if at:
           and [b.value for b in benches] == ["Nifty 500", "S&P 500"],
           f"X5: both watchlist sides offer all six benchmarks, defaulting by exchange "
           f"({[b.value for b in benches]})")
+
+    spec = json.loads(list(at.get("plotly_chart"))[0].proto.spec)
+    names = [tr.get("name") for tr in spec["data"] if tr.get("name", "").startswith("≥")]
+    check(names == ["≥10%", "≥20%", "≥30%", "≥50%"],
+          f"X6: Nifty 500's drawdown panel draws the four levels, lightest first ({names})")
+    check("Nifty 500: % Down From 52-Week High" in texts and "≥10% 72.5%, ≥20% 40.5%, ≥30% 21.5%, ≥50% 4.5%" in texts,
+          "X6: its title names each level's latest share")
+    check("Not stored yet - added by the next breadth run" in texts,
+          "X6: the S&P 500 block, stored before the series, says the next breadth run adds it")
+    # Watchlist Breadth's chart: the one titled with India Invested's % above the 200-day.
+    _specs = [json.loads(c.proto.spec) for c in at.get("plotly_chart")]
+    _texts = [" | ".join(a.get("text", "") for a in sp.get("layout", {}).get("annotations", [])) for sp in _specs]
+    wspec, wtexts = next(((sp, t) for sp, t in zip(_specs, _texts) if "India Invested: % Above 200-Day SMA" in t),
+                         ({"data": []}, ""))
+    wnames = [tr.get("name") for tr in wspec["data"] if "≥" in (tr.get("name") or "")]
+    check("India Invested: % Down From 52-Week High" in wtexts and "Nifty 500 ≥20%" in wnames
+          and wnames.count("≥20%") == 2,
+          f"X6: each watchlist side draws its own levels, India Invested with Nifty 500's 20% line dotted ({wnames})")
+    check("(Oct" in wtexts.split("India Invested: % Down From 52-Week High", 1)[-1][:12]
+          and "vs Nifty 500 ≥20% 40.5%" in wtexts,
+          "X6: the watchlist title names its benchmark's latest 20% share")
 
 at = render("Nifty 50")
 if at:

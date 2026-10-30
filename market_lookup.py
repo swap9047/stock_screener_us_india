@@ -168,8 +168,9 @@ class MarketDB:
         return rows
 
     def breadth_points(self, series, since):
-        return self._all("SELECT date, pct_above_200, pct_above_50, pct_highs, pct_lows FROM kg_breadth "
-                         "WHERE series = %s AND date >= %s ORDER BY date", (series, since))
+        # Every column: the drawdown ones (2026-10-30) exist only once they are added to the table by hand
+        # (docs/kg_breadth_drawdown.sql), and naming them before then would fail the whole call.
+        return self._all("SELECT * FROM kg_breadth WHERE series = %s AND date >= %s ORDER BY date", (series, since))
 
     def prices(self, tickers, since):
         """{ticker: [(date, close)]} oldest first."""

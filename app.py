@@ -5442,7 +5442,9 @@ with tab_news:
             return None
 
         def format_json_breadth(market_data, filter_months):
-            if not market_data: return None, None
+            """(% above the SMAs, 52-week highs / lows, drawdown) DataFrames for a
+            market_breadth.json block, from `filter_months` back."""
+            if not market_data: return None, None, None
             cutoff = pd.Timestamp.now().normalize() - pd.DateOffset(months=filter_months)
         
             # SMA
@@ -5466,8 +5468,12 @@ with tab_news:
                     "% New Lows": list(l_hist.values())
                 })
                 df_hl = df_hl[df_hl["Date"] >= cutoff]
-            
-            return df_ema, df_hl
+
+            # Drawdown from the 52-week high (2026-10-30); empty for a block
+            # stored before then, until the next breadth run redoes it.
+            df_dd = breadth_charts.drawdown_frame(market_data.get("drawdown_history"), cutoff)
+
+            return df_ema, df_hl, df_dd
 
         # Load Data
         breadth_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "market_breadth.json")
@@ -5649,8 +5655,9 @@ with tab_news:
             # breadth (Nifty 500 / S&P 500), independent of the watchlist
             # registry -- NOT renamed alongside markets.json/watchlist.json, so
             # these stay as the literal keys refresh_market_breadth.py writes.
-            df_ema_ind, df_hl_ind = format_json_breadth(breadth_data.get("markets", {}).get("INDIA"), months)
-            df_ema_right, df_hl_right = format_json_breadth(breadth_data.get("markets", {}).get(right_breadth_key), months)
+            df_ema_ind, df_hl_ind, df_dd_ind = format_json_breadth(breadth_data.get("markets", {}).get("INDIA"), months)
+            df_ema_right, df_hl_right, df_dd_right = format_json_breadth(
+                breadth_data.get("markets", {}).get(right_breadth_key), months)
 
             # A phone or tablet, from the request's User-Agent (no header -> desktop).
             try:
@@ -5710,6 +5717,13 @@ with tab_news:
         
             title_hl_ind = f"Nifty 500: 52-Week Highs vs Lows ({_when(df_hl_ind, 'INDIA')}: Highs {get_val(df_hl_ind, '% New Highs')}%, Lows {get_val(df_hl_ind, '% New Lows')}%){stale_ind}"
             title_hl_right = f"{right_index_label}: 52-Week Highs vs Lows ({_when(df_hl_right, right_breadth_key)}: Highs {get_val(df_hl_right, '% New Highs')}%, Lows {get_val(df_hl_right, '% New Lows')}%){stale_right}"
+
+            # "≥10% 72.1%, ≥20% 40.3%, ..." -- the latest share at each drawdown level.
+            def _down_figures(df):
+                return ", ".join(f"≥{lvl}% {get_val(df, f'% Down {lvl}%')}%" for lvl, _ in breadth_charts.DRAWDOWN_SERIES)
+
+            title_dd_ind = f"Nifty 500: % Down From 52-Week High ({_when(df_dd_ind, 'INDIA')}: {_down_figures(df_dd_ind)}){stale_ind}"
+            title_dd_right = f"{right_index_label}: % Down From 52-Week High ({_when(df_dd_right, right_breadth_key)}: {_down_figures(df_dd_right)}){stale_right}"
         
             def get_perf(df):
                 if df is not None and not df.empty and 'Portfolio' in df.columns and 'Benchmark' in df.columns:
@@ -5737,22 +5751,25 @@ with tab_news:
             title_perf_ind = f"{_ind_display_label} vs {_ind_bench_label} ({get_perf(df_perf_ind)})"
             title_perf_right = f"{_right_display_label} vs {_right_bench_label} ({get_perf(df_perf_right)})"
 
-            # Phones get the six panels stacked in one column (two side by side
+            # Phones get the eight panels stacked in one column (two side by side
             # are unreadable at that width), titles broken before their figures,
             # and no zoom or drag -- a tap only shows values (2026-10-15).
+            # The drawdown row (2026-10-30) sits under the highs / lows: both read
+            # the 52-week high.
             _panels = [("ema", "ind", title_ema_ind), ("ema", "right", title_ema_right),
                        ("hl", "ind", title_hl_ind), ("hl", "right", title_hl_right),
+                       ("dd", "ind", title_dd_ind), ("dd", "right", title_dd_right),
                        ("perf", "ind", title_perf_ind), ("perf", "right", title_perf_right)]
             if _mobile:
                 _panels = [p_ for m in ("ind", "right") for p_ in _panels if p_[1] == m]
                 _pos = {(kind, m): (i + 1, 1) for i, (kind, m, _) in enumerate(_panels)}
-                fig = make_subplots(rows=6, cols=1, shared_xaxes="all", vertical_spacing=0.05,
+                fig = make_subplots(rows=8, cols=1, shared_xaxes="all", vertical_spacing=0.04,
                                     subplot_titles=[t.replace(" (", "<br>(", 1) for _, _, t in _panels])
             else:
                 _pos = {(kind, m): (i // 2 + 1, i % 2 + 1) for i, (kind, m, _) in enumerate(_panels)}
                 # Two lines on desktop too (2026-10-28): with "Nifty Smallcap 250" on
                 # the right, one-line titles ran into each other on a narrow window.
-                fig = make_subplots(rows=3, cols=2, shared_xaxes="all", vertical_spacing=0.08,
+                fig = make_subplots(rows=4, cols=2, shared_xaxes="all", vertical_spacing=0.07,
                                     horizontal_spacing=0.05,
                                     subplot_titles=[t.replace(" (", "<br>(", 1) for _, _, t in _panels])
 
@@ -5772,10 +5789,11 @@ with tab_news:
             # pointed at the refresh job.
             _ind_label = markets_registry_now.get("india_invested", {}).get("label", "India Invested")
             _right_label = _right_display_label
-            for _m, _ema, _hl, _perf, _name, _bench, _missing in (
-                    ("ind", df_ema_ind, df_hl_ind, df_perf_ind, _ind_label, _ind_bench_label,
+            for _m, _ema, _hl, _dd, _perf, _name, _bench, _missing in (
+                    ("ind", df_ema_ind, df_hl_ind, df_dd_ind, df_perf_ind, _ind_label, _ind_bench_label,
                      "No data - last refresh failed"),
-                    ("right", df_ema_right, df_hl_right, df_perf_right, _right_label, _right_bench_label, _right_missing_text)):
+                    ("right", df_ema_right, df_hl_right, df_dd_right, df_perf_right, _right_label, _right_bench_label,
+                     _right_missing_text)):
                 _perf_missing = _right_perf_missing_text if _m == "right" else "No data - last refresh failed"
                 _r, _c = _pos[("ema", _m)]
                 if _ema is not None and not _ema.empty:
@@ -5787,15 +5805,27 @@ with tab_news:
                     breadth_charts.add_highs_lows(fig, _hl, _r, _c)
                 else:
                     breadth_charts.no_data(fig, _r, _c, _missing)
+                _r, _c = _pos[("dd", _m)]
+                if _dd is not None and not _dd.empty:
+                    breadth_charts.add_drawdown(fig, _dd, _r, _c)
+                elif _hl is not None and not _hl.empty:
+                    # The block predates the drawdown series: the next breadth run redoes it.
+                    breadth_charts.no_data(fig, _r, _c, "Not stored yet - added by the next breadth run")
+                else:
+                    breadth_charts.no_data(fig, _r, _c, _missing)
                 _r, _c = _pos[("perf", _m)]
                 if _perf is not None and not _perf.empty:
                     breadth_charts.add_performance(fig, _perf, _r, _c, _name, _bench)
                 else:
                     breadth_charts.no_data(fig, _r, _c, _perf_missing)
 
-            breadth_charts.style(fig, height=1800 if _mobile else 900, mobile=_mobile)
+            breadth_charts.style(fig, height=2400 if _mobile else 1200, mobile=_mobile)
             st.plotly_chart(fig, width="stretch", key="breadth_index_chart",
                             config=breadth_charts.plotly_config(_mobile))
+            st.caption("% Down From 52-Week High: the share of the index's stocks whose close is at least 10%, "
+                       "20%, 30% or 50% below their highest close of the last 52 weeks (a correction, a bear "
+                       "market, deeper). Each line includes the ones below it, so they never cross; stocks with "
+                       "under a year of history are left out, as in the highs / lows.")
 
             # Row four (2026-10-28): each column's index, its members as the
             # quarterly job last stored them.
@@ -5864,7 +5894,8 @@ with tab_news:
             df_hl = pd.DataFrame({"Date": pd.to_datetime(list(wb["highs_history"])),
                                   "% New Highs": list(wb["highs_history"].values()),
                                   "% New Lows": list(wb["lows_history"].values())})
-            df_idx, _ = format_json_breadth(_breadth_block(bench_market), months)
+            df_dd = breadth_charts.drawdown_frame(wb.get("drawdown_history"))
+            df_idx, _, df_idx_dd = format_json_breadth(_breadth_block(bench_market), months)
             bench_closes, _ = assemble_closes(_bench_blocks, [bench])
             df_perf = None
             if not bench_closes.empty:
@@ -5873,12 +5904,14 @@ with tab_news:
                 panel = closes if bench in closes.columns else closes.join(bench_closes, how="outer")
                 df_perf = calculate_portfolio_returns(panel, list(closes.columns), bench,
                                                       weights=None, filter_months=months)
-            out.update(df_ema=df_ema, df_hl=df_hl, df_idx=df_idx, df_perf=df_perf, titles=(
+            out.update(df_ema=df_ema, df_hl=df_hl, df_idx=df_idx, df_dd=df_dd, df_idx_dd=df_idx_dd, df_perf=df_perf, titles=(
                 f"{name}: % Above 200-Day SMA ({get_last_date(df_ema)}: {wb['pct_above']:.1f}%"
                 f"{_fifty(df_ema)}, Captured: {wb['total']}) vs {bench_label} "
                 f"{get_val(df_idx, '% Above 200d SMA')}%",
                 f"{name}: 52-Week Highs vs Lows ({get_last_date(df_hl)}: Highs "
                 f"{get_val(df_hl, '% New Highs')}%, Lows {get_val(df_hl, '% New Lows')}%)",
+                f"{name}: % Down From 52-Week High ({get_last_date(df_dd)}: {_down_figures(df_dd)}) vs {bench_label} "
+                f"≥20% {get_val(df_idx_dd, '% Down 20%')}%",
                 f"{name} vs {bench_label} ({get_perf(df_perf)})"))
             note = (f"**{name}**: {len(tickers)} stocks; {wb['total']} have the 200 days of history the "
                     f"line needs, so each one moves it by {100 / max(wb['total'], 1):.1f} points.")
@@ -5904,35 +5937,41 @@ with tab_news:
         def _wb_title(sd, i):
             if "titles" not in sd:
                 return [f"{sd['name']}: % Above 200-Day SMA", f"{sd['name']}: 52-Week Highs vs Lows",
-                        f"{sd['name']} vs {sd['bench_label']}"][i]
+                        f"{sd['name']}: % Down From 52-Week High", f"{sd['name']} vs {sd['bench_label']}"][i]
             # Two lines on desktop too, like the index charts (2026-10-28).
             return sd["titles"][i].replace(" (", "<br>(", 1)
 
-        # Desktop: a 3x2 grid, one side per column. Phone: six panels stacked,
-        # the left side's three first.
+        # Desktop: a 4x2 grid, one side per column. Phone: eight panels stacked,
+        # the left side's four first. The drawdown row (2026-10-30) is third, as
+        # in the index charts.
         if _mobile:
-            _wb_pos = {(c, r): (c * 3 + r + 1, 1) for c in (0, 1) for r in range(3)}
-            fig_wb = make_subplots(rows=6, cols=1, shared_xaxes="all", vertical_spacing=0.05,
-                                   subplot_titles=[_wb_title(_sides[c], r) for c in (0, 1) for r in range(3)])
+            _wb_pos = {(c, r): (c * 4 + r + 1, 1) for c in (0, 1) for r in range(4)}
+            fig_wb = make_subplots(rows=8, cols=1, shared_xaxes="all", vertical_spacing=0.04,
+                                   subplot_titles=[_wb_title(_sides[c], r) for c in (0, 1) for r in range(4)])
         else:
-            _wb_pos = {(c, r): (r + 1, c + 1) for c in (0, 1) for r in range(3)}
-            fig_wb = make_subplots(rows=3, cols=2, shared_xaxes="all", vertical_spacing=0.08,
+            _wb_pos = {(c, r): (r + 1, c + 1) for c in (0, 1) for r in range(4)}
+            fig_wb = make_subplots(rows=4, cols=2, shared_xaxes="all", vertical_spacing=0.07,
                                    horizontal_spacing=0.05,
-                                   subplot_titles=[_wb_title(_sides[c], r) for r in range(3) for c in (0, 1)])
+                                   subplot_titles=[_wb_title(_sides[c], r) for r in range(4) for c in (0, 1)])
         for c, sd in enumerate(_sides):
-            (r1, c1), (r2, c2), (r3, c3) = _wb_pos[(c, 0)], _wb_pos[(c, 1)], _wb_pos[(c, 2)]
+            (r1, c1), (r2, c2), (r3, c3), (r4, c4) = (_wb_pos[(c, r)] for r in range(4))
             if "empty" in sd:
-                for rr, cc in ((r1, c1), (r2, c2), (r3, c3)):
+                for rr, cc in ((r1, c1), (r2, c2), (r3, c3), (r4, c4)):
                     breadth_charts.no_data(fig_wb, rr, cc, sd["empty"])
                 continue
             breadth_charts.add_breadth(fig_wb, sd["df_ema"], r1, c1, overlay=sd["df_idx"],
                                        overlay_name=sd["bench_label"], show_50=show_50)
             breadth_charts.add_highs_lows(fig_wb, sd["df_hl"], r2, c2)
-            if sd["df_perf"] is not None and not sd["df_perf"].empty:
-                breadth_charts.add_performance(fig_wb, sd["df_perf"], r3, c3, sd["name"], sd["bench_label"])
+            if not sd["df_dd"].empty:
+                breadth_charts.add_drawdown(fig_wb, sd["df_dd"], r3, c3, overlay=sd["df_idx_dd"],
+                                            overlay_name=sd["bench_label"])
             else:
-                breadth_charts.no_data(fig_wb, r3, c3, f"No {sd['bench_label']} price series stored yet")
-        breadth_charts.style(fig_wb, height=1800 if _mobile else 900, mobile=_mobile)
+                breadth_charts.no_data(fig_wb, r3, c3, f"Not enough stored price history for {sd['name']} yet")
+            if sd["df_perf"] is not None and not sd["df_perf"].empty:
+                breadth_charts.add_performance(fig_wb, sd["df_perf"], r4, c4, sd["name"], sd["bench_label"])
+            else:
+                breadth_charts.no_data(fig_wb, r4, c4, f"No {sd['bench_label']} price series stored yet")
+        breadth_charts.style(fig_wb, height=2400 if _mobile else 1200, mobile=_mobile)
         st.caption(" ".join(sd["note"] for sd in _sides if "note" in sd)
                    + " Returns are each list equal-weighted and rebalanced daily, price only -- a "
                      "hindsight view of today's members, like the curves above.")

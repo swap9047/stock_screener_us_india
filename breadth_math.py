@@ -1,5 +1,6 @@
-"""Breadth maths: % of a set of stocks above their 200-day SMA, and at 52-week
-highs / lows, day by day.
+"""Breadth maths: % of a set of stocks above their 200-day SMA, at 52-week
+highs / lows, and down 10 / 20 / 30 / 50% or more from their 52-week high, day
+by day.
 
 Shared by the nightly market-breadth job (refresh_market_breadth.py, over the
 S&P 500 and Nifty 500) and the app's per-watchlist breadth view (over one
@@ -11,6 +12,12 @@ NaN where a ticker has no close) and returns numbers.
 """
 
 import pandas as pd
+
+# How far below its 52-week high a stock is counted as "down" (owner,
+# 2026-10-30): at least 10% (a correction), 20% (a bear market), 30% and 50%.
+# Each series counts every stock at least that far down, so they nest (the 20%
+# share is never above the 10% one) and never cross.
+DRAWDOWN_LEVELS = (10, 20, 30, 50)
 
 
 def _own_sessions(closes, fn):
@@ -28,6 +35,9 @@ def compute_breadth(closes, since=None):
     plus "history", "highs_history" and "lows_history": {"YYYY-MM-DD": %}.
     "pct_above_50" / "history_50" are the same over the 50-day SMA (2026-10-15,
     the charts' 50-day overlay), on the same days as "history".
+    "drawdown" / "drawdown_history": {"10": %, ...} / {"10": {"YYYY-MM-DD": %}}
+    -- the share of stocks at least DRAWDOWN_LEVELS % below their 52-week high
+    (2026-10-30), over the same stocks and days as the highs / lows.
     """
     if closes is None or closes.empty:
         return None
@@ -66,6 +76,11 @@ def compute_breadth(closes, since=None):
 
     is_new_high = closes >= high52
     is_new_low = closes <= low52
+    # Down at least L% from the 52-week high, on closes like the highs above (a
+    # close, not an intraday high, so a stock at its high is 0% down). NaN where
+    # the window is not full, so it is out of the count like the highs / lows.
+    off_high = (1 - closes / high52) * 100
+    is_down = {lvl: off_high >= lvl - 1e-9 for lvl in DRAWDOWN_LEVELS}
 
     valid_counts = closes.notna().sum(axis=1)
     # Each series needs its OWN denominator: only stocks that actually have the
@@ -83,6 +98,7 @@ def compute_breadth(closes, since=None):
     # yields inf, and inf survives a later boolean mask if the row is kept.
     highs_series = (is_new_high.sum(axis=1) / hl_counts.replace(0, pd.NA)) * 100
     lows_series = (is_new_low.sum(axis=1) / hl_counts.replace(0, pd.NA)) * 100
+    down_series = {lvl: (is_down[lvl].sum(axis=1) / hl_counts.replace(0, pd.NA)) * 100 for lvl in DRAWDOWN_LEVELS}
 
     # Warmup: drop the first 252 rows of the DOWNLOADED panel so the 52w
     # high/low window is full. This used to be `iloc[252:]` applied AFTER
@@ -98,6 +114,7 @@ def compute_breadth(closes, since=None):
     breadth50_series = breadth50_series[valid_mask]
     highs_series = highs_series[valid_mask]
     lows_series = lows_series[valid_mask]
+    down_series = {lvl: v[valid_mask] for lvl, v in down_series.items()}
 
     if since is not None:
         keep = breadth_series.index >= since
@@ -105,8 +122,10 @@ def compute_breadth(closes, since=None):
         breadth50_series = breadth50_series[keep]
         highs_series = highs_series[keep]
         lows_series = lows_series[keep]
+        down_series = {lvl: v[keep] for lvl, v in down_series.items()}
 
     history_dict, history50_dict, highs_dict, lows_dict = {}, {}, {}, {}
+    down_dict = {str(lvl): {} for lvl in DRAWDOWN_LEVELS}
     for date in breadth_series.index:
         date_str = date.strftime("%Y-%m-%d")
         history_dict[date_str] = round(float(breadth_series[date]), 1)
@@ -114,6 +133,10 @@ def compute_breadth(closes, since=None):
             history50_dict[date_str] = round(float(breadth50_series[date]), 1)
         highs_dict[date_str] = round(float(highs_series[date]), 1)
         lows_dict[date_str] = round(float(lows_series[date]), 1)
+        for lvl in DRAWDOWN_LEVELS:
+            v = down_series[lvl][date]
+            if pd.notna(v):
+                down_dict[str(lvl)][date_str] = round(float(v), 1)
 
     last_valid_idx = closes.index[-1]
     latest_close = closes.loc[last_valid_idx]
@@ -126,6 +149,9 @@ def compute_breadth(closes, since=None):
     has_ma50 = latest_close.notna() & latest_sma50.notna()
     total50 = int(has_ma50.sum())
     pct_above_50 = round(float((latest_close > latest_sma50).sum() / total50 * 100), 1) if total50 else None
+    latest_off = off_high.loc[last_valid_idx].dropna()
+    drawdown = ({str(lvl): round(float((latest_off >= lvl - 1e-9).sum() / len(latest_off) * 100), 1)
+                 for lvl in DRAWDOWN_LEVELS} if len(latest_off) else None)
 
     return {
         "above": above_now,
@@ -137,6 +163,8 @@ def compute_breadth(closes, since=None):
         "lows_history": lows_dict,
         "pct_above_50": pct_above_50,
         "history_50": history50_dict,
+        "drawdown": drawdown,
+        "drawdown_history": down_dict,
     }
 
 

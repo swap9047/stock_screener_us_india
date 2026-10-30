@@ -72,8 +72,17 @@ series = pm.breadth_records(breadth, perf, lists)
 sb = {s["series"]: s for s in series}
 check(sb["INDIA"]["kind"] == "index" and sb["INDIA"]["label"] == "Nifty 500" and "US" not in sb and "NASDAQ100" not in sb,
       "an index block is published under its library name; a failed or missing leg is skipped (the stored one stays)")
-check(sb["INDIA"]["points"] == [("2026-10-21", 70.0, None, 1.0, 0.5), ("2026-10-22", 75.0, 50.0, 2.0, 0.0)],
-      "index points: date, % above 200d, % above 50d (blank where absent), % at highs, % at lows")
+check(sb["INDIA"]["points"] == [("2026-10-21", 70.0, None, 1.0, 0.5, None, None, None, None),
+                                ("2026-10-22", 75.0, 50.0, 2.0, 0.0, None, None, None, None)],
+      "index points: date, % above 200d, % above 50d (blank where absent), % at highs, % at lows, and the four "
+      "drawdown levels (blank for a block stored before them)")
+_dd = dict(block, drawdown={"10": 60.0, "20": 30.0, "30": 10.0, "50": 0.0},
+           drawdown_history={"10": {"2026-10-22": 60.0}, "20": {"2026-10-22": 30.0}, "30": {"2026-10-22": 10.0},
+                             "50": {"2026-10-22": 0.0}})
+_dds = {s["series"]: s for s in pm.breadth_records({"markets": {"INDIA": _dd}}, {}, [])}
+check(_dds["INDIA"]["points"][-1] == ("2026-10-22", 75.0, 50.0, 2.0, 0.0, 60.0, 30.0, 10.0, 0.0)
+      and _dds["INDIA"]["latest"]["drawdown"] == {"10": 60.0, "20": 30.0, "30": 10.0, "50": 0.0},
+      "drawdown (2026-10-30): the points carry % 10 / 20 / 30 / 50%+ below the 52-week high, the latest reading its shares")
 check(sb["INDIA"]["latest"] == {"above": 3, "below": 1, "total": 4, "pct_above": 75.0, "pct_above_50": 50.0, "partial": False,
                                 "live": False, "date": "2026-10-22"}, "the index's latest reading, without its history")
 own = compute_breadth(assemble_closes(perf["markets"], by["all_hold"]["tickers"])[0])
@@ -146,8 +155,14 @@ check(c.transactions == 1 and sql[:2] == ["DELETE FROM kg_watchlist_members", "D
       and ("all_hold", "ACME") in members and len(members) == sum(len(w["tickers"]) for w in lists),
       "watchlists and members are replaced in one transaction (a tab removed in the app disappears)")
 
-c = Conn([[("INDIA", "2026-10-22", 2), ("all_hold", "2026-10-22", len(sb["all_hold"]["points"]))]])
+BASE_COLS = [("series",), ("date",), ("pct_above_200",), ("pct_above_50",), ("pct_highs",), ("pct_lows",)]
+DOWN_COLS = [(c,) for c in pm.DRAWDOWN_COLUMNS]
+c = Conn([BASE_COLS, [("INDIA", "2026-10-22", 2), ("all_hold", "2026-10-22", len(sb["all_hold"]["points"]))]])
 n = pm.write_breadth(c, series)
+ins_sql, ins_rows = next((s_, p_) for s_, p_ in c.log if s_.startswith("INSERT INTO kg_breadth "))
+check("pct_down" not in ins_sql and all(len(r) == 6 for r in ins_rows)
+      and next(p_ for s_, p_ in c.log if s_.startswith("SELECT series, max(date), count(*)")) is None,
+      "without the drawdown columns (not added to the table yet) the other columns are written, as before")
 deletes = [p for s, p in c.log if s.startswith("DELETE FROM kg_breadth")]
 check(n == 2 + len(sb["in_hold"]["points"]) + len(sb["us_hold"]["points"]) + len(sb["in_ideas"]["points"]) + len(sb["all_ideas"]["points"])
       + len([p for p in sb["all_hold"]["points"] if p[0] >= "2026-10-12"]),
@@ -155,6 +170,14 @@ check(n == 2 + len(sb["in_hold"]["points"]) + len(sb["us_hold"]["points"]) + len
 check(len(deletes) == 2 and all(p == ([s["series"] for s in series],) for p in deletes)
       and all("kind <> 'index'" in s for s, _ in c.log if s.startswith("DELETE FROM kg_breadth")),
       "the series of lists that no longer exist are dropped; an index series never is")
+# The columns added: rows carry them, and a series stored without them (count(pct_down_10) = 0) is written in full.
+c = Conn([BASE_COLS + DOWN_COLS, [("all_hold", "2026-10-22", 0)]])
+n2 = pm.write_breadth(c, [sb["all_hold"]])
+ins_sql, ins_rows = next((s_, p_) for s_, p_ in c.log if s_.startswith("INSERT INTO kg_breadth "))
+check("pct_down_10 = excluded.pct_down_10" in ins_sql and all(len(r) == 10 for r in ins_rows)
+      and n2 == len(sb["all_hold"]["points"]) and ins_rows[-1][-4:] == sb["all_hold"]["points"][-1][-4:]
+      and any("count(pct_down_10)" in s_ for s_, _ in c.log),
+      "with the drawdown columns, every row carries them, and a series stored before them is rewritten in full once")
 
 c = Conn([[("SPY", "2026-10-22", 500)]])
 written, deleted = pm.write_prices(c, prices, today=date(2026, 10, 22))

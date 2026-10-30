@@ -152,9 +152,16 @@ def watchlist_table(db, name, groups=None, sort_by=None, descending=True, limit=
     }
 
 
+# kg_breadth's drawdown columns (2026-10-30) and how a reply names them: % of stocks at least that far below
+# their 52-week high.
+DRAWDOWN_COLUMNS = (("pct_down_10", "% 10%+ below 52-week high"), ("pct_down_20", "% 20%+ below 52-week high"),
+                    ("pct_down_30", "% 30%+ below 52-week high"), ("pct_down_50", "% 50%+ below 52-week high"))
+
+
 def market_breadth(db, name, days=365):
     """An index's or a list's breadth over the last `days`: [date, % above 200d SMA, % above 50d SMA,
-    % at 52-week highs, % at 52-week lows]."""
+    % at 52-week highs, % at 52-week lows], plus % 10 / 20 / 30 / 50%+ below the 52-week high once the
+    table has those columns and the series has them."""
     days = max(1, min(int(days or 365), MAX_BREADTH_DAYS))
     series = {s["series"]: s for s in db.breadth_series()}
     key = _index_series(name)
@@ -165,15 +172,22 @@ def market_breadth(db, name, days=365):
                 "note": f"Pass an index ({index_registry.label_list()}) or one of the watchlists."}
     meta = series[key]
     since = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
-    points = [[p["date"], p["pct_above_200"], p["pct_above_50"], p["pct_highs"], p["pct_lows"]]
-              for p in db.breadth_points(key, since)]
+    stored = db.breadth_points(key, since)
+    # The drawdown columns only when the table has them and this series has a value in them -- a column of
+    # nulls would read as "no stock is down".
+    down = [(c, label) for c, label in DRAWDOWN_COLUMNS if any(p.get(c) is not None for p in stored)]
+    points = [[p["date"], p["pct_above_200"], p["pct_above_50"], p["pct_highs"], p["pct_lows"], *(p.get(c) for c, _ in down)]
+              for p in stored]
     return {"query": name, "found": True, "series": key, "label": meta["label"], "kind": meta["kind"], "days": days,
             "latest": meta["latest"], "as_of": meta["as_of"],
-            "columns": ["date", "% above 200-day SMA", "% above 50-day SMA", "% at 52-week high", "% at 52-week low"],
+            "columns": ["date", "% above 200-day SMA", "% above 50-day SMA", "% at 52-week high", "% at 52-week low",
+                        *(label for _, label in down)],
             "points": points,
             "note": "Market breadth from the user's stock screener: the share of the index's (or list's) stocks above their "
-                    "200- and 50-day simple moving averages and at 52-week highs and lows, each trading day. latest.total "
-                    "is how many stocks the reading counts."}
+                    "200- and 50-day simple moving averages, at 52-week highs and lows, and at least 10 / 20 / 30 / 50% "
+                    "below their 52-week high (closes; 10% is a correction, 20% a bear market), each trading day. "
+                    "latest.total is how many stocks the reading counts; latest.drawdown is the latest share at each "
+                    "level, keyed by the level."}
 
 
 def yahoo_closes(symbols, days):

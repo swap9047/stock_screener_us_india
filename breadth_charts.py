@@ -12,6 +12,8 @@ Design (2026-10-15, the charts "looked basic"):
 - 52-week highs vs lows as diverging bars, highs up and lows down, instead of
   two tangled lines;
 - returns: the watchlist filled against its 100 start, the index dotted;
+- drawdown (2026-10-30): the share of stocks at least 10 / 20 / 30 / 50% below
+  their 52-week high, four lines from amber to dark red that never cross;
 - transparent backgrounds and faint grids, so Streamlit's light and dark themes
   both carry it.
 
@@ -128,6 +130,52 @@ def add_highs_lows(fig, df, row, col):
     ticks = [v for v in range(-int(edge), int(edge) + 1, step)]
     fig.update_yaxes(range=[-edge, edge], tickvals=ticks, ticktext=[f"{abs(v)}%" for v in ticks],
                      row=row, col=col)
+
+
+# breadth_math.DRAWDOWN_LEVELS, lightest first: each line is a subset of the one
+# before it, so a deeper level is drawn darker.
+DRAWDOWN_SERIES = (("10", "#f5b041"), ("20", "#e67e22"), ("30", RED), ("50", "#922b21"))
+
+
+def drawdown_frame(history, cutoff=None):
+    """A DataFrame with Date and "% Down 10%" ... "% Down 50%" from a breadth
+    block's or compute_breadth's "drawdown_history"; empty when it has none
+    (a block stored before 2026-10-30)."""
+    history = history or {}
+    days = sorted(set().union(*(set(v) for v in history.values()))) if history else []
+    if not days:
+        return pd.DataFrame()
+    df = pd.DataFrame({"Date": pd.to_datetime(days),
+                       **{f"% Down {lvl}%": [(history.get(lvl) or {}).get(d) for d in days]
+                          for lvl, _ in DRAWDOWN_SERIES}})
+    return df[df["Date"] >= cutoff] if cutoff is not None else df
+
+
+def add_drawdown(fig, df, row, col, overlay=None, overlay_name=None):
+    """% of stocks at least 10 / 20 / 30 / 50% below their 52-week high: `df`
+    from drawdown_frame. `overlay` (the same shape, e.g. the benchmark index
+    under a watchlist) adds its 20% line dotted -- the share in a bear market."""
+    legend = _panel_legend(fig, row, col)
+    if overlay is not None and not overlay.empty and "% Down 20%" in overlay.columns:
+        o = overlay[["Date", "% Down 20%"]].dropna()
+        fig.add_trace(go.Scatter(x=o["Date"], y=o["% Down 20%"], name=f"{overlay_name} ≥20%",
+                                 line=dict(color=GREY, width=1.5, dash="dot"), legend=legend, legendrank=9,
+                                 hovertemplate=f"{overlay_name}: % stocks 20%+ below 52w high %{{y:.1f}}%<extra></extra>"),
+                      row=row, col=col)
+    for rank, (lvl, colour) in enumerate(DRAWDOWN_SERIES):
+        col_name = f"% Down {lvl}%"
+        if col_name not in df.columns:
+            continue
+        d = df[["Date", col_name]].dropna()
+        if d.empty:
+            continue
+        fig.add_trace(go.Scatter(x=d["Date"], y=d[col_name], name=f"≥{lvl}%",
+                                 line=dict(color=colour, width=1.8), legend=legend, legendrank=rank + 1,
+                                 hovertemplate=f"% stocks {lvl}%+ below 52w high %{{y:.1f}}%<extra></extra>"),
+                      row=row, col=col)
+        _last_point(fig, d["Date"], d[col_name], colour, row, col)
+    ticks = [0, 25, 50, 75, 100]
+    fig.update_yaxes(range=[0, 100], tickvals=ticks, ticktext=[f"{t}%" for t in ticks], row=row, col=col)
 
 
 def add_performance(fig, df, row, col, name, bench_name):

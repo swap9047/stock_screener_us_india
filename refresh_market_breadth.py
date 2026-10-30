@@ -246,6 +246,9 @@ def needs_refresh(block, expected):
     # rather than waiting for the next session to fill the overlay in.
     if "history_50" not in block:
         return True
+    # Likewise a block from before the drawdown series (2026-10-30).
+    if "drawdown_history" not in block:
+        return True
     return max(history) < expected
 
 
