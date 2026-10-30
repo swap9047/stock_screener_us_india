@@ -53,8 +53,10 @@ INSTRUCTIONS = (
     "with its price_date as (screener, <date>). Explain a signal with the tool's explain group and definitions, "
     "which are the screener's own rules. For the user's watchlists and holdings (how a list did today or this week, its "
     "best and worst stocks), call list_watchlists, then get_watchlist with the groups and sort you need; for market "
-    f"breadth ({index_registry.label_list()} or a watchlist) get_market_breadth; for a price chart or a return over "
-    "any window get_price_history. Use web search for news, results and guidance, which these tools do not have.")
+    f"breadth ({index_registry.label_list()} or a watchlist) get_market_breadth; for an index's or a watchlist's "
+    "quarterly results (the median company's revenue, profit and EPS growth and OPM, per quarter) "
+    "get_quarterly_results; for a price chart or a return over any window get_price_history. Use web search for "
+    "news, a single company's results and guidance, which these tools do not have.")
 
 GROUP_HELP = ("price, returns, moving_averages, momentum (RSI, ADX), relative_strength (Mansfield RS vs Nifty 500 / "
               "S&P 500), trend (Trend, Tech Uptrend, TA Rules, Expert Take, weekly VStop; always comes with stage), volume, range (52-week, "
@@ -168,6 +170,29 @@ TOOLS = [
         "annotations": {"readOnlyHint": True, "openWorldHint": True},
     },
     {
+        "name": "get_quarterly_results",
+        "title": "Quarterly results, median company",
+        "description": (
+            f"Quarterly results from the user's screener for an index ({index_registry.label_list()}) or one of the "
+            "user's watchlists: per calendar quarter, the MEDIAN company's revenue growth %, profit growth % (reported "
+            "net income), EPS growth % and OPM %, year on year (default) or quarter on quarter, with how many companies "
+            "each median covers and whether the quarter is still being reported. The same numbers as the screener's "
+            "News tab quarterly results charts."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "An index (" + ", ".join(f"'{x}'" for x in index_registry.LABELS)
+                         + ") or a watchlist."},
+                "basis": {"type": "string", "enum": ["yoy", "qoq"],
+                          "description": "yoy: on the same quarter a year earlier (default); qoq: on the quarter before."},
+                "quarters": {"type": "integer", "minimum": 1, "maximum": market_lists.MAX_RESULT_QUARTERS,
+                             "description": "Latest quarters to return (default 8)."},
+            },
+            "required": ["name"],
+        },
+        "annotations": {"readOnlyHint": True},
+    },
+    {
         "name": "metric_catalog",
         "title": "What each screener metric means",
         "description": "Every metric the stock screener computes, by group, with its definition (the screener's own glossary).",
@@ -177,7 +202,7 @@ TOOLS = [
 ]
 
 
-LIST_TOOLS = ("list_watchlists", "get_watchlist", "get_market_breadth", "get_price_history")
+LIST_TOOLS = ("list_watchlists", "get_watchlist", "get_market_breadth", "get_quarterly_results", "get_price_history")
 
 
 def call_tool(name, args, db=None, compute=None, yahoo=market_lookup.yahoo_symbol, search=market_lookup.yahoo_search,
@@ -201,6 +226,11 @@ def call_tool(name, args, db=None, compute=None, yahoo=market_lookup.yahoo_symbo
             if not str(args.get("name") or "").strip():
                 return {"error": "pass name: an index or a watchlist"}, True
             return market_lists.market_breadth(db, args["name"], args.get("days") or 365), False
+        if name == "get_quarterly_results":
+            if not str(args.get("name") or "").strip():
+                return {"error": "pass name: an index or a watchlist"}, True
+            return market_lists.quarterly_results(db, args["name"], args.get("basis") or "yoy",
+                                                  args.get("quarters") or 8), False
         companies = args.get("companies")
         if isinstance(companies, str):
             companies = [companies]

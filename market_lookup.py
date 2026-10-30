@@ -172,6 +172,15 @@ class MarketDB:
         # (docs/kg_breadth_drawdown.sql), and naming them before then would fail the whole call.
         return self._all("SELECT * FROM kg_breadth WHERE series = %s AND date >= %s ORDER BY date", (series, since))
 
+    def quarterly_results(self):
+        """The News tab's quarterly results medians (publish_market.quarterly_records), or {}."""
+        rows = self._all("SELECT value FROM kg_market_meta WHERE key = 'quarterly_results'")
+        try:
+            value = json.loads(rows[0]["value"]) if rows else {}
+        except (TypeError, ValueError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
     def prices(self, tickers, since):
         """{ticker: [(date, close)]} oldest first."""
         out = {}
