@@ -155,12 +155,12 @@ def watchlist_table(db, name, groups=None, sort_by=None, descending=True, limit=
 # kg_breadth's drawdown columns (2026-10-30) and how a reply names them: % of stocks at least that far below
 # their 52-week high.
 DRAWDOWN_COLUMNS = (("pct_down_10", "% 10%+ below 52-week high"), ("pct_down_20", "% 20%+ below 52-week high"),
-                    ("pct_down_30", "% 30%+ below 52-week high"), ("pct_down_50", "% 50%+ below 52-week high"))
+                    ("pct_down_30", "% 30%+ below 52-week high"), ("pct_down_40", "% 40%+ below 52-week high"))
 
 
 def market_breadth(db, name, days=365):
     """An index's or a list's breadth over the last `days`: [date, % above 200d SMA, % above 50d SMA,
-    % at 52-week highs, % at 52-week lows], plus % 10 / 20 / 30 / 50%+ below the 52-week high once the
+    % at 52-week highs, % at 52-week lows], plus % 10 / 20 / 30 / 40%+ below the 52-week high once the
     table has those columns and the series has them."""
     days = max(1, min(int(days or 365), MAX_BREADTH_DAYS))
     series = {s["series"]: s for s in db.breadth_series()}
@@ -184,7 +184,7 @@ def market_breadth(db, name, days=365):
                         *(label for _, label in down)],
             "points": points,
             "note": "Market breadth from the user's stock screener: the share of the index's (or list's) stocks above their "
-                    "200- and 50-day simple moving averages, at 52-week highs and lows, and at least 10 / 20 / 30 / 50% "
+                    "200- and 50-day simple moving averages, at 52-week highs and lows, and at least 10 / 20 / 30 / 40% "
                     "below their 52-week high (closes; 10% is a correction, 20% a bear market), each trading day. "
                     "latest.total is how many stocks the reading counts; latest.drawdown is the latest share at each "
                     "level, keyed by the level."}

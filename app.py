@@ -5823,7 +5823,7 @@ with tab_news:
             st.plotly_chart(fig, width="stretch", key="breadth_index_chart",
                             config=breadth_charts.plotly_config(_mobile))
             st.caption("% Down From 52-Week High: the share of the index's stocks whose close is at least 10%, "
-                       "20%, 30% or 50% below their highest close of the last 52 weeks (a correction, a bear "
+                       "20%, 30% or 40% below their highest close of the last 52 weeks (a correction, a bear "
                        "market, deeper). Each line includes the ones below it, so they never cross; stocks with "
                        "under a year of history are left out, as in the highs / lows.")
 

@@ -52,7 +52,7 @@ def fn(name):
 needs = fn("needs_refresh")
 if needs:
     block = {"history": {"2026-09-30": 42.2, "2026-10-01": 38.6}, "history_50": {"2026-10-01": 40.0},
-             "drawdown_history": {"10": {"2026-10-01": 30.0}}}
+             "drawdown_history": {lvl: {"2026-10-01": 30.0} for lvl in ("10", "20", "30", "40")}}
     check(needs(None, "2026-10-01"), "B1: no stored block -> refresh")
     check(needs(block, None), "B1: the session check failed -> refresh (never skip blind)")
     check(needs(block, "2026-10-02"), "B1: a newer completed session -> refresh")
@@ -181,7 +181,7 @@ def run_main(stored, expected, block, live_days=None, bare=False):
     stored = json.loads(json.dumps(stored))
     for v in (stored.get("markets") or {}).values() if not bare else ():
         v.setdefault("history_50", {})
-        v.setdefault("drawdown_history", {})
+        v.setdefault("drawdown_history", {lvl: {} for lvl in ("10", "20", "30", "40")})
     asked = {label for label in EXTRA_LEGS if label in block}
     block = {**{label: {"total": 9, "pct_above": 50.0, "history": {"2026-10-01": 50.0},
                         "partial": False, "unpublished": []} for label in EXTRA_LEGS}, **block}
@@ -229,15 +229,15 @@ check("unpublished" not in out["markets"]["INDIA"], "B1: the unpublished list is
 
 # 2026-10-30: the first run after the drawdown series. India's stored block is final
 # for 10-29 from 488 names; Yahoo has blanked 10-29, so the download ends on 10-28.
-DD = {"10": {"2026-10-28": 60.0}, "20": {"2026-10-28": 30.0}, "30": {"2026-10-28": 15.0}, "50": {"2026-10-28": 2.0}}
+DD = {"10": {"2026-10-28": 60.0}, "20": {"2026-10-28": 30.0}, "30": {"2026-10-28": 15.0}, "40": {"2026-10-28": 2.0}}
 OLD = {"as_of": "2026-10-29 21:00", "markets": {
     "US": {"as_of": "2026-10-29 21:00", "total": 500, "history": {"2026-10-29": 63.6}, "history_50": {},
-           "drawdown_history": {"10": {"2026-10-29": 40.0}}},
+           "drawdown_history": {lvl: {"2026-10-29": 40.0} for lvl in ("10", "20", "30", "40")}},
     "INDIA": {"as_of": "2026-10-29 21:00", "total": 488, "history": {"2026-10-28": 33.0, "2026-10-29": 34.8},
               "history_50": {"2026-10-29": 20.6}}},
     "status": {}}
 STALE_INDIA = {"total": 490, "pct_above": 32.9, "history": {"2026-10-28": 32.9}, "history_50": {"2026-10-28": 19.0},
-               "drawdown_history": DD, "drawdown": {"10": 60.0, "20": 30.0, "30": 15.0, "50": 2.0},
+               "drawdown_history": DD, "drawdown": {"10": 60.0, "20": 30.0, "30": 15.0, "40": 2.0},
                "partial": False, "unpublished": ["2026-10-29"]}
 out, calls = run_main(OLD, {"America/New_York": "2026-10-29", "Asia/Kolkata": "2026-10-29"},
                       {"Nifty 500": STALE_INDIA}, bare=True)
@@ -248,6 +248,19 @@ check(calls == ["Nifty 500"] and ind["history"] == {"2026-10-28": 33.0, "2026-10
 check(ind.get("drawdown_history") == DD and ind.get("drawdown") == STALE_INDIA["drawdown"],
       f"B1c: ...and takes the series it lacked from the download ({sorted(ind)})")
 check(not rmb.needs_refresh(ind, "2026-10-29"), "B1c: so the next run no longer redoes it (it did, hourly, on 2026-10-30)")
+# The 50% level became 40% the same day: a block stored with the old levels is redone, and
+# kept over a staler download it takes the new series.
+OLD_LEVELS = {"10": {"2026-10-29": 61.0}, "20": {"2026-10-29": 31.0}, "30": {"2026-10-29": 16.0}, "50": {"2026-10-29": 3.0}}
+old_lv = json.loads(json.dumps(OLD))
+old_lv["markets"]["INDIA"].update(drawdown_history=OLD_LEVELS, drawdown={"10": 61.0, "20": 31.0, "30": 16.0, "50": 3.0})
+check(rmb.needs_refresh(old_lv["markets"]["INDIA"], "2026-10-29") and not rmb.needs_refresh(ind, "2026-10-29"),
+      "B1d: a block whose drawdown series lacks a level (50% stored, 40% wanted) is redone; a complete one is not")
+out, calls = run_main(old_lv, {"America/New_York": "2026-10-29", "Asia/Kolkata": "2026-10-29"},
+                      {"Nifty 500": STALE_INDIA}, bare=True)
+ind2 = out["markets"]["INDIA"]
+check(calls == ["Nifty 500"] and ind2["history"] == OLD["markets"]["INDIA"]["history"]
+      and ind2["drawdown_history"] == DD and ind2["drawdown"] == STALE_INDIA["drawdown"],
+      "B1d: kept over a staler download, it takes the series with the new levels")
 
 # 2026-10-09: Friday traded, Yahoo served it as NaN -> awaiting, block still saved
 LATE_US = {"total": 9, "pct_above": 46.7, "history": {"2026-10-08": 46.7}, "partial": False, "unpublished": ["2026-10-09"]}

@@ -239,6 +239,17 @@ def latest_day_share(closes):
 CARRIED_SERIES = ("history_50", "drawdown_history", "drawdown")
 
 
+def lacks_series(block, series):
+    """True when `block` has no `series`, or -- for the drawdown ones -- lacks one
+    of breadth_math.DRAWDOWN_LEVELS: the 50% level became 40% on 2026-10-30, and a
+    block stored with the old levels has a drawdown series without the new one."""
+    value = (block or {}).get(series)
+    if series in ("drawdown_history", "drawdown"):
+        from breadth_math import DRAWDOWN_LEVELS
+        return not value or any(str(lvl) not in value for lvl in DRAWDOWN_LEVELS)
+    return not value
+
+
 def needs_refresh(block, expected):
     """False only when the stored block already holds the latest session
     (expected_session) as a final reading -- a live or partial one is always
@@ -252,8 +263,9 @@ def needs_refresh(block, expected):
     # rather than waiting for the next session to fill the overlay in.
     if "history_50" not in block:
         return True
-    # Likewise a block from before the drawdown series (2026-10-30).
-    if "drawdown_history" not in block:
+    # Likewise a block from before the drawdown series (2026-10-30), or from
+    # before one of its levels (lacks_series).
+    if lacks_series(block, "drawdown_history"):
         return True
     return max(history) < expected
 
@@ -509,8 +521,9 @@ def _run_legs(legs, results, now):
             # kept five of the six blocks without the series, and needs_refresh redid
             # them -- a full download of every index -- each hour until the next session.
             # Its latest "drawdown" is the download's last day, as its history says.
+            # The same goes for a series stored with an old set of levels (lacks_series).
             for series in CARRIED_SERIES:
-                if not kept.get(series) and block.get(series):
+                if lacks_series(kept, series) and block.get(series):
                     kept[series] = block[series]
                     print(f"{label}: {series} taken from this download (the stored block has none)")
             block = kept

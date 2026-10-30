@@ -10,7 +10,7 @@ W3 assemble_closes builds one panel from dashboard_perf.json's per-watchlist
 W4 the app view: watchlist + group dropdown, a benchmark per watchlist, 6 years
    of performance data so the 5-year view is not blanked by the warmup.
 W5 a return title over a benchmark day the list lacks reads a number, not nan.
-W6 drawdown breadth (2026-10-30): % of stocks at least 10 / 20 / 30 / 50% below
+W6 drawdown breadth (2026-10-30): % of stocks at least 10 / 20 / 30 / 40% below
    their 52-week high of closes, over the stocks with a full 252-session window.
 
 Offline: invented tickers, no network, no data files.
@@ -240,8 +240,8 @@ panel = pd.DataFrame({
 })
 r6 = bm.compute_breadth(panel)
 # By hand, over the 5 stocks with a full window: 10% -> 3 (DOWN10, DOWN25, DOWN60),
-# 20% -> 2, 30% -> 1, 50% -> 1.
-want = {"10": 60.0, "20": 40.0, "30": 20.0, "50": 20.0}
+# 20% -> 2, 30% -> 1, 40% -> 1.
+want = {"10": 60.0, "20": 40.0, "30": 20.0, "40": 20.0}
 check(r6["drawdown"] == want, f"W6: the latest day, by hand ({r6['drawdown']})")
 last6 = d_idx[-1].strftime("%Y-%m-%d")
 check({k: v[last6] for k, v in r6["drawdown_history"].items()} == want
@@ -251,9 +251,9 @@ first = min(r6["drawdown_history"]["10"])
 check(all(r6["drawdown_history"][k][first] == 0.0 for k in want),
       "W6: before the drops every stock is at or near its high (0% down at every level)")
 check(all(r6["drawdown_history"]["10"][d] >= r6["drawdown_history"]["20"][d] >= r6["drawdown_history"]["30"][d]
-          >= r6["drawdown_history"]["50"][d] for d in r6["drawdown_history"]["10"]),
+          >= r6["drawdown_history"]["40"][d] for d in r6["drawdown_history"]["10"]),
       "W6: the levels nest, so the lines never cross")
-check(bm.DRAWDOWN_LEVELS == (10, 20, 30, 50), "W6: the levels are 10, 20, 30 and 50% (owner, 2026-10-30)")
+check(bm.DRAWDOWN_LEVELS == (10, 20, 30, 40), "W6: the levels are 10, 20, 30 and 40% (owner, 2026-10-30)")
 
 print(f"FAILURES: {fails}")
 sys.exit(1 if fails else 0)

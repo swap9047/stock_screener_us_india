@@ -113,7 +113,7 @@ def _block(pct):
 def _with_drawdown(block):
     days = list(block["history"])
     block["drawdown_history"] = {"10": {d: 72.5 for d in days}, "20": {d: 40.5 for d in days},
-                                 "30": {d: 21.5 for d in days}, "50": {d: 4.5 for d in days}}
+                                 "30": {d: 21.5 for d in days}, "40": {d: 4.5 for d in days}}
     return block
 
 
@@ -175,9 +175,9 @@ if at:
 
     spec = json.loads(list(at.get("plotly_chart"))[0].proto.spec)
     names = [tr.get("name") for tr in spec["data"] if tr.get("name", "").startswith("≥")]
-    check(names == ["≥10%", "≥20%", "≥30%", "≥50%"],
+    check(names == ["≥10%", "≥20%", "≥30%", "≥40%"],
           f"X6: Nifty 500's drawdown panel draws the four levels, lightest first ({names})")
-    check("Nifty 500: % Down From 52-Week High" in texts and "≥10% 72.5%, ≥20% 40.5%, ≥30% 21.5%, ≥50% 4.5%" in texts,
+    check("Nifty 500: % Down From 52-Week High" in texts and "≥10% 72.5%, ≥20% 40.5%, ≥30% 21.5%, ≥40% 4.5%" in texts,
           "X6: its title names each level's latest share")
     check("Not stored yet - added by the next breadth run" in texts,
           "X6: the S&P 500 block, stored before the series, says the next breadth run adds it")

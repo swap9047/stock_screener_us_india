@@ -1,5 +1,5 @@
 """Breadth maths: % of a set of stocks above their 200-day SMA, at 52-week
-highs / lows, and down 10 / 20 / 30 / 50% or more from their 52-week high, day
+highs / lows, and down 10 / 20 / 30 / 40% or more from their 52-week high, day
 by day.
 
 Shared by the nightly market-breadth job (refresh_market_breadth.py, over the
@@ -14,10 +14,12 @@ NaN where a ticker has no close) and returns numbers.
 import pandas as pd
 
 # How far below its 52-week high a stock is counted as "down" (owner,
-# 2026-10-30): at least 10% (a correction), 20% (a bear market), 30% and 50%.
+# 2026-10-30): at least 10% (a correction), 20% (a bear market), 30% and 40%
+# (50% until the same day: at most a few % of an index got that far, a line
+# along the floor).
 # Each series counts every stock at least that far down, so they nest (the 20%
 # share is never above the 10% one) and never cross.
-DRAWDOWN_LEVELS = (10, 20, 30, 50)
+DRAWDOWN_LEVELS = (10, 20, 30, 40)
 
 
 def _own_sessions(closes, fn):

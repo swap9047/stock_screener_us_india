@@ -12,7 +12,7 @@ Design (2026-10-15, the charts "looked basic"):
 - 52-week highs vs lows as diverging bars, highs up and lows down, instead of
   two tangled lines;
 - returns: the watchlist filled against its 100 start, the index dotted;
-- drawdown (2026-10-30): the share of stocks at least 10 / 20 / 30 / 50% below
+- drawdown (2026-10-30): the share of stocks at least 10 / 20 / 30 / 40% below
   their 52-week high, four lines from amber to dark red that never cross;
 - transparent backgrounds and faint grids, so Streamlit's light and dark themes
   both carry it.
@@ -134,11 +134,11 @@ def add_highs_lows(fig, df, row, col):
 
 # breadth_math.DRAWDOWN_LEVELS, lightest first: each line is a subset of the one
 # before it, so a deeper level is drawn darker.
-DRAWDOWN_SERIES = (("10", "#f5b041"), ("20", "#e67e22"), ("30", RED), ("50", "#922b21"))
+DRAWDOWN_SERIES = (("10", "#f5b041"), ("20", "#e67e22"), ("30", RED), ("40", "#922b21"))
 
 
 def drawdown_frame(history, cutoff=None):
-    """A DataFrame with Date and "% Down 10%" ... "% Down 50%" from a breadth
+    """A DataFrame with Date and "% Down 10%" ... "% Down 40%" from a breadth
     block's or compute_breadth's "drawdown_history"; empty when it has none
     (a block stored before 2026-10-30)."""
     history = history or {}
@@ -152,7 +152,7 @@ def drawdown_frame(history, cutoff=None):
 
 
 def add_drawdown(fig, df, row, col, overlay=None, overlay_name=None):
-    """% of stocks at least 10 / 20 / 30 / 50% below their 52-week high: `df`
+    """% of stocks at least 10 / 20 / 30 / 40% below their 52-week high: `df`
     from drawdown_frame. `overlay` (the same shape, e.g. the benchmark index
     under a watchlist) adds its 20% line dotted -- the share in a bear market."""
     legend = _panel_legend(fig, row, col)
