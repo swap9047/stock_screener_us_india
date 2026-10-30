@@ -76,13 +76,13 @@ check(sb["INDIA"]["points"] == [("2026-10-21", 70.0, None, 1.0, 0.5, None, None,
                                 ("2026-10-22", 75.0, 50.0, 2.0, 0.0, None, None, None, None)],
       "index points: date, % above 200d, % above 50d (blank where absent), % at highs, % at lows, and the four "
       "drawdown levels (blank for a block stored before them)")
-_dd = dict(block, drawdown={"10": 60.0, "20": 30.0, "30": 10.0, "50": 0.0},
+_dd = dict(block, drawdown={"10": 60.0, "20": 30.0, "30": 10.0, "40": 0.0},
            drawdown_history={"10": {"2026-10-22": 60.0}, "20": {"2026-10-22": 30.0}, "30": {"2026-10-22": 10.0},
-                             "50": {"2026-10-22": 0.0}})
+                             "40": {"2026-10-22": 0.0}})
 _dds = {s["series"]: s for s in pm.breadth_records({"markets": {"INDIA": _dd}}, {}, [])}
 check(_dds["INDIA"]["points"][-1] == ("2026-10-22", 75.0, 50.0, 2.0, 0.0, 60.0, 30.0, 10.0, 0.0)
-      and _dds["INDIA"]["latest"]["drawdown"] == {"10": 60.0, "20": 30.0, "30": 10.0, "50": 0.0},
-      "drawdown (2026-10-30): the points carry % 10 / 20 / 30 / 50%+ below the 52-week high, the latest reading its shares")
+      and _dds["INDIA"]["latest"]["drawdown"] == {"10": 60.0, "20": 30.0, "30": 10.0, "40": 0.0},
+      "drawdown (2026-10-30): the points carry % 10 / 20 / 30 / 40%+ below the 52-week high, the latest reading its shares")
 check(sb["INDIA"]["latest"] == {"above": 3, "below": 1, "total": 4, "pct_above": 75.0, "pct_above_50": 50.0, "partial": False,
                                 "live": False, "date": "2026-10-22"}, "the index's latest reading, without its history")
 own = compute_breadth(assemble_closes(perf["markets"], by["all_hold"]["tickers"])[0])
@@ -176,7 +176,7 @@ n2 = pm.write_breadth(c, [sb["all_hold"]])
 ins_sql, ins_rows = next((s_, p_) for s_, p_ in c.log if s_.startswith("INSERT INTO kg_breadth "))
 check("pct_down_10 = excluded.pct_down_10" in ins_sql and all(len(r) == 10 for r in ins_rows)
       and n2 == len(sb["all_hold"]["points"]) and ins_rows[-1][-4:] == sb["all_hold"]["points"][-1][-4:]
-      and any("count(pct_down_10)" in s_ for s_, _ in c.log),
+      and any("LEAST(count(pct_down_10), count(pct_down_20), count(pct_down_30), count(pct_down_40))" in s_ for s_, _ in c.log),
       "with the drawdown columns, every row carries them, and a series stored before them is rewritten in full once")
 
 c = Conn([[("SPY", "2026-10-22", 500)]])

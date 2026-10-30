@@ -234,11 +234,11 @@ def publish_library(conn, min_gap=None):
 INDEX_SERIES = {ix["key"]: ix["label"] for ix in index_registry.INDEXES}
 # What a breadth series' "latest" reading carries (the rest of a block is its history).
 BREADTH_LATEST_KEYS = ("above", "below", "total", "pct_above", "pct_above_50", "drawdown", "partial", "live")
-# kg_breadth's drawdown columns (2026-10-30): % of stocks at least 10 / 20 / 30 / 50% below their 52-week high,
+# kg_breadth's drawdown columns (2026-10-30): % of stocks at least 10 / 20 / 30 / 40% below their 52-week high,
 # breadth_math.DRAWDOWN_LEVELS. They are added to the research library's table by hand (this job's role cannot
 # alter a table): until they exist, write_breadth writes the other columns and says so, and the latest reading
 # (kg_breadth_series.latest, jsonb) already carries "drawdown".
-DRAWDOWN_COLUMNS = ("pct_down_10", "pct_down_20", "pct_down_30", "pct_down_50")
+DRAWDOWN_COLUMNS = ("pct_down_10", "pct_down_20", "pct_down_30", "pct_down_40")
 BREADTH_COLUMNS = ("pct_above_200", "pct_above_50", "pct_highs", "pct_lows")
 # Daily closes kept in kg_prices: two years, enough for any return or chart a chat asks about.
 PRICE_DAYS = 730
@@ -333,11 +333,13 @@ def to_write(points, stored):
     return [p for p in points if p[0] >= since]
 
 
-def _stored(conn, table, key, counted="*"):
-    """{key: (newest date, row count)} for kg_breadth by series or kg_prices by ticker. `counted` names a column
-    to count only the rows that have it: a column added later is then written in full once (to_write)."""
+def _stored(conn, table, key, counted=("*",)):
+    """{key: (newest date, row count)} for kg_breadth by series or kg_prices by ticker. `counted` names columns
+    to count only the rows that have ALL of them (the least-filled one): a column added later is then written
+    in full once (to_write)."""
+    count = f"count({counted[0]})" if len(counted) == 1 else "LEAST(" + ", ".join(f"count({c})" for c in counted) + ")"
     with conn.cursor() as cur:
-        cur.execute(f"SELECT {key}, max(date), count({counted}) FROM {table} GROUP BY {key}")
+        cur.execute(f"SELECT {key}, max(date), {count} FROM {table} GROUP BY {key}")
         return {r[0]: (r[1], r[2]) for r in cur.fetchall()}
 
 
@@ -371,8 +373,9 @@ def write_breadth(conn, series):
     if not has_down:
         print("kg_breadth has no drawdown columns yet: their points are not written (the latest reading carries "
               "them). Add them with docs/kg_breadth_drawdown.sql.")
-    # Counting the drawdown column, every stored series is written in full once after the columns are added.
-    stored = _stored(conn, "kg_breadth", "series", counted=DRAWDOWN_COLUMNS[0] if has_down else "*")
+    # Counting the least-filled drawdown column, every stored series is written in full once after a column is
+    # added (pct_down_40 joined after the others, when the 50% level became 40% on 2026-10-30).
+    stored = _stored(conn, "kg_breadth", "series", counted=DRAWDOWN_COLUMNS if has_down else ("*",))
     rows = [(s["series"], *p[:1 + len(cols)]) for s in series for p in to_write(s["points"], stored.get(s["series"]))]
     now = _now()
     with conn.transaction():

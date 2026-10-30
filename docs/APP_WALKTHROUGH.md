@@ -665,7 +665,7 @@ This tab is rendered only while it is open.
   earlier day, the same day from fewer stocks, or a final close with an intraday
   reading. Each chart title names its latest day.
 - **% Down From 52-Week High** (2026-10-30, the third row, under the highs and lows). The
-  share of the index's stocks whose close is at least **10%**, **20%**, **30%** or **50%**
+  share of the index's stocks whose close is at least **10%**, **20%**, **30%** or **40%**
   below their highest close of the last 52 weeks -- four lines, amber to dark red: 10% is a
   correction, 20% a bear market. Each line includes the stocks on the deeper ones, so they
   never cross; a stock with under a year of history is left out, as in the highs and lows.
@@ -676,7 +676,7 @@ This tab is rendered only while it is open.
 - **Watchlist Breadth.** The same four charts for two watchlists or combined groups side
   by side -- India Invested vs Nifty 500 on the left and US Invested vs S&P 500 on the right
   by default, each with its own pickers: % of its stocks above their 200-day SMA (with the
-  index's line overlaid), % at 52-week highs and lows, % down 10 / 20 / 30 / 50% from the
+  index's line overlaid), % at 52-week highs and lows, % down 10 / 20 / 30 / 40% from the
   52-week high (with the index's 20% line dotted under it), and its return against that index
   (any of the six: Nifty 500, Nifty 50, Nifty Midcap 150, Nifty Smallcap 250, S&P 500,
   Nasdaq 100; a dropdown). The benchmark defaults to the exchange most of its

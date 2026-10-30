@@ -133,7 +133,7 @@ TOOLS = [
         "description": (
             f"Market breadth from the user's screener for an index ({index_registry.label_list()}) or one of the user's "
             "watchlists: each trading day, the % of its stocks above their 200-day and 50-day simple moving averages and "
-            "at 52-week highs and lows, and at least 10 / 20 / 30 / 50% below their 52-week high (how many are in a "
+            "at 52-week highs and lows, and at least 10 / 20 / 30 / 40% below their 52-week high (how many are in a "
             "correction or a bear market), plus the latest counts. The same numbers as the screener's breadth charts."),
         "inputSchema": {
             "type": "object",
