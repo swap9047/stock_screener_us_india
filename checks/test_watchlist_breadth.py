@@ -155,13 +155,22 @@ check('PERIOD = "6y"' in PERF and 'period="5y"' not in PERF,
 
 import refresh_dashboard_perf as rdp
 from datetime import date
-keep = rdp.keep_recent_tail
+keep = rdp.keep_recent_closes
 new = {"2026-10-12": 1.0, "2026-10-13": 2.0}
 old = {"2026-10-12": 0.9, "2026-10-13": 1.9, "2026-10-14": 3.0}
 check(keep(new, old, today=date(2026, 10, 15)) == {"2026-10-12": 1.0, "2026-10-13": 2.0, "2026-10-14": 3.0},
       "W4: a download ending before the stored series keeps the stored latest day (Yahoo blanked it)")
-check(keep({"2026-10-14": 3.1}, old, today=date(2026, 10, 15)) == {"2026-10-14": 3.1},
-      "W4: a download that has the day replaces the stored close (no carry-over)")
+check(keep({"2026-10-14": 3.1}, old, today=date(2026, 10, 15)) == {"2026-10-12": 0.9, "2026-10-13": 1.9, "2026-10-14": 3.1},
+      "W4: a download that has the day replaces the stored close; recent days it lacks are kept (2026-10-30)")
+# 2026-10-30: Yahoo served India's forming Oct 30 bar but had blanked Oct 29 -- a hole in the middle.
+stored = {"2026-10-27": 10.0, "2026-10-28": 10.5, "2026-10-29": 11.0, "2026-10-30": 11.2}
+fresh = {"2026-10-27": 10.0, "2026-10-28": 10.5, "2026-10-30": 11.4}
+got = keep(fresh, stored, today=date(2026, 10, 30))
+check(got == {"2026-10-27": 10.0, "2026-10-28": 10.5, "2026-10-29": 11.0, "2026-10-30": 11.4} and list(got) == sorted(got),
+      "W4: a day blanked in the middle of the download keeps its stored close; the fresh live bar wins (2026-10-30)")
+check(keep({"2026-10-30": 11.4}, {"2026-10-20": 9.0, "2026-10-29": 11.0}, today=date(2026, 10, 30))
+      == {"2026-10-29": 11.0, "2026-10-30": 11.4},
+      "W4: a stored close older than KEEP_RECENT_DAYS is not carried, even in the middle")
 check(keep({"2026-01-05": 1.0}, {"2026-01-05": 1.0, "2026-01-06": 1.1}, today=date(2026, 10, 15)) == {"2026-01-05": 1.0},
       "W4: an old stored tail (a delisted ticker) is not carried")
 check(keep({}, old) == {} and keep(new, None) == new, "W4: nothing to merge -> the download as is")
