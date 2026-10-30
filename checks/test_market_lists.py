@@ -159,6 +159,23 @@ body, _ = mcp.call_tool("get_market_breadth", {"name": "dow jones"}, db=db)
 check(body["found"] is False and "Nifty 500" in body["available"], "unknown: found false with what is available")
 body, _ = mcp.call_tool("get_market_breadth", {"name": "us invested"}, db=db)
 check(body["found"] is False, "a list with no breadth stored: found false")
+# The drawdown columns (2026-10-30): named only where the table has them and the series has values.
+body, _ = mcp.call_tool("get_market_breadth", {"name": "Nifty 500", "days": 30}, db=db)
+check(len(body["columns"]) == 5 and all(len(p) == 5 for p in body["points"]),
+      "drawdown: before the columns exist (rows without them), the reply is the five columns, unchanged")
+_saved = {k: [dict(p) for p in v] for k, v in POINTS.items()}
+for p in POINTS["INDIA"]:
+    p.update(pct_down_10=60.0, pct_down_20=30.0, pct_down_30=10.0, pct_down_50=1.0)
+for p in POINTS["in_hold"]:
+    p.update(pct_down_10=None, pct_down_20=None, pct_down_30=None, pct_down_50=None)
+body, _ = mcp.call_tool("get_market_breadth", {"name": "Nifty 500", "days": 30}, db=db)
+check(body["columns"][5:] == ["% 10%+ below 52-week high", "% 20%+ below 52-week high", "% 30%+ below 52-week high",
+                              "% 50%+ below 52-week high"] and body["points"][-1][5:] == [60.0, 30.0, 10.0, 1.0],
+      "drawdown: with the columns filled, each point carries % 10 / 20 / 30 / 50%+ below the 52-week high")
+body, _ = mcp.call_tool("get_market_breadth", {"name": "india holdings"}, db=db)
+check(len(body["columns"]) == 5, "drawdown: columns of nulls (a series not written yet) are left out, not read as 0%")
+POINTS.clear()
+POINTS.update(_saved)
 
 # --- get_price_history --------------------------------------------------------------------------------------
 asked = []

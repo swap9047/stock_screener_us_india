@@ -51,11 +51,14 @@ def fn(name):
 # --- B1 is there a new session? ------------------------------------------------------
 needs = fn("needs_refresh")
 if needs:
-    block = {"history": {"2026-09-30": 42.2, "2026-10-01": 38.6}, "history_50": {"2026-10-01": 40.0}}
+    block = {"history": {"2026-09-30": 42.2, "2026-10-01": 38.6}, "history_50": {"2026-10-01": 40.0},
+             "drawdown_history": {"10": {"2026-10-01": 30.0}}}
     check(needs(None, "2026-10-01"), "B1: no stored block -> refresh")
     check(needs(block, None), "B1: the session check failed -> refresh (never skip blind)")
     check(needs(block, "2026-10-02"), "B1: a newer completed session -> refresh")
     check(not needs(block, "2026-10-01"), "B1: the latest session is already stored -> skip")
+    check(needs({k: v for k, v in block.items() if k != "drawdown_history"}, "2026-10-01"),
+          "B1: a block from before the drawdown series (2026-10-30) is redone once")
     check(needs({"history": {}}, "2026-10-01"), "B1: an empty history -> refresh")
     check(needs({"history": {"2026-10-01": 38.6}}, "2026-10-01"),
           "B1: a block from before the 50-day series is redone once, though its date is current")
@@ -172,11 +175,12 @@ def run_main(stored, expected, block, live_days=None):
     legs."""
     calls = []
     live_days = live_days or {}
-    # The fixtures are current blocks: give them the 50-day series (2026-10-15),
-    # or needs_refresh redoes every one of them.
+    # The fixtures are current blocks: give them the 50-day series (2026-10-15)
+    # and the drawdown series (2026-10-30), or needs_refresh redoes every one.
     stored = json.loads(json.dumps(stored))
     for v in (stored.get("markets") or {}).values():
         v.setdefault("history_50", {})
+        v.setdefault("drawdown_history", {})
     asked = {label for label in EXTRA_LEGS if label in block}
     block = {**{label: {"total": 9, "pct_above": 50.0, "history": {"2026-10-01": 50.0},
                         "partial": False, "unpublished": []} for label in EXTRA_LEGS}, **block}

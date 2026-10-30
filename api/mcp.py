@@ -97,7 +97,8 @@ TOOLS = [
         "description": (
             "Every tab of the user's stock screener -- watchlists and the holdings lists (India Invested, US Invested), "
             "plus groups combining them -- with how many stocks each holds, its benchmark and its latest breadth "
-            "(% of its stocks above the 200- and 50-day averages), and the indexes with breadth. Call first for any "
+            "(% of its stocks above the 200- and 50-day averages, and how many are 10 / 20 / 30 / 50%+ below their "
+            "52-week high), and the indexes with breadth. Call first for any "
             "question about the user's watchlists or portfolio, then get_watchlist."),
         "inputSchema": {"type": "object", "properties": {}},
         "annotations": {"readOnlyHint": True},
@@ -132,7 +133,8 @@ TOOLS = [
         "description": (
             f"Market breadth from the user's screener for an index ({index_registry.label_list()}) or one of the user's "
             "watchlists: each trading day, the % of its stocks above their 200-day and 50-day simple moving averages and "
-            "at 52-week highs and lows, plus the latest counts. The same numbers as the screener's breadth charts."),
+            "at 52-week highs and lows, and at least 10 / 20 / 30 / 50% below their 52-week high (how many are in a "
+            "correction or a bear market), plus the latest counts. The same numbers as the screener's breadth charts."),
         "inputSchema": {
             "type": "object",
             "properties": {

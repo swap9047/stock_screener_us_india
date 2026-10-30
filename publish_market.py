@@ -233,7 +233,13 @@ def publish_library(conn, min_gap=None):
 # market_breadth.json's index blocks, as the research library names them: every index_registry entry.
 INDEX_SERIES = {ix["key"]: ix["label"] for ix in index_registry.INDEXES}
 # What a breadth series' "latest" reading carries (the rest of a block is its history).
-BREADTH_LATEST_KEYS = ("above", "below", "total", "pct_above", "pct_above_50", "partial", "live")
+BREADTH_LATEST_KEYS = ("above", "below", "total", "pct_above", "pct_above_50", "drawdown", "partial", "live")
+# kg_breadth's drawdown columns (2026-10-30): % of stocks at least 10 / 20 / 30 / 50% below their 52-week high,
+# breadth_math.DRAWDOWN_LEVELS. They are added to the research library's table by hand (this job's role cannot
+# alter a table): until they exist, write_breadth writes the other columns and says so, and the latest reading
+# (kg_breadth_series.latest, jsonb) already carries "drawdown".
+DRAWDOWN_COLUMNS = ("pct_down_10", "pct_down_20", "pct_down_30", "pct_down_50")
+BREADTH_COLUMNS = ("pct_above_200", "pct_above_50", "pct_highs", "pct_lows")
 # Daily closes kept in kg_prices: two years, enough for any return or chart a chat asks about.
 PRICE_DAYS = 730
 # Each run rewrites a stored series' last 10 days (a "live" reading redone, a late Yahoo bar) and writes a
@@ -263,11 +269,14 @@ def watchlist_records(registry, watchlists, groups, group_labels):
 
 
 def _breadth_points(result):
-    """[(date, % above 200d, % above 50d, % at highs, % at lows)] oldest first, from a breadth block or a
-    breadth_math.compute_breadth result (the same keys)."""
+    """[(date, % above 200d, % above 50d, % at highs, % at lows, % down 10 / 20 / 30 / 50% from the 52-week
+    high)] oldest first, from a breadth block or a breadth_math.compute_breadth result (the same keys). A block
+    stored before the drawdown series (2026-10-30) has None there."""
     hist = result.get("history") or {}
     h50, highs, lows = (result.get(k) or {} for k in ("history_50", "highs_history", "lows_history"))
-    return [(d, hist[d], h50.get(d), highs.get(d), lows.get(d)) for d in sorted(hist)]
+    down = result.get("drawdown_history") or {}
+    levels = [down.get(c.rsplit("_", 1)[1]) or {} for c in DRAWDOWN_COLUMNS]
+    return [(d, hist[d], h50.get(d), highs.get(d), lows.get(d), *(lv.get(d) for lv in levels)) for d in sorted(hist)]
 
 
 def breadth_records(breadth, perf, lists):
@@ -324,11 +333,20 @@ def to_write(points, stored):
     return [p for p in points if p[0] >= since]
 
 
-def _stored(conn, table, key):
-    """{key: (newest date, row count)} for kg_breadth by series or kg_prices by ticker."""
+def _stored(conn, table, key, counted="*"):
+    """{key: (newest date, row count)} for kg_breadth by series or kg_prices by ticker. `counted` names a column
+    to count only the rows that have it: a column added later is then written in full once (to_write)."""
     with conn.cursor() as cur:
-        cur.execute(f"SELECT {key}, max(date), count(*) FROM {table} GROUP BY {key}")
+        cur.execute(f"SELECT {key}, max(date), count({counted}) FROM {table} GROUP BY {key}")
         return {r[0]: (r[1], r[2]) for r in cur.fetchall()}
+
+
+def _columns(conn, table):
+    """The table's column names, as the database has them."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' "
+                    "AND table_name = %s", (table,))
+        return {r[0] for r in cur.fetchall()}
 
 
 def write_watchlists(conn, lists):
@@ -348,8 +366,14 @@ def write_watchlists(conn, lists):
 def write_breadth(conn, series):
     """Upsert each series' reading and its new points; drop the series of watchlists that no longer exist
     (an index series is never dropped: a failed leg keeps its last one). The number of points written."""
-    stored = _stored(conn, "kg_breadth", "series")
-    rows = [(s["series"], *p) for s in series for p in to_write(s["points"], stored.get(s["series"]))]
+    has_down = set(DRAWDOWN_COLUMNS) <= _columns(conn, "kg_breadth")
+    cols = BREADTH_COLUMNS + (DRAWDOWN_COLUMNS if has_down else ())
+    if not has_down:
+        print("kg_breadth has no drawdown columns yet: their points are not written (the latest reading carries "
+              "them). Add them with docs/kg_breadth_drawdown.sql.")
+    # Counting the drawdown column, every stored series is written in full once after the columns are added.
+    stored = _stored(conn, "kg_breadth", "series", counted=DRAWDOWN_COLUMNS[0] if has_down else "*")
+    rows = [(s["series"], *p[:1 + len(cols)]) for s in series for p in to_write(s["points"], stored.get(s["series"]))]
     now = _now()
     with conn.transaction():
         with conn.cursor() as cur:
@@ -357,10 +381,9 @@ def write_breadth(conn, series):
                             "VALUES (%s, %s, %s, %s::jsonb, %s, %s) ON CONFLICT (series) DO UPDATE SET label = excluded.label, "
                             "kind = excluded.kind, latest = excluded.latest, as_of = excluded.as_of, updated_at = excluded.updated_at",
                             [(s["series"], s["label"], s["kind"], json.dumps(s["latest"]), s["as_of"], now) for s in series])
-            cur.executemany("INSERT INTO kg_breadth (series, date, pct_above_200, pct_above_50, pct_highs, pct_lows) "
-                            "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (series, date) DO UPDATE SET "
-                            "pct_above_200 = excluded.pct_above_200, pct_above_50 = excluded.pct_above_50, "
-                            "pct_highs = excluded.pct_highs, pct_lows = excluded.pct_lows", rows)
+            cur.executemany(f"INSERT INTO kg_breadth (series, date, {', '.join(cols)}) "
+                            f"VALUES ({', '.join(['%s'] * (2 + len(cols)))}) ON CONFLICT (series, date) DO UPDATE SET "
+                            + ", ".join(f"{c} = excluded.{c}" for c in cols), rows)
             keep = [s["series"] for s in series]
             cur.execute("DELETE FROM kg_breadth WHERE series IN (SELECT series FROM kg_breadth_series "
                         "WHERE kind <> 'index' AND NOT (series = ANY(%s)))", (keep,))
