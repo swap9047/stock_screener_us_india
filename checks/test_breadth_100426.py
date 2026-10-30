@@ -165,7 +165,7 @@ EXTRA_LEGS = {"Nasdaq 100": "NASDAQ100", "Nifty 50": "NIFTY50", "Nifty Midcap 15
               "Nifty Smallcap 250": "NIFTYSMALL250"}
 
 
-def run_main(stored, expected, block, live_days=None):
+def run_main(stored, expected, block, live_days=None, bare=False):
     """main() with the downloads stubbed; returns (saved file, legs downloaded).
     `live_days` {tz: {dates}}: what is_live answers (default: nothing is live).
 
@@ -177,8 +177,9 @@ def run_main(stored, expected, block, live_days=None):
     live_days = live_days or {}
     # The fixtures are current blocks: give them the 50-day series (2026-10-15)
     # and the drawdown series (2026-10-30), or needs_refresh redoes every one.
+    # `bare`: leave them as given (a block stored before a series existed).
     stored = json.loads(json.dumps(stored))
-    for v in (stored.get("markets") or {}).values():
+    for v in (stored.get("markets") or {}).values() if not bare else ():
         v.setdefault("history_50", {})
         v.setdefault("drawdown_history", {})
     asked = {label for label in EXTRA_LEGS if label in block}
@@ -225,6 +226,28 @@ check(out["status"] == {"US": "unchanged", "INDIA": "ok"}, f"B1: statuses say so
 check(out["markets"]["US"]["history"] == {"2026-10-02": 42.3} and out["markets"]["US"]["as_of"] == out["as_of"],
       "B1: the unchanged block is kept, and marked current (so the app does not call it stale)")
 check("unpublished" not in out["markets"]["INDIA"], "B1: the unpublished list is not stored")
+
+# 2026-10-30: the first run after the drawdown series. India's stored block is final
+# for 10-29 from 488 names; Yahoo has blanked 10-29, so the download ends on 10-28.
+DD = {"10": {"2026-10-28": 60.0}, "20": {"2026-10-28": 30.0}, "30": {"2026-10-28": 15.0}, "50": {"2026-10-28": 2.0}}
+OLD = {"as_of": "2026-10-29 21:00", "markets": {
+    "US": {"as_of": "2026-10-29 21:00", "total": 500, "history": {"2026-10-29": 63.6}, "history_50": {},
+           "drawdown_history": {"10": {"2026-10-29": 40.0}}},
+    "INDIA": {"as_of": "2026-10-29 21:00", "total": 488, "history": {"2026-10-28": 33.0, "2026-10-29": 34.8},
+              "history_50": {"2026-10-29": 20.6}}},
+    "status": {}}
+STALE_INDIA = {"total": 490, "pct_above": 32.9, "history": {"2026-10-28": 32.9}, "history_50": {"2026-10-28": 19.0},
+               "drawdown_history": DD, "drawdown": {"10": 60.0, "20": 30.0, "30": 15.0, "50": 2.0},
+               "partial": False, "unpublished": ["2026-10-29"]}
+out, calls = run_main(OLD, {"America/New_York": "2026-10-29", "Asia/Kolkata": "2026-10-29"},
+                      {"Nifty 500": STALE_INDIA}, bare=True)
+ind = out["markets"]["INDIA"]
+check(calls == ["Nifty 500"] and ind["history"] == {"2026-10-28": 33.0, "2026-10-29": 34.8} and ind["total"] == 488
+      and ind["history_50"] == {"2026-10-29": 20.6},
+      "B1c: a block without the drawdown series is redone; the stored, more current reading is kept")
+check(ind.get("drawdown_history") == DD and ind.get("drawdown") == STALE_INDIA["drawdown"],
+      f"B1c: ...and takes the series it lacked from the download ({sorted(ind)})")
+check(not rmb.needs_refresh(ind, "2026-10-29"), "B1c: so the next run no longer redoes it (it did, hourly, on 2026-10-30)")
 
 # 2026-10-09: Friday traded, Yahoo served it as NaN -> awaiting, block still saved
 LATE_US = {"total": 9, "pct_above": 46.7, "history": {"2026-10-08": 46.7}, "partial": False, "unpublished": ["2026-10-09"]}

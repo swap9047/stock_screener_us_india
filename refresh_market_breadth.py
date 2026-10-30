@@ -233,6 +233,12 @@ def latest_day_share(closes):
     return float(counts.iloc[-1] / reference) if reference else 1.0
 
 
+# Series added after blocks were first stored: needs_refresh redoes a block
+# without one, and a stored block kept over a staler download takes the
+# download's (_run_legs).
+CARRIED_SERIES = ("history_50", "drawdown_history", "drawdown")
+
+
 def needs_refresh(block, expected):
     """False only when the stored block already holds the latest session
     (expected_session) as a final reading -- a live or partial one is always
@@ -495,6 +501,18 @@ def _run_legs(legs, results, now):
             k = _currency(kept)
             print(f"{label}: the stored block is more current ({k[0]}, {'final' if k[1] else 'live'}, "
                   f"{kept.get('total')} names) than this download -- keeping it")
+            # A series the stored block lacks is taken from this download, which is a
+            # day or a few names behind but otherwise right. The drawdown series
+            # (2026-10-30) was added to every block by the first run after its merge,
+            # and that run's downloads were staler than the stored blocks (Yahoo had
+            # blanked India's latest closes, the S&P 500 came back a name short): it
+            # kept five of the six blocks without the series, and needs_refresh redid
+            # them -- a full download of every index -- each hour until the next session.
+            # Its latest "drawdown" is the download's last day, as its history says.
+            for series in CARRIED_SERIES:
+                if not kept.get(series) and block.get(series):
+                    kept[series] = block[series]
+                    print(f"{label}: {series} taken from this download (the stored block has none)")
             block = kept
             block["as_of"] = now
         results["markets"][key] = block
