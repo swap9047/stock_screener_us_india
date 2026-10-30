@@ -9,6 +9,7 @@ last few days of a series it already stored.
 Offline: invented tickers and series, a recording connection, fetch_snapshot's downloads replaced.
 """
 
+import json
 import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -90,6 +91,66 @@ check(sb["all_hold"]["points"] == pm._breadth_points(own) and sb["all_hold"]["ki
       and sb["all_hold"]["latest"]["pct_above"] == own["pct_above"] and sb["all_hold"]["latest"]["stocks"] == 3,
       "a list's breadth is breadth_math's over its stocks' closes -- the app's Watchlist Breadth chart's numbers")
 check(len(sb["in_ideas"]["points"]) == 700 - 252, "the 52-week warm-up is dropped, as in the app")
+
+# --- quarterly results medians for Claude chat (2026-10-30) ----------------------------------------------
+import quarterly_results as qr  # noqa: E402
+
+
+def _q(rev, ni):
+    return {"rev": rev, "op": rev / 10, "ni": ni, "eps": ni / 10}
+
+
+QR = {"as_of": "2026-10-30 08:00 UTC",
+      "members": {"INDIA": ["ZED.NS", "ACME.NS", "NEW.NS"], "US": []},
+      "tickers": {t: {"q": {"2025-09-30": _q(100, 10), "2026-06-30": _q(105, 11), "2026-09-30": _q(110 + i, 12 + i)}}
+                  for i, t in enumerate(("ZED.NS", "ACME.NS", "NEW.NS", "ACME"))}}
+payload = pm.quarterly_records(QR, lists)
+ser = payload["series"]
+check(payload["as_of"] == QR["as_of"] and set(ser) == {"INDIA"} | {w["name"] for w in lists}
+      and ser["INDIA"]["kind"] == "index" and ser["INDIA"]["label"] == "Nifty 500" and ser["all_hold"]["kind"] == "group",
+      f"quarterly: every index with members (an empty member list left out) and every tab and group ({sorted(ser)})")
+# By hand, India Invested (ZED.NS, ACME.NS): Sep '26 revenue growth 10% and 11% on Sep '25 -> median 10.5;
+# the 5-company rule is turned off here only to compare the maths (it leaves out a 2-company figure).
+want, _ = qr.summarize(QR["tickers"], by["in_hold"]["tickers"], basis="yoy", quarters=qr.MAX_QUARTERS)
+check(ser["in_hold"]["yoy"] == want and ser["in_hold"]["companies"] == 2 and ser["in_hold"]["stocks"] == 2
+      and qr.summarize(QR["tickers"], by["in_hold"]["tickers"], min_companies=1, min_share=0)[0][-1]["rev"] == 10.5,
+      "quarterly: a list's rows are quarterly_results.summarize's over its stocks (the News tab's numbers)")
+check(ser["in_hold"]["qoq"] == qr.summarize(QR["tickers"], by["in_hold"]["tickers"], basis="qoq", quarters=qr.MAX_QUARTERS)[0],
+      "quarterly: QoQ is stored beside YoY")
+check(pm.quarterly_records({}, lists) is None and pm.quarterly_records({"tickers": {}}, lists) is None,
+      "quarterly: no results file (not loaded, or never run) publishes nothing")
+
+
+class _QCur:
+    def __init__(self, log):
+        self.log = log
+
+    def execute(self, sql, params=None):
+        self.log.append((sql, params))
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class _QConn:
+    def __init__(self):
+        self.log = []
+
+    def cursor(self):
+        return _QCur(self.log)
+
+    def transaction(self):
+        return _QCur(self.log)
+
+
+qc = _QConn()
+pm.write_quarterly(qc, payload)
+check(len(qc.log) == 1 and "INSERT INTO kg_market_meta" in qc.log[0][0] and "ON CONFLICT (key) DO UPDATE" in qc.log[0][0]
+      and qc.log[0][1][0] == "quarterly_results" and json.loads(qc.log[0][1][1]) == json.loads(json.dumps(payload)),
+      "quarterly: stored whole under kg_market_meta's 'quarterly_results' key (no new table)")
 
 # --- closes: two years, every stock and benchmark, from the first block holding it ----------------------
 prices = pm.price_series(perf, lists, today=date(2026, 10, 22))

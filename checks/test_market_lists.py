@@ -52,6 +52,17 @@ SERIES = [{"series": "INDIA", "label": "Nifty 500", "kind": "index", "latest": {
           {"series": "in_hold", "label": "India Invested", "kind": "watchlist", "latest": {"pct_above": 80.0}, "as_of": "x"}]
 POINTS = {s["series"]: [{"date": d, "pct_above_200": 50.0, "pct_above_50": 40.0, "pct_highs": 1.0, "pct_lows": 2.0} for d in DAYS]
           for s in SERIES}
+def _row(label, rev, season=False, gap=0):
+    return {"label": label, "rev": rev, "ni": rev + 1, "eps": rev + 2, "margin": 15.0,
+            "n": {"rev": 40, "ni": 39, "eps": 38, "margin": 30}, "reported": 50, "season": season, "gap": gap}
+
+
+QUARTERLY = {"as_of": "2026-10-30 08:00 UTC", "series": {
+    "INDIA": {"label": "Nifty 500", "kind": "index", "stocks": 501, "companies": 499,
+              "yoy": [_row("Mar '26", 14.5), _row("Jun '26", 18.0), _row("Sep '26", 18.4, season=True, gap=119)],
+              "qoq": [_row("Jun '26", 2.0), _row("Sep '26", 3.0, season=True)]},
+    "in_hold": {"label": "India Invested", "kind": "watchlist", "stocks": 3, "companies": 2,
+                "yoy": [{**_row("Sep '26", 5.0), "ni": None, "eps": None}], "qoq": []}}}
 PRICES = {t: [(d, 100.0 + i) for i, d in enumerate(DAYS)] for t in ("ACME.NS", "ZED.NS", "^CRSLDX", "SPY", "ACME")}
 
 
@@ -70,6 +81,9 @@ class DB:
 
     def breadth_series(self):
         return [dict(s) for s in SERIES]
+
+    def quarterly_results(self):
+        return QUARTERLY
 
     def breadth_points(self, series, since):
         return [p for p in POINTS.get(series, []) if p["date"] >= since]
@@ -146,6 +160,31 @@ check(mcp.call_tool("get_watchlist", {"name": "India Watchlist", "groups": ["tre
       and mcp.call_tool("get_watchlist", {"name": "India Watchlist"}, db=db)[0]["groups"] == ["price", "returns", "trend", "stage"],
       "a watchlist table with trend carries stage too, the default one included")
 check(mcp.call_tool("list_watchlists", {}, db=None)[1] is True, "no database: an error, not an exception")
+
+# --- get_quarterly_results (2026-10-30) ------------------------------------------------------------------
+body, err = mcp.call_tool("get_quarterly_results", {"name": "Nifty 500"}, db=db)
+check(not err and body["found"] and body["series"] == "INDIA" and body["basis"] == "YOY"
+      and [p[0] for p in body["points"]] == ["Mar '26", "Jun '26", "Sep '26"]
+      and body["points"][-1][1:5] == [18.4, 19.4, 20.4, 15.0] and body["points"][-1][5] == [40, 39, 38, 30]
+      and body["points"][-1][6:] == [50, True, 119] and len(body["columns"]) == len(body["points"][0]),
+      "quarterly: an index by name, YoY by default -- quarter, the four medians, companies in each, reported, "
+      "still being reported, Yahoo's missing base quarters")
+body, _ = mcp.call_tool("get_quarterly_results", {"name": "nifty 500", "basis": "QoQ", "quarters": 1}, db=db)
+check(body["basis"] == "QOQ" and [p[0] for p in body["points"]] == ["Sep '26"], "quarterly: QoQ, and the last N quarters")
+body, _ = mcp.call_tool("get_quarterly_results", {"name": "india holdings"}, db=db)
+check(body["found"] and body["series"] == "in_hold" and body["points"][0][1] == 5.0 and body["points"][0][2] is None,
+      "quarterly: a watchlist by loose name; a thin figure reads null, not 0")
+body, _ = mcp.call_tool("get_quarterly_results", {"name": "dow jones"}, db=db)
+check(body["found"] is False and "Nifty 500" in body["available"], "quarterly: unknown -> found false with what is available")
+body, err = mcp.call_tool("get_quarterly_results", {}, db=db)
+check(err and "name" in body["error"], "quarterly: no name is an error")
+body, _ = mcp.call_tool("get_quarterly_results", {"name": "Nifty 500", "quarters": 999}, db=db)
+check(len(body["points"]) == 3, "quarterly: quarters is capped")
+_qr_saved = QUARTERLY
+QUARTERLY = {}
+body, _ = mcp.call_tool("get_quarterly_results", {"name": "Nifty 500"}, db=db)
+check(body["found"] is False, "quarterly: nothing published yet -> found false, no error")
+QUARTERLY = _qr_saved
 
 # --- get_market_breadth -------------------------------------------------------------------------------------
 body, _ = mcp.call_tool("get_market_breadth", {"name": "Nifty 500", "days": 30}, db=db)

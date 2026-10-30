@@ -190,6 +190,47 @@ def market_breadth(db, name, days=365):
                     "level, keyed by the level."}
 
 
+# A quarterly results reply's figures (quarterly_results.FIELDS), as it names them.
+RESULT_FIELDS = (("rev", "revenue growth %"), ("ni", "profit growth %"), ("eps", "EPS growth %"), ("margin", "OPM %"))
+MAX_RESULT_QUARTERS = 12
+
+
+def quarterly_results(db, name, basis="yoy", quarters=8):
+    """An index's or a list's quarterly results: per calendar quarter, the median company's revenue, profit and EPS
+    growth and OPM -- the News tab's quarterly results charts, as publish_market.py watchlists stores them."""
+    basis = "qoq" if str(basis or "").strip().lower() == "qoq" else "yoy"
+    quarters = max(1, min(int(quarters or 8), MAX_RESULT_QUARTERS))
+    stored = db.quarterly_results() or {}
+    series = stored.get("series") or {}
+    key = _index_series(name)
+    if not key:
+        key, _ = find_watchlist(db.watchlists(), name)
+    if not key or key not in series:
+        return {"query": name, "found": False, "available": [s["label"] for s in series.values()],
+                "note": f"Pass an index ({index_registry.label_list()}) or one of the watchlists."}
+    s = series[key]
+    rows = (s.get(basis) or [])[-quarters:]
+    return {
+        "query": name, "found": True, "series": key, "label": s["label"], "kind": s["kind"], "basis": basis.upper(),
+        "stocks": s.get("stocks"), "companies_with_results": s.get("companies"), "as_of": stored.get("as_of"),
+        "columns": ["quarter", *(label for _, label in RESULT_FIELDS), "companies in each median (revenue, profit, EPS, OPM)",
+                    "companies that reported the quarter", "still being reported", "companies whose base quarter Yahoo lacks"],
+        "points": [[r["label"], *(r.get(f) for f, _ in RESULT_FIELDS), [(r.get("n") or {}).get(f) for f, _ in RESULT_FIELDS],
+                    r.get("reported"), bool(r.get("season")), r.get("gap") or 0] for r in rows],
+        "note": ("Quarterly results from the user's stock screener (Yahoo's quarterly income statements), the same numbers "
+                 "as its News tab charts. Each figure is the MEDIAN company's: revenue growth, profit growth (reported "
+                 "net income, one-offs included) and EPS growth on the same quarter a year earlier (YoY) or the quarter "
+                 "before (QoQ), and OPM (operating income after depreciation over revenue). Quarters are calendar "
+                 "quarters: an Indian company's Q2 FY27 is Sep '26. A company with a loss or zero in the base quarter is "
+                 "left out of that growth figure, and one whose share count jumped (a bonus issue or split) out of EPS "
+                 "growth; banks have no OPM. A figure from fewer than 5 companies or under 30% of those that reported "
+                 "the quarter is null. 'Still being reported': fewer than half the companies of the quarter before have "
+                 "reported, so the median can still move. A company whose base quarter is a hole in Yahoo's data is "
+                 "left out of that 30% and counted in the last column. Three years of quarters are stored, so YoY has "
+                 "fewer quarters until the history builds."),
+    }
+
+
 def yahoo_closes(symbols, days):
     """{symbol: [(date, close)]} from Yahoo (split-adjusted, dividends not added -- like the stored closes).
     Empty on any failure."""

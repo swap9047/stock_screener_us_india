@@ -427,7 +427,7 @@ check("stage" in _gmm["inputSchema"]["properties"]["groups"]["items"]["enum"]
 tools = {t["name"]: t for t in listed["result"]["tools"]}
 desc = tools["get_market_metrics"]["description"]
 check(set(tools) == {"get_market_metrics", "metric_catalog", "list_watchlists", "get_watchlist", "get_market_breadth",
-                     "get_price_history"} and all(w in desc for w in ("NSE", "BSE", "price", "RSI", "before web search")),
+                     "get_quarterly_results", "get_price_history"} and all(w in desc for w in ("NSE", "BSE", "price", "RSI", "before web search")),
       "tools/list: the description says what it is for, so Claude picks it outside a Project too")
 check(tools["get_market_metrics"]["inputSchema"]["properties"]["groups"]["items"]["enum"] == list(ma.GROUP_NAMES)
       and all(t["annotations"]["readOnlyHint"] for t in tools.values()), "groups are the published ones; every tool read-only")

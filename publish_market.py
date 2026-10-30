@@ -417,6 +417,42 @@ def _read_json(name):
         return None
 
 
+# The News tab's quarterly results for Claude chat (owner, 2026-10-30: the medians only, not each company's
+# figures): every index_registry index (its members as quarterly_results.json stores them) and every tab and
+# group, YoY and QoQ, as quarterly_results.summarize gives them -- the same numbers as the charts. One JSON
+# value in kg_market_meta, so the research library's database needed no new table.
+QUARTERLY_KEY = "quarterly_results"
+
+
+def quarterly_records(results, lists):
+    """{"as_of", "series": {key: {label, kind, stocks, companies, yoy: [rows], qoq: [rows]}}}, or None when
+    quarterly_results.json has no companies (not loaded, or the job has never run)."""
+    import quarterly_results as qr
+    data = (results or {}).get("tickers") or {}
+    if not data:
+        return None
+    members = (results or {}).get("members") or {}
+    groups = [(ix["key"], ix["label"], "index", members.get(ix["key"]) or []) for ix in index_registry.INDEXES]
+    groups += [(w["name"], w["label"], w["kind"], w["tickers"]) for w in lists]
+    series = {}
+    for key, label, kind, tickers in groups:
+        if not tickers:
+            continue
+        entry = {"label": label, "kind": kind, "stocks": len(set(tickers))}
+        for basis in ("yoy", "qoq"):
+            entry[basis], entry["companies"] = qr.summarize(data, tickers, basis=basis, quarters=qr.MAX_QUARTERS)
+        series[key] = entry
+    return {"as_of": results.get("as_of"), "series": series}
+
+
+def write_quarterly(conn, payload):
+    """The quarterly results medians, replaced whole."""
+    with conn.transaction():
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO kg_market_meta (key, value) VALUES (%s, %s) "
+                        "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (QUARTERLY_KEY, json.dumps(payload)))
+
+
 def publish_watchlists(conn):
     from watchlist_labels import COMBINED_TAB_LABELS
     lists = watchlist_records(stock_data.load_markets_registry(), stock_data.load_watchlists(),
@@ -431,10 +467,14 @@ def publish_watchlists(conn):
     points = write_breadth(conn, series) if series else 0
     prices = price_series(perf, lists)
     written, deleted = write_prices(conn, prices) if prices else (0, 0)
+    quarterly = quarterly_records(_read_json("quarterly_results.json"), lists)
+    if quarterly:
+        write_quarterly(conn, quarterly)
     print(f"Published {sum(w['kind'] == 'watchlist' for w in lists)} watchlist(s) and {sum(w['kind'] == 'group' for w in lists)} "
           f"group(s) ({len({t for w in lists for t in w['tickers']})} stocks); breadth for "
           f"{sum(s['kind'] == 'index' for s in series)} index(es) and {sum(s['kind'] != 'index' for s in series)} list(s), "
-          f"{points} point(s) written; closes for {len(prices)} ticker(s), {written} row(s) written, {deleted} removed.")
+          f"{points} point(s) written; closes for {len(prices)} ticker(s), {written} row(s) written, {deleted} removed; "
+          f"quarterly results for {len((quarterly or {}).get('series') or {})} index(es) and list(s).")
     if not perf:
         print("::warning::dashboard_perf.json missing -- watchlist breadth and closes not refreshed.")
     return 0
