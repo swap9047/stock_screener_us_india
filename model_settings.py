@@ -9,8 +9,9 @@ One table, STEPS, names every place the codebase calls a model:
     F1 Sentiment broad search        F2 Sentiment targeted-retry search F3 Sentiment reasoning
     R1 Market read
 
-A step's CHAIN is an ordered list of {"model", "attempts"}: each model is tried `attempts`
-times (on a freshly rotated key, llm_util's `avoid_key`) before the next one. Today's ladders
+A step's CHAIN is an ordered list of {"model", "attempts", "timeout"}: each model is tried `attempts`
+times (on a freshly rotated key, llm_util's `avoid_key`) before the next one, and a call that has not
+answered within `timeout` seconds (150 by default) fails and the ladder moves on. Today's ladders
 are the defaults, so nothing changes until a step is saved:
 
     search      gemma-26b x3                                  (llm_util.same_model_tiers)
@@ -42,6 +43,12 @@ FLASH_37 = "models/gemini-3.7-flash"
 FLASH_38 = "models/gemini-3.8-flash"
 
 MAX_ATTEMPTS = 10
+# Seconds one call may take before the ladder gives up on it (owner, 2026-10-31: 150, then on to the next).
+# The ceiling sits under llm_util.HTTP_TIMEOUT_SECONDS (180), the SDK's own cut-off, which a longer wait
+# would run into with a different error.
+DEFAULT_TIMEOUT_S = 150
+MIN_TIMEOUT_S = 10
+MAX_TIMEOUT_S = 170
 # What the budget picker offers. 0 = no thinking. Collation clamps to its own band
 # (news_summary._collation_thinking_budget), so it only offers that band.
 BUDGET_CHOICES = [0, 1024, 2048, 4096, 8192, 16384]
@@ -114,12 +121,25 @@ def normalize_chain(raw):
             attempts = int(item.get("attempts", 1))
         except (TypeError, ValueError):
             attempts = 1
-        out.append({"model": full_id(item["model"]), "attempts": max(1, min(MAX_ATTEMPTS, attempts))})
+        out.append({"model": full_id(item["model"]), "attempts": max(1, min(MAX_ATTEMPTS, attempts)),
+                    "timeout": _clean_timeout(item.get("timeout"))})
     return out or None
 
 
+def _clean_timeout(value):
+    try:
+        return max(MIN_TIMEOUT_S, min(MAX_TIMEOUT_S, int(value)))
+    except (TypeError, ValueError):
+        return DEFAULT_TIMEOUT_S
+
+
+def _entries(pairs):
+    """[{"model", "attempts", "timeout"}] from the (model, attempts) pairs the defaults and the old keys give."""
+    return [{"model": m, "attempts": n, "timeout": DEFAULT_TIMEOUT_S} for m, n in pairs]
+
+
 def _default_chain(step):
-    return [{"model": m, "attempts": n} for m, n in STEPS[step]["chain"]]
+    return _entries(STEPS[step]["chain"])
 
 
 def _legacy(step, settings):
@@ -148,7 +168,7 @@ def _legacy(step, settings):
         chain = [(model, 2)] + ([(fallback, 1)] if model != fallback else [])
     if chain == list(default_chain) and budget == spec["budget"]:
         return None
-    return [{"model": m, "attempts": n} for m, n in chain], budget
+    return _entries(chain), budget
 
 
 def resolve(step, settings=None):
@@ -197,6 +217,7 @@ def tiers(step, settings=None, pair_backoff=30):
 
 
 def build_tiers(chain, shape="run", pair_backoff=30):
+    """(model, seconds to wait first, call timeout) for each try, in the order they are made."""
     backoff = llm_util.RETRY_BACKOFF_SECONDS      # read at call time, like llm_util's own builders
     out = []
     rest = chain
@@ -204,23 +225,26 @@ def build_tiers(chain, shape="run", pair_backoff=30):
         a, b = chain[0], chain[1]
         for r in range(max(a["attempts"], b["attempts"])):
             if a["attempts"] > r:
-                out.append((a["model"], pair_backoff if r else 0))
+                out.append((a["model"], pair_backoff if r else 0, a["timeout"]))
             if b["attempts"] > r:
-                out.append((b["model"], 0))
+                out.append((b["model"], 0, b["timeout"]))
         rest = chain[2:]
         for entry in rest:
             for i in range(entry["attempts"]):
-                out.append((entry["model"], pair_backoff if i == 0 else backoff))
+                out.append((entry["model"], pair_backoff if i == 0 else backoff, entry["timeout"]))
         return out
     for entry in rest:
         for i in range(entry["attempts"]):
-            out.append((entry["model"], 0 if i == 0 else backoff))
+            out.append((entry["model"], 0 if i == 0 else backoff, entry["timeout"]))
     return out
 
 
 def describe(chain):
-    """'gemma-4-26b-a4b-it x3 -> gemini-3.5-flash-lite' for the steps table."""
-    return " → ".join(short(e["model"]) + (f" ×{e['attempts']}" if e["attempts"] > 1 else "") for e in chain)
+    """'gemma-4-26b-a4b-it ×3 → gemini-3.5-flash-lite' for the steps list; a timeout is named only
+    when it is not the default."""
+    return " → ".join(short(e["model"]) + (f" ×{e['attempts']}" if e["attempts"] > 1 else "")
+                      + (f" @{e['timeout']}s" if e.get("timeout", DEFAULT_TIMEOUT_S) != DEFAULT_TIMEOUT_S else "")
+                      for e in chain)
 
 
 def is_custom(step, settings=None):

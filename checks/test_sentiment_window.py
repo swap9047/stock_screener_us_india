@@ -108,7 +108,7 @@ try:
     out = fe.fetch_targeted_earnings_numbers(object(), "ZED.NS", "Zed Ltd", "india_invested", "2026-07-24")
     check(out == "", "an exhausted targeted ladder returns '' and never raises")
     tiers = captured2.get("targeted-earnings", [])
-    models = [m for m, _ in tiers]
+    models = [t[0] for t in tiers]
     # Every rung is SEARCH_MODEL now: the 31b fallback answered 0 of ~63 calls
     # across four runs, so the model stops varying and the KEY varies instead
     # (llm_util.same_model_tiers + _pick's `avoid`).
@@ -118,7 +118,7 @@ try:
           f"...via same_model_tiers, so the retries and their pacing are shared: {models}")
 
     fe.fetch_fundamental_news(object(), "ACME", "us_invested", "Acme Corp", is_retry=True)
-    broad = [m for m, _ in captured2.get("fundamental-search", [])]
+    broad = [t[0] for t in captured2.get("fundamental-search", [])]
     check(broad == models,
           f"both passes agree on the order, so neither can drift: broad={broad} targeted={models}")
 finally:
@@ -137,7 +137,7 @@ captured3 = {}
 
 
 def _fake_ladder3(client, prompt, tiers, config_for, label="llm", subject="", timeout=None, on_success=None):
-    captured3[label] = [m for m, _ in tiers]
+    captured3[label] = [t[0] for t in tiers]
     return None, None
 
 

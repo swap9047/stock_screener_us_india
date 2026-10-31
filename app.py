@@ -3654,7 +3654,12 @@ def _render_model_step_editor(step, settings):
         attempts = st.number_input(f"Tries for model {i + 1}", min_value=1, max_value=model_settings.MAX_ATTEMPTS,
                                    value=seed["attempts"], step=1, key=f"ms_{step}_attempts_{i}",
                                    help="How many times this model is tried before the next one; each retry goes to a different API key.")
-        new_chain.append({"model": model, "attempts": int(attempts)})
+        timeout = st.number_input(
+            f"Timeout for model {i + 1} (seconds)", min_value=model_settings.MIN_TIMEOUT_S, max_value=model_settings.MAX_TIMEOUT_S,
+            value=int(seed.get("timeout", model_settings.DEFAULT_TIMEOUT_S)), step=10, key=f"ms_{step}_timeout_{i}",
+            help="A call to this model that has not answered by then is given up on and the next try (or model) "
+                 f"starts. Default {model_settings.DEFAULT_TIMEOUT_S} s; at most {model_settings.MAX_TIMEOUT_S} s.")
+        new_chain.append({"model": model, "attempts": int(attempts), "timeout": int(timeout)})
     b1, b2 = st.columns(2)
     b1.button("➕ Add a model", key=f"ms_add_{step}", width="stretch", disabled=n >= 8,
               on_click=_model_settings_flip_rows, args=(step, 1))
@@ -3687,8 +3692,11 @@ def _render_model_step_editor(step, settings):
         else:
             results = []
             with st.spinner(f"Testing {len(set(e['model'] for e in new_chain))} model(s)..."):
-                for m in dict.fromkeys(e["model"] for e in new_chain):
-                    results.append((m, *model_settings.test_call(client, step, m, budget)))
+                wait = {}
+                for e in new_chain:
+                    wait.setdefault(e["model"], e["timeout"])
+                for m, secs_allowed in wait.items():
+                    results.append((m, *model_settings.test_call(client, step, m, budget, timeout=secs_allowed)))
             st.session_state[f"ms_test_{step}"] = {"sig": sig, "results": results}
             tested = st.session_state[f"ms_test_{step}"]
     if tested and tested["sig"] == sig:
