@@ -86,6 +86,11 @@ ADVICE_WORDS = re.compile(
     r"|\brecommend|\bstop[- ]?loss|\bprice target|\bguarantee[sd]?\b"
     r"|\bwill\s+(?:definitely\s+|surely\s+)?(?:rally|crash|bounce|fall|rise|recover|collapse)\b", re.I)
 
+# The facts' own field names must not leak into the prose ("the 1y most high of 19.9%", "pct_above"): a read
+# is for an investor. The first reads written by the smallest model did exactly that.
+INTERNAL_NAMES = re.compile(r"\b1-?y(?:ear)?\s+most\b|\bmost\s+(?:highs?|lows?)\s+(?:level|peak)\b|\bat_1y|_pct\b|_points\b"
+                            r"|\bsessions_in\b|\bshare_of\b|\bbreadth_vs_index\b", re.I)
+
 # Numbers a read may use without the facts holding them: the chart's own lines and
 # windows ("50% line", "200-day", "52-week", "20 sessions").
 FIXED_NUMBERS = {20, 50, 80, 100, 200, 52, 1, 2, 3, 4, 5, 10}
@@ -462,6 +467,8 @@ def validate_read(data, facts):
                 raise ValueError("the headline is too long")
             if ADVICE_WORDS.search(text):
                 raise ValueError(f"{key} gives advice")
+            if INTERNAL_NAMES.search(text):
+                raise ValueError(f"{key} uses an internal field name")
             bad = unknown_numbers(text, facts)
             if bad:
                 raise ValueError(f"{key} quotes numbers the facts do not hold: {', '.join(bad)}")

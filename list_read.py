@@ -241,6 +241,8 @@ def _text(key, text, facts, limit=mr.MAX_TEXT_CHARS):
         raise ValueError("the headline is too long")
     if mr.ADVICE_WORDS.search(text):
         raise ValueError(f"{key} gives advice")
+    if mr.INTERNAL_NAMES.search(text):
+        raise ValueError(f"{key} uses an internal field name")
     bad = mr.unknown_numbers(text, facts)
     if bad:
         raise ValueError(f"{key} quotes numbers the facts do not hold: {', '.join(bad)}")

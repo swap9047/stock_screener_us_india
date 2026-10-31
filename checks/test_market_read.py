@@ -191,6 +191,9 @@ check(not refused({"breadth": "Selling pressure is easing in the short-term; buy
       and not refused({"headline": "Short covering can lift a washed-out market."}),
       "M2: ordinary market language (selling pressure, short-term, buyers) is not advice")
 check(refused({"breadth": "x" * 800}) and refused({"breadth": 12}), "M2: too long or not text is refused")
+check(refused({"breadth": "Highs remain below the 1y most high of 15%."}) and refused({"highs_lows": "Lows hit the 1-year most lows level (12%)."})
+      and refused({"breadth": "breadth_vs_index says diverging."}) and not refused({"breadth": "Breadth is 15% against a 12-month high of 60%."}),
+      "M2: the facts' own field names (\"1y most high\", breadth_vs_index) must not appear in the prose")
 check(refused({"headline": " ".join(["word"] * 40)}) and not refused({"headline": " ".join(["word"] * 28)}),
       "M2: a headline of more than about 30 words is refused, one of 28 is fine")
 no_dd = dict(facts, drawdown=None)

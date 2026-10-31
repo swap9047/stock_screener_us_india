@@ -196,6 +196,8 @@ check(refused({"takeaways": ["Time to buy the dip.", "fine"]}) and refused({"sto
 check(refused({"market": "x"}, {**facts, "market_read": None}) and refused({"results": "Results are strong."}, {**facts, "results": None})
       and refused({"stocks": "Beta Foods."}, {**facts, "stocks": None}), "L5: a part whose facts are absent must be null")
 check(refused({"headline": None}), "L5: a read needs a headline")
+check(refused({"stocks": "New lows hit the 1-year most lows level."}) and refused({"takeaways": ["revenue_growth_pct is high.", "ok"]}),
+      "L5: the facts' own field names must not appear in the prose")
 check(refused({"headline": " ".join(["word"] * 40)}), "L5: a headline of more than about 30 words is refused")
 
 # --- L6 the job ----------------------------------------------------------------------------------
