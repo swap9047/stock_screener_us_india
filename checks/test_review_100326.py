@@ -323,14 +323,15 @@ check(i > 0 and all(k in body for k in ("show_fundamental_columns_toggle", "dash
       and "st.session_state.pop" in body, "B1: the shared setter drops both widgets' state before rerunning")
 
 # --- B2 the per-tab AI model / budget pickers don't undo each other -----------
-# Every market tab renders its own copy of the Expert Take and Sentiment model
-# and thinking-budget pickers, all bound to ONE setting. A change on one tab was
-# written back by the next tab's stale copy (reproduced: saves went new -> old),
-# so the pickers never stuck. A change must drop every tab's copy.
+# Every market tab used to render its own copy of the Expert Take and Sentiment model and
+# thinking-budget pickers, all bound to ONE setting, and a change on one tab was written back by the
+# next tab's stale copy. Since 2026-10-31 the models are edited in one place, the sidebar's
+# Settings · Models, so no tab draws a copy at all.
 i = APP.find("def _render_ai_section(")
 section = APP[i:APP.find("def render_expert_view_expander(")]
-check(section.count("_save_setting_reset_widgets(") >= 2 and "st.rerun()" not in section.split("c1, c2, c3, c4")[0],
-      "B2: the model and budget pickers save through the shared reset helper")
+check("reasoning_model_select" not in section and "reasoning_budget_select" not in section
+      and "Settings · Models" in section,
+      "B2: the tabs draw no model / budget picker (one panel in the sidebar), so there are no copies to undo each other")
 i = APP.find("def _save_setting_reset_widgets(")
 body = APP[i:i + 1200]
 check(i > 0 and "startswith(" in body and "st.session_state.pop" in body and "st.rerun()" in body,

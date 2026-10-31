@@ -12,6 +12,7 @@ import re
 from datetime import date, datetime, timedelta, timezone
 
 import llm_util
+import model_settings
 from news_summary import market_window_date
 from google.genai import types
 
@@ -107,8 +108,9 @@ def fetch_gemma_expert_news(client, ticker, market, company_name, is_retry=False
             raise ValueError("search refused: answered from its training cutoff instead of searching")
         return resp
 
+    from stock_data import load_settings
     resp, used = llm_util.run_model_ladder(
-        client, prompt, llm_util.same_model_tiers(SEARCH_MODEL),
+        client, prompt, model_settings.tiers("E1", load_settings()),
         lambda m: config, label="expert-search", subject=ticker, timeout=llm_util.SEARCH_TIMEOUT_SECONDS,
         on_success=_searched,
     )
@@ -775,8 +777,11 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
 
     from stock_data import load_settings
     settings = load_settings()
-    model = settings.get("expert_reasoning_model", "models/gemini-3.5-flash-lite")
-    budget = settings.get("expert_thinking_budget", 8192)
+    # The chain and thinking budget saved in the sidebar's Settings · Models (model_settings, "E2"),
+    # else the old settings keys, else the default: each model's attempts, in order.
+    model_cfg = model_settings.resolve("E2", settings)
+    model = model_cfg["chain"][0]["model"]
+    budget = model_cfg["budget"]
 
     def _pending_fallback(reason, used_model="Error"):
         # catalyst_summary used to be set to `news_text` -- the raw,
@@ -820,7 +825,7 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
     # The fallback is 26b alone. gemma-4-31b-it used to sit ahead of it, and
     # it answered 0 of ~63 calls on the search side (llm_util.same_model_tiers),
     # so every exhausted primary spent a full call timeout on it first.
-    tiers = llm_util.standard_tiers(model, REASONING_FALLBACK_MODEL)
+    tiers = model_settings.tiers("E2", settings)
     data, used = llm_util.run_model_ladder(
         client, prompt, tiers, _config_for, label="expert", subject=ticker,
         on_success=lambda resp: normalize_view(llm_util.json_object(_clean_json_text(resp.text))),

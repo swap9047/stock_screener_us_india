@@ -18,7 +18,7 @@
 # The comparison is with the last deployed commit (VERCEL_GIT_PREVIOUS_SHA), so a push of several commits still
 # deploys when an earlier one changed the functions; without it, with the parent. Any failure to compare (a
 # commit the clone doesn't have, no parent) builds: a needless deployment is cheaper than a missing one.
-WATCHED="api vercel.json .vercelignore requirements.txt alerts.py custom_columns.py expert_views.py filters.py fundamentals_eval.py glossary.py index_registry.py json_store.py llm_util.py market_api.py market_http.py market_lookup.py market_lists.py news_summary.py stage_analysis.py stock_data.py ticker_notes.py"
+WATCHED="api vercel.json .vercelignore requirements.txt alerts.py custom_columns.py expert_views.py filters.py fundamentals_eval.py glossary.py index_registry.py json_store.py llm_util.py market_api.py market_http.py market_lookup.py market_lists.py model_settings.py news_summary.py stage_analysis.py stock_data.py ticker_notes.py"
 
 [ "$VERCEL_GIT_COMMIT_REF" != "main" ] && exit 0
 cd "$(git rev-parse --show-toplevel)" || exit 1

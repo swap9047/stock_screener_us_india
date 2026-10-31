@@ -20,8 +20,9 @@ import os
 import sys
 
 import market_read
+import model_settings
 from llm_util import make_client
-from stock_data import load_watchlists
+from stock_data import load_settings, load_watchlists
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -48,9 +49,13 @@ def main():
     backfill = int(backfill) if backfill.isdigit() else 0
     force = os.environ.get("MARKET_READ_FORCE", "").strip().lower() in ("1", "true", "yes")
 
+    # The models, attempts and thinking budget saved in the sidebar's Settings · Models ("R1").
+    settings = load_settings()
     data = market_read.load_market_read()
     written, awaiting, failed = market_read.run(client, breadth, perf, load_watchlists(), data,
-                                                backfill=backfill, force=force)
+                                                backfill=backfill, force=force,
+                                                tiers=model_settings.tiers("R1", settings),
+                                                budget=model_settings.budget("R1", settings))
     if written:
         market_read.save_market_read(data)
     print(f"[market read] {written} written, {awaiting} still forming, {failed} failed")

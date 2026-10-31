@@ -54,6 +54,7 @@ from zoneinfo import ZoneInfo
 from google.genai import types
 
 import llm_util
+import model_settings
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 NEWS_SUMMARY_FILE = os.path.join(SCRIPT_DIR, "news_summary.json")
@@ -408,7 +409,7 @@ def _extract_sources(resp):
     return sources
 
 
-def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None, model=SEARCH_MODEL):
+def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None, model=SEARCH_MODEL, tiers=None):
     """Stage 1: grounded search for ONE ticker.
 
     Returns (text, sources) where `text` is the model's BARE output -- callers
@@ -452,9 +453,11 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None,
     # because the caller inspects the RAISED exception to choose between the
     # retry queue and a terminal failure, and the ladder helper does not
     # surface it. It mirrors that helper's key handling instead.
-    tiers = llm_util.same_model_tiers(model)
-    if model != SEARCH_MODEL:
-        tiers.append((SEARCH_MODEL, 0))
+    # `tiers` is the step's saved chain (model_settings, "N1"); without one, the old shape.
+    if tiers is None:
+        tiers = llm_util.same_model_tiers(model)
+        if model != SEARCH_MODEL:
+            tiers.append((SEARCH_MODEL, 0))
     last_exc = None
     avoid_key = None
     unavailable = set()
@@ -481,7 +484,7 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None,
     raise last_exc
 
 
-def _run_reasoning(client, prompt, model, budget, label, subject=""):
+def _run_reasoning(client, prompt, model, budget, label, subject="", tiers=None):
     """Shared Stage 2 / Stage 3 model ladder:
     `model` -> `model` again after a short backoff -> REASONING_FALLBACK_MODEL.
 
@@ -505,7 +508,7 @@ def _run_reasoning(client, prompt, model, budget, label, subject=""):
     # Stage 2 for every ticker and silently forward unfiltered search text.
     text, used = llm_util.run_model_ladder(
         client, prompt,
-        llm_util.standard_tiers(model, REASONING_FALLBACK_MODEL),
+        tiers or llm_util.standard_tiers(model, REASONING_FALLBACK_MODEL),
         _config_for, label=label, subject=subject,
         timeout=CALL_TIMEOUT_SECONDS,
         on_success=lambda resp: (resp.text or "").strip(),
@@ -517,7 +520,7 @@ def _run_reasoning(client, prompt, model, budget, label, subject=""):
 
 
 def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date,
-                                ticker_names=None, model=REASONING_MODEL, budget=4096, previous=None):
+                                ticker_names=None, model=REASONING_MODEL, budget=4096, previous=None, tiers=None):
     """Stage 2: strict recency + materiality filtering for one ticker.
 
     Returns (text, status): status is "ok" when a model answered (an empty
@@ -575,7 +578,7 @@ def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date,
         f"RAW TEXT:\n{raw_text}"
     )
 
-    text, ok = _run_reasoning(client, prompt, model, budget, "stage2", subject)
+    text, ok = _run_reasoning(client, prompt, model, budget, "stage2", subject, tiers=tiers)
     if not ok:
         return raw_text, STATUS_DEGRADED
     return text, "ok"
@@ -591,7 +594,7 @@ def _collation_thinking_budget(budget):
 
 
 def collate_market_summary(client, market, batch_texts, as_of_date=None,
-                           model=None, budget=None, fallback_model=None, last_resort_model=None):
+                           model=None, budget=None, fallback_model=None, last_resort_model=None, tiers=None):
     """Stage 3: collate one market's surviving notes into the daily brief.
 
     Returns (summary, status), same contract as Stage 2. A legitimate empty
@@ -657,9 +660,10 @@ def collate_market_summary(client, market, batch_texts, as_of_date=None,
     # 2026-09-29..10-04 every editor failure was a 503 from both models within
     # ~20 s of retrying, and the raw notes went to Discord.
     last_resort_model = last_resort_model or REASONING_MODEL
-    tiers = llm_util.retry_pair_tiers(model, fallback_model, backoff=COLLATION_RETRY_WAIT_SECONDS)
-    if last_resort_model not in (model, fallback_model):
-        tiers.append((last_resort_model, COLLATION_RETRY_WAIT_SECONDS))
+    if tiers is None:
+        tiers = llm_util.retry_pair_tiers(model, fallback_model, backoff=COLLATION_RETRY_WAIT_SECONDS)
+        if last_resort_model not in (model, fallback_model):
+            tiers.append((last_resort_model, COLLATION_RETRY_WAIT_SECONDS))
     text, used = llm_util.run_model_ladder(
         client, prompt, tiers,
         _config_for, label="stage3", subject=market,
@@ -740,6 +744,14 @@ def build_news_summary(watchlists, api_key, now=None):
     raw_budget = settings.get("news_reasoning_budget", 4096)
     thinking_budget = int(raw_budget) if isinstance(raw_budget, str) and raw_budget.isdigit() else raw_budget
 
+    # The chains and budgets saved in the sidebar's Settings · Models (model_settings), else the old
+    # settings above, else today's defaults: each model's attempts and the step's thinking budget.
+    search_tiers = model_settings.tiers("N1", settings)
+    filter_tiers = model_settings.tiers("N2", settings)
+    thinking_budget = model_settings.budget("N2", settings)
+    collation_tiers = model_settings.tiers("N3", settings, pair_backoff=COLLATION_RETRY_WAIT_SECONDS)
+    collation_budget = model_settings.budget("N3", settings)
+
     client = llm_util.make_client(api_key)
     result = {
         # Dated by the 6 AM ET slot this run belongs to, not by when GitHub
@@ -795,7 +807,7 @@ def build_news_summary(watchlists, api_key, now=None):
         t0 = time.time()
         try:
             raw_text, sources = fetch_single_raw_news(
-                client, ticker, market, window, ticker_names=ticker_names, model=search_model,
+                client, ticker, market, window, ticker_names=ticker_names, model=search_model, tiers=search_tiers,
             )
         except Exception as e:
             if not is_retry and _is_retryable(e):
@@ -815,7 +827,7 @@ def build_news_summary(watchlists, api_key, now=None):
             clean, status = filter_batch_with_reasoning(
                 client, header, [ticker], market, window,
                 ticker_names=ticker_names, model=reasoning_model, budget=thinking_budget,
-                previous=previous_note(previous_digest, ticker, slot_date),
+                previous=previous_note(previous_digest, ticker, slot_date), tiers=filter_tiers,
             )
             if status != STATUS_DEGRADED:
                 # Bullets only from here: filler lines out, then the code's
@@ -915,7 +927,7 @@ def build_news_summary(watchlists, api_key, now=None):
         collated, collate_status = collate_market_summary(
             client, market, filtered_texts, as_of_date=window_date,
             model=collation_model, fallback_model=collation_fallback,
-            budget=collation_budget, last_resort_model=reasoning_model,
+            budget=collation_budget, last_resort_model=reasoning_model, tiers=collation_tiers,
         )
         print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] [{market}] Stage3 done "
               f"({time.time()-t0:.1f}s, {collate_status})")

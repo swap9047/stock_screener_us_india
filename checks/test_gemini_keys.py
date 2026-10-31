@@ -323,7 +323,9 @@ check([b for _, b in tiers8][0] == 0 and all(b > 0 for b in [b for _, b in tiers
 
 for mod in ("fundamentals_eval.py", "expert_views.py"):
     src = (Path(REPO) / mod).read_text()
-    check("same_model_tiers(SEARCH_MODEL)" in src, f"{mod}'s grounded search uses same_model_tiers")
+    # Through the step table since the sidebar's Settings · Models (model_settings.py): its default is
+    # the same three attempts on one model (checked in test_model_settings.py).
+    check('model_settings.tiers("' in src, f"{mod}'s grounded search takes its ladder from model_settings")
     # The search fallback MODEL is gone entirely -- the key is what varies now.
     # Neither REASONING ladder names 31b any more either -- see
     # checks/test_review_091926.py T3.

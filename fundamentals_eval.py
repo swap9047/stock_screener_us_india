@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 from google.genai import types
 
 import llm_util
+import model_settings
 import yfinance as yf
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -180,8 +181,9 @@ def fetch_fundamental_news(client, ticker, market, company_name, is_retry=False,
     grounding_tool = types.Tool(google_search=types.GoogleSearch())
     config = types.GenerateContentConfig(tools=[grounding_tool])
 
+    from stock_data import load_settings
     resp, used = llm_util.run_model_ladder(
-        client, prompt, llm_util.same_model_tiers(SEARCH_MODEL),
+        client, prompt, model_settings.tiers("F1", load_settings()),
         lambda m: config, label="fundamental-search", subject=ticker, timeout=llm_util.SEARCH_TIMEOUT_SECONDS,
     )
     if used is not None:
@@ -924,9 +926,10 @@ def fetch_targeted_earnings_numbers(client, ticker, company_name, market, announ
     )
     grounding_tool = types.Tool(google_search=types.GoogleSearch())
     config = types.GenerateContentConfig(tools=[grounding_tool])
+    from stock_data import load_settings
     resp, used = llm_util.run_model_ladder(
         client, prompt,
-        llm_util.same_model_tiers(SEARCH_MODEL),
+        model_settings.tiers("F2", load_settings()),
         lambda m: config, label="targeted-earnings", subject=ticker,
     )
     if used is None:
@@ -1055,8 +1058,12 @@ def generate_fundamental_view(client, row_data, news_text=None, news_source=None
         data["sentiment"], data["sentiment_drivers"] = score_sentiment(data, threshold, alone_up, alone_down)
         return data
 
-    model = settings.get("sentiment_reasoning_model", "models/gemini-3.5-flash-lite")
-    budget = settings.get("sentiment_thinking_budget", 8192)
+    # The chain and thinking budget saved in the sidebar's Settings · Models (model_settings, "F3"),
+    # else the old settings keys, else the default.
+    model_cfg = model_settings.resolve("F3", settings)
+    model = model_cfg["chain"][0]["model"]
+    budget = model_cfg["budget"]
+    reasoning_tiers = model_settings.tiers("F3", settings)
 
     if not model.startswith("models/"):
         model = f"models/{model}"
@@ -1079,7 +1086,7 @@ def generate_fundamental_view(client, row_data, news_text=None, news_source=None
     # quota) instead of burning every tier on something a retry cannot fix.
     data, used = llm_util.run_model_ladder(
         client, prompt,
-        llm_util.standard_tiers(model, REASONING_FALLBACK_MODEL),
+        reasoning_tiers,
         _config_for, label="sentiment", subject=ticker,
         on_success=lambda resp: normalize_view(llm_util.json_object(_clean_json_text(resp.text))),
     )
@@ -1103,7 +1110,7 @@ def generate_fundamental_view(client, row_data, news_text=None, news_source=None
             combined = f"{news_text}\n\n--- TARGETED FOLLOW-UP SEARCH ({anchor} results) ---\n{extra}"
             data2, used2 = llm_util.run_model_ladder(
                 client, build_sentiment_prompt(company_name, ticker, combined, threshold, alone_up, alone_down),
-                llm_util.standard_tiers(model, REASONING_FALLBACK_MODEL),
+                reasoning_tiers,
                 _config_for, label="sentiment-retry", subject=ticker,
                 on_success=lambda resp: normalize_view(llm_util.json_object(_clean_json_text(resp.text))),
             )

@@ -164,8 +164,8 @@ finally:
 _fe_src = (Path(REPO) / "fundamentals_eval.py").read_text()
 check('standard_tiers(model, "models/gemma-4-31b-it")' not in _fe_src,
       "no reasoning ladder in fundamentals_eval still hardcodes 31b as its fallback")
-check(_fe_src.count("standard_tiers(model, REASONING_FALLBACK_MODEL)") == 2,
-      "both reasoning ladders (sentiment, sentiment-retry) use the constant")
+check(_fe_src.count("reasoning_tiers") == 3 and 'model_settings.tiers("F3", settings)' in _fe_src,
+      "both reasoning ladders (sentiment, sentiment-retry) use the one step chain (model_settings F3)")
 
 
 # --- the window reaches back to the company's own last results ----------------
