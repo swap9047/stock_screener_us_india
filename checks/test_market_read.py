@@ -4,6 +4,8 @@ Gemini client; nothing reads the real JSON.
   M1  facts: each chart's numbers match an independent calculation (zone, change,
       last cross of 50, "lowest since", streaks, the equal-weight curve and its
       windows), and a chart with too little history has no facts;
+  M1b the context the weak first reads lacked (2026-10-31): "at the year's extreme" flags that are true only when
+      it is, and whether breadth and the index agree or diverge over 5 and 20 sessions;
   M2  the number check: a read may quote what the facts hold (rounded as given,
       dates' digits, the charts' own lines) and nothing else; advice, markdown
       lengths, a chart without facts and an empty read are refused;
@@ -142,6 +144,22 @@ none = mr.build_facts(IX, block(), {"markets": {}, "benchmarks": {}}, LISTS["ind
 check(none["return"] is None and none["index_price"] is None and none["breadth"] is not None,
       "M1: no stored prices -> no return facts, the other charts unaffected")
 
+# --- M1b context facts ----------------------------------------------------------------------------
+check(b["at_1y_low"] is True and b["at_1y_high"] is False and f["breadth"]["pct_above_50d"]["at_1y_low"] is True,
+      "M1b: today is the year's low for the 200-day breadth (15 against a year at 60), so the flag is true, and the high flag false")
+check(h["lows_at_1y_most"] is True and f["drawdown"]["share_of_stocks"]["down_20pct_or_more"]["at_1y_high"] is True,
+      "M1b: lows at their 12-month most, and the 20% drawdown share at its 12-month high")
+# By hand: the index (+0.05% a session) is +0.25% over 5 sessions (flat, under the 0.5% band) and +1.0% over 20 (up);
+# 200-day breadth is -7.5 points over 5 (down) and -30 over 20 (down).
+check(f["breadth_vs_index"] == {"last_5_sessions": "index flat, breadth down: mixed",
+                                "last_20_sessions": "index up, breadth down: diverging"},
+      f"M1b: breadth against the index, named: {f['breadth_vs_index']}")
+check(mr.breadth_vs_index({"change_5d_pct": -2.0}, {"pct_above_200d": {"change_5d_points": -6.0}}) == {"last_5_sessions": "index down, breadth down: confirming"}
+      and mr.breadth_vs_index({"change_5d_pct": 3.0}, {"pct_above_200d": {"change_5d_points": 1.0}}) == {"last_5_sessions": "index up, breadth flat: mixed"}
+      and mr.breadth_vs_index({"change_20d_pct": -1.0}, {"pct_above_200d": {"change_20d_points": 9.0}}) == {"last_20_sessions": "index down, breadth up: diverging"}
+      and mr.breadth_vs_index(None, None) is None,
+      "M1b: confirming, mixed and diverging, and nothing when either side is missing")
+
 # --- M2 the number check -------------------------------------------------------------------
 facts = f
 ok_read = {"headline": "Breadth fell to 15.0%, washed out; lows at 12% since Oct 16.",
@@ -173,6 +191,8 @@ check(not refused({"breadth": "Selling pressure is easing in the short-term; buy
       and not refused({"headline": "Short covering can lift a washed-out market."}),
       "M2: ordinary market language (selling pressure, short-term, buyers) is not advice")
 check(refused({"breadth": "x" * 800}) and refused({"breadth": 12}), "M2: too long or not text is refused")
+check(refused({"headline": " ".join(["word"] * 40)}) and not refused({"headline": " ".join(["word"] * 28)}),
+      "M2: a headline of more than about 30 words is refused, one of 28 is fine")
 no_dd = dict(facts, drawdown=None)
 try:
     mr.validate_read({"headline": "h", "drawdown": "Damage is spreading."}, no_dd)
@@ -194,6 +214,9 @@ check("headline 4" in p and "headline 3" in p and "headline 2" in p and "headlin
 check('"now": 15.0' in p and "INDEX: Nifty 500" in p and "AAA" not in p and "BBB" not in p
       and "washed out" in p and "Never say buy" in p, "M3: the facts, the rules, and no ticker")
 check("none yet" in mr.build_prompt("Nifty 500", f, []), "M3: a first read is told it is the first")
+check(all(w in p for w in ("breadth_vs_index", "one-day move", "12-month", "at_1y_high", "never \"cycle\"", "ordinary or unchanged one is null",
+                           "Do not repeat a figure")) and '"breadth_vs_index"' in p,
+      "M3: the prompt asks for the year's range as context, the breadth-vs-index verdict, no trend from one day, null for an ordinary chart")
 
 # --- M4 the ladder -------------------------------------------------------------------------
 

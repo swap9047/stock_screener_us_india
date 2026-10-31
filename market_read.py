@@ -68,6 +68,8 @@ LIST_SECTIONS = ("market", "breadth", "highs_lows", "drawdown", "return", "resul
 LIST_SECTION_TITLES = {**SECTION_TITLES, "market": "The market", "return": "Against the index",
                        "results": "Quarterly results", "stocks": "Holdings"}
 MAX_TEXT_CHARS = 700
+# A headline is one sentence (the prompt says 28 words; a few more are tolerated, a paragraph is not).
+MAX_HEADLINE_WORDS = 34
 
 # Trading-day windows for the return chart's facts.
 RETURN_WINDOWS = {"1m": 21, "3m": 63, "6m": 126, "1y": 252}
@@ -130,6 +132,9 @@ def _level_facts(s):
     out["1y_low"] = {"value": r1(year.min()), "date": _iso(year.idxmin())}
     out["1y_high"] = {"value": r1(year.max()), "date": _iso(year.idxmax())}
     out["share_of_last_year_at_or_below_now_pct"] = r1((year <= now).mean() * 100)
+    # True only when today IS the year's extreme: the model may say "at its 12-month high" only then.
+    out["at_1y_high"] = bool(now >= year.max() - 1e-9)
+    out["at_1y_low"] = bool(now <= year.min() + 1e-9)
     earlier = s.iloc[:-1]
     for name, mask in (("lowest_since", earlier <= now), ("highest_since", earlier >= now)):
         hit = earlier[mask]
@@ -186,7 +191,9 @@ def highs_lows_facts(block, asof=None):
            "1y_most_highs": {"value": r1(year_h.max()), "date": _iso(year_h.idxmax())},
            "1y_most_lows": {"value": r1(year_l.max()), "date": _iso(year_l.idxmax())},
            "share_of_last_year_lows_at_or_below_now_pct": r1((year_l <= l.iloc[-1]).mean() * 100),
-           "share_of_last_year_highs_at_or_below_now_pct": r1((year_h <= h.iloc[-1]).mean() * 100)}
+           "share_of_last_year_highs_at_or_below_now_pct": r1((year_h <= h.iloc[-1]).mean() * 100),
+           "highs_at_1y_most": bool(h.iloc[-1] >= year_h.max() - 1e-9 and h.iloc[-1] > 0),
+           "lows_at_1y_most": bool(l.iloc[-1] >= year_l.max() - 1e-9 and l.iloc[-1] > 0)}
     for name, lead, other in (("sessions_in_a_row_lows_exceed_highs", l, h), ("sessions_in_a_row_highs_exceed_lows", h, l)):
         run = 0
         for a, b in zip(reversed(lead.tolist()), reversed(other.tolist())):
@@ -209,7 +216,8 @@ def drawdown_facts(block, asof=None):
         year = s.iloc[-252:]
         facts = {"now": r1(s.iloc[-1]), "last_5_sessions": [r1(v) for v in s.iloc[-5:]],
                  "1y_high": {"value": r1(year.max()), "date": _iso(year.idxmax())},
-                 "share_of_last_year_at_or_below_now_pct": r1((year <= s.iloc[-1]).mean() * 100)}
+                 "share_of_last_year_at_or_below_now_pct": r1((year <= s.iloc[-1]).mean() * 100),
+                 "at_1y_high": bool(s.iloc[-1] >= year.max() - 1e-9)}
         for n in (5, 20):
             if len(s) > n:
                 facts[f"change_{n}d_points"] = r1(s.iloc[-1] - s.iloc[-1 - n])
@@ -281,6 +289,25 @@ def index_price_facts(bench, asof=None):
     return out
 
 
+def _direction(value, tol):
+    return "up" if value > tol else "down" if value < -tol else "flat"
+
+
+def breadth_vs_index(index_price, breadth):
+    """Do breadth and the index agree? Over 5 and 20 sessions: the index's price change (flat within 0.5%) against
+    the 200-day breadth's change (flat within 2 points), named so the model need not work it out."""
+    out = {}
+    pct200 = ((breadth or {}).get("pct_above_200d")) or {}
+    for n in (5, 20):
+        idx, br = (index_price or {}).get(f"change_{n}d_pct"), pct200.get(f"change_{n}d_points")
+        if idx is None or br is None:
+            continue
+        i, b = _direction(idx, 0.5), _direction(br, 2.0)
+        verdict = "diverging" if {i, b} == {"up", "down"} else "confirming" if i == b and i != "flat" else "mixed"
+        out[f"last_{n}_sessions"] = f"index {i}, breadth {b}: {verdict}"
+    return out or None
+
+
 def benchmark_series(ix, perf):
     """An index's price series from dashboard_perf.json (its "benchmarks", else a market block that holds it), or None."""
     benchmarks = (perf or {}).get("benchmarks") or {}
@@ -307,6 +334,7 @@ def build_facts(ix, block, perf, tickers, asof=None):
         listing = return_facts(portfolio_curve(closes, tickers), bench, len(closes.columns), asof)
     facts = {"index": ix["label"], "breadth": breadth, "highs_lows": highs, "drawdown": drawdown,
              "return": listing, "index_price": index_price_facts(bench, asof)}
+    facts["breadth_vs_index"] = breadth_vs_index(facts["index_price"], breadth)
     facts["session"] = (breadth or highs or drawdown or listing or {}).get("session")
     return facts
 
@@ -342,11 +370,23 @@ Rules:
   strength", "narrow rally", "deteriorating", "recovering") and add hedged context -- what such a
   reading has tended to mean and its caveat ("often", "can", "tends to"). Never say buy, sell or
   short, never promise an outcome, no price targets.
+- Put a reading in context before calling it extreme: set it against the chart's own range in the
+  facts (the 1-year high and low and when they happened, the share of the year it has been this low or
+  high, how many sessions it has been in this zone). Lows at 12% mean one thing against a 12-month
+  peak of 28% (far from a washout) and another against 13%. Say "at its 12-month high/low" only when
+  the fact at_1y_high / at_1y_low (highs_at_1y_most / lows_at_1y_most) is true.
+- Say whether breadth and the index agree or diverge, using breadth_vs_index: breadth falling while the
+  index holds up (or the reverse) is worth naming; a market whose index is flat while breadth drops
+  is weaker than its index looks.
+- Do not build a trend on one day's move. If last_5_sessions show the move reverses the previous day's
+  (a spike and a fall back), call it a one-day move and use the 5- or 20-session change instead. Refer to
+  earlier peaks only as the 12-month ranges the facts give; never "cycle" or "all-time" peaks.
 - Compare with the earlier reads: say what changed since them (a cross of a line, a reading moving
   from one zone to another, a trend continuing for several sessions) or that nothing has. Do not
   repeat an earlier read's wording when nothing moved.
-- Say something about a chart only when it adds insight; otherwise use null for it. A fact being
-  absent means that chart gets null.
+- Say something about a chart only when it adds insight; otherwise use null for it. Most days two or
+  three charts are enough; an ordinary or unchanged one is null. A fact being absent means null.
+  Do not repeat a figure in two sentences.
 - headline: one sentence (at most 28 words) with the single most important takeaway.
 - Each chart's text: at most two sentences, at most 55 words, plain text, no markdown.
 
@@ -418,6 +458,8 @@ def validate_read(data, facts):
             text = " ".join(text.split())
             if len(text) > MAX_TEXT_CHARS:
                 raise ValueError(f"{key} is too long")
+            if key == "headline" and len(text.split()) > MAX_HEADLINE_WORDS:
+                raise ValueError("the headline is too long")
             if ADVICE_WORDS.search(text):
                 raise ValueError(f"{key} gives advice")
             bad = unknown_numbers(text, facts)

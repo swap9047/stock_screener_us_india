@@ -194,9 +194,17 @@ Rules:
   ("often", "can", "tends to"). Never say buy, sell, trim, add or short, never promise an outcome, no price targets.
 - market: one sentence setting the list in the market read (does the list confirm or diverge from the index?).
   Null when there is no market read.
+- Put a reading in context before calling it extreme: set it against the chart's own range in the facts (the
+  1-year high and low and when they happened, how many sessions it has been in this zone) and, for breadth,
+  against the home index's share. Say "at its 12-month high/low" only when at_1y_high / at_1y_low (highs_at_1y_most
+  / lows_at_1y_most) is true; never "matching" or "at" a high or low otherwise.
+- Do not build a trend on one day's move. If last_5_sessions show the move reverses the previous day's, call it a
+  one-day move and use the 5- or 20-session change. Earlier peaks only as the 12-month ranges the facts give.
 - Compare with the earlier reads of this list: say what changed (a line crossed, a zone changed, leaders swapped)
   or that nothing has. Do not repeat an earlier read's wording when nothing moved.
-- Say something about a chart only when it adds insight; otherwise use null for it. A fact being absent means null.
+- Say something about a chart only when it adds insight; otherwise use null for it. Most days four or five parts
+  are enough; an ordinary or unchanged one is null. A fact being absent means null. Do not repeat a figure in two
+  sentences, and do not repeat what the market read already says beyond one line.
 - headline: one sentence, at most 30 words: the single most important takeaway.
 - Each part's text: at most two sentences, at most 60 words, plain text, no markdown.
 - takeaways: 3 to 5 short items (each at most 40 words) for the investor as the owner of this list: where it is
@@ -229,6 +237,8 @@ def _text(key, text, facts, limit=mr.MAX_TEXT_CHARS):
     text = " ".join(text.split())
     if len(text) > limit:
         raise ValueError(f"{key} is too long")
+    if key == "headline" and len(text.split()) > mr.MAX_HEADLINE_WORDS:
+        raise ValueError("the headline is too long")
     if mr.ADVICE_WORDS.search(text):
         raise ValueError(f"{key} gives advice")
     bad = mr.unknown_numbers(text, facts)

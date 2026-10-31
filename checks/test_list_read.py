@@ -161,6 +161,8 @@ prior = [{"session": f"2026-10-{20 + i}", "headline": f"headline {i}", "takeaway
 p = lr.build_list_prompt("India Invested", facts, prior)
 check("headline 4" in p and "headline 3" in p and "headline 2" in p and "headline 1" not in p and "headline 0" not in p,
       "L4: only the last three earlier reads reach the prompt")
+check(all(w in p for w in ("12-month", "one-day move", "never \"matching\"", "ordinary or unchanged one is null", "Do not repeat a figure")),
+      "L4: the prompt asks for the year's range, no trend from one day, no loose 'matching', null for an ordinary chart")
 check("Alpha Works Limited" in p and "Nifty breadth is weak" in p and "Never say buy" in p and "key takeaways" in p.lower()
       and "LIST: India Invested" in p and "none yet" in lr.build_list_prompt("x", facts, []),
       "L4: the holdings' names, the market read, the rules; a first read is told so")
@@ -194,6 +196,7 @@ check(refused({"takeaways": ["Time to buy the dip.", "fine"]}) and refused({"sto
 check(refused({"market": "x"}, {**facts, "market_read": None}) and refused({"results": "Results are strong."}, {**facts, "results": None})
       and refused({"stocks": "Beta Foods."}, {**facts, "stocks": None}), "L5: a part whose facts are absent must be null")
 check(refused({"headline": None}), "L5: a read needs a headline")
+check(refused({"headline": " ".join(["word"] * 40)}), "L5: a headline of more than about 30 words is refused")
 
 # --- L6 the job ----------------------------------------------------------------------------------
 LISTS = {"india_invested": STOCKS, "us_invested": ["UA", "UB", "UC", "UD"]}
