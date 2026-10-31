@@ -40,10 +40,11 @@ MARKET_READ_FILE = os.path.join(SCRIPT_DIR, "market_read.json")
 
 # The ladder (owner, 2026-10-31): 3.8-flash four times, each on a different key
 # (run_model_ladder passes the failed rung's key as the next one's `avoid_key`),
-# then 3.6-flash, then 3.5-flash-lite, every rung at a 4k thinking budget.
+# then 3.6-flash (owner, 2026-10-31: no flash-lite rung -- its reads were weaker than a missing one is
+# bad; a failed run is retried by the slot gate), every rung at a 4k thinking budget.
 PRIMARY_MODEL = "models/gemini-3.8-flash"
 PRIMARY_ATTEMPTS = 4
-FALLBACK_MODELS = ("models/gemini-3.6-flash", "models/gemini-3.5-flash-lite")
+FALLBACK_MODELS = ("models/gemini-3.6-flash",)
 THINKING_BUDGET = 4096
 CALL_TIMEOUT_S = 150      # a call not answered by then fails and the ladder moves on (owner, 2026-10-31)
 
@@ -55,11 +56,21 @@ PRIOR_READS = 3
 # index_registry's "INDIA" and "US"; the other four indexes the News tab can show are not written.
 READ_INDEX_KEYS = ("INDIA", "US")
 
+# The invested lists that get a read (owner, 2026-10-31): the two panels the News tab's Watchlist Breadth shows by
+# default, each against its home index, whose own read it takes as the market context (list_read.py).
+LIST_READ_KEYS = {"india_invested": "INDIA", "us_invested": "US"}
+
 # In the order the charts are drawn.
 SECTIONS = ("breadth", "highs_lows", "drawdown", "return")
 SECTION_TITLES = {"breadth": "Breadth", "highs_lows": "52-week highs vs lows",
                   "drawdown": "Stocks far below their highs", "return": "Your list vs the index"}
+# An invested list's read adds the market it sits in, its quarterly results and its holdings, and ends with takeaways.
+LIST_SECTIONS = ("market", "breadth", "highs_lows", "drawdown", "return", "results", "stocks")
+LIST_SECTION_TITLES = {**SECTION_TITLES, "market": "The market", "return": "Against the index",
+                       "results": "Quarterly results", "stocks": "Holdings"}
 MAX_TEXT_CHARS = 700
+# A headline is one sentence (the prompt says 28 words; a few more are tolerated, a paragraph is not).
+MAX_HEADLINE_WORDS = 34
 
 # Trading-day windows for the return chart's facts.
 RETURN_WINDOWS = {"1m": 21, "3m": 63, "6m": 126, "1y": 252}
@@ -76,9 +87,14 @@ ADVICE_WORDS = re.compile(
     r"|\brecommend|\bstop[- ]?loss|\bprice target|\bguarantee[sd]?\b"
     r"|\bwill\s+(?:definitely\s+|surely\s+)?(?:rally|crash|bounce|fall|rise|recover|collapse)\b", re.I)
 
+# The facts' own field names must not leak into the prose ("the 1y most high of 19.9%", "pct_above"): a read
+# is for an investor. The first reads written by the smallest model did exactly that.
+INTERNAL_NAMES = re.compile(r"\b(?:1|12)-?(?:y|year|month)s?\s+most\b|\bmost\s+(?:highs?|lows?)\s+(?:level|peak)\b|\bat_1y|_pct\b|_points\b"
+                            r"|\bsessions_in\b|\bshare_of\b|\bbreadth_vs_index\b", re.I)
+
 # Numbers a read may use without the facts holding them: the chart's own lines and
 # windows ("50% line", "200-day", "52-week", "20 sessions").
-FIXED_NUMBERS = {20, 50, 80, 100, 200, 52, 1, 2, 3, 4, 5, 10}
+FIXED_NUMBERS = {20, 50, 80, 100, 200, 52, 1, 2, 3, 4, 5, 10, 30, 40}
 
 
 def r1(x):
@@ -122,6 +138,9 @@ def _level_facts(s):
     out["1y_low"] = {"value": r1(year.min()), "date": _iso(year.idxmin())}
     out["1y_high"] = {"value": r1(year.max()), "date": _iso(year.idxmax())}
     out["share_of_last_year_at_or_below_now_pct"] = r1((year <= now).mean() * 100)
+    # True only when today IS the year's extreme: the model may say "at its 12-month high" only then.
+    out["at_1y_high"] = bool(now >= year.max() - 1e-9)
+    out["at_1y_low"] = bool(now <= year.min() + 1e-9)
     earlier = s.iloc[:-1]
     for name, mask in (("lowest_since", earlier <= now), ("highest_since", earlier >= now)):
         hit = earlier[mask]
@@ -178,7 +197,9 @@ def highs_lows_facts(block, asof=None):
            "1y_most_highs": {"value": r1(year_h.max()), "date": _iso(year_h.idxmax())},
            "1y_most_lows": {"value": r1(year_l.max()), "date": _iso(year_l.idxmax())},
            "share_of_last_year_lows_at_or_below_now_pct": r1((year_l <= l.iloc[-1]).mean() * 100),
-           "share_of_last_year_highs_at_or_below_now_pct": r1((year_h <= h.iloc[-1]).mean() * 100)}
+           "share_of_last_year_highs_at_or_below_now_pct": r1((year_h <= h.iloc[-1]).mean() * 100),
+           "highs_at_1y_most": bool(h.iloc[-1] >= year_h.max() - 1e-9 and h.iloc[-1] > 0),
+           "lows_at_1y_most": bool(l.iloc[-1] >= year_l.max() - 1e-9 and l.iloc[-1] > 0)}
     for name, lead, other in (("sessions_in_a_row_lows_exceed_highs", l, h), ("sessions_in_a_row_highs_exceed_lows", h, l)):
         run = 0
         for a, b in zip(reversed(lead.tolist()), reversed(other.tolist())):
@@ -201,7 +222,8 @@ def drawdown_facts(block, asof=None):
         year = s.iloc[-252:]
         facts = {"now": r1(s.iloc[-1]), "last_5_sessions": [r1(v) for v in s.iloc[-5:]],
                  "1y_high": {"value": r1(year.max()), "date": _iso(year.idxmax())},
-                 "share_of_last_year_at_or_below_now_pct": r1((year <= s.iloc[-1]).mean() * 100)}
+                 "share_of_last_year_at_or_below_now_pct": r1((year <= s.iloc[-1]).mean() * 100),
+                 "at_1y_high": bool(s.iloc[-1] >= year.max() - 1e-9)}
         for n in (5, 20):
             if len(s) > n:
                 facts[f"change_{n}d_points"] = r1(s.iloc[-1] - s.iloc[-1 - n])
@@ -273,10 +295,27 @@ def index_price_facts(bench, asof=None):
     return out
 
 
-def build_facts(ix, block, perf, tickers, asof=None):
-    """Everything the model may say about one index, as of `asof` (default: the
-    block's latest day). `perf` is dashboard_perf.json, `tickers` the invested
-    list of the index's region."""
+def _direction(value, tol):
+    return "up" if value > tol else "down" if value < -tol else "flat"
+
+
+def breadth_vs_index(index_price, breadth):
+    """Do breadth and the index agree? Over 5 and 20 sessions: the index's price change (flat within 0.5%) against
+    the 200-day breadth's change (flat within 2 points), named so the model need not work it out."""
+    out = {}
+    pct200 = ((breadth or {}).get("pct_above_200d")) or {}
+    for n in (5, 20):
+        idx, br = (index_price or {}).get(f"change_{n}d_pct"), pct200.get(f"change_{n}d_points")
+        if idx is None or br is None:
+            continue
+        i, b = _direction(idx, 0.5), _direction(br, 2.0)
+        verdict = "diverging" if {i, b} == {"up", "down"} else "confirming" if i == b and i != "flat" else "mixed"
+        out[f"last_{n}_sessions"] = f"index {i}, breadth {b}: {verdict}"
+    return out or None
+
+
+def benchmark_series(ix, perf):
+    """An index's price series from dashboard_perf.json (its "benchmarks", else a market block that holds it), or None."""
     benchmarks = (perf or {}).get("benchmarks") or {}
     bench_map = benchmarks.get(ix["benchmark"])
     if not bench_map:
@@ -284,7 +323,14 @@ def build_facts(ix, block, perf, tickers, asof=None):
             if isinstance(market_block, dict) and market_block.get(ix["benchmark"]):
                 bench_map = market_block[ix["benchmark"]]
                 break
-    bench = _series(bench_map) if bench_map else None
+    return _series(bench_map) if bench_map else None
+
+
+def build_facts(ix, block, perf, tickers, asof=None):
+    """Everything the model may say about one index, as of `asof` (default: the
+    block's latest day). `perf` is dashboard_perf.json, `tickers` the invested
+    list of the index's region."""
+    bench = benchmark_series(ix, perf)
     breadth = breadth_facts(block, asof)
     highs = highs_lows_facts(block, asof)
     drawdown = drawdown_facts(block, asof)
@@ -294,6 +340,7 @@ def build_facts(ix, block, perf, tickers, asof=None):
         listing = return_facts(portfolio_curve(closes, tickers), bench, len(closes.columns), asof)
     facts = {"index": ix["label"], "breadth": breadth, "highs_lows": highs, "drawdown": drawdown,
              "return": listing, "index_price": index_price_facts(bench, asof)}
+    facts["breadth_vs_index"] = breadth_vs_index(facts["index_price"], breadth)
     facts["session"] = (breadth or highs or drawdown or listing or {}).get("session")
     return facts
 
@@ -329,11 +376,23 @@ Rules:
   strength", "narrow rally", "deteriorating", "recovering") and add hedged context -- what such a
   reading has tended to mean and its caveat ("often", "can", "tends to"). Never say buy, sell or
   short, never promise an outcome, no price targets.
+- Put a reading in context before calling it extreme: set it against the chart's own range in the
+  facts (the 1-year high and low and when they happened, the share of the year it has been this low or
+  high, how many sessions it has been in this zone). Lows at 12% mean one thing against a 12-month
+  peak of 28% (far from a washout) and another against 13%. Say "at its 12-month high/low" only when
+  the fact at_1y_high / at_1y_low (highs_at_1y_most / lows_at_1y_most) is true.
+- Say whether breadth and the index agree or diverge, using breadth_vs_index: breadth falling while the
+  index holds up (or the reverse) is worth naming; a market whose index is flat while breadth drops
+  is weaker than its index looks.
+- Do not build a trend on one day's move. If last_5_sessions show the move reverses the previous day's
+  (a spike and a fall back), call it a one-day move and use the 5- or 20-session change instead. Refer to
+  earlier peaks only as the 12-month ranges the facts give; never "cycle" or "all-time" peaks.
 - Compare with the earlier reads: say what changed since them (a cross of a line, a reading moving
   from one zone to another, a trend continuing for several sessions) or that nothing has. Do not
   repeat an earlier read's wording when nothing moved.
-- Say something about a chart only when it adds insight; otherwise use null for it. A fact being
-  absent means that chart gets null.
+- Say something about a chart only when it adds insight; otherwise use null for it. Most days two or
+  three charts are enough; an ordinary or unchanged one is null. A fact being absent means null.
+  Do not repeat a figure in two sentences.
 - headline: one sentence (at most 28 words) with the single most important takeaway.
 - Each chart's text: at most two sentences, at most 55 words, plain text, no markdown.
 
@@ -354,6 +413,7 @@ def build_prompt(label, facts, prior):
 
 
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
+_PERIOD = re.compile(r"\b\d+(?:\.\d+)?[- ]?(?:months?|years?|weeks?)\b", re.I)
 
 
 def _numbers_in(value, found):
@@ -379,6 +439,9 @@ def unknown_numbers(text, facts):
     known = set()
     _numbers_in(facts, known)
     bad = []
+    # A period's length is not a data point: "12-month peak", "6 months", "1-year": the first live run refused
+    # a good Nifty read for writing "12-month" on a day the facts held no 12.
+    text = _PERIOD.sub(" ", text)
     for m in _NUMBER.findall(text):
         n = float(m)
         if n in FIXED_NUMBERS:
@@ -405,8 +468,12 @@ def validate_read(data, facts):
             text = " ".join(text.split())
             if len(text) > MAX_TEXT_CHARS:
                 raise ValueError(f"{key} is too long")
+            if key == "headline" and len(text.split()) > MAX_HEADLINE_WORDS:
+                raise ValueError("the headline is too long")
             if ADVICE_WORDS.search(text):
                 raise ValueError(f"{key} gives advice")
+            if INTERNAL_NAMES.search(text):
+                raise ValueError(f"{key} uses an internal field name")
             bad = unknown_numbers(text, facts)
             if bad:
                 raise ValueError(f"{key} quotes numbers the facts do not hold: {', '.join(bad)}")
@@ -418,9 +485,10 @@ def validate_read(data, facts):
     return read
 
 
-def generate_read(client, label, facts, prior, tiers=None, budget=None):
+def generate_read(client, label, facts, prior, tiers=None, budget=None, prompt=None, validate=None):
     """(read dict, model used), or (None, None) once every rung failed. `tiers` and `budget` come from
-    the sidebar's Settings · Models ("R1", model_settings); without them, the defaults below."""
+    the sidebar's Settings · Models ("R1", model_settings); without them, the defaults below. `prompt` and
+    `validate` replace build_prompt / validate_read (an invested list's read, list_read.py)."""
     thinking = THINKING_BUDGET if budget is None else budget
 
     def config_for(model):
@@ -435,9 +503,9 @@ def generate_read(client, label, facts, prior, tiers=None, budget=None):
     tiers = tiers or (llm_util.same_model_tiers(PRIMARY_MODEL, attempts=PRIMARY_ATTEMPTS)
                       + [(m, 0) for m in FALLBACK_MODELS])
     return llm_util.run_model_ladder(
-        client, build_prompt(label, facts, prior), tiers, config_for, label="market read", subject=label,
+        client, (prompt or build_prompt)(label, facts, prior), tiers, config_for, label="market read", subject=label,
         timeout=CALL_TIMEOUT_S,
-        on_success=lambda resp: validate_read(llm_util.json_object(resp.text or ""), facts))
+        on_success=lambda resp: (validate or validate_read)(llm_util.json_object(resp.text or ""), facts))
 
 
 # --- storage -----------------------------------------------------------------------
@@ -460,28 +528,28 @@ def save_market_read(data, path=None, now=None):
     atomic_write_json(path or MARKET_READ_FILE, data)
 
 
-def entries_for(data, key):
-    """An index's reads, oldest first."""
-    entries = ((data.get("indexes") or {}).get(key) or {}).get("entries")
+def entries_for(data, key, group="indexes"):
+    """An index's reads (group "indexes") or an invested list's (group "lists"), oldest first."""
+    entries = ((data.get(group) or {}).get(key) or {}).get("entries")
     return [e for e in entries if isinstance(e, dict)] if isinstance(entries, list) else []
 
 
-def latest_entry(data, key):
-    entries = entries_for(data, key)
+def latest_entry(data, key, group="indexes"):
+    entries = entries_for(data, key, group)
     return max(entries, key=lambda e: e.get("session") or "") if entries else None
 
 
-def add_entry(data, key, label, entry):
+def add_entry(data, key, label, entry, group="indexes"):
     """Store `entry`, replacing the same session's and keeping the newest KEEP_ENTRIES."""
-    slot = data.setdefault("indexes", {}).setdefault(key, {})
+    slot = data.setdefault(group, {}).setdefault(key, {})
     slot["label"] = label
-    kept = [e for e in entries_for(data, key) if e.get("session") != entry["session"]] + [entry]
+    kept = [e for e in entries_for(data, key, group) if e.get("session") != entry["session"]] + [entry]
     kept.sort(key=lambda e: e.get("session") or "")
     slot["entries"] = kept[-KEEP_ENTRIES:]
 
 
 def box_markdown(entry, label, when_text):
-    """What the (i) box shows for an index's latest read, as Markdown (Streamlit
+    """What the (i) box shows for an index's or an invested list's latest read, as Markdown (Streamlit
     would read $...$ as LaTeX, so a dollar sign is escaped)."""
     def clean(text):
         return str(text).replace("$", "\\$")
@@ -491,12 +559,18 @@ def box_markdown(entry, label, when_text):
     parts = []
     if entry.get("headline"):
         parts.append(f"**{clean(entry['headline'])}**")
-    for key in SECTIONS:
+    is_list = any(entry.get(k) for k in ("market", "results", "stocks", "takeaways"))
+    for key in (LIST_SECTIONS if is_list else SECTIONS):
         if entry.get(key):
-            parts.append(f"**{SECTION_TITLES[key]}.** {clean(entry[key])}")
+            title = (LIST_SECTION_TITLES if is_list else SECTION_TITLES)[key]
+            parts.append(f"**{title}.** {clean(entry[key])}")
+    if isinstance(entry.get("takeaways"), list) and entry["takeaways"]:
+        parts.append("**Key takeaways**\n" + "\n".join(f"- {clean(t)}" for t in entry["takeaways"] if t))
     if not parts:
         parts.append("Nothing stood out on these charts.")
     foot = f"{label} · session of {entry.get('session', '?')}"
+    if entry.get("benchmark"):
+        foot += f" · against {entry['benchmark']}"
     if entry.get("written"):
         foot += f" · written {str(entry['written'])[:10]}"
     if entry.get("model"):
@@ -549,7 +623,9 @@ def run(client, breadth, perf, watchlists, data, now=None, backfill=0, force=Fal
             if not read:
                 log(f"[market read] {ix['label']} {session}: every model failed")
                 failed += 1
-                break
+                if session == todo[-1]:
+                    break
+                continue                  # an older session (backfill) must not cost the latest its read
             add_entry(data, ix["key"], ix["label"], {"session": session, "written": now.strftime("%Y-%m-%d %H:%M UTC"),
                                                      "model": model, **read})
             log(f"[market read] {ix['label']} {session}: written by {model}")

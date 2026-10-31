@@ -64,6 +64,16 @@ QUARTERLY = {"as_of": "2026-10-30 08:00 UTC", "series": {
     "in_hold": {"label": "India Invested", "kind": "watchlist", "stocks": 3, "companies": 2,
                 "yoy": [{**_row("Sep '26", 5.0), "ni": None, "eps": None}], "qoq": []}}}
 PRICES = {t: [(d, 100.0 + i) for i, d in enumerate(DAYS)] for t in ("ACME.NS", "ZED.NS", "^CRSLDX", "SPY", "ACME")}
+MARKET_READ = {"generated_at": "2026-10-31T04:36:40Z", "indexes": {
+    "INDIA": {"label": "Nifty 500", "entries": [
+        {"session": "2026-10-29", "written": "2026-10-30 11:20 UTC", "model": "models/gemini-3.8-flash", "headline": "Older Nifty headline",
+         "breadth": "old breadth", "highs_lows": None, "drawdown": None, "return": None},
+        {"session": "2026-10-30", "written": "2026-10-31 04:30 UTC", "model": "models/gemini-3.8-flash", "headline": "Nifty breadth is weak",
+         "breadth": "Only 31.8% above the 200-day average.", "highs_lows": "Lows outnumber highs for 12 sessions.", "drawdown": None,
+         "return": "The list trails over a month."}]},
+    "US": {"label": "S&P 500", "entries": [
+        {"session": "2026-10-30", "written": "2026-10-31 04:30 UTC", "model": "models/gemini-3.6-flash", "headline": "S&P 500 holds broad strength",
+         "breadth": "59.2% above the 200-day average.", "highs_lows": None, "drawdown": "Healing.", "return": None}]}}}
 
 
 class DB:
@@ -84,6 +94,9 @@ class DB:
 
     def quarterly_results(self):
         return QUARTERLY
+
+    def market_read(self):
+        return MARKET_READ
 
     def breadth_points(self, series, since):
         return [p for p in POINTS.get(series, []) if p["date"] >= since]
@@ -160,6 +173,7 @@ check(mcp.call_tool("get_watchlist", {"name": "India Watchlist", "groups": ["tre
       and mcp.call_tool("get_watchlist", {"name": "India Watchlist"}, db=db)[0]["groups"] == ["price", "returns", "trend", "stage"],
       "a watchlist table with trend carries stage too, the default one included")
 check(mcp.call_tool("list_watchlists", {}, db=None)[1] is True, "no database: an error, not an exception")
+check(mcp.call_tool("get_market_read", {}, db=None)[1] is True, "get_market_read with no database: an error, not an exception")
 
 # --- get_quarterly_results (2026-10-30) ------------------------------------------------------------------
 body, err = mcp.call_tool("get_quarterly_results", {"name": "Nifty 500"}, db=db)
@@ -180,6 +194,32 @@ body, err = mcp.call_tool("get_quarterly_results", {}, db=db)
 check(err and "name" in body["error"], "quarterly: no name is an error")
 body, _ = mcp.call_tool("get_quarterly_results", {"name": "Nifty 500", "quarters": 999}, db=db)
 check(len(body["points"]) == 3, "quarterly: quarters is capped")
+# --- get_market_read (2026-10-31) -----------------------------------------------------------------------
+body, err = mcp.call_tool("get_market_read", {}, db=db)
+by_idx = {i["index"]: i["reads"] for i in body["indexes"]}
+check(not err and body["found"] and set(by_idx) == {"Nifty 500", "S&P 500"} and body["as_of"] == "2026-10-31T04:36:40Z",
+      "market read: no name gives every index that has one")
+nifty = by_idx["Nifty 500"]
+check(len(nifty) == 1 and nifty[0]["session"] == "2026-10-30" and nifty[0]["headline"] == "Nifty breadth is weak"
+      and nifty[0]["model"] == "gemini-3.8-flash" and set(nifty[0]) == {"session", "written", "model", "headline", "breadth", "highs_lows", "return"},
+      f"market read: the latest read by default, the model without its models/ prefix, empty parts left out ({sorted(nifty[0])})")
+body, _ = mcp.call_tool("get_market_read", {"name": "nifty 500", "history": 3}, db=db)
+check([r["session"] for r in body["indexes"][0]["reads"]] == ["2026-10-30", "2026-10-29"] and len(body["indexes"]) == 1,
+      "market read: an index by loose name, history gives the earlier reads newest first")
+body, _ = mcp.call_tool("get_market_read", {"name": "S&P", "history": 99}, db=db)
+check(body["indexes"][0]["index"] == "S&P 500" and len(body["indexes"][0]["reads"]) == 1, "market read: S&P by alias; history capped")
+body, _ = mcp.call_tool("get_market_read", {"name": "Nifty 50"}, db=db)
+check(body["found"] is False and sorted(body["available"]) == ["Nifty 500", "S&P 500"],
+      "market read: an index with no read is found false, listing the two that have one")
+body, _ = mcp.call_tool("get_market_read", {"name": "my india holdings"}, db=db)
+check(body["found"] is False, "market read: a watchlist name is not an index")
+MARKET_READ_SAVED, MARKET_READ = MARKET_READ, {}
+body, err = mcp.call_tool("get_market_read", {}, db=db)
+check(not err and body["found"] is False and body["indexes"] == [], "market read: nothing stored yet is an empty answer, not an error")
+MARKET_READ = MARKET_READ_SAVED
+check("analysis, not advice" in mcp.call_tool("get_market_read", {}, db=db)[0]["note"]
+      and "get_market_read" in mcp.INSTRUCTIONS, "market read: the reply says it is analysis, and the connector's instructions name the tool")
+
 _qr_saved = QUARTERLY
 QUARTERLY = {}
 body, _ = mcp.call_tool("get_quarterly_results", {"name": "Nifty 500"}, db=db)

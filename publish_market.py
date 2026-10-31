@@ -7,6 +7,7 @@ knowledge graph on Supabase), where its Q&A pages and Claude chat read them.
     python3 publish_market.py library    # library companies the screener doesn't track (market-library.yml)
     python3 publish_market.py library --min-gap 50   # ... unless they were published under 50 minutes ago
     python3 publish_market.py watchlists # the tabs, breadth and daily closes (market-breadth.yml)
+    python3 publish_market.py reads      # the News tab's market reads, for Claude chat (market-read.yml)
 
 The library is published hourly by data-refresh.yml (its first run each hour) and at 7 AM / 5 PM ET by
 market-library.yml as the fallback; --min-gap makes whichever run comes second in an hour skip.
@@ -21,6 +22,10 @@ so Claude chat and the library's Q&A can answer "how did my India watchlist do t
 kg_watchlists / kg_watchlist_members; each index's and each watchlist's breadth into kg_breadth_series /
 kg_breadth (breadth_math, the app's own maths); and two years of daily closes of every watchlist stock and
 benchmark into kg_prices. Membership only: still no notes, flags, Interested or custom columns.
+
+The reads mode publishes the News tab's AI market reads (market_read.json: a few sentences per chart for Nifty 500
+and the S&P 500, and for the India Invested and US Invested panels, with key takeaways) as one JSON value in kg_market_meta, so Claude chat's get_market_read tool serves the same text
+as the app's (i) boxes. The text describes the invested list (the owner's choice, like the watchlists above).
 
 MARKET_DB_URL is the session-pooler URI of the `market_writer` role, which can write only those market
 tables and read the listings and which tickers the library discusses. Unset (a fork, or before
@@ -453,6 +458,50 @@ def write_quarterly(conn, payload):
                         "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (QUARTERLY_KEY, json.dumps(payload)))
 
 
+# The News tab's market reads for Claude chat (owner, 2026-10-31): market_read.json as the job wrote it (the
+# newest reads of each index, oldest first), one JSON value in kg_market_meta -- no new table.
+READS_KEY = "market_read"
+
+
+def reads_payload(data):
+    """market_read.json as it is stored in the library -- the index reads and the invested lists' -- or None when it
+    holds no read (not loaded, or the job has never run)."""
+    def group(name):
+        out = {}
+        for key, slot in ((data or {}).get(name) or {}).items():
+            entries = slot.get("entries") if isinstance(slot, dict) else None
+            entries = [e for e in (entries or []) if isinstance(e, dict) and e.get("session")]
+            if entries:
+                out[key] = {"label": slot.get("label") or key, "entries": entries}
+        return out
+
+    if not isinstance((data or {}).get("indexes"), dict) and not isinstance((data or {}).get("lists"), dict):
+        return None
+    indexes, lists = group("indexes"), group("lists")
+    if not indexes and not lists:
+        return None
+    return {"generated_at": data.get("generated_at"), "indexes": indexes, "lists": lists}
+
+
+def write_reads(conn, payload):
+    """The market reads, replaced whole."""
+    with conn.transaction():
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO kg_market_meta (key, value) VALUES (%s, %s) "
+                        "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (READS_KEY, json.dumps(payload)))
+
+
+def publish_reads(conn):
+    payload = reads_payload(_read_json("market_read.json"))
+    if not payload:
+        print("No market reads to publish (market_read.json is missing or empty).")
+        return 0
+    write_reads(conn, payload)
+    print(f"Published market reads for {len(payload['indexes'])} index(es) and {len(payload['lists'])} list(s), "
+          f"{sum(len(v['entries']) for g in (payload['indexes'], payload['lists']) for v in g.values())} read(s).")
+    return 0
+
+
 def publish_watchlists(conn):
     from watchlist_labels import COMBINED_TAB_LABELS
     lists = watchlist_records(stock_data.load_markets_registry(), stock_data.load_watchlists(),
@@ -489,7 +538,7 @@ def main(argv):
             min_gap = float(argv[i + 1])
         except (IndexError, ValueError):
             mode = ""
-    if mode not in ("screener", "library", "watchlists"):
+    if mode not in ("screener", "library", "watchlists", "reads"):
         print(__doc__)
         return 2
     url = os.environ.get("MARKET_DB_URL", "").strip()
@@ -505,6 +554,8 @@ def main(argv):
     try:
         if mode == "watchlists":
             return publish_watchlists(conn)
+        if mode == "reads":
+            return publish_reads(conn)
         return publish_screener(conn) if mode == "screener" else publish_library(conn, min_gap)
     finally:
         conn.close()

@@ -4,12 +4,14 @@ Gemini client; nothing reads the real JSON.
   M1  facts: each chart's numbers match an independent calculation (zone, change,
       last cross of 50, "lowest since", streaks, the equal-weight curve and its
       windows), and a chart with too little history has no facts;
+  M1b the context the weak first reads lacked (2026-10-31): "at the year's extreme" flags that are true only when
+      it is, and whether breadth and the index agree or diverge over 5 and 20 sessions;
   M2  the number check: a read may quote what the facts hold (rounded as given,
       dates' digits, the charts' own lines) and nothing else; advice, markdown
       lengths, a chart without facts and an empty read are refused;
   M3  the prompt carries the facts and only the last three earlier reads, no ticker;
-  M4  the ladder: 3.8-flash four times each on another key, then 3.6-flash, then
-      3.5-flash-lite, every rung at a 4096 thinking budget in JSON mode; a read that
+  M4  the ladder: 3.8-flash four times each on another key, then 3.6-flash
+      (no flash-lite rung), every rung at a 4096 thinking budget in JSON mode; a read that
       fails the check moves on like an error;
   M5  the job: only Nifty 500 and the S&P 500 are read (the other four indexes never),
       a reading still forming waits, a final one is written once (a second run writes
@@ -142,6 +144,22 @@ none = mr.build_facts(IX, block(), {"markets": {}, "benchmarks": {}}, LISTS["ind
 check(none["return"] is None and none["index_price"] is None and none["breadth"] is not None,
       "M1: no stored prices -> no return facts, the other charts unaffected")
 
+# --- M1b context facts ----------------------------------------------------------------------------
+check(b["at_1y_low"] is True and b["at_1y_high"] is False and f["breadth"]["pct_above_50d"]["at_1y_low"] is True,
+      "M1b: today is the year's low for the 200-day breadth (15 against a year at 60), so the flag is true, and the high flag false")
+check(h["lows_at_1y_most"] is True and f["drawdown"]["share_of_stocks"]["down_20pct_or_more"]["at_1y_high"] is True,
+      "M1b: lows at their 12-month most, and the 20% drawdown share at its 12-month high")
+# By hand: the index (+0.05% a session) is +0.25% over 5 sessions (flat, under the 0.5% band) and +1.0% over 20 (up);
+# 200-day breadth is -7.5 points over 5 (down) and -30 over 20 (down).
+check(f["breadth_vs_index"] == {"last_5_sessions": "index flat, breadth down: mixed",
+                                "last_20_sessions": "index up, breadth down: diverging"},
+      f"M1b: breadth against the index, named: {f['breadth_vs_index']}")
+check(mr.breadth_vs_index({"change_5d_pct": -2.0}, {"pct_above_200d": {"change_5d_points": -6.0}}) == {"last_5_sessions": "index down, breadth down: confirming"}
+      and mr.breadth_vs_index({"change_5d_pct": 3.0}, {"pct_above_200d": {"change_5d_points": 1.0}}) == {"last_5_sessions": "index up, breadth flat: mixed"}
+      and mr.breadth_vs_index({"change_20d_pct": -1.0}, {"pct_above_200d": {"change_20d_points": 9.0}}) == {"last_20_sessions": "index down, breadth up: diverging"}
+      and mr.breadth_vs_index(None, None) is None,
+      "M1b: confirming, mixed and diverging, and nothing when either side is missing")
+
 # --- M2 the number check -------------------------------------------------------------------
 facts = f
 ok_read = {"headline": "Breadth fell to 15.0%, washed out; lows at 12% since Oct 16.",
@@ -172,7 +190,18 @@ check(refused({"headline": "Time to buy the dip."}) and refused({"breadth": "A g
 check(not refused({"breadth": "Selling pressure is easing in the short-term; buyers are returning (15%)."})
       and not refused({"headline": "Short covering can lift a washed-out market."}),
       "M2: ordinary market language (selling pressure, short-term, buyers) is not advice")
+check(not refused({"breadth": "Lows of 12% sit far below the 12-month peak, and the 6-month and 1-year views agree (15%)."})
+      and not refused({"drawdown": "The share down 40% or more is steady, and 30% or more too (15%)."})
+      and refused({"breadth": "Lows exceeded highs for 987 sessions (15%)."}) and refused({"breadth": "A 13-month stretch of 987 sessions."}),
+      "M2: a period's length (12-month, 6-month, 1-year) and the chart's own 30/40% levels are not data points; an invented count still is")
+check(refused({"highs_lows": "Lows hit the 12-month most lows reading (12%)."}) and refused({"breadth": "A 1-year most high of 5%."}),
+      "M2: 'the 12-month most lows reading' is the field name too")
 check(refused({"breadth": "x" * 800}) and refused({"breadth": 12}), "M2: too long or not text is refused")
+check(refused({"breadth": "Highs remain below the 1y most high of 15%."}) and refused({"highs_lows": "Lows hit the 1-year most lows level (12%)."})
+      and refused({"breadth": "breadth_vs_index says diverging."}) and not refused({"breadth": "Breadth is 15% against a 12-month high of 60%."}),
+      "M2: the facts' own field names (\"1y most high\", breadth_vs_index) must not appear in the prose")
+check(refused({"headline": " ".join(["word"] * 40)}) and not refused({"headline": " ".join(["word"] * 28)}),
+      "M2: a headline of more than about 30 words is refused, one of 28 is fine")
 no_dd = dict(facts, drawdown=None)
 try:
     mr.validate_read({"headline": "h", "drawdown": "Damage is spreading."}, no_dd)
@@ -194,6 +223,9 @@ check("headline 4" in p and "headline 3" in p and "headline 2" in p and "headlin
 check('"now": 15.0' in p and "INDEX: Nifty 500" in p and "AAA" not in p and "BBB" not in p
       and "washed out" in p and "Never say buy" in p, "M3: the facts, the rules, and no ticker")
 check("none yet" in mr.build_prompt("Nifty 500", f, []), "M3: a first read is told it is the first")
+check(all(w in p for w in ("breadth_vs_index", "one-day move", "12-month", "at_1y_high", "never \"cycle\"", "ordinary or unchanged one is null",
+                           "Do not repeat a figure")) and '"breadth_vs_index"' in p,
+      "M3: the prompt asks for the year's range as context, the breadth-vs-index verdict, no trend from one day, null for an ordinary chart")
 
 # --- M4 the ladder -------------------------------------------------------------------------
 
@@ -233,13 +265,13 @@ GOOD = json.dumps({"headline": "Breadth is washed out at 15.0%.", "breadth": Non
                    "drawdown": None, "return": None})
 BAD_NUMBER = json.dumps({"headline": "Breadth is 33.3%.", "breadth": None, "highs_lows": None, "drawdown": None, "return": None})
 
-c = FakeClient([Err(503, "overloaded")] * 4 + [BAD_NUMBER, GOOD])
+c = FakeClient([Err(503, "overloaded")] * 4 + [BAD_NUMBER])
 read, model = mr.generate_read(c, "Nifty 500", f, [])
 seq = [x["model"] for x in c.calls]
 check(seq[:4] == ["models/gemini-3.8-flash"] * 4, f"M4: four 3.8-flash attempts first ({seq})")
-check(model == "models/gemini-3.5-flash-lite" and read["headline"].startswith("Breadth is washed out"),
-      f"M4: 3.6-flash's reply quoting a number the facts lack is refused, flash-lite's good one is used ({model})")
-check(seq[4] == "models/gemini-3.6-flash" and len(seq) == 6, f"M4: then 3.6-flash, then 3.5-flash-lite ({seq})")
+check((read, model) == (None, None),
+      f"M4: 3.6-flash's reply quoting a number the facts lack is refused, and no rung is left to try ({model})")
+check(seq[4:] == ["models/gemini-3.6-flash"] and len(seq) == 5, f"M4: then 3.6-flash, and nothing after it ({seq})")
 check(all(c.calls[i]["avoid"] == c.calls[i - 1]["key"] and c.calls[i]["key"] != c.calls[i - 1]["key"] for i in range(1, 4)),
       f"M4: each retry is on a different key ({[x['key'] for x in c.calls[:4]]})")
 cfg = c.calls[0]["config"]
@@ -249,10 +281,10 @@ check(cfg.thinking_config.thinking_budget == 4096 and cfg.response_mime_type == 
 c = FakeClient([GOOD])
 read, model = mr.generate_read(c, "Nifty 500", f, [])
 check(model == "models/gemini-3.8-flash" and len(c.calls) == 1, "M4: a good first reply costs one call")
-c = FakeClient([Err(503, "overloaded")] * 6)
-check(mr.generate_read(c, "Nifty 500", f, []) == (None, None) and len(c.calls) == 6,
-      "M4: every rung failing gives (None, None) after six calls")
-c = FakeClient(["not json"] * 6)
+c = FakeClient([Err(503, "overloaded")] * 5)
+check(mr.generate_read(c, "Nifty 500", f, []) == (None, None) and len(c.calls) == 5,
+      "M4: every rung failing gives (None, None) after five calls")
+c = FakeClient(["not json"] * 5)
 check(mr.generate_read(c, "Nifty 500", f, []) == (None, None), "M4: unparseable replies are failures too")
 
 # --- M5 the job ----------------------------------------------------------------------------
@@ -292,6 +324,15 @@ res = mr.run(None, BREADTH, PERF, LISTS, data2, backfill=2, log=lambda *_: None)
 india = [x for x in written_calls if x[0] == "Nifty 500"]
 check(res[0] == 6 and [x[1] for x in india] == D[-3:] and india[2][2] == D[-3:-1] and india[0][2] == [],
       f"M5: backfill 2 writes the two earlier sessions first, and each read sees the ones before it ({india})")
+def flaky(client, label, facts_, prior_, **kw):
+    return (None, None) if facts_["session"] == D[-2] else stub_generate(client, label, facts_, prior_)
+
+
+mr.generate_read = flaky
+d_flaky = {}
+res = mr.run(None, BREADTH, PERF, LISTS, d_flaky, backfill=1, log=lambda *_: None)
+check(res == (2, 0, 2) and [e["session"] for e in mr.entries_for(d_flaky, "INDIA")] == [D[-1]],
+      f"M5: with backfill, an older session no model could write does not cost the latest its read ({res})")
 mr.generate_read = lambda *a, **k: (None, None)
 data3 = {}
 res = mr.run(None, BREADTH, PERF, LISTS, data3, log=lambda *_: None)
@@ -346,9 +387,14 @@ load = uses.index("./.github/actions/load-data")
 py = next(i for i, s in enumerate(steps) if "refresh_market_read.py" in s.get("run", ""))
 check(wait < load < py and "python" not in steps[wait]["run"], "M8: waits for a breadth refresh before the data is loaded")
 check(steps[py].get("shell") == "bash" and "| python -u log_redact.py" in steps[py]["run"], "M8: redacted, bash (pipefail)")
-com = steps[-1]
-check(com["uses"] == "./.github/actions/commit-data" and com["with"]["files"] == "market_read.json" and com.get("if") == "always()",
+ci = next(i for i, st in enumerate(steps) if st.get("uses") == "./.github/actions/commit-data")
+com = steps[ci]
+check(com["with"]["files"] == "market_read.json" and com.get("if") == "always()",
       "M8: commits only market_read.json, even after a failure")
+pub = steps[-1]
+check(steps.index(pub) > ci and "publish_market.py reads" in pub["run"] and pub.get("continue-on-error") is True and pub.get("if") == "always()"
+      and pub.get("shell") == "bash" and "| python -u log_redact.py" in pub["run"] and pub["env"] == {"MARKET_DB_URL": "${{ secrets.MARKET_DB_URL }}"},
+      "M8: after the commit the reads are published to the research library, redacted, never failing the run")
 keys = re.findall(r"(GEMINI_API_KEY\w*):", steps[py].get("env") and text[text.index("Write the market reads"):])
 check({"GEMINI_API_KEY", "GEMINI_API_KEY_BACKUP", "GEMINI_API_KEY_BACKUP_B", "GEMINI_API_KEY_BACKUP_B2",
        "GEMINI_API_KEY_BACKUP_B3", "GEMINI_API_KEY_BACKUP_B4"} <= set(keys), "M8: every Gemini key secret is passed to the step")
