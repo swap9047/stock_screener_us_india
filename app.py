@@ -5817,6 +5817,9 @@ with tab_news:
                     (_read_cols[0], "INDIA", "Nifty 500", "market_read_open_ind"),
                     (_read_cols[1], right_breadth_key, right_index_label, "market_read_open_right")):
                 with _rcol:
+                    if _rkey not in market_read.READ_INDEX_KEYS:
+                        st.caption("Reads are written for Nifty 500 and the S&P 500 only.")
+                        continue
                     st.button(f"ⓘ {_rlabel} read", key=f"{_rstate}_button", on_click=_flip_market_read,
                               args=(_rstate,),
                               help="What this index's charts say, written after each market's close "

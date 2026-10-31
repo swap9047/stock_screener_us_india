@@ -11,9 +11,10 @@ Gemini client; nothing reads the real JSON.
   M4  the ladder: 3.8-flash four times each on another key, then 3.6-flash, then
       3.5-flash-lite, every rung at a 4096 thinking budget in JSON mode; a read that
       fails the check moves on like an error;
-  M5  the job: a reading still forming waits, a final one is written once (a second
-      run writes nothing), force and backfill, earlier reads reach the prompt, a
-      failed ladder saves nothing for that index;
+  M5  the job: only Nifty 500 and the S&P 500 are read (the other four indexes never),
+      a reading still forming waits, a final one is written once (a second run writes
+      nothing), force and backfill, earlier reads reach the prompt, each read is saved as
+      it is written, a failed ladder saves nothing for that index;
   M6  storage: one read a session, the newest ten kept, a torn file reads as empty,
       the file is stamped for the freshness guard;
   M7  the box text: dollar signs escaped, an empty chart skipped, no read yet says when;
@@ -265,18 +266,25 @@ def stub_generate(client, label, facts, prior, **kw):
 
 real_generate = mr.generate_read
 mr.generate_read = stub_generate
-BREADTH = {"markets": {"INDIA": block(), "US": block(), "NIFTY50": block(live=True)}, "status": {"NIFTY50": "live"}}
+BREADTH = {"markets": {"INDIA": block(), "US": block(), "NIFTY50": block(), "NASDAQ100": block()}, "status": {}}
 data = {}
 logs = []
-res = mr.run(None, BREADTH, PERF, LISTS, data, log=logs.append)
-check(res == (2, 1, 0) and {k for k in data["indexes"]} == {"INDIA", "US"}
+saves = []
+res = mr.run(None, BREADTH, PERF, LISTS, data, log=logs.append, on_write=lambda: saves.append(len(mr.entries_for(data, "INDIA"))))
+check(res == (2, 0, 0) and {k for k in data["indexes"]} == {"INDIA", "US"}
       and data["indexes"]["INDIA"]["entries"][0]["session"] == D[-1],
-      f"M5: final readings are written, a forming one waits, indexes with no breadth are skipped ({res})")
-check(any("Nifty 50" in l and "not final" in l for l in logs) and not any("AAA" in l for l in logs),
-      "M5: the log names the index, never a ticker")
+      f"M5: Nifty 500 and the S&P 500 are written; Nifty 50 and Nasdaq 100, though their breadth is stored, are not ({res})")
+check(mr.READ_INDEX_KEYS == ("INDIA", "US") and not any("Nifty 50 2" in l or "Nifty 50:" in l or "Nasdaq" in l for l in logs)
+      and not any("AAA" in l for l in logs), "M5: the log names only the two indexes, never a ticker")
+check(saves == [1, 1], f"M5: on_write runs after each read, so a run cut short keeps what it wrote ({saves})")
+live = {"markets": {"INDIA": block(), "US": block(live=True)}, "status": {"US": "live"}}
+d_live = {}
+res = mr.run(None, live, PERF, LISTS, d_live, log=logs.append)
+check(res == (1, 1, 0) and set(d_live["indexes"]) == {"INDIA"} and any("S&P 500" in l and "not final" in l for l in logs),
+      f"M5: a reading still forming waits and is counted, the other index is written ({res})")
 written_calls.clear()
 res = mr.run(None, BREADTH, PERF, LISTS, data, log=lambda *_: None)
-check(res == (0, 1, 0) and not written_calls, "M5: a second run writes nothing for a session that has its read")
+check(res == (0, 0, 0) and not written_calls, "M5: a second run writes nothing for a session that has its read")
 res = mr.run(None, BREADTH, PERF, LISTS, data, force=True, log=lambda *_: None)
 check(res[0] == 2 and len(data["indexes"]["INDIA"]["entries"]) == 1, "M5: force writes the latest again, replacing it")
 data2, written_calls[:] = {}, []
@@ -287,7 +295,7 @@ check(res[0] == 6 and [x[1] for x in india] == D[-3:] and india[2][2] == D[-3:-1
 mr.generate_read = lambda *a, **k: (None, None)
 data3 = {}
 res = mr.run(None, BREADTH, PERF, LISTS, data3, log=lambda *_: None)
-check(res == (0, 1, 2) and not data3.get("indexes"), f"M5: a failed ladder is counted and nothing is saved for it ({res})")
+check(res == (0, 0, 2) and not data3.get("indexes"), f"M5: a failed ladder is counted and nothing is saved for it ({res})")
 mr.generate_read = real_generate
 
 # --- M6 storage ----------------------------------------------------------------------------
