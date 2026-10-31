@@ -133,3 +133,17 @@ jobs:
         with:
           files: market_read.json
           message: "Update market reads [automated]"
+
+      # The reads for Claude chat too (owner, 2026-10-31): the same text goes into the research library's
+      # database, where the connector's get_market_read tool serves it. After the commit, and
+      # continue-on-error: the library's copy must never cost the data repo's. always(): reads written before a
+      # failure (every read is saved as it is made) are published as well. Counts only in the log.
+      - name: Publish the reads to the research library
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          pip install --quiet "psycopg[binary]~=3.3"
+          python -u publish_market.py reads 2>&1 | python -u log_redact.py
+        env:
+          MARKET_DB_URL: ${{ secrets.MARKET_DB_URL }}

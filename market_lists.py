@@ -231,6 +231,49 @@ def quarterly_results(db, name, basis="yoy", quarters=8):
     }
 
 
+# The reads' parts in the order the News tab draws its charts, as the reply names them.
+READ_PARTS = (("breadth", "breadth (% of stocks above their 200- and 50-day averages)"),
+              ("highs_lows", "52-week highs vs lows"),
+              ("drawdown", "stocks 10-40% below their 52-week high"),
+              ("return", "the user's invested list vs the index"))
+MAX_READ_HISTORY = 5
+
+
+def market_read(db, name=None, history=1):
+    """The News tab's AI market reads (the (i) boxes above its index charts): for Nifty 500 and the S&P 500, a headline
+    and a few sentences on each chart, written after each market's close. No name: every index that has one.
+    `history` n adds the n-1 earlier reads (newest first), to see what changed."""
+    history = max(1, min(int(history or 1), MAX_READ_HISTORY))
+    stored = db.market_read() or {}
+    indexes = stored.get("indexes") or {}
+    if str(name or "").strip():
+        key = _index_series(name)
+        if not key or key not in indexes:
+            return {"query": name, "found": False, "available": [v.get("label", k) for k, v in indexes.items()],
+                    "note": "Market reads are written for these indexes only."}
+        wanted = [key]
+    else:
+        wanted = list(indexes)
+    out = []
+    for key in wanted:
+        entries = sorted((e for e in (indexes[key].get("entries") or []) if isinstance(e, dict)),
+                         key=lambda e: e.get("session") or "", reverse=True)[:history]
+        out.append({"index": indexes[key].get("label", key),
+                    "reads": [{"session": e.get("session"), "written": e.get("written"),
+                               "model": str(e.get("model") or "").replace("models/", ""),
+                               "headline": e.get("headline"),
+                               **{part: e.get(part) for part, _ in READ_PARTS if e.get(part)}} for e in entries]})
+    return {
+        "found": bool(out), "as_of": stored.get("generated_at"), "indexes": out,
+        "parts": {part: label for part, label in READ_PARTS},
+        "note": ("AI-written from the screener's own chart data (the same numbers as get_market_breadth and "
+                 "get_price_history) after each market's close: Nifty 500 about 7:15 AM ET, the S&P 500 about 5:15 PM ET; "
+                 "'session' is the trading day it reads. A part is left out when the chart had nothing to add. Every "
+                 "number in a read comes from that data. It is analysis, not advice. The 'return' part compares the "
+                 "user's own invested list with the index."),
+    }
+
+
 def yahoo_closes(symbols, days):
     """{symbol: [(date, close)]} from Yahoo (split-adjusted, dividends not added -- like the stored closes).
     Empty on any failure."""

@@ -55,7 +55,9 @@ INSTRUCTIONS = (
     "best and worst stocks), call list_watchlists, then get_watchlist with the groups and sort you need; for market "
     f"breadth ({index_registry.label_list()} or a watchlist) get_market_breadth; for an index's or a watchlist's "
     "quarterly results (the median company's revenue, profit and EPS growth and OPM, per quarter) "
-    "get_quarterly_results; for a price chart or a return over any window get_price_history. Use web search for "
+    "get_quarterly_results; for the screener's own AI read of its Nifty 500 and S&P 500 charts (how the market is "
+    "positioned, what changed, oversold or overbought) get_market_read; for a price chart or a return over any window "
+    "get_price_history. Use web search for "
     "news, a single company's results and guidance, which these tools do not have.")
 
 GROUP_HELP = ("price, returns, moving_averages, momentum (RSI, ADX), relative_strength (Mansfield RS vs Nifty 500 / "
@@ -193,6 +195,26 @@ TOOLS = [
         "annotations": {"readOnlyHint": True},
     },
     {
+        "name": "get_market_read",
+        "title": "The screener's AI read of the index charts",
+        "description": (
+            "The screener's own AI-written read of how the market is positioned, for Nifty 500 and the S&P 500: a "
+            "headline and a few sentences on its breadth (% of stocks above the 200- and 50-day averages), 52-week "
+            "highs vs lows, how many stocks sit 10-40% below their 52-week high, and the user's invested list against "
+            "the index, with named conditions (washed out, broad strength, narrow rally...) and what changed since "
+            "earlier sessions. The text under the News tab's (i) buttons. Written after each market's close; call "
+            "get_market_breadth or get_price_history for the numbers behind it."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "'Nifty 500' or 'S&P 500'; leave out for both."},
+                "history": {"type": "integer", "minimum": 1, "maximum": market_lists.MAX_READ_HISTORY,
+                            "description": "How many sessions of reads, newest first (default 1, the latest)."},
+            },
+        },
+        "annotations": {"readOnlyHint": True},
+    },
+    {
         "name": "metric_catalog",
         "title": "What each screener metric means",
         "description": "Every metric the stock screener computes, by group, with its definition (the screener's own glossary).",
@@ -202,7 +224,8 @@ TOOLS = [
 ]
 
 
-LIST_TOOLS = ("list_watchlists", "get_watchlist", "get_market_breadth", "get_quarterly_results", "get_price_history")
+LIST_TOOLS = ("list_watchlists", "get_watchlist", "get_market_breadth", "get_quarterly_results", "get_market_read",
+              "get_price_history")
 
 
 def call_tool(name, args, db=None, compute=None, yahoo=market_lookup.yahoo_symbol, search=market_lookup.yahoo_search,
@@ -231,6 +254,8 @@ def call_tool(name, args, db=None, compute=None, yahoo=market_lookup.yahoo_symbo
                 return {"error": "pass name: an index or a watchlist"}, True
             return market_lists.quarterly_results(db, args["name"], args.get("basis") or "yoy",
                                                   args.get("quarters") or 8), False
+        if name == "get_market_read":
+            return market_lists.market_read(db, args.get("name"), args.get("history") or 1), False
         companies = args.get("companies")
         if isinstance(companies, str):
             companies = [companies]

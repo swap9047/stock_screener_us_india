@@ -346,9 +346,14 @@ load = uses.index("./.github/actions/load-data")
 py = next(i for i, s in enumerate(steps) if "refresh_market_read.py" in s.get("run", ""))
 check(wait < load < py and "python" not in steps[wait]["run"], "M8: waits for a breadth refresh before the data is loaded")
 check(steps[py].get("shell") == "bash" and "| python -u log_redact.py" in steps[py]["run"], "M8: redacted, bash (pipefail)")
-com = steps[-1]
-check(com["uses"] == "./.github/actions/commit-data" and com["with"]["files"] == "market_read.json" and com.get("if") == "always()",
+ci = next(i for i, st in enumerate(steps) if st.get("uses") == "./.github/actions/commit-data")
+com = steps[ci]
+check(com["with"]["files"] == "market_read.json" and com.get("if") == "always()",
       "M8: commits only market_read.json, even after a failure")
+pub = steps[-1]
+check(steps.index(pub) > ci and "publish_market.py reads" in pub["run"] and pub.get("continue-on-error") is True and pub.get("if") == "always()"
+      and pub.get("shell") == "bash" and "| python -u log_redact.py" in pub["run"] and pub["env"] == {"MARKET_DB_URL": "${{ secrets.MARKET_DB_URL }}"},
+      "M8: after the commit the reads are published to the research library, redacted, never failing the run")
 keys = re.findall(r"(GEMINI_API_KEY\w*):", steps[py].get("env") and text[text.index("Write the market reads"):])
 check({"GEMINI_API_KEY", "GEMINI_API_KEY_BACKUP", "GEMINI_API_KEY_BACKUP_B", "GEMINI_API_KEY_BACKUP_B2",
        "GEMINI_API_KEY_BACKUP_B3", "GEMINI_API_KEY_BACKUP_B4"} <= set(keys), "M8: every Gemini key secret is passed to the step")
