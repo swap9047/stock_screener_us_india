@@ -157,7 +157,7 @@ READS = {"generated_at": "2026-10-31T04:36:40Z", "indexes": {
     "INDIA": {"label": "Nifty 500", "entries": [{"session": "2026-10-30", "headline": "h", "breadth": "b"}, {"headline": "no session"}, "junk"]},
     "US": {"label": "S&P 500", "entries": []}, "NIFTY50": "junk"}}
 rp = pm.reads_payload(READS)
-check(rp == {"generated_at": "2026-10-31T04:36:40Z", "indexes": {"INDIA": {"label": "Nifty 500", "entries": [{"session": "2026-10-30", "headline": "h", "breadth": "b"}]}}},
+check(rp == {"generated_at": "2026-10-31T04:36:40Z", "indexes": {"INDIA": {"label": "Nifty 500", "entries": [{"session": "2026-10-30", "headline": "h", "breadth": "b"}]}}, "lists": {}},
       f"reads: an index's entries with a session are published; an empty or malformed index is left out ({rp})")
 check(pm.reads_payload({}) is None and pm.reads_payload(None) is None and pm.reads_payload({"indexes": {"US": {"entries": []}}}) is None,
       "reads: no file, or no read in it, publishes nothing")

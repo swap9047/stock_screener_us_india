@@ -1,7 +1,7 @@
 """The sidebar's Settings · Models (2026-10-31), rendered: offline, from a throwaway copy of the
 repo (as test_market_read_render.py), over synthetic prices.
 
-  P1  the expander is there but builds nothing while closed; open, it lists all nine steps, by
+  P1  the expander is there but builds nothing while closed; open, it lists all ten steps, by
       group, with today's chains and thinking budgets, none marked custom;
   P2  picking a step shows one model picker and tries box per model (seeded from the step's chain),
       a thinking budget for a reasoning step (collation only 4k/8k), none for a search;
@@ -172,8 +172,8 @@ def step_lines(at):
 at = render()
 if at:
     lines, text = step_lines(at)
-    check(len(lines) == 9 and "custom" not in text and all(g in text for g in ("**News digest**", "**Expert Take**", "**Sentiment**", "**Market read**")),
-          f"P1: open, nine steps in four groups, none custom ({len(lines)})")
+    check(len(lines) == 10 and "custom" not in text and all(g in text for g in ("**News digest**", "**Expert Take**", "**Sentiment**", "**Market read**")),
+          f"P1: open, ten steps in four groups, none custom ({len(lines)})")
     check(lines[("News digest", "collation (one per watchlist)")] == "- collation (one per watchlist): `gemini-3.7-flash ×2 → gemini-3.6-flash ×2 → gemini-3.5-flash-lite` · thinking 8k"
           and lines[("Market read", "the index charts' summary")].endswith("· thinking 4k")
           and lines[("News digest", "grounded search")] == "- grounded search: `gemma-4-26b-a4b-it ×3`"

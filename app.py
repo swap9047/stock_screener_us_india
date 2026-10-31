@@ -6067,7 +6067,7 @@ with tab_news:
             bench, bench_market = _wb_benchmarks[bench_label]
             name = _wb_labels.get(wb_key, wb_key)
             out = {"name": name, "bench_label": bench_label, "radio_key": f"breadth_benchmark_{side}_{wb_key}",
-                   "tickers": tickers, "bench_market": bench_market}
+                   "tickers": tickers, "bench_market": bench_market, "wb_key": wb_key}
             closes, missing = assemble_closes(_perf_markets, tickers)
             wb = compute_breadth(closes, since=_wb_cutoff) if not closes.empty else None
             if not tickers:
@@ -6113,6 +6113,26 @@ with tab_news:
         col_left, col_right = st.columns(2)
         _sides = [_watchlist_side("left", "india_invested", col_left),
                   _watchlist_side("right", "us_invested", col_right)]
+
+        # The invested lists' reads (owner, 2026-10-31): what each panel's charts say for the owner of the list,
+        # set in the market read, with key takeaways. Behind an (i) button per panel like the index reads above;
+        # written for India Invested and US Invested, so another list picked in a panel says so instead.
+        _list_read_data = market_read.load_market_read()
+        for _lcol, _sd, _lstate in ((col_left, _sides[0], "list_read_open_left"), (col_right, _sides[1], "list_read_open_right")):
+            with _lcol:
+                _lkey = _sd.get("wb_key")
+                if _lkey not in market_read.LIST_READ_KEYS:
+                    st.caption("Reads are written for India Invested and US Invested only.")
+                    continue
+                st.button(f"ⓘ {_sd['name']} read", key=f"{_lstate}_button", on_click=_flip_market_read, args=(_lstate,),
+                          help="What this list's charts say, in the market around it, with key takeaways "
+                               "(Nifty 7:15 AM ET, US 5:15 PM ET).")
+                if st.session_state.get(_lstate):
+                    with st.container(border=True):
+                        _lix = index_registry.BY_KEY.get(market_read.LIST_READ_KEYS[_lkey]) or {}
+                        st.markdown(market_read.box_markdown(
+                            market_read.latest_entry(_list_read_data, _lkey, "lists"), _sd["name"],
+                            "7:15 AM ET" if _lix.get("region") == "INDIA" else "5:15 PM ET"))
         # Only each side's selected watchlist's radio is drawn, and Streamlit drops
         # a widget's state on any run that does not draw it -- so the others'
         # choices are re-assigned here or each would reset on the next switch.

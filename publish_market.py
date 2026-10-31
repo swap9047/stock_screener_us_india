@@ -24,7 +24,7 @@ kg_breadth (breadth_math, the app's own maths); and two years of daily closes of
 benchmark into kg_prices. Membership only: still no notes, flags, Interested or custom columns.
 
 The reads mode publishes the News tab's AI market reads (market_read.json: a few sentences per chart for Nifty 500
-and the S&P 500) as one JSON value in kg_market_meta, so Claude chat's get_market_read tool serves the same text
+and the S&P 500, and for the India Invested and US Invested panels, with key takeaways) as one JSON value in kg_market_meta, so Claude chat's get_market_read tool serves the same text
 as the app's (i) boxes. The text describes the invested list (the owner's choice, like the watchlists above).
 
 MARKET_DB_URL is the session-pooler URI of the `market_writer` role, which can write only those market
@@ -464,18 +464,23 @@ READS_KEY = "market_read"
 
 
 def reads_payload(data):
-    """market_read.json as it is stored in the library, or None when it holds no read (not loaded, or the job
-    has never run)."""
-    indexes = (data or {}).get("indexes")
-    if not isinstance(indexes, dict):
+    """market_read.json as it is stored in the library -- the index reads and the invested lists' -- or None when it
+    holds no read (not loaded, or the job has never run)."""
+    def group(name):
+        out = {}
+        for key, slot in ((data or {}).get(name) or {}).items():
+            entries = slot.get("entries") if isinstance(slot, dict) else None
+            entries = [e for e in (entries or []) if isinstance(e, dict) and e.get("session")]
+            if entries:
+                out[key] = {"label": slot.get("label") or key, "entries": entries}
+        return out
+
+    if not isinstance((data or {}).get("indexes"), dict) and not isinstance((data or {}).get("lists"), dict):
         return None
-    out = {}
-    for key, slot in indexes.items():
-        entries = slot.get("entries") if isinstance(slot, dict) else None
-        entries = [e for e in (entries or []) if isinstance(e, dict) and e.get("session")]
-        if entries:
-            out[key] = {"label": slot.get("label") or key, "entries": entries}
-    return {"generated_at": data.get("generated_at"), "indexes": out} if out else None
+    indexes, lists = group("indexes"), group("lists")
+    if not indexes and not lists:
+        return None
+    return {"generated_at": data.get("generated_at"), "indexes": indexes, "lists": lists}
 
 
 def write_reads(conn, payload):
@@ -492,8 +497,8 @@ def publish_reads(conn):
         print("No market reads to publish (market_read.json is missing or empty).")
         return 0
     write_reads(conn, payload)
-    print(f"Published market reads for {len(payload['indexes'])} index(es), "
-          f"{sum(len(v['entries']) for v in payload['indexes'].values())} read(s).")
+    print(f"Published market reads for {len(payload['indexes'])} index(es) and {len(payload['lists'])} list(s), "
+          f"{sum(len(v['entries']) for g in (payload['indexes'], payload['lists']) for v in g.values())} read(s).")
     return 0
 
 

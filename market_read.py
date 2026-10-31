@@ -55,10 +55,18 @@ PRIOR_READS = 3
 # index_registry's "INDIA" and "US"; the other four indexes the News tab can show are not written.
 READ_INDEX_KEYS = ("INDIA", "US")
 
+# The invested lists that get a read (owner, 2026-10-31): the two panels the News tab's Watchlist Breadth shows by
+# default, each against its home index, whose own read it takes as the market context (list_read.py).
+LIST_READ_KEYS = {"india_invested": "INDIA", "us_invested": "US"}
+
 # In the order the charts are drawn.
 SECTIONS = ("breadth", "highs_lows", "drawdown", "return")
 SECTION_TITLES = {"breadth": "Breadth", "highs_lows": "52-week highs vs lows",
                   "drawdown": "Stocks far below their highs", "return": "Your list vs the index"}
+# An invested list's read adds the market it sits in, its quarterly results and its holdings, and ends with takeaways.
+LIST_SECTIONS = ("market", "breadth", "highs_lows", "drawdown", "return", "results", "stocks")
+LIST_SECTION_TITLES = {**SECTION_TITLES, "market": "The market", "return": "Against the index",
+                       "results": "Quarterly results", "stocks": "Holdings"}
 MAX_TEXT_CHARS = 700
 
 # Trading-day windows for the return chart's facts.
@@ -273,10 +281,8 @@ def index_price_facts(bench, asof=None):
     return out
 
 
-def build_facts(ix, block, perf, tickers, asof=None):
-    """Everything the model may say about one index, as of `asof` (default: the
-    block's latest day). `perf` is dashboard_perf.json, `tickers` the invested
-    list of the index's region."""
+def benchmark_series(ix, perf):
+    """An index's price series from dashboard_perf.json (its "benchmarks", else a market block that holds it), or None."""
     benchmarks = (perf or {}).get("benchmarks") or {}
     bench_map = benchmarks.get(ix["benchmark"])
     if not bench_map:
@@ -284,7 +290,14 @@ def build_facts(ix, block, perf, tickers, asof=None):
             if isinstance(market_block, dict) and market_block.get(ix["benchmark"]):
                 bench_map = market_block[ix["benchmark"]]
                 break
-    bench = _series(bench_map) if bench_map else None
+    return _series(bench_map) if bench_map else None
+
+
+def build_facts(ix, block, perf, tickers, asof=None):
+    """Everything the model may say about one index, as of `asof` (default: the
+    block's latest day). `perf` is dashboard_perf.json, `tickers` the invested
+    list of the index's region."""
+    bench = benchmark_series(ix, perf)
     breadth = breadth_facts(block, asof)
     highs = highs_lows_facts(block, asof)
     drawdown = drawdown_facts(block, asof)
@@ -418,9 +431,10 @@ def validate_read(data, facts):
     return read
 
 
-def generate_read(client, label, facts, prior, tiers=None, budget=None):
+def generate_read(client, label, facts, prior, tiers=None, budget=None, prompt=None, validate=None):
     """(read dict, model used), or (None, None) once every rung failed. `tiers` and `budget` come from
-    the sidebar's Settings · Models ("R1", model_settings); without them, the defaults below."""
+    the sidebar's Settings · Models ("R1", model_settings); without them, the defaults below. `prompt` and
+    `validate` replace build_prompt / validate_read (an invested list's read, list_read.py)."""
     thinking = THINKING_BUDGET if budget is None else budget
 
     def config_for(model):
@@ -435,9 +449,9 @@ def generate_read(client, label, facts, prior, tiers=None, budget=None):
     tiers = tiers or (llm_util.same_model_tiers(PRIMARY_MODEL, attempts=PRIMARY_ATTEMPTS)
                       + [(m, 0) for m in FALLBACK_MODELS])
     return llm_util.run_model_ladder(
-        client, build_prompt(label, facts, prior), tiers, config_for, label="market read", subject=label,
+        client, (prompt or build_prompt)(label, facts, prior), tiers, config_for, label="market read", subject=label,
         timeout=CALL_TIMEOUT_S,
-        on_success=lambda resp: validate_read(llm_util.json_object(resp.text or ""), facts))
+        on_success=lambda resp: (validate or validate_read)(llm_util.json_object(resp.text or ""), facts))
 
 
 # --- storage -----------------------------------------------------------------------
@@ -460,28 +474,28 @@ def save_market_read(data, path=None, now=None):
     atomic_write_json(path or MARKET_READ_FILE, data)
 
 
-def entries_for(data, key):
-    """An index's reads, oldest first."""
-    entries = ((data.get("indexes") or {}).get(key) or {}).get("entries")
+def entries_for(data, key, group="indexes"):
+    """An index's reads (group "indexes") or an invested list's (group "lists"), oldest first."""
+    entries = ((data.get(group) or {}).get(key) or {}).get("entries")
     return [e for e in entries if isinstance(e, dict)] if isinstance(entries, list) else []
 
 
-def latest_entry(data, key):
-    entries = entries_for(data, key)
+def latest_entry(data, key, group="indexes"):
+    entries = entries_for(data, key, group)
     return max(entries, key=lambda e: e.get("session") or "") if entries else None
 
 
-def add_entry(data, key, label, entry):
+def add_entry(data, key, label, entry, group="indexes"):
     """Store `entry`, replacing the same session's and keeping the newest KEEP_ENTRIES."""
-    slot = data.setdefault("indexes", {}).setdefault(key, {})
+    slot = data.setdefault(group, {}).setdefault(key, {})
     slot["label"] = label
-    kept = [e for e in entries_for(data, key) if e.get("session") != entry["session"]] + [entry]
+    kept = [e for e in entries_for(data, key, group) if e.get("session") != entry["session"]] + [entry]
     kept.sort(key=lambda e: e.get("session") or "")
     slot["entries"] = kept[-KEEP_ENTRIES:]
 
 
 def box_markdown(entry, label, when_text):
-    """What the (i) box shows for an index's latest read, as Markdown (Streamlit
+    """What the (i) box shows for an index's or an invested list's latest read, as Markdown (Streamlit
     would read $...$ as LaTeX, so a dollar sign is escaped)."""
     def clean(text):
         return str(text).replace("$", "\\$")
@@ -491,12 +505,18 @@ def box_markdown(entry, label, when_text):
     parts = []
     if entry.get("headline"):
         parts.append(f"**{clean(entry['headline'])}**")
-    for key in SECTIONS:
+    is_list = any(entry.get(k) for k in ("market", "results", "stocks", "takeaways"))
+    for key in (LIST_SECTIONS if is_list else SECTIONS):
         if entry.get(key):
-            parts.append(f"**{SECTION_TITLES[key]}.** {clean(entry[key])}")
+            title = (LIST_SECTION_TITLES if is_list else SECTION_TITLES)[key]
+            parts.append(f"**{title}.** {clean(entry[key])}")
+    if isinstance(entry.get("takeaways"), list) and entry["takeaways"]:
+        parts.append("**Key takeaways**\n" + "\n".join(f"- {clean(t)}" for t in entry["takeaways"] if t))
     if not parts:
         parts.append("Nothing stood out on these charts.")
     foot = f"{label} · session of {entry.get('session', '?')}"
+    if entry.get("benchmark"):
+        foot += f" · against {entry['benchmark']}"
     if entry.get("written"):
         foot += f" · written {str(entry['written'])[:10]}"
     if entry.get("model"):

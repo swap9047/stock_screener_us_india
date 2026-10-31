@@ -5,7 +5,8 @@ name: Market Read Writer
 # from facts computed in code (market_read.py) and shown behind the (i) button above
 # the charts. Twice a day, after each market's close and once the breadth job has
 # stored the final reading: 7:15 AM ET (NSE closed ~6 AM) and 5:15 PM ET (US closed
-# 4 PM). Only Nifty 500 and the S&P 500 get a read (owner, 2026-10-31). Their latest final session
+# 4 PM). Only Nifty 500 and the S&P 500 get an index read, and India Invested and US Invested
+# (the Watchlist Breadth panels) a list read with key takeaways (owner, 2026-10-31). Their latest final session
 # is written once, whichever slot finds it
 # missing, so a late or repeated run costs nothing.
 on:

@@ -198,16 +198,18 @@ TOOLS = [
         "name": "get_market_read",
         "title": "The screener's AI read of the index charts",
         "description": (
-            "The screener's own AI-written read of how the market is positioned, for Nifty 500 and the S&P 500: a "
-            "headline and a few sentences on its breadth (% of stocks above the 200- and 50-day averages), 52-week "
-            "highs vs lows, how many stocks sit 10-40% below their 52-week high, and the user's invested list against "
-            "the index, with named conditions (washed out, broad strength, narrow rally...) and what changed since "
-            "earlier sessions. The text under the News tab's (i) buttons. Written after each market's close; call "
-            "get_market_breadth or get_price_history for the numbers behind it."),
+            "The screener's own AI-written reads. For Nifty 500 and the S&P 500: how the market is positioned, a headline "
+            "and a few sentences on its breadth (% of stocks above the 200- and 50-day averages), 52-week highs vs "
+            "lows and how many stocks sit 10-40% below their 52-week high. For the user's invested panels (India "
+            "Invested, US Invested): the same charts for their own list set against the market, the quarterly results, "
+            "the holdings behind the charts (leaders, laggards, what is below its 200-day average) and key takeaways "
+            "for them as the investor. Named conditions (washed out, broad strength, narrow rally...) and what changed "
+            "since earlier sessions. The text under the News tab's (i) buttons. Written after each market's close; call "
+            "get_market_breadth, get_watchlist or get_price_history for the numbers behind it."),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "'Nifty 500' or 'S&P 500'; leave out for both."},
+                "name": {"type": "string", "description": "'Nifty 500', 'S&P 500', 'India Invested' or 'US Invested'; leave out for all."},
                 "history": {"type": "integer", "minimum": 1, "maximum": market_lists.MAX_READ_HISTORY,
                             "description": "How many sessions of reads, newest first (default 1, the latest)."},
             },

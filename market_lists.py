@@ -232,45 +232,67 @@ def quarterly_results(db, name, basis="yoy", quarters=8):
 
 
 # The reads' parts in the order the News tab draws its charts, as the reply names them.
-READ_PARTS = (("breadth", "breadth (% of stocks above their 200- and 50-day averages)"),
+READ_PARTS = (("market", "the market around the list (list reads)"),
+              ("breadth", "breadth (% of stocks above their 200- and 50-day averages)"),
               ("highs_lows", "52-week highs vs lows"),
               ("drawdown", "stocks 10-40% below their 52-week high"),
-              ("return", "the user's invested list vs the index"))
+              ("return", "the user's invested list vs the index"),
+              ("results", "quarterly results (median company; list reads)"),
+              ("stocks", "the holdings behind the charts (list reads)"))
 MAX_READ_HISTORY = 5
 
 
+def _read_entry(e):
+    out = {"session": e.get("session"), "written": e.get("written"),
+           "model": str(e.get("model") or "").replace("models/", ""), "headline": e.get("headline")}
+    if e.get("benchmark"):
+        out["against"] = e["benchmark"]
+    out.update({part: e.get(part) for part, _ in READ_PARTS if e.get(part)})
+    if e.get("takeaways"):
+        out["key_takeaways"] = list(e["takeaways"])
+    return out
+
+
 def market_read(db, name=None, history=1):
-    """The News tab's AI market reads (the (i) boxes above its index charts): for Nifty 500 and the S&P 500, a headline
-    and a few sentences on each chart, written after each market's close. No name: every index that has one.
-    `history` n adds the n-1 earlier reads (newest first), to see what changed."""
+    """The News tab's AI market reads (the (i) boxes): for Nifty 500 and the S&P 500 a headline and a few sentences on
+    each chart; for the India Invested and US Invested panels (the Watchlist Breadth section) the same plus the quarterly
+    results, the holdings behind them and key takeaways for the investor. Written after each market's close. No name:
+    everything that has a read. `history` n adds the n-1 earlier reads (newest first), to see what changed."""
     history = max(1, min(int(history or 1), MAX_READ_HISTORY))
     stored = db.market_read() or {}
-    indexes = stored.get("indexes") or {}
+    indexes, lists = stored.get("indexes") or {}, stored.get("lists") or {}
+    wanted_idx, wanted_lists = list(indexes), list(lists)
     if str(name or "").strip():
+        wanted_idx, wanted_lists = [], []
         key = _index_series(name)
-        if not key or key not in indexes:
-            return {"query": name, "found": False, "available": [v.get("label", k) for k, v in indexes.items()],
-                    "note": "Market reads are written for these indexes only."}
-        wanted = [key]
-    else:
-        wanted = list(indexes)
-    out = []
-    for key in wanted:
-        entries = sorted((e for e in (indexes[key].get("entries") or []) if isinstance(e, dict)),
+        if key and key in indexes:
+            wanted_idx = [key]
+        else:
+            list_key, _ = find_watchlist(db.watchlists(), name)
+            if list_key and list_key in lists:
+                wanted_lists = [list_key]
+        if not wanted_idx and not wanted_lists:
+            return {"query": name, "found": False,
+                    "available": [v.get("label", k) for g in (indexes, lists) for k, v in g.items()],
+                    "note": "Market reads are written for these indexes and invested lists only."}
+
+    def reads(slot):
+        entries = sorted((e for e in (slot.get("entries") or []) if isinstance(e, dict)),
                          key=lambda e: e.get("session") or "", reverse=True)[:history]
-        out.append({"index": indexes[key].get("label", key),
-                    "reads": [{"session": e.get("session"), "written": e.get("written"),
-                               "model": str(e.get("model") or "").replace("models/", ""),
-                               "headline": e.get("headline"),
-                               **{part: e.get(part) for part, _ in READ_PARTS if e.get(part)}} for e in entries]})
+        return [_read_entry(e) for e in entries]
+
     return {
-        "found": bool(out), "as_of": stored.get("generated_at"), "indexes": out,
+        "found": bool(wanted_idx or wanted_lists), "as_of": stored.get("generated_at"),
+        "indexes": [{"index": indexes[k].get("label", k), "reads": reads(indexes[k])} for k in wanted_idx],
+        "invested_lists": [{"list": lists[k].get("label", k), "reads": reads(lists[k])} for k in wanted_lists],
         "parts": {part: label for part, label in READ_PARTS},
-        "note": ("AI-written from the screener's own chart data (the same numbers as get_market_breadth and "
-                 "get_price_history) after each market's close: Nifty 500 about 7:15 AM ET, the S&P 500 about 5:15 PM ET; "
-                 "'session' is the trading day it reads. A part is left out when the chart had nothing to add. Every "
-                 "number in a read comes from that data. It is analysis, not advice. The 'return' part compares the "
-                 "user's own invested list with the index."),
+        "note": ("AI-written from the screener's own chart data (the same numbers as get_market_breadth, get_price_history "
+                 "and get_quarterly_results) after each market's close: Nifty 500 and India Invested about 7:15 AM ET, the "
+                 "S&P 500 and US Invested about 5:15 PM ET; 'session' is the trading day it reads. A part is left out when "
+                 "the chart had nothing to add. Every number in a read comes from that data. It is analysis, not advice. "
+                 "The 'return' part of an index read compares the user's own invested list with the index; an invested "
+                 "list's read is set against its home index ('against'), names holdings, and ends with key_takeaways "
+                 "for the investor."),
     }
 
 
