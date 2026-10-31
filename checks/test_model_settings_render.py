@@ -5,9 +5,9 @@ repo (as test_market_read_render.py), over synthetic prices.
       group, with today's chains and thinking budgets, none marked custom;
   P2  picking a step shows one model picker and tries box per model (seeded from the step's chain),
       a thinking budget for a reasoning step (collation only 4k/8k), none for a search;
-  P3  Add a model / Remove last change the number of rows; changing a model, its tries and the
-      budget and pressing Save writes the chain to settings.json, marks the step custom and says
-      it applies from the next run;
+  P3  Add a model / Remove last change the number of rows; changing a model, its tries, its
+      timeout (150 s unless changed) and the budget and pressing Save writes the chain to
+      settings.json, marks the step custom and says it applies from the next run;
   P4  Default puts it back (the step no longer custom, the old keys at their defaults);
   P5  the old pickers are gone from the News tab and AI Analysis Controls, which point here;
   P6  the repository lists the models and Add puts a new one in the pickers;
@@ -201,16 +201,19 @@ if at:
     check(any(s.key == "ms_E2_model_2" for s in at.sidebar.selectbox), "P3: Add a model adds a row")
     at.sidebar.selectbox(key="ms_E2_model_2").set_value("models/gemini-3.6-flash").run()
     at.sidebar.number_input(key="ms_E2_attempts_0").set_value(4).run()
+    check(at.sidebar.number_input(key="ms_E2_timeout_0").value == 150, "P3: each model's timeout starts at 150 seconds")
+    at.sidebar.number_input(key="ms_E2_timeout_2").set_value(90).run()
     at.sidebar.selectbox(key="ms_E2_budget").set_value(2048).run()
     at.sidebar.button(key="ms_save_E2").click().run()
     saved = settings_file()["ai_models"].get("E2")
-    check(saved == {"chain": [{"model": "models/gemini-3.5-flash-lite", "attempts": 4}, {"model": "models/gemma-4-26b-a4b-it", "attempts": 1},
-                              {"model": "models/gemini-3.6-flash", "attempts": 1}], "budget": 2048},
+    check(saved == {"chain": [{"model": "models/gemini-3.5-flash-lite", "attempts": 4, "timeout": 150},
+                              {"model": "models/gemma-4-26b-a4b-it", "attempts": 1, "timeout": 150},
+                              {"model": "models/gemini-3.6-flash", "attempts": 1, "timeout": 90}], "budget": 2048},
           f"P3: Save writes the chain, each model's tries and the budget to settings.json ({saved})")
     notice = " ".join(m.value for m in at.sidebar.success)
     check("Expert Take · write-up" in notice and "Applies from its next run" in notice, f"P3: it says when it applies ({notice[:90]})")
     lines, text = step_lines(at)
-    check(lines[("Expert Take", "write-up")] == "- write-up: `gemini-3.5-flash-lite ×4 → gemma-4-26b-a4b-it → gemini-3.6-flash` · thinking 2k · ✎ custom",
+    check(lines[("Expert Take", "write-up")] == "- write-up: `gemini-3.5-flash-lite ×4 → gemma-4-26b-a4b-it → gemini-3.6-flash @90s` · thinking 2k · ✎ custom",
           f"P3: the list shows the step custom with its new chain ({lines[('Expert Take', 'write-up')]})")
     at.sidebar.button(key="ms_del_E2").click().run()
     check(not any(s.key == "ms_E2_model_2" for s in at.sidebar.selectbox), "P3: Remove last removes a row")

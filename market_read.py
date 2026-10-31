@@ -45,7 +45,7 @@ PRIMARY_MODEL = "models/gemini-3.8-flash"
 PRIMARY_ATTEMPTS = 4
 FALLBACK_MODELS = ("models/gemini-3.6-flash", "models/gemini-3.5-flash-lite")
 THINKING_BUDGET = 4096
-CALL_TIMEOUT_S = 120
+CALL_TIMEOUT_S = 150      # a call not answered by then fails and the ladder moves on (owner, 2026-10-31)
 
 # Reads kept per index, and how many of the latest go back into the prompt.
 KEEP_ENTRIES = 10

@@ -216,9 +216,12 @@ def json_object(text):
 
 def run_model_ladder(client, prompt, tiers, config_for, label="llm", subject="",
                      timeout=CALL_TIMEOUT_SECONDS, on_success=None):
-    """Try each (model, backoff) tier in order until one answers.
+    """Try each (model, backoff[, timeout]) tier in order until one answers.
 
-    `tiers` is a list of (model_id, sleep_seconds_before_attempt). `config_for`
+    `tiers` is a list of (model_id, sleep_seconds_before_attempt) or, since the sidebar's per-model
+    timeout (model_settings, 2026-10-31), (model_id, sleep_seconds_before_attempt, call_timeout_seconds):
+    a tier's own timeout beats the ladder's `timeout`, and a call that has not answered by then
+    fails and the ladder moves on. `config_for`
     maps a model id to its GenerateContentConfig -- a callable because the
     thinking-budget config is only valid on non-Gemma models. `on_success`, if
     given, converts the raw response into the return value.
@@ -231,11 +234,13 @@ def run_model_ladder(client, prompt, tiers, config_for, label="llm", subject="",
     # With the grounded searches now running every rung on ONE model, the key is
     # the only thing that varies between attempts.
     avoid_key = None
-    for model, backoff in tiers:
+    for tier in tiers:
+        model, backoff = tier[0], tier[1]
+        tier_timeout = tier[2] if len(tier) > 2 and tier[2] else timeout
         if backoff:
             time.sleep(backoff)
         try:
-            resp = generate_with_timeout(client, model, prompt, config_for(model), timeout=timeout,
+            resp = generate_with_timeout(client, model, prompt, config_for(model), timeout=tier_timeout,
                                          avoid_key=avoid_key)
             return (on_success(resp) if on_success else resp), model
         except Exception as e:

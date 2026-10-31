@@ -212,7 +212,7 @@ class _Resp:
 
 def _ladder(texts):
     def run(client, prompt, tiers, config_for, label="", subject="", timeout=None, on_success=None):
-        for (model, _), text in zip(tiers, texts):
+        for (model, *_), text in zip(tiers, texts):
             calls.append(text)
             try:
                 return (on_success(_Resp(text)) if on_success else _Resp(text)), model

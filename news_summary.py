@@ -461,14 +461,17 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None,
     last_exc = None
     avoid_key = None
     unavailable = set()
-    for attempt_model, backoff in tiers:
+    for tier in tiers:
+        attempt_model, backoff = tier[0], tier[1]
+        # A rung from the sidebar's chain carries its own timeout (model_settings); the old ones don't.
+        attempt_timeout = tier[2] if len(tier) > 2 and tier[2] else CALL_TIMEOUT_SECONDS
         if attempt_model in unavailable:
             continue
         if backoff:
             time.sleep(backoff)
         try:
             resp = _generate_with_timeout(client, attempt_model, prompt, config,
-                                          timeout=CALL_TIMEOUT_SECONDS, avoid_key=avoid_key)
+                                          timeout=attempt_timeout, avoid_key=avoid_key)
             return (resp.text or "").strip(), _extract_sources(resp)
         except Exception as e:
             last_exc = e
