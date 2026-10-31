@@ -113,6 +113,7 @@ from breadth_math import compute_breadth, assemble_closes
 import breadth_charts
 import index_registry
 import quarterly_results
+import market_read
 import llm_util
 from alerts import (load_rules, save_rules, preview_rules, DISCORD_CONFIG_FILE,
                      send_discord_batch, build_discord_messages_for_rule, describe_schedule, DISCLAIMER,
@@ -5650,7 +5651,33 @@ with tab_news:
                     "uses TODAY's index members, so earlier years read somewhat stronger than they were "
                     "(survivorship bias)."
                 )
-            
+
+            # The market read (owner, 2026-10-31): a few sentences per index on what its
+            # charts say, written twice a day by market-read.yml into market_read.json.
+            # Behind an (i) button, one per column, so it takes no room until asked for;
+            # opening one pushes the charts down. Plain session keys (not widget state)
+            # hold which are open, so they survive reruns and a trip to another tab.
+            _read_data = market_read.load_market_read()
+
+            def _flip_market_read(state_key):
+                st.session_state[state_key] = not st.session_state.get(state_key, False)
+
+            _read_cols = st.columns(2)
+            for _rcol, _rkey, _rlabel, _rstate in (
+                    (_read_cols[0], "INDIA", "Nifty 500", "market_read_open_ind"),
+                    (_read_cols[1], right_breadth_key, right_index_label, "market_read_open_right")):
+                with _rcol:
+                    st.button(f"ⓘ {_rlabel} read", key=f"{_rstate}_button", on_click=_flip_market_read,
+                              args=(_rstate,),
+                              help="What this index's charts say, written after each market's close "
+                                   "(Nifty 7:15 AM ET, US 5:15 PM ET).")
+                    if st.session_state.get(_rstate):
+                        with st.container(border=True):
+                            _rix = index_registry.BY_KEY.get(_rkey) or {}
+                            st.markdown(market_read.box_markdown(
+                                market_read.latest_entry(_read_data, _rkey), _rlabel,
+                                "7:15 AM ET" if _rix.get("region") == "INDIA" else "5:15 PM ET"))
+
             # market_breadth.json's "INDIA"/"US" keys are fixed national-index
             # breadth (Nifty 500 / S&P 500), independent of the watchlist
             # registry -- NOT renamed alongside markets.json/watchlist.json, so
