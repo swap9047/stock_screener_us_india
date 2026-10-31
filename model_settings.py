@@ -7,7 +7,7 @@ One table, STEPS, names every place the codebase calls a model:
     N1 News grounded search          N2 News significance filter        N3 News collation
     E1 Expert Take search            E2 Expert Take write-up
     F1 Sentiment broad search        F2 Sentiment targeted-retry search F3 Sentiment reasoning
-    R1 Market read
+    R1 Market read                  R2 Market read, invested lists
 
 A step's CHAIN is an ordered list of {"model", "attempts", "timeout"}: each model is tried `attempts`
 times (on a freshly rotated key, llm_util's `avoid_key`) before the next one, and a call that has not
@@ -76,6 +76,8 @@ STEPS = {
     "F3": {"group": "Sentiment", "label": "Sentiment · reasoning (both passes)", "kind": "reasoning",
            "shape": "run", "chain": [(FLASH_LITE, 2), (GEMMA_26B, 1)], "budget": 8192},
     "R1": {"group": "Market read", "label": "Market read · the index charts' summary", "kind": "read",
+           "shape": "run", "chain": [(FLASH_38, 4), (FLASH_36, 1), (FLASH_LITE, 1)], "budget": 4096},
+    "R2": {"group": "Market read", "label": "Market read · invested lists and takeaways", "kind": "read",
            "shape": "run", "chain": [(FLASH_38, 4), (FLASH_36, 1), (FLASH_LITE, 1)], "budget": 4096},
 }
 

@@ -8,6 +8,8 @@ the repo (as test_results_render.py), over synthetic prices, breadth and market_
       are all still drawn; a second click closes it;
   V3  only Nifty 500 and the S&P 500 get a read: any other right-hand index has no (i)
       button, just a line saying so; the S&P 500 reads follow the dropdown back;
+  V6  the Watchlist Breadth panels have their own (i) buttons (India Invested, US Invested): a click opens the list's
+      read with its market line, parts and key takeaways; a panel showing another list says reads are for the two;
   V4  no market_read.json at all (a fresh install) renders cleanly with the same message;
   V5  a phone renders the buttons and the box cleanly.
 """
@@ -129,7 +131,16 @@ READS = {"generated_at": "2026-10-31T11:20:00Z", "indexes": {
     "US": {"label": "S&P 500", "entries": [
         {"session": "2026-10-30", "written": "2026-10-30 21:20 UTC", "model": "models/gemini-3.6-flash",
          "headline": "S&P 500 is a narrow rally", "breadth": "Cost $5 of breadth.", "highs_lows": "Highs are thin.",
-         "drawdown": None, "return": None}]}}}
+         "drawdown": None, "return": None}]}},
+    "lists": {
+        "india_invested": {"label": "India Invested", "entries": [
+            {"session": "2026-10-30", "written": "2026-10-31 11:25 UTC", "model": "models/gemini-3.8-flash", "benchmark": "Nifty 500",
+             "headline": "India Invested holds up far better than the market", "market": "The list diverges from a weak Nifty.",
+             "breadth": "83.9% above the 200-day average.", "stocks": "Beta Foods sits near its 52-week low.",
+             "takeaways": ["Leadership is narrow.", "Watch Beta Foods."]}]},
+        "us_invested": {"label": "US Invested", "entries": [
+            {"session": "2026-10-30", "written": "2026-10-30 21:25 UTC", "model": "models/gemini-3.6-flash", "benchmark": "S&P 500",
+             "headline": "US Invested lags the S&P 500", "takeaways": ["Few holdings.", "One near its low."]}]}}}
 
 import breadth_charts
 from streamlit.testing.v1 import AppTest
@@ -160,7 +171,12 @@ def md(at):
 
 
 def read_buttons(at):
-    return [b.label for b in at.button if b.label.startswith("ⓘ")]
+    """The index reads' buttons (the invested lists' have their own, below)."""
+    return [b.label for b in at.button if b.label.startswith("ⓘ") and "Invested" not in b.label]
+
+
+def list_buttons(at):
+    return [b.label for b in at.button if b.label.startswith("ⓘ") and "Invested" in b.label]
 
 
 L, R = "market_read_open_ind_button", "market_read_open_right_button"
@@ -209,6 +225,35 @@ at = render(mobile=True, clicks=[L, R])
 if at:
     check(read_buttons(at) == ["ⓘ Nifty 500 read", "ⓘ S&P 500 read"] and "Nifty breadth is washed out" in md(at)
           and "S&P 500 is a narrow rally" in md(at), "V5: a phone renders both buttons and both boxes")
+
+# V6 the invested lists' reads
+LL, LR = "list_read_open_left_button", "list_read_open_right_button"
+at = render()
+if at:
+    check(list_buttons(at) == ["ⓘ India Invested read", "ⓘ US Invested read"], f"V6: a button per Watchlist Breadth panel ({list_buttons(at)})")
+    check("holds up far better" not in md(at), "V6: nothing of a list read is drawn until one is clicked")
+at = render(clicks=[LL])
+if at:
+    t = md(at)
+    check("India Invested holds up far better than the market" in t and "**The market.** The list diverges from a weak Nifty." in t
+          and "**Holdings.** Beta Foods sits near its 52-week low." in t and "**Key takeaways**" in t and "- Leadership is narrow." in t
+          and "against Nifty 500" in t and "US Invested lags" not in t and "Nifty breadth is washed out" not in t,
+          "V6: the left panel's button opens India Invested's read: market line, holdings, takeaways as bullets, its benchmark")
+    at.button(key=LL).click().run()
+    check("holds up far better" not in md(at), "V6: a second click closes it")
+at = render(clicks=[LR])
+if at:
+    check("US Invested lags the S&P 500" in md(at) and "- Few holdings." in md(at), "V6: the right panel's button opens US Invested's read")
+at = render()
+if at:
+    at.session_state["breadth_watchlist_left"] = "all_invested"
+    at.run()
+    check(not at.exception and list_buttons(at) == ["ⓘ US Invested read"]
+          and any("Reads are written for India Invested and US Invested only." in c.value for c in at.caption),
+          "V6: a panel showing another list has no button, and says reads are for the two")
+at = render(mobile=True, clicks=[LL, LR])
+if at:
+    check("India Invested holds up far better" in md(at) and "US Invested lags" in md(at), "V6: a phone renders both list boxes")
 
 print("FAILURES:", fails)
 sys.exit(fails)

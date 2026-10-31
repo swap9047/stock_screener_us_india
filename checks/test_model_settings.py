@@ -72,8 +72,8 @@ want = llm_util.same_model_tiers(F38, attempts=4) + [(F36, 0), (L, 0)]
 check(two(ms.tiers("R1", CLEAN)) == want, "S1: R1 is 3.8-flash x4, then 3.6-flash, then flash-lite (what market_read had)")
 check([ms.budget(s, CLEAN) for s in ("N1", "N2", "N3", "E2", "F3", "R1")] == [None, 8192, 8192, 8192, 8192, 4096],
       "S1: the default thinking budgets (none for a search)")
-check(all(ms.resolve(s, CLEAN)["source"] == "default" for s in ms.STEPS) and len(ms.STEPS) == 9,
-      "S1: nine steps, none custom")
+check(all(ms.resolve(s, CLEAN)["source"] == "default" for s in ms.STEPS) and len(ms.STEPS) == 10,
+      "S1: ten steps, none custom")
 
 # --- S2 the old keys still decide ------------------------------------------------------------------
 old = {"ai_models": {}, "news_reasoning_model": "gemini-3.5-flash-lite", "news_reasoning_budget": 8192}

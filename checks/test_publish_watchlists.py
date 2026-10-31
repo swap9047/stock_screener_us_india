@@ -152,6 +152,21 @@ check(len(qc.log) == 1 and "INSERT INTO kg_market_meta" in qc.log[0][0] and "ON 
       and qc.log[0][1][0] == "quarterly_results" and json.loads(qc.log[0][1][1]) == json.loads(json.dumps(payload)),
       "quarterly: stored whole under kg_market_meta's 'quarterly_results' key (no new table)")
 
+# --- the News tab's market reads for Claude chat (2026-10-31) --------------------------------------------
+READS = {"generated_at": "2026-10-31T04:36:40Z", "indexes": {
+    "INDIA": {"label": "Nifty 500", "entries": [{"session": "2026-10-30", "headline": "h", "breadth": "b"}, {"headline": "no session"}, "junk"]},
+    "US": {"label": "S&P 500", "entries": []}, "NIFTY50": "junk"}}
+rp = pm.reads_payload(READS)
+check(rp == {"generated_at": "2026-10-31T04:36:40Z", "indexes": {"INDIA": {"label": "Nifty 500", "entries": [{"session": "2026-10-30", "headline": "h", "breadth": "b"}]}}, "lists": {}},
+      f"reads: an index's entries with a session are published; an empty or malformed index is left out ({rp})")
+check(pm.reads_payload({}) is None and pm.reads_payload(None) is None and pm.reads_payload({"indexes": {"US": {"entries": []}}}) is None,
+      "reads: no file, or no read in it, publishes nothing")
+rc = _QConn()
+pm.write_reads(rc, rp)
+check(len(rc.log) == 1 and "INSERT INTO kg_market_meta" in rc.log[0][0] and "ON CONFLICT (key) DO UPDATE" in rc.log[0][0]
+      and rc.log[0][1][0] == "market_read" and json.loads(rc.log[0][1][1]) == rp,
+      "reads: stored whole under kg_market_meta's 'market_read' key (no new table)")
+
 # --- closes: two years, every stock and benchmark, from the first block holding it ----------------------
 prices = pm.price_series(perf, lists, today=date(2026, 10, 22))
 check(set(prices) == {"ZED.NS", "ACME.NS", "ACME", "NEW.NS", "^CRSLDX", "SPY", "QQQ"},

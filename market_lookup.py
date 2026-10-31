@@ -181,6 +181,15 @@ class MarketDB:
             return {}
         return value if isinstance(value, dict) else {}
 
+    def market_read(self):
+        """The News tab's market reads (publish_market.reads_payload), or {}."""
+        rows = self._all("SELECT value FROM kg_market_meta WHERE key = 'market_read'")
+        try:
+            value = json.loads(rows[0]["value"]) if rows else {}
+        except (TypeError, ValueError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
     def prices(self, tickers, since):
         """{ticker: [(date, close)]} oldest first."""
         out = {}
