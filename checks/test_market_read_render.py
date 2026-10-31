@@ -6,8 +6,8 @@ the repo (as test_results_render.py), over synthetic prices, breadth and market_
   V2  a click opens that index's latest read (headline, then the charts in drawing order,
       the footer with session and model), the other column stays closed, the charts
       are all still drawn; a second click closes it;
-  V3  the right-hand index follows its dropdown: a Nifty index with no read yet says
-      the 7:15 AM ET run writes it, a US one the 5:15 PM ET run;
+  V3  only Nifty 500 and the S&P 500 get a read: any other right-hand index has no (i)
+      button, just a line saying so; the S&P 500 reads follow the dropdown back;
   V4  no market_read.json at all (a fresh install) renders cleanly with the same message;
   V5  a phone renders the buttons and the box cleanly.
 """
@@ -189,15 +189,16 @@ if at:
     check("S&P 500 is a narrow rally" in t2 and "Cost \\$5 of breadth." in t2 and "Nifty breadth is washed out" not in t2,
           "V2: the S&P button opens the S&P read, with the dollar sign escaped")
 
-at = render(right="Nifty 50", clicks=[R])
+for other in ("Nifty 50", "Nasdaq 100"):
+    at = render(right=other)
+    if at:
+        check(read_buttons(at) == ["ⓘ Nifty 500 read"]
+              and any("Reads are written for Nifty 500 and the S&P 500 only." in c.value for c in at.caption),
+              f"V3: with {other} on the right there is no (i) button there, and a line says only the two get reads")
+at = render(right="S&P 500", clicks=[R])
 if at:
-    check(read_buttons(at) == ["ⓘ Nifty 500 read", "ⓘ Nifty 50 read"]
-          and "No read for Nifty 50 yet -- it is written after the 7:15 AM ET run." in md(at),
-          "V3: the right button follows the dropdown; a Nifty index with no read says the 7:15 AM ET run writes it")
-at = render(right="Nasdaq 100", clicks=[R])
-if at:
-    check("No read for Nasdaq 100 yet -- it is written after the 5:15 PM ET run." in md(at),
-          "V3: a US index with no read says the 5:15 PM ET run")
+    check(read_buttons(at) == ["ⓘ Nifty 500 read", "ⓘ S&P 500 read"] and "S&P 500 is a narrow rally" in md(at),
+          "V3: the S&P 500 on the right has its button and read")
 
 at = render(reads=False, clicks=[L])
 if at:

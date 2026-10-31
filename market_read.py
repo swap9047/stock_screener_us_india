@@ -1,6 +1,6 @@
 """The News tab's "market read": a few sentences on what the index charts say.
 
-For each index (Nifty 500, S&P 500, ... every index_registry entry) and each of
+For each index that gets a read (Nifty 500 and the S&P 500: READ_INDEX_KEYS) and each of
 the four charts the tab draws for it -- % of stocks above the 200/50-day SMA,
 52-week highs vs lows, % of stocks 10/20/30/40% below their 52-week high, and
 your invested list against the index -- code works out
@@ -50,6 +50,10 @@ CALL_TIMEOUT_S = 120
 # Reads kept per index, and how many of the latest go back into the prompt.
 KEEP_ENTRIES = 10
 PRIOR_READS = 3
+
+# The indexes that get a read (owner, 2026-10-31: Nifty 500 and the S&P 500 only). Their keys are
+# index_registry's "INDIA" and "US"; the other four indexes the News tab can show are not written.
+READ_INDEX_KEYS = ("INDIA", "US")
 
 # In the order the charts are drawn.
 SECTIONS = ("breadth", "highs_lows", "drawdown", "return")
@@ -518,15 +522,16 @@ def sessions_to_write(block, existing, backfill=0, force=False):
 
 
 def run(client, breadth, perf, watchlists, data, now=None, backfill=0, force=False, log=print,
-        tiers=None, budget=None):
+        tiers=None, budget=None, on_write=None):
     """Write the missing reads into `data`. Returns (written, awaiting, failed): counts
     of reads written, indexes whose reading is still forming or part-published, and
-    reads every rung failed on."""
+    reads every rung failed on. Only READ_INDEX_KEYS are read. `on_write()` is called after each read is
+    added, so a caller can save as it goes (a run cut short keeps what it wrote)."""
     now = now or datetime.now(timezone.utc)
     markets = (breadth or {}).get("markets") or {}
     status = (breadth or {}).get("status") or {}
     written = awaiting = failed = 0
-    for ix in index_registry.INDEXES:
+    for ix in (i for i in index_registry.INDEXES if i["key"] in READ_INDEX_KEYS):
         block = markets.get(ix["key"]) or {}
         if not block.get("history"):
             log(f"[market read] {ix['label']}: no breadth stored yet")
@@ -549,4 +554,6 @@ def run(client, breadth, perf, watchlists, data, now=None, backfill=0, force=Fal
                                                      "model": model, **read})
             log(f"[market read] {ix['label']} {session}: written by {model}")
             written += 1
+            if on_write:
+                on_write()
     return written, awaiting, failed
