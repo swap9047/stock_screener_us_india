@@ -97,6 +97,7 @@ PULLABLE_FILES = [
     "market_breadth.json",
     "dashboard_perf.json",
     "quarterly_results.json",     # the News tab's quarterly results charts (2026-10-28)
+    "market_read.json",           # the News tab's (i) market reads, written twice a day (2026-10-31)
     "weekly_wrapup_state.json",   # read by the Alert Rules tab's wrap-up preview
 ]
 
