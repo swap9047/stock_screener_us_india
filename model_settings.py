@@ -18,7 +18,8 @@ are the defaults, so nothing changes until a step is saved:
     reasoning   3.5-flash-lite x2, then gemma-26b x1          (llm_util.standard_tiers)
     collation   3.7-flash x2 and 3.6-flash x2 ALTERNATING, then 3.5-flash-lite x1
                                                               (llm_util.retry_pair_tiers + a last resort)
-    market read 3.8-flash x4, then 3.6-flash x1 (no flash-lite: owner, 2026-10-31)
+    market read 3.8-flash x4, then 3.6-flash x1 (no flash-lite: owner, 2026-10-31); the invested
+                lists' read (R2) gets 3.6-flash x4
 
 The settings that used to be edited by the News tab's and AI Analysis Controls' pickers
 (news_reasoning_model, expert_thinking_budget, ...) are still honored when a step has no saved
@@ -77,8 +78,9 @@ STEPS = {
            "shape": "run", "chain": [(FLASH_LITE, 2), (GEMMA_26B, 1)], "budget": 8192},
     "R1": {"group": "Market read", "label": "Market read · the index charts' summary", "kind": "read",
            "shape": "run", "chain": [(FLASH_38, 4), (FLASH_36, 1)], "budget": 4096},
+    # R2 (owner, 2026-10-31): 3.6-flash gets 4 tries too, each on another key -- the invested-list read is the longer one
     "R2": {"group": "Market read", "label": "Market read · invested lists and takeaways", "kind": "read",
-           "shape": "run", "chain": [(FLASH_38, 4), (FLASH_36, 1)], "budget": 4096},
+           "shape": "run", "chain": [(FLASH_38, 4), (FLASH_36, 4)], "budget": 4096},
 }
 
 # The settings.json keys each step's model and budget were edited under before the sidebar panel.

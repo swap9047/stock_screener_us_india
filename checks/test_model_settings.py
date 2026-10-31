@@ -70,6 +70,7 @@ want = llm_util.retry_pair_tiers(F37, F36, backoff=30) + [(L, 30)]
 check(two(ms.tiers("N3", CLEAN, pair_backoff=30)) == want, f"S1: N3 alternates 3.7 and 3.6 twice, then flash-lite after 30 s: {ms.tiers('N3', CLEAN)}")
 want = llm_util.same_model_tiers(F38, attempts=4) + [(F36, 0)]
 check(two(ms.tiers("R1", CLEAN)) == want, "S1: R1 is 3.8-flash x4, then 3.6-flash (what market_read has; no flash-lite)")
+check([t[0] for t in ms.tiers("R2", CLEAN)] == [F38] * 4 + [F36] * 4, f"S1: R2 is 3.8-flash x4, then 3.6-flash x4 (owner, 2026-10-31): {[t[0][-9:] for t in ms.tiers('R2', CLEAN)]}")
 check([ms.budget(s, CLEAN) for s in ("N1", "N2", "N3", "E2", "F3", "R1")] == [None, 8192, 8192, 8192, 8192, 4096],
       "S1: the default thinking budgets (none for a search)")
 check(all(ms.resolve(s, CLEAN)["source"] == "default" for s in ms.STEPS) and len(ms.STEPS) == 10,
