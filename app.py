@@ -5812,13 +5812,14 @@ with tab_news:
 
             # The market read (owner, 2026-10-31): a few sentences per index on what its
             # charts say, written twice a day by market-read.yml into market_read.json.
-            # Behind an (i) button, one per column, so it takes no room until asked for;
-            # opening one pushes the charts down. Plain session keys (not widget state)
-            # hold which are open, so they survive reruns and a trip to another tab.
+            # Open when the tab loads (owner, 2026-10-31), with an (i) button per column
+            # that folds it away; an open box pushes the charts down. Plain session keys
+            # (not widget state) hold what the viewer changed, so it survives reruns and a
+            # trip to another tab.
             _read_data = market_read.load_market_read()
 
-            def _flip_market_read(state_key):
-                st.session_state[state_key] = not st.session_state.get(state_key, False)
+            def _flip_market_read(state_key, default=False):
+                st.session_state[state_key] = not st.session_state.get(state_key, default)
 
             _read_cols = st.columns(2)
             for _rcol, _rkey, _rlabel, _rstate in (
@@ -5829,10 +5830,10 @@ with tab_news:
                         st.caption("Reads are written for Nifty 500 and the S&P 500 only.")
                         continue
                     st.button(f"ⓘ {_rlabel} read", key=f"{_rstate}_button", on_click=_flip_market_read,
-                              args=(_rstate,),
+                              args=(_rstate, True),
                               help="What this index's charts say, written after each market's close "
                                    "(Nifty 7:15 AM ET, US 5:15 PM ET).")
-                    if st.session_state.get(_rstate):
+                    if st.session_state.get(_rstate, True):
                         with st.container(border=True):
                             _rix = index_registry.BY_KEY.get(_rkey) or {}
                             st.markdown(market_read.box_markdown(
