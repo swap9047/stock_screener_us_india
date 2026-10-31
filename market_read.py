@@ -88,12 +88,12 @@ ADVICE_WORDS = re.compile(
 
 # The facts' own field names must not leak into the prose ("the 1y most high of 19.9%", "pct_above"): a read
 # is for an investor. The first reads written by the smallest model did exactly that.
-INTERNAL_NAMES = re.compile(r"\b1-?y(?:ear)?\s+most\b|\bmost\s+(?:highs?|lows?)\s+(?:level|peak)\b|\bat_1y|_pct\b|_points\b"
+INTERNAL_NAMES = re.compile(r"\b(?:1|12)-?(?:y|year|month)s?\s+most\b|\bmost\s+(?:highs?|lows?)\s+(?:level|peak)\b|\bat_1y|_pct\b|_points\b"
                             r"|\bsessions_in\b|\bshare_of\b|\bbreadth_vs_index\b", re.I)
 
 # Numbers a read may use without the facts holding them: the chart's own lines and
 # windows ("50% line", "200-day", "52-week", "20 sessions").
-FIXED_NUMBERS = {20, 50, 80, 100, 200, 52, 1, 2, 3, 4, 5, 10}
+FIXED_NUMBERS = {20, 50, 80, 100, 200, 52, 1, 2, 3, 4, 5, 10, 30, 40}
 
 
 def r1(x):
@@ -412,6 +412,7 @@ def build_prompt(label, facts, prior):
 
 
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
+_PERIOD = re.compile(r"\b\d+(?:\.\d+)?[- ]?(?:months?|years?|weeks?)\b", re.I)
 
 
 def _numbers_in(value, found):
@@ -437,6 +438,9 @@ def unknown_numbers(text, facts):
     known = set()
     _numbers_in(facts, known)
     bad = []
+    # A period's length is not a data point: "12-month peak", "6 months", "1-year": the first live run refused
+    # a good Nifty read for writing "12-month" on a day the facts held no 12.
+    text = _PERIOD.sub(" ", text)
     for m in _NUMBER.findall(text):
         n = float(m)
         if n in FIXED_NUMBERS:
@@ -618,7 +622,9 @@ def run(client, breadth, perf, watchlists, data, now=None, backfill=0, force=Fal
             if not read:
                 log(f"[market read] {ix['label']} {session}: every model failed")
                 failed += 1
-                break
+                if session == todo[-1]:
+                    break
+                continue                  # an older session (backfill) must not cost the latest its read
             add_entry(data, ix["key"], ix["label"], {"session": session, "written": now.strftime("%Y-%m-%d %H:%M UTC"),
                                                      "model": model, **read})
             log(f"[market read] {ix['label']} {session}: written by {model}")

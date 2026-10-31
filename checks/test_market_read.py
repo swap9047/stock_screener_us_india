@@ -190,6 +190,12 @@ check(refused({"headline": "Time to buy the dip."}) and refused({"breadth": "A g
 check(not refused({"breadth": "Selling pressure is easing in the short-term; buyers are returning (15%)."})
       and not refused({"headline": "Short covering can lift a washed-out market."}),
       "M2: ordinary market language (selling pressure, short-term, buyers) is not advice")
+check(not refused({"breadth": "Lows of 12% sit far below the 12-month peak, and the 6-month and 1-year views agree (15%)."})
+      and not refused({"drawdown": "The share down 40% or more is steady, and 30% or more too (15%)."})
+      and refused({"breadth": "Lows exceeded highs for 987 sessions (15%)."}) and refused({"breadth": "A 13-month stretch of 987 sessions."}),
+      "M2: a period's length (12-month, 6-month, 1-year) and the chart's own 30/40% levels are not data points; an invented count still is")
+check(refused({"highs_lows": "Lows hit the 12-month most lows reading (12%)."}) and refused({"breadth": "A 1-year most high of 5%."}),
+      "M2: 'the 12-month most lows reading' is the field name too")
 check(refused({"breadth": "x" * 800}) and refused({"breadth": 12}), "M2: too long or not text is refused")
 check(refused({"breadth": "Highs remain below the 1y most high of 15%."}) and refused({"highs_lows": "Lows hit the 1-year most lows level (12%)."})
       and refused({"breadth": "breadth_vs_index says diverging."}) and not refused({"breadth": "Breadth is 15% against a 12-month high of 60%."}),
@@ -318,6 +324,15 @@ res = mr.run(None, BREADTH, PERF, LISTS, data2, backfill=2, log=lambda *_: None)
 india = [x for x in written_calls if x[0] == "Nifty 500"]
 check(res[0] == 6 and [x[1] for x in india] == D[-3:] and india[2][2] == D[-3:-1] and india[0][2] == [],
       f"M5: backfill 2 writes the two earlier sessions first, and each read sees the ones before it ({india})")
+def flaky(client, label, facts_, prior_, **kw):
+    return (None, None) if facts_["session"] == D[-2] else stub_generate(client, label, facts_, prior_)
+
+
+mr.generate_read = flaky
+d_flaky = {}
+res = mr.run(None, BREADTH, PERF, LISTS, d_flaky, backfill=1, log=lambda *_: None)
+check(res == (2, 0, 2) and [e["session"] for e in mr.entries_for(d_flaky, "INDIA")] == [D[-1]],
+      f"M5: with backfill, an older session no model could write does not cost the latest its read ({res})")
 mr.generate_read = lambda *a, **k: (None, None)
 data3 = {}
 res = mr.run(None, BREADTH, PERF, LISTS, data3, log=lambda *_: None)

@@ -242,6 +242,15 @@ check(w == 1 and set(d3["lists"]) == {"us_invested"}, "L6: a list whose home ind
 d4 = {}
 w, _ = lr.run_lists(None, BREADTH, PERF, {"india_invested": [], "us_invested": LISTS["us_invested"]}, d4, SNAP, QUARTERLY, log=lambda *_: None)
 check(w == 1 and set(d4["lists"]) == {"us_invested"}, "L6: a list with no stocks is skipped")
+def flaky_list(client, label, facts_, prior_, **kw):
+    return (None, None) if facts_["session"] == D[-2] else stub(client, label, facts_, prior_)
+
+
+lr.generate_list_read = flaky_list
+d_flaky = {}
+w, f_ = lr.run_lists(None, BREADTH, PERF, LISTS, d_flaky, SNAP, QUARTERLY, backfill=1, log=lambda *_: None)
+check((w, f_) == (2, 2) and [e["session"] for e in mr.entries_for(d_flaky, "india_invested", "lists")] == [D[-1]],
+      f"L6: with backfill, an older session no model could write does not cost the latest its read ({w}, {f_})")
 lr.generate_list_read = lambda *a, **k: (None, None)
 d5 = {}
 w, f_ = lr.run_lists(None, BREADTH, PERF, LISTS, d5, SNAP, QUARTERLY, log=lambda *_: None)

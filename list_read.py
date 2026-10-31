@@ -309,7 +309,9 @@ def run_lists(client, breadth, perf, watchlists, data, snapshot, quarterly, labe
             if not read:
                 log(f"[invested read] {label} {session}: every model failed")
                 failed += 1
-                break
+                if session == todo[-1]:
+                    break
+                continue                  # an older session (backfill) must not cost the latest its read
             mr.add_entry(data, list_key, label, {
                 "session": session, "written": now.strftime("%Y-%m-%d %H:%M UTC"), "model": model,
                 "benchmark": facts["benchmark"], **read}, group="lists")
