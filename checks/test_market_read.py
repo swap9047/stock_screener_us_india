@@ -10,8 +10,8 @@ Gemini client; nothing reads the real JSON.
       dates' digits, the charts' own lines) and nothing else; advice, markdown
       lengths, a chart without facts and an empty read are refused;
   M3  the prompt carries the facts and only the last three earlier reads, no ticker;
-  M4  the ladder: 3.8-flash four times each on another key, then 3.6-flash, then
-      3.5-flash-lite, every rung at a 4096 thinking budget in JSON mode; a read that
+  M4  the ladder: 3.8-flash four times each on another key, then 3.6-flash
+      (no flash-lite rung), every rung at a 4096 thinking budget in JSON mode; a read that
       fails the check moves on like an error;
   M5  the job: only Nifty 500 and the S&P 500 are read (the other four indexes never),
       a reading still forming waits, a final one is written once (a second run writes
@@ -265,13 +265,13 @@ GOOD = json.dumps({"headline": "Breadth is washed out at 15.0%.", "breadth": Non
                    "drawdown": None, "return": None})
 BAD_NUMBER = json.dumps({"headline": "Breadth is 33.3%.", "breadth": None, "highs_lows": None, "drawdown": None, "return": None})
 
-c = FakeClient([Err(503, "overloaded")] * 4 + [BAD_NUMBER, GOOD])
+c = FakeClient([Err(503, "overloaded")] * 4 + [BAD_NUMBER])
 read, model = mr.generate_read(c, "Nifty 500", f, [])
 seq = [x["model"] for x in c.calls]
 check(seq[:4] == ["models/gemini-3.8-flash"] * 4, f"M4: four 3.8-flash attempts first ({seq})")
-check(model == "models/gemini-3.5-flash-lite" and read["headline"].startswith("Breadth is washed out"),
-      f"M4: 3.6-flash's reply quoting a number the facts lack is refused, flash-lite's good one is used ({model})")
-check(seq[4] == "models/gemini-3.6-flash" and len(seq) == 6, f"M4: then 3.6-flash, then 3.5-flash-lite ({seq})")
+check((read, model) == (None, None),
+      f"M4: 3.6-flash's reply quoting a number the facts lack is refused, and no rung is left to try ({model})")
+check(seq[4:] == ["models/gemini-3.6-flash"] and len(seq) == 5, f"M4: then 3.6-flash, and nothing after it ({seq})")
 check(all(c.calls[i]["avoid"] == c.calls[i - 1]["key"] and c.calls[i]["key"] != c.calls[i - 1]["key"] for i in range(1, 4)),
       f"M4: each retry is on a different key ({[x['key'] for x in c.calls[:4]]})")
 cfg = c.calls[0]["config"]
@@ -281,10 +281,10 @@ check(cfg.thinking_config.thinking_budget == 4096 and cfg.response_mime_type == 
 c = FakeClient([GOOD])
 read, model = mr.generate_read(c, "Nifty 500", f, [])
 check(model == "models/gemini-3.8-flash" and len(c.calls) == 1, "M4: a good first reply costs one call")
-c = FakeClient([Err(503, "overloaded")] * 6)
-check(mr.generate_read(c, "Nifty 500", f, []) == (None, None) and len(c.calls) == 6,
-      "M4: every rung failing gives (None, None) after six calls")
-c = FakeClient(["not json"] * 6)
+c = FakeClient([Err(503, "overloaded")] * 5)
+check(mr.generate_read(c, "Nifty 500", f, []) == (None, None) and len(c.calls) == 5,
+      "M4: every rung failing gives (None, None) after five calls")
+c = FakeClient(["not json"] * 5)
 check(mr.generate_read(c, "Nifty 500", f, []) == (None, None), "M4: unparseable replies are failures too")
 
 # --- M5 the job ----------------------------------------------------------------------------
