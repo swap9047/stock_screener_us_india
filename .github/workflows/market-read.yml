@@ -33,8 +33,12 @@ permissions:
   actions: read    # the slot gate reads this workflow's run history; the wait step lists the breadth runs
 
 jobs:
-  # Two slots, weekdays: 7 AM and 5 PM ET. A run may start up to 3 hours into its
-  # slot (GitHub starts scheduled runs late), then the slot is dropped.
+  # Two slots, weekdays: 7 AM and 5 PM ET. grace-hours 23 (owner, 2026-10-31): the gate
+  # always works the LATEST slot, so a run starting any time before the next slot still
+  # does a slot that was missed or failed (GitHub starts scheduled runs late and drops
+  # some), once a run's work job has succeeded the slot is done, and the next slot
+  # takes over. A run that fails (every model down, or a reading still forming) is
+  # retried by each hourly wake-up until then.
   gate:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -47,7 +51,7 @@ jobs:
         uses: ./.github/actions/slot-gate
         with:
           slots: "7,17"
-          grace-hours: "3"
+          grace-hours: "23"
           days: "MON,TUE,WED,THU,FRI"
           work-job: write_reads
           workflow-file: market-read.yml

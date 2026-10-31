@@ -328,8 +328,9 @@ on = wf.get(True) or wf.get("on")
 check(on["schedule"] == [{"cron": "15 * * * *"}] and "backfill" in on["workflow_dispatch"]["inputs"]
       and "force" in on["workflow_dispatch"]["inputs"], "M8: wakes hourly at :15; backfill and force are dispatch inputs")
 gate = next(s for s in wf["jobs"]["gate"]["steps"] if s.get("id") == "slot")["with"]
-check(gate["slots"] == "7,17" and gate["days"] == "MON,TUE,WED,THU,FRI" and gate["work-job"] == "write_reads"
-      and wf["jobs"]["gate"]["steps"][-1]["with"]["workflow-file"] == "market-read.yml", "M8: slots 7 and 17 ET on weekdays")
+check(gate["slots"] == "7,17" and gate["days"] == "MON,TUE,WED,THU,FRI" and gate["grace-hours"] == "23"
+      and gate["work-job"] == "write_reads"
+      and wf["jobs"]["gate"]["steps"][-1]["with"]["workflow-file"] == "market-read.yml", "M8: slots 7 and 17 ET on weekdays, a missed one still done up to 23 hours later")
 steps = wf["jobs"]["write_reads"]["steps"]
 uses = [s.get("uses", "") for s in steps]
 wait = next(i for i, s in enumerate(steps) if "market-breadth.yml" in s.get("run", ""))
