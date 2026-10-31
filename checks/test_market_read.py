@@ -258,7 +258,7 @@ check(mr.generate_read(c, "Nifty 500", f, []) == (None, None), "M4: unparseable 
 written_calls = []
 
 
-def stub_generate(client, label, facts, prior):
+def stub_generate(client, label, facts, prior, **kw):
     written_calls.append((label, facts["session"], [e["session"] for e in prior]))
     return {"headline": f"{label} headline", "breadth": "b", "highs_lows": None, "drawdown": None, "return": None}, "models/x"
 
@@ -284,7 +284,7 @@ res = mr.run(None, BREADTH, PERF, LISTS, data2, backfill=2, log=lambda *_: None)
 india = [x for x in written_calls if x[0] == "Nifty 500"]
 check(res[0] == 6 and [x[1] for x in india] == D[-3:] and india[2][2] == D[-3:-1] and india[0][2] == [],
       f"M5: backfill 2 writes the two earlier sessions first, and each read sees the ones before it ({india})")
-mr.generate_read = lambda *a: (None, None)
+mr.generate_read = lambda *a, **k: (None, None)
 data3 = {}
 res = mr.run(None, BREADTH, PERF, LISTS, data3, log=lambda *_: None)
 check(res == (0, 1, 2) and not data3.get("indexes"), f"M5: a failed ladder is counted and nothing is saved for it ({res})")

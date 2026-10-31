@@ -203,6 +203,12 @@ DEFAULT_SETTINGS = {
     "news_collation_fallback_model": "models/gemini-3.6-flash",
     "news_collation_thinking_budget": 8192,
     
+    # -- Model settings (the sidebar's Settings · Models; see model_settings.py) --
+    # {step: {"chain": [{"model", "attempts"}], "budget"}} for the steps saved there, and the model list
+    # it offers ([] = model_settings.DEFAULT_REPOSITORY). Not calculation settings (the "ai_" prefix).
+    "ai_models": {},
+    "ai_model_repository": [],
+
     # -- Expert Pipeline Defaults --
     "expert_reasoning_model": "models/gemini-3.5-flash-lite",
     "expert_thinking_budget": 8192,
@@ -3317,7 +3323,7 @@ def rebuild_snapshot_for_market(snap_per_market, market, tickers, fetch_new):
 # replaced (they are read only once, by the markets.json migration in
 # load_markets_registry). Flipping show_fundamental_columns used to invalidate
 # the snapshot and force a live Yahoo fetch for a column-visibility change.
-NON_CALC_SETTING_PREFIXES = ("news_", "expert_", "note_", "sentiment_")
+NON_CALC_SETTING_PREFIXES = ("ai_", "news_", "expert_", "note_", "sentiment_")
 NON_CALC_SETTING_KEYS = {"show_fundamental_columns", "benchmark_us", "benchmark_india"}
 
 

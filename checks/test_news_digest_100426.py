@@ -178,7 +178,7 @@ _saved = (ns.fetch_single_raw_news, llm_util.run_model_ladder, llm_util.make_cli
 searched = []
 
 
-def fake_search(client, ticker, market, as_of_date, ticker_names=None, model=None):
+def fake_search(client, ticker, market, as_of_date, ticker_names=None, model=None, **kw):
     searched.append((ticker, as_of_date))
     return {"ACME": "2026-10-03: Acme won a $2B defence contract. Simply Wall St says it is cheap.",
             "ZED.NS": ""}.get(ticker, "Gold rose 1%."), []
@@ -236,7 +236,7 @@ class Throttled(Exception):
     pass
 
 
-def slow_search(client, ticker, market, as_of_date, ticker_names=None, model=None):
+def slow_search(client, ticker, market, as_of_date, ticker_names=None, model=None, **kw):
     with lock:
         live["now"] += 1
         live["max"] = max(live["max"], live["now"])

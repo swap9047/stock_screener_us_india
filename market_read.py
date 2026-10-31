@@ -32,6 +32,7 @@ from google.genai import types
 
 import index_registry
 import llm_util
+import model_settings
 from breadth_math import assemble_closes
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -413,14 +414,22 @@ def validate_read(data, facts):
     return read
 
 
-def generate_read(client, label, facts, prior):
-    """(read dict, model used), or (None, None) once every rung failed."""
-    def config_for(model):
-        return types.GenerateContentConfig(
-            response_mime_type="application/json",
-            thinking_config=types.ThinkingConfig(thinking_budget=THINKING_BUDGET))
+def generate_read(client, label, facts, prior, tiers=None, budget=None):
+    """(read dict, model used), or (None, None) once every rung failed. `tiers` and `budget` come from
+    the sidebar's Settings · Models ("R1", model_settings); without them, the defaults below."""
+    thinking = THINKING_BUDGET if budget is None else budget
 
-    tiers = llm_util.same_model_tiers(PRIMARY_MODEL, attempts=PRIMARY_ATTEMPTS) + [(m, 0) for m in FALLBACK_MODELS]
+    def config_for(model):
+        kwargs = {"response_mime_type": "application/json"}
+        if "gemma" not in model and thinking:
+            if isinstance(thinking, str):
+                kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=thinking)
+            else:
+                kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=int(thinking))
+        return types.GenerateContentConfig(**kwargs)
+
+    tiers = tiers or (llm_util.same_model_tiers(PRIMARY_MODEL, attempts=PRIMARY_ATTEMPTS)
+                      + [(m, 0) for m in FALLBACK_MODELS])
     return llm_util.run_model_ladder(
         client, build_prompt(label, facts, prior), tiers, config_for, label="market read", subject=label,
         timeout=CALL_TIMEOUT_S,
@@ -508,7 +517,8 @@ def sessions_to_write(block, existing, backfill=0, force=False):
     return [d for d in wanted if d not in have or (force and d == days[-1])]
 
 
-def run(client, breadth, perf, watchlists, data, now=None, backfill=0, force=False, log=print):
+def run(client, breadth, perf, watchlists, data, now=None, backfill=0, force=False, log=print,
+        tiers=None, budget=None):
     """Write the missing reads into `data`. Returns (written, awaiting, failed): counts
     of reads written, indexes whose reading is still forming or part-published, and
     reads every rung failed on."""
@@ -530,7 +540,7 @@ def run(client, breadth, perf, watchlists, data, now=None, backfill=0, force=Fal
         for session in todo:
             facts = build_facts(ix, block, perf, tickers, asof=session)
             prior = [e for e in entries_for(data, ix["key"]) if (e.get("session") or "") < session]
-            read, model = generate_read(client, ix["label"], facts, prior)
+            read, model = generate_read(client, ix["label"], facts, prior, tiers=tiers, budget=budget)
             if not read:
                 log(f"[market read] {ix['label']} {session}: every model failed")
                 failed += 1

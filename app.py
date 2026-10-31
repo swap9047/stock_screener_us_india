@@ -112,6 +112,7 @@ from watchlist_labels import COMBINED_TAB_LABELS, watchlist_label_error
 from breadth_math import compute_breadth, assemble_closes
 import breadth_charts
 import index_registry
+import model_settings
 import quarterly_results
 import market_read
 import llm_util
@@ -2964,6 +2965,7 @@ def render_shared_column_picker(labels, active_market=None, active_market_label=
     render_custom_columns_manager()
     render_stage_analysis_upload()
     render_ticker_notes_manager()
+    render_model_settings()
 
     return st.session_state[SHARED_ORDER_KEY], label_by_key, key_by_label
 
@@ -3568,6 +3570,206 @@ def _reanalyze_tickers_in_dashboard(tickers, results, api_key, sync_message,
     st.rerun()
 
 
+def _model_settings_budget_text(step, budget):
+    if model_settings.STEPS[step]["kind"] == "search":
+        return "-"
+    if budget in (0, None):
+        return "off"
+    return f"{budget // 1024}k" if isinstance(budget, int) and budget % 1024 == 0 else str(budget)
+
+
+def _model_settings_flip_rows(step, delta):
+    key = f"ms_rows_{step}"
+    st.session_state[key] = max(1, min(8, st.session_state.get(key, 1) + delta))
+
+
+def render_model_settings():
+    """Sidebar "Settings · Models" (owner, 2026-10-31): every place the app calls a model -- the news
+    digest's search, filter and collation, Expert Take's search and write-up, Sentiment's two searches
+    and reasoning, and the market read -- with, per step, an ordered chain of models, how many times
+    each is tried (each retry on another key), the thinking budget, a Test button, Save and Default,
+    and a model repository to add, test and drop models. Saved into settings.json (pushed
+    automatically); the scheduled jobs read it at their next run (model_settings.py).
+
+    Built only while the expander is open (on_change="rerun" gives it an .open state), like the TA
+    flowchart: a plain expander runs its body on every rerun, and this one makes a client and a table."""
+    exp = st.sidebar.expander("⚙️ Settings · Models", key="model_settings_exp", on_change="rerun")
+    if not exp.open:
+        return
+    with exp:
+        settings = load_settings()
+        notice = st.session_state.pop("model_settings_notice", None)
+        if notice:
+            st.success(notice)
+        st.caption("Every AI step, the models it tries in order and how many times each (a retry goes to "
+                   "another key). A change applies from each job's next run: the scheduled workflows read "
+                   "settings.json, which the app pushes to the data repo automatically.")
+        # A list, not a table: the sidebar is too narrow for four columns (only the first showed).
+        lines, group = [], None
+        for sid, spec in model_settings.STEPS.items():
+            cfg = model_settings.resolve(sid, settings)
+            if spec["group"] != group:
+                group = spec["group"]
+                lines.extend(["", f"**{group}**", ""])       # blank lines, or a heading runs into the bullet above
+            name = spec["label"].split(" · ", 1)[-1]
+            thinking = "" if spec["kind"] == "search" else f" · thinking {_model_settings_budget_text(sid, cfg['budget'])}"
+            mark = " · ✎ custom" if cfg["source"] != "default" else ""
+            lines.append(f"- {name}: `{model_settings.describe(cfg['chain'])}`{thinking}{mark}")
+        st.markdown("\n".join(lines))
+
+        step = st.selectbox("Change a step", list(model_settings.STEPS), index=None, key="model_settings_step",
+                            format_func=lambda k: model_settings.STEPS[k]["label"], placeholder="Pick a step...")
+        if step:
+            _render_model_step_editor(step, settings)
+
+        st.markdown("---")
+        if st.toggle("📦 Model repository", key="model_settings_repo_open"):
+            _render_model_repository(settings)
+
+
+def _render_model_step_editor(step, settings):
+    spec = model_settings.STEPS[step]
+    cfg = model_settings.resolve(step, settings)
+    chain = cfg["chain"]
+    default_chain = [{"model": m, "attempts": n} for m, n in spec["chain"]]
+    st.caption(f"Default: {model_settings.describe(default_chain)}"
+               + (f" · thinking {_model_settings_budget_text(step, spec['budget'])}" if spec["kind"] != "search" else ""))
+    if spec["shape"] == "pairs":
+        st.caption("The first two models take turns (1st, 2nd, 1st again, 2nd again, ...); the rest follow in order.")
+
+    rows_key = f"ms_rows_{step}"
+    if rows_key not in st.session_state:
+        st.session_state[rows_key] = len(chain)
+    n = st.session_state[rows_key]
+    options = model_settings.options_for(settings, chain)
+    repo = {m["id"]: m for m in model_settings.repository(settings)}
+    new_chain = []
+    for i in range(n):
+        seed = chain[i] if i < len(chain) else chain[-1]
+        # Stacked, not side by side: the sidebar is too narrow for a model name and a number in one row.
+        model = st.selectbox(
+            f"Model {i + 1}", options, index=options.index(seed["model"]) if seed["model"] in options else 0,
+            key=f"ms_{step}_model_{i}",
+            format_func=lambda mid: model_settings.short(mid))
+        attempts = st.number_input(f"Tries for model {i + 1}", min_value=1, max_value=model_settings.MAX_ATTEMPTS,
+                                   value=seed["attempts"], step=1, key=f"ms_{step}_attempts_{i}",
+                                   help="How many times this model is tried before the next one; each retry goes to a different API key.")
+        new_chain.append({"model": model, "attempts": int(attempts)})
+    b1, b2 = st.columns(2)
+    b1.button("➕ Add a model", key=f"ms_add_{step}", width="stretch", disabled=n >= 8,
+              on_click=_model_settings_flip_rows, args=(step, 1))
+    b2.button("➖ Remove last", key=f"ms_del_{step}", width="stretch", disabled=n <= 1,
+              on_click=_model_settings_flip_rows, args=(step, -1))
+
+    budget = None
+    if spec["kind"] != "search":
+        choices = list(model_settings.COLLATION_BUDGET_CHOICES if spec["kind"] == "collation" else model_settings.BUDGET_CHOICES)
+        current = cfg["budget"] if cfg["budget"] is not None else spec["budget"]
+        if isinstance(current, str) and not current.isdigit():
+            choices.append(current)              # a level kept from the old picker
+        elif current not in choices:
+            current = min(choices, key=lambda c: abs(c - int(current)))
+        budget = st.selectbox("Thinking budget (Gemini models)", choices, index=choices.index(current),
+                              key=f"ms_{step}_budget",
+                              format_func=lambda b: "Off" if b == 0 else f"{b:,} ({b // 1024}k)" if isinstance(b, int) else str(b))
+        if any("gemma" in e["model"] for e in new_chain):
+            st.caption("Gemma models take no thinking budget; it applies to the Gemini models in the chain.")
+    st.caption(f"Active chain: **{model_settings.describe(new_chain)}**")
+
+    sig = json.dumps([new_chain, budget], sort_keys=True)
+    tested = st.session_state.get(f"ms_test_{step}")
+    if st.button("🧪 Test", key=f"ms_test_btn_{step}", width="stretch",
+                 help="One real call on each model in the chain, shaped like this step's own calls."):
+        api_key = get_gemini_api_keys(st.secrets)
+        client = llm_util.make_client(api_key, st_secrets=st.secrets) if api_key else None
+        if client is None:
+            st.warning("No Gemini API key is configured here, so there is nothing to test with.")
+        else:
+            results = []
+            with st.spinner(f"Testing {len(set(e['model'] for e in new_chain))} model(s)..."):
+                for m in dict.fromkeys(e["model"] for e in new_chain):
+                    results.append((m, *model_settings.test_call(client, step, m, budget)))
+            st.session_state[f"ms_test_{step}"] = {"sig": sig, "results": results}
+            tested = st.session_state[f"ms_test_{step}"]
+    if tested and tested["sig"] == sig:
+        for m, ok, detail, secs in tested["results"]:
+            st.caption(f"{'✅' if ok else '❌'} `{model_settings.short(m)}` · {_escape_markdown_dollars(detail)} · {secs:.1f} s")
+
+    c1, c2 = st.columns(2)
+    if c1.button("💾 Save", key=f"ms_save_{step}", width="stretch"):
+        save_settings({"ai_models": model_settings.with_step(settings, step, new_chain, budget)})
+        st.session_state.pop(f"ms_test_{step}", None)
+        st.session_state["model_settings_notice"] = (
+            f"⚙️ {spec['label']}: now {model_settings.describe(new_chain)}. Applies from its next run.")
+        st.rerun()
+    if c2.button("↺ Default", key=f"ms_reset_{step}", width="stretch", disabled=cfg["source"] == "default"):
+        save_settings(model_settings.reset_changes(settings, step))
+        for k in [k for k in st.session_state if k.startswith((f"ms_{step}_", f"ms_test_{step}", rows_key))]:
+            st.session_state.pop(k, None)
+        st.session_state["model_settings_notice"] = f"⚙️ {spec['label']}: back to the default."
+        st.rerun()
+
+
+def _render_model_repository(settings):
+    """The models the pickers offer: test one, drop one, add one."""
+    repo = model_settings.repository(settings)
+    st.caption("Models the pickers above offer. Add a new model, test it, or drop one you no longer use.")
+    st.dataframe([{"Model ID": m["id"], "Name": m["label"],
+                   "Thinking": (f"{m['default_budget'] // 1024}k" if m["supports_thinking"] and m.get("default_budget") else
+                                "yes" if m["supports_thinking"] else "no")} for m in repo],
+                 hide_index=True, width="stretch")
+    ids = [m["id"] for m in repo]
+    label_of = {m["id"]: f"{m['label']} ({model_settings.short(m['id'])})" for m in repo}
+
+    def _client():
+        api_key = get_gemini_api_keys(st.secrets)
+        return llm_util.make_client(api_key, st_secrets=st.secrets) if api_key else None
+
+    t1, t2 = st.columns([3, 1])
+    pick = t1.selectbox("Test a model", ids, format_func=label_of.get, key="ms_repo_test_pick")
+    if t2.button("Test", key="ms_repo_test_btn", width="stretch"):
+        client = _client()
+        if client is None:
+            st.warning("No Gemini API key is configured here.")
+        else:
+            info = next(m for m in repo if m["id"] == pick)
+            ok, detail, secs = model_settings.test_call(client, "R1", pick, info["default_budget"] if info["supports_thinking"] else 0)
+            (st.success if ok else st.error)(f"{'✅' if ok else '❌'} `{model_settings.short(pick)}` · {_escape_markdown_dollars(detail)} · {secs:.1f} s")
+
+    d1, d2 = st.columns([3, 1])
+    if len(ids) > 1:
+        drop = d1.selectbox("Drop a model", ids, format_func=label_of.get, key="ms_repo_drop_pick")
+        if d2.button("Drop", key="ms_repo_drop_btn", width="stretch"):
+            save_settings({"ai_model_repository": [m for m in repo if m["id"] != drop]})
+            st.session_state["model_settings_notice"] = (f"📦 Dropped `{model_settings.short(drop)}` from the repository "
+                                                         "(a chain already using it keeps working).")
+            st.rerun()
+
+    new_id = st.text_input("New model ID", placeholder="e.g. gemini-3.9-flash", key="ms_repo_add_id").strip()
+    new_label = st.text_input("Display name", placeholder="e.g. Gemini 3.9 Flash", key="ms_repo_add_label").strip()
+    new_thinks = st.checkbox("Supports thinking", value=not new_id.startswith("gemma-"), key="ms_repo_add_thinks")
+    a1, a2 = st.columns(2)
+    if a1.button("🧪 Test it", key="ms_repo_add_test", disabled=not new_id, width="stretch"):
+        client = _client()
+        if client is None:
+            st.warning("No Gemini API key is configured here.")
+        else:
+            ok, detail, secs = model_settings.test_call(client, "R1", model_settings.full_id(new_id), 4096 if new_thinks else 0)
+            (st.success if ok else st.error)(f"{'✅' if ok else '❌'} `{new_id}` · {_escape_markdown_dollars(detail)} · {secs:.1f} s")
+    if a2.button("➕ Add", key="ms_repo_add_btn", disabled=not new_id, width="stretch"):
+        mid = model_settings.full_id(new_id)
+        if mid in ids:
+            st.warning(f"`{model_settings.short(mid)}` is already in the repository.")
+        else:
+            save_settings({"ai_model_repository": repo + [{"id": mid, "label": new_label or model_settings.short(mid),
+                                                           "supports_thinking": new_thinks,
+                                                           "default_budget": 4096 if new_thinks else None}]})
+            for k in ("ms_repo_add_id", "ms_repo_add_label"):
+                st.session_state.pop(k, None)
+            st.session_state["model_settings_notice"] = f"📦 Added `{model_settings.short(mid)}` to the repository."
+            st.rerun()
+
+
 def render_expert_analysis_control_bar(market, results, combined_markets=None):
     expert_views = load_expert_views()
     # All configured keys, not just the primary: on Streamlit Cloud the backup
@@ -3621,15 +3823,6 @@ def render_expert_analysis_control_bar(market, results, combined_markets=None):
     from stock_data import load_settings
     settings_now = load_settings()
 
-    # No gemma-4-31b-it: it answered 0 of ~63 calls and was taken out of every
-    # ladder (llm_util.same_model_tiers); offering it here only bought dead rungs.
-    REASON_CHOICES = ["models/gemini-3.5-flash-lite", "models/gemma-4-26b-a4b-it"]
-    DEFAULT_REASON = "models/gemini-3.5-flash-lite"
-
-    def _normalize_reason(val):
-        """Legacy settings stored the bare id; every choice is 'models/'-prefixed now."""
-        return DEFAULT_REASON if val == "gemini-3.5-flash-lite" else val
-
     def _render_ai_section(scope, heading, pending, model_key, budget_key,
                            workflow_file, workflow_name):
         """One column's controls: model + thinking budget, a ticker picker, and
@@ -3641,51 +3834,9 @@ def render_expert_analysis_control_bar(market, results, combined_markets=None):
         every one of several tabs, all live in the same session_state.
         """
         st.markdown(f"##### {heading}")
-        col1, col2, col3 = st.columns([4, 3, 3])
-        with col1:
-            st.caption("Search is powered by gemma-4-26b-a4b-it")
-        with col2:
-            saved_reason = _normalize_reason(settings_now.get(model_key, DEFAULT_REASON))
-            new_reason = st.selectbox(
-                "Reasoning Model", REASON_CHOICES,
-                index=REASON_CHOICES.index(saved_reason) if saved_reason in REASON_CHOICES else 0,
-                key=f"{scope}_reasoning_model_select_{market}",
-            )
-            if new_reason != saved_reason:
-                # The budget pickers too: their choices change with the model.
-                _save_setting_reset_widgets({model_key: new_reason},
-                                            (f"{scope}_reasoning_model_select_", f"{scope}_reasoning_budget_select_"))
-
-        with col3:
-            # Gemma exposes a named reasoning LEVEL; Gemini a numeric token
-            # budget. Swapping the model swaps the whole choice list.
-            is_gemma = "gemma" in settings_now.get(model_key, "")
-            if is_gemma:
-                budget_choices = ["LOW", "MEDIUM", "HIGH"]
-                default_val = "HIGH"
-            else:
-                budget_choices = [1024, 2048, 4096, 8192]
-                default_val = 8192
-
-            current_val = settings_now.get(budget_key, default_val)
-
-            if is_gemma and current_val not in budget_choices:
-                current_val = default_val
-            elif not is_gemma:
-                try:
-                    current_val = int(current_val)
-                except (ValueError, TypeError):
-                    current_val = default_val
-                if current_val not in budget_choices:
-                    current_val = default_val
-
-            new_budget = st.selectbox(
-                "Thinking Budget / Level", budget_choices,
-                index=budget_choices.index(current_val),
-                key=f"{scope}_reasoning_budget_select_{market}",
-            )
-            if new_budget != current_val:
-                _save_setting_reset_widgets({budget_key: new_budget}, (f"{scope}_reasoning_budget_select_",))
+        # The models, their tries and thinking budget are edited in the sidebar's Settings · Models
+        # (model_settings.py), not by a picker drawn on every tab.
+        st.caption("Models: sidebar → ⚙️ Settings · Models.")
 
         c1, c2, c3, c4 = st.columns([3.5, 1.3, 1.8, 1.4])
 
@@ -5280,8 +5431,7 @@ with tab_news:
     if not tab_news.open:
         # A widget that is not rendered on a run loses its session_state, so
         # these would reset every time you left the tab. Re-assigning keeps them.
-        for _k in ("time_horizon_filter", "breadth_us_index", "breadth_show_50d", "news_scope_select", "news_search_model_select",
-                   "news_reasoning_model_select", "news_reasoning_budget_select",
+        for _k in ("time_horizon_filter", "breadth_us_index", "breadth_show_50d", "news_scope_select",
                    "breadth_watchlist_left", "breadth_watchlist_right", "results_growth_basis", "results_fields",
                    "results_quarters",
                    *[k for k in st.session_state if str(k).startswith("breadth_benchmark_")]):
@@ -6089,7 +6239,10 @@ with tab_news:
             + ", ".join(_resolved_bits)
         )
 
-        col1, col2, col3, col4 = st.columns([2, 3, 3, 3])
+        # The search, filter and collation models, their tries and thinking budgets are edited in the
+        # sidebar's Settings · Models (model_settings.py): one place, instead of copies of the same
+        # setting drawn here and on every tab (each copy used to save its stale value back).
+        col1, col2 = st.columns([2, 6])
         with col1:
             if st.button("🔄 Refresh News", width="stretch"):
                 token, repo, _ = get_github_config(st.secrets)
@@ -6101,70 +6254,8 @@ with tab_news:
                         st.error(f"Failed to start refresh: {msg}")
                 else:
                     st.error("Missing GITHUB_TOKEN or GITHUB_REPO in secrets.")
-                
         with col2:
-            # gemma-4-31b-it is not offered: see REASON_CHOICES above.
-            search_choices = ["models/gemma-4-26b-a4b-it"]
-            new_search = st.selectbox(
-                "Search Model", search_choices,
-                index=search_choices.index(settings_now.get("news_search_model", search_choices[0])) if settings_now.get("news_search_model") in search_choices else 0,
-                key="news_search_model_select"
-            )
-            if new_search != settings_now.get("news_search_model"):
-                settings_now["news_search_model"] = new_search
-                save_settings(settings_now)
-                st.rerun()
-
-        with col3:
-            reason_choices = ["models/gemini-3.5-flash-lite", "models/gemma-4-26b-a4b-it"]
-            current_reason = settings_now.get("news_reasoning_model", "models/gemini-3.5-flash-lite")
-            if current_reason == "gemini-3.5-flash-lite":
-                current_reason = "models/gemini-3.5-flash-lite"
-            new_reason = st.selectbox(
-                "Reasoning Model", reason_choices,
-                index=reason_choices.index(current_reason) if current_reason in reason_choices else 0,
-                key="news_reasoning_model_select"
-            )
-            # Normalize comparison
-            saved_reason = settings_now.get("news_reasoning_model", "models/gemini-3.5-flash-lite")
-            if saved_reason == "gemini-3.5-flash-lite":
-                saved_reason = "models/gemini-3.5-flash-lite"
-            if new_reason != saved_reason:
-                settings_now["news_reasoning_model"] = new_reason
-                save_settings(settings_now)
-                st.rerun()
-            
-        with col4:
-            is_gemma = "gemma" in settings_now.get("news_reasoning_model", "")
-            if is_gemma:
-                budget_choices = ["LOW", "MEDIUM", "HIGH"]
-                default_val = "HIGH"
-            else:
-                budget_choices = [1024, 2048, 4096, 8192]
-                default_val = 8192
-
-            current_val = settings_now.get("news_reasoning_budget", default_val)
-        
-            # Type safety for transitioning between models
-            if is_gemma and current_val not in budget_choices:
-                current_val = default_val
-            elif not is_gemma:
-                try:
-                    current_val = int(current_val)
-                except (ValueError, TypeError):
-                    current_val = default_val
-                if current_val not in budget_choices:
-                    current_val = default_val
-                
-            new_budget = st.selectbox(
-                "Thinking Budget / Level", budget_choices,
-                index=budget_choices.index(current_val),
-                key="news_reasoning_budget_select"
-            )
-            if new_budget != current_val:
-                settings_now["news_reasoning_budget"] = new_budget
-                save_settings(settings_now)
-                st.rerun()
+            st.caption("Models: sidebar → ⚙️ Settings · Models (News · search, filter, collation).")
 
         if not news_data:
             st.info(
