@@ -2,10 +2,11 @@
 the repo (as test_results_render.py), over synthetic prices, breadth and market_read.json.
 
   V1  an (i) button above the index charts for each column -- Nifty 500, and the
-      right-hand index; nothing of a read is drawn until one is clicked;
-  V2  a click opens that index's latest read (headline, then the charts in drawing order,
-      the footer with session and model), the other column stays closed, the charts
-      are all still drawn; a second click closes it;
+      right-hand index; both reads are open when the tab loads (owner, 2026-10-31) and
+      the buttons fold them away;
+  V2  each box shows that index's latest read (headline, then the charts in drawing order,
+      the footer with session and model), the charts are all still drawn; a click folds
+      one away and leaves the other, a second click opens it again;
   V3  only Nifty 500 and the S&P 500 get a read: any other right-hand index has no (i)
       button, just a line saying so; the S&P 500 reads follow the dropdown back;
   V6  the Watchlist Breadth panels have their own (i) buttons (India Invested, US Invested): a click opens the list's
@@ -185,25 +186,31 @@ at = render()
 if at:
     check(read_buttons(at) == ["ⓘ Nifty 500 read", "ⓘ S&P 500 read"],
           f"V1: an (i) button for each column, the right one named after its index ({read_buttons(at)})")
-    check("washed out" not in md(at) and "narrow rally" not in md(at), "V1: no read is drawn until one is clicked")
+    check("Nifty breadth is washed out" in md(at) and "S&P 500 is a narrow rally" in md(at),
+          "V1: both reads are open when the tab loads (owner, 2026-10-31)")
+at = render(clicks=[L, R])
+if at:
+    check("washed out" not in md(at) and "narrow rally" not in md(at), "V1: the (i) buttons fold both away")
     n_charts = len(at.get("plotly_chart"))
 
-at = render(clicks=[L])
+at = render()
 if at:
     text = md(at)
     check("Nifty breadth is washed out" in text and "Only 15% of stocks are above the 200-day average." in text
-          and "OLDER Nifty headline" not in text and "narrow rally" not in text,
-          "V2: the Nifty button opens its latest read, not an older one nor the other index's")
-    check(text.index("Breadth.") < text.index("Stocks far below their highs.") < text.index("Your list vs the index.")
-          and "52-week highs vs lows." not in text and "session of 2026-10-30" in text
-          and "gemini-3.8-flash" in text, "V2: charts in drawing order, empty ones skipped, the footer names session and model")
+          and "OLDER Nifty headline" not in text and "S&P 500 is a narrow rally" in text,
+          "V2: each index's box shows its latest read, not an older one nor the other index's")
+    nifty = text[:text.index("S&P 500 is a narrow rally")]      # the left box is drawn first
+    check(nifty.index("Breadth.") < nifty.index("Stocks far below their highs.") < nifty.index("Your list vs the index.")
+          and "52-week highs vs lows." not in nifty and "session of 2026-10-30" in nifty
+          and "gemini-3.8-flash" in nifty, "V2: charts in drawing order, empty ones skipped, the footer names session and model")
     check(len(at.get("plotly_chart")) == n_charts, "V2: every chart is still drawn under the box")
+    check("Cost \\$5 of breadth." in text, "V2: the S&P read's dollar sign is escaped")
     at.button(key=L).click().run()
-    check("Nifty breadth is washed out" not in md(at), "V2: a second click closes it")
-    at.button(key=R).click().run()
     t2 = md(at)
-    check("S&P 500 is a narrow rally" in t2 and "Cost \\$5 of breadth." in t2 and "Nifty breadth is washed out" not in t2,
-          "V2: the S&P button opens the S&P read, with the dollar sign escaped")
+    check("Nifty breadth is washed out" not in t2 and "S&P 500 is a narrow rally" in t2,
+          "V2: a click folds the Nifty read away and leaves the S&P one")
+    at.button(key=L).click().run()
+    check("Nifty breadth is washed out" in md(at), "V2: a second click opens it again")
 
 for other in ("Nifty 50", "Nasdaq 100"):
     at = render(right=other)
@@ -211,17 +218,17 @@ for other in ("Nifty 50", "Nasdaq 100"):
         check(read_buttons(at) == ["ⓘ Nifty 500 read"]
               and any("Reads are written for Nifty 500 and the S&P 500 only." in c.value for c in at.caption),
               f"V3: with {other} on the right there is no (i) button there, and a line says only the two get reads")
-at = render(right="S&P 500", clicks=[R])
+at = render(right="S&P 500")
 if at:
     check(read_buttons(at) == ["ⓘ Nifty 500 read", "ⓘ S&P 500 read"] and "S&P 500 is a narrow rally" in md(at),
           "V3: the S&P 500 on the right has its button and read")
 
-at = render(reads=False, clicks=[L])
+at = render(reads=False)
 if at:
     check("No read for Nifty 500 yet" in md(at) and len(at.get("plotly_chart")) >= 1,
           "V4: with no market_read.json the box says so and the page still renders")
 
-at = render(mobile=True, clicks=[L, R])
+at = render(mobile=True)
 if at:
     check(read_buttons(at) == ["ⓘ Nifty 500 read", "ⓘ S&P 500 read"] and "Nifty breadth is washed out" in md(at)
           and "S&P 500 is a narrow rally" in md(at), "V5: a phone renders both buttons and both boxes")
@@ -237,7 +244,7 @@ if at:
     t = md(at)
     check("India Invested holds up far better than the market" in t and "**The market.** The list diverges from a weak Nifty." in t
           and "**Holdings.** Beta Foods sits near its 52-week low." in t and "**Key takeaways**" in t and "- Leadership is narrow." in t
-          and "against Nifty 500" in t and "US Invested lags" not in t and "Nifty breadth is washed out" not in t,
+          and "against Nifty 500" in t and "US Invested lags" not in t,
           "V6: the left panel's button opens India Invested's read: market line, holdings, takeaways as bullets, its benchmark")
     at.button(key=LL).click().run()
     check("holds up far better" not in md(at), "V6: a second click closes it")
