@@ -73,22 +73,10 @@ def main():
     breakdown = " + ".join(f"{len(tks)} {mkt}" for mkt, tks in watchlists.items())
     print(f"Building news summary for {breakdown} tickers via Gemini grounded search"
           + (" (partial run)..." if partial else "..."))
-    news_data = build_news_summary(watchlists, api_key)
-    to_save = news_data
-    if partial:
-        previous = load_news_summary() or {}
-        to_save = {**news_data, "markets": {**(previous.get("markets") or {}), **(news_data.get("markets") or {})}}
-    save_news_summary(to_save)
+    # A partial run never reuses a failed run's results: it is a smoke test of the
+    # pipeline, so it searches what it was given.
+    news_data = build_news_summary(watchlists, api_key, reuse_failed_run=not partial)
     totals = news_data.get("totals", {})
-    print(f"Saved news_summary.json (as_of {news_data['as_of']}). Totals: {totals}")
-    # The editor (Stage 3) failing used to show nowhere: on 4 of 18 digests in a
-    # week the raw notes went out and the run stayed green. The bullets are
-    # formatted in code now (news_summary.format_notes_fallback), but say so.
-    for mkt, entry in (news_data.get("markets") or {}).items():
-        if (entry or {}).get("collate_status", "ok") != "ok":
-            print(f"::warning::News editor failed for one watchlist ({entry['collate_status']}); "
-                  "its bullets were formatted automatically.")
-
     # A run where every ticker threw used to be byte-indistinguishable from a
     # genuinely quiet news day: build_news_summary still returned a well-formed
     # dict of "No major news..." summaries, the workflow committed it and went
@@ -100,10 +88,30 @@ def main():
     # got the 25-of-51-failed digest and then, from the retry, a second one. Now
     # a failed run posts nothing; the file is still saved (and committed) so the
     # News tab's "search failed" count shows what happened, and the retry posts
-    # the day's only digest.
+    # the day's only digest. Decided before SAVING too (2026-11-01): the file is
+    # marked run_failed, and the retry searches only the stocks that failed
+    # (news_summary.reusable_outcomes).
     searched = totals.get("searched", 0)
     failed = totals.get("failed", 0)
     run_failed = bool(searched and failed >= max(1, searched // 2))
+    to_save = {**news_data, "run_failed": run_failed}
+    if partial:
+        previous = load_news_summary() or {}
+        # A smoke test neither fails a slot nor clears a failed one: keep the flag --
+        # for the SAME slot only. Carried onto a new slot's date it would make that
+        # slot's first scheduled run reuse the older slot's records as its own.
+        same_slot = previous.get("as_of") == news_data.get("as_of")
+        to_save = {**news_data, "run_failed": bool(same_slot and previous.get("run_failed")),
+                   "markets": {**(previous.get("markets") or {}), **(news_data.get("markets") or {})}}
+    save_news_summary(to_save)
+    print(f"Saved news_summary.json (as_of {news_data['as_of']}). Totals: {totals}")
+    # The editor (Stage 3) failing used to show nowhere: on 4 of 18 digests in a
+    # week the raw notes went out and the run stayed green. The bullets are
+    # formatted in code now (news_summary.format_notes_fallback), but say so.
+    for mkt, entry in (news_data.get("markets") or {}).items():
+        if (entry or {}).get("collate_status", "ok") != "ok":
+            print(f"::warning::News editor failed for one watchlist ({entry['collate_status']}); "
+                  "its bullets were formatted automatically.")
 
     webhook = load_discord_webhook()
     if partial:
