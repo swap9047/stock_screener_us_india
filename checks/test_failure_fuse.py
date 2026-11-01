@@ -47,8 +47,7 @@ check(True, "an untripped fuse exits normally")
 # --- wired into both jobs -------------------------------------------------------
 TICKERS = [f"T{i:02d}" for i in range(25)]
 WL = {"us_invested": TICKERS}
-# "trend" / "stage": the Expert Take job skips a row without a Trend (since 2026-10-04) or a Stage
-# (since 2026-10-31, when the verdict became Stage-led).
+# "stage": the Expert Take job skips a row without a Stage (until 2026-11-01 also one without a Trend)
 SNAP = {"per_market": {"us_invested": [{"ticker": t, "company_name": t, "trend": "Uptrend", "stage": "S2 Advancing"}
                                        for t in TICKERS]}}
 

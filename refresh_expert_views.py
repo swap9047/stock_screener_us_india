@@ -233,14 +233,14 @@ def main():
                     counters["failed"] += 1
                 continue
 
-            if not row.get("trend") or row.get("stage") not in STAGES:
-                # Too little history for a Trend, or no Stage Analysis upload
-                # covers it (the Stage leads the verdict since 2026-10-31):
-                # Expert Take is Pending and needs no write-up. Not a failure --
-                # it used to cost two model calls a night and count toward the
-                # FailureFuse.
-                why = "no Trend yet" if not row.get("trend") else "no Stage Analysis yet"
-                print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - SKIP ({why})")
+            if row.get("stage") not in STAGES:
+                # No Stage Analysis upload covers it: Expert Take is Pending and
+                # needs no write-up. Not a failure -- it used to cost two model
+                # calls a night and count toward the FailureFuse. A stock with no
+                # Trend (a recent listing) is NOT skipped any more (2026-11-01):
+                # Trend stopped being a verdict input, and skipping it left two
+                # S2 stocks on a weeks-old write-up and a "pending" placeholder.
+                print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - SKIP (no Stage Analysis yet)")
                 continue
             if resume_since is not None and written_since(expert_views.get(tk), resume_since):
                 print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - SKIP (already analysed this slot)")
