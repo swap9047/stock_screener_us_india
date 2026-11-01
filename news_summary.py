@@ -13,9 +13,10 @@ Perplexity-Finance-style digest built with a 3-stage per-ticker architecture:
      events 3-4 days out) and material-catalyst rules. Ladder:
      gemini-3.5-flash-lite -> retry it once -> gemma-4-26b-a4b-it -> degraded.
 
-  Stage 3 (Collation): gemini-3.7-flash, falling back to gemini-3.6-flash,
-     both with a 4k-8k thinking budget; if both fail the pair is retried once
-     after a backoff. Once per market. EDITS and formats that market's notes
+  Stage 3 (Collation): gemini-3.7-flash x2, then gemini-3.6-flash x2, then
+     gemini-3.5-flash-lite x2 (the Settings · Models chain), one call after
+     another, with a 4k-8k thinking budget on the Gemini models; the wait before
+     each retry is exponential (2, 4, 8, 16, 30 s). Once per market. EDITS and formats that market's notes
      into a scannable brief -- it deliberately does NOT re-filter them, since
      recency and materiality were already decided in Stage 2 where the raw
      dates still exist.
@@ -103,7 +104,7 @@ RETRY_SECONDS_BETWEEN_CALLS = 30
 # llm_util.standard_tiers. A local REASONING_RETRY_BACKOFF_SECONDS lived here
 # and went dead in that change -- tune the shared one instead.
 
-CALL_TIMEOUT_SECONDS = 120
+CALL_TIMEOUT_SECONDS = 200      # one call's cut-off (owner, 2026-11-01); the chain's own timeouts beat it
 
 # Per-ticker outcome recorded in news_summary.json. The point of these is that
 # a quiet news day and a total pipeline outage used to be byte-identical in the
@@ -132,10 +133,10 @@ NO_NEWS_SENTENCE = "No major news for this watchlist's tickers in the last 24 ho
 NEWS_SLOT_HOUR_ET = 6
 _ET = ZoneInfo("America/New_York")
 
-# Stage 3: the pause before the second pass and before the last-resort model.
-# 2026-09-29..10-04 the editor failed in 4 of 18 digests, every time on 503
-# "high demand" from both models, after ~20 s of retrying (owner, 2026-10-04: 30 s).
-COLLATION_RETRY_WAIT_SECONDS = 30
+# Stage 3 used to alternate its first two models and wait a fixed 30 s before a second pass
+# (2026-10-04, after 4 of 18 digests failed on 503 "high demand" within ~20 s). Since 2026-11-01
+# (owner) its calls are sequential like every other step's and the wait before each retry is
+# exponential, llm_util.retry_wait.
 
 MARKET_LABELS = {"US": "US Watchlist", "INDIA": "India Watchlist"}
 
@@ -911,15 +912,16 @@ def collate_market_summary(client, market, batch_texts, as_of_date=None,
             kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking)
         return types.GenerateContentConfig(**kwargs)
 
-    # Both editing models, then both again after 30 s, then the filter model after
-    # another 30 s (it answers when the bigger models are "in high demand"). On
-    # 2026-09-29..10-04 every editor failure was a 503 from both models within
-    # ~20 s of retrying, and the raw notes went to Discord.
+    # Each editing model twice, one after the other, then the filter model twice (it answers when the
+    # bigger models are "in high demand"), the wait before each retry exponential. On 2026-09-29..10-04
+    # every editor failure was a 503 from both models within ~20 s of retrying, and the raw notes
+    # went to Discord.
     last_resort_model = last_resort_model or REASONING_MODEL
     if tiers is None:
-        tiers = llm_util.retry_pair_tiers(model, fallback_model, backoff=COLLATION_RETRY_WAIT_SECONDS)
+        chain = [(model, 2), (fallback_model, 2)]
         if last_resort_model not in (model, fallback_model):
-            tiers.append((last_resort_model, COLLATION_RETRY_WAIT_SECONDS))
+            chain.append((last_resort_model, 2))
+        tiers = llm_util.sequential_tiers(chain)
     text, used = llm_util.run_model_ladder(
         client, prompt, tiers,
         _config_for, label="stage3", subject=market,
@@ -1008,7 +1010,7 @@ def build_news_summary(watchlists, api_key, now=None, reuse_failed_run=True):
     search_tiers = model_settings.tiers("N1", settings)
     filter_tiers = model_settings.tiers("N2", settings)
     thinking_budget = model_settings.budget("N2", settings)
-    collation_tiers = model_settings.tiers("N3", settings, pair_backoff=COLLATION_RETRY_WAIT_SECONDS)
+    collation_tiers = model_settings.tiers("N3", settings)
     collation_budget = model_settings.budget("N3", settings)
 
     client = llm_util.make_client(api_key)

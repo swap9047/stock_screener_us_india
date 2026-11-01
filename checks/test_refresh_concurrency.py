@@ -113,8 +113,8 @@ check(set(store) == EXPECTED, "...and ends up in the store like the rest")
 # Successful search+reasoning pairs ran 36-145s (median 86) on 2026-09-18, so a
 # per-call 120s ceiling sat above the whole distribution while 68 calls spent the
 # full 120s answering nothing.
-check(getattr(llm_util, "SEARCH_TIMEOUT_SECONDS", None) == 120,
-      f"SEARCH_TIMEOUT_SECONDS is 120 (got {getattr(llm_util, 'SEARCH_TIMEOUT_SECONDS', None)})")
+check(getattr(llm_util, "SEARCH_TIMEOUT_SECONDS", None) == 200,
+      f"SEARCH_TIMEOUT_SECONDS is 200 (owner, 2026-11-01; got {getattr(llm_util, 'SEARCH_TIMEOUT_SECONDS', None)})")
 for mod in ("fundamentals_eval.py", "expert_views.py"):
     src = (Path(REPO) / mod).read_text()
     check("timeout=llm_util.SEARCH_TIMEOUT_SECONDS" in src or "timeout=SEARCH_TIMEOUT_SECONDS" in src,

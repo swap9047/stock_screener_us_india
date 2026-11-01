@@ -3636,8 +3636,8 @@ def _render_model_step_editor(step, settings):
     default_chain = [{"model": m, "attempts": n} for m, n in spec["chain"]]
     st.caption(f"Default: {model_settings.describe(default_chain)}"
                + (f" · thinking {_model_settings_budget_text(step, spec['budget'])}" if spec["kind"] != "search" else ""))
-    if spec["shape"] == "pairs":
-        st.caption("The first two models take turns (1st, 2nd, 1st again, 2nd again, ...); the rest follow in order.")
+    st.caption("Calls run one after another: a model's tries, then the next model's. Before each retry the wait "
+               "doubles (2, 4, 8, 16, then 30 s).")
 
     rows_key = f"ms_rows_{step}"
     if rows_key not in st.session_state:
@@ -3655,7 +3655,8 @@ def _render_model_step_editor(step, settings):
             format_func=lambda mid: model_settings.short(mid))
         attempts = st.number_input(f"Tries for model {i + 1}", min_value=1, max_value=model_settings.MAX_ATTEMPTS,
                                    value=seed["attempts"], step=1, key=f"ms_{step}_attempts_{i}",
-                                   help="How many times this model is tried before the next one; each retry goes to a different API key.")
+                                   help="How many times this model is tried before the next one; each retry goes to a different API key, "
+                 "after an exponential wait (2 s, doubling, at most 30 s).")
         timeout = st.number_input(
             f"Timeout for model {i + 1} (seconds)", min_value=model_settings.MIN_TIMEOUT_S, max_value=model_settings.MAX_TIMEOUT_S,
             value=int(seed.get("timeout", model_settings.DEFAULT_TIMEOUT_S)), step=10, key=f"ms_{step}_timeout_{i}",

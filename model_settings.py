@@ -11,15 +11,18 @@ One table, STEPS, names every place the codebase calls a model:
 
 A step's CHAIN is an ordered list of {"model", "attempts", "timeout"}: each model is tried `attempts`
 times (on a freshly rotated key, llm_util's `avoid_key`) before the next one, and a call that has not
-answered within `timeout` seconds (150 by default) fails and the ladder moves on. Today's ladders
-are the defaults, so nothing changes until a step is saved:
+answered within `timeout` seconds (200 by default and at most; owner, 2026-11-01) fails and the ladder
+moves on. Every call is SEQUENTIAL (owner, 2026-11-01): a try starts only after the one before it has
+ended, the SDK itself ends a timed-out request (llm_util._with_request_timeout), a model is finished with
+before the next starts (no alternating between two models, no second pass), and the wait before each
+retry is exponential over the whole ladder -- 2, 4, 8, 16, 30, 30... s (llm_util.retry_wait). The
+defaults:
 
     search      gemma-26b x3                                  (llm_util.same_model_tiers)
     reasoning   3.5-flash-lite x2, then gemma-26b x1          (llm_util.standard_tiers)
-    collation   3.7-flash x2 and 3.6-flash x2 ALTERNATING, then 3.5-flash-lite x1
-                                                              (llm_util.retry_pair_tiers + a last resort)
-    market read 3.8-flash x4, then 3.6-flash x1 (no flash-lite: owner, 2026-10-31); the invested
-                lists' read (R2) gets 3.6-flash x4
+    collation   3.7-flash x2, 3.6-flash x2, then 3.5-flash-lite x2
+    market read 3.8-flash x2, then 3.6-flash x2 (no flash-lite: owner, 2026-10-31); the invested
+                lists' read (R2) is the same
 
 The settings that used to be edited by the News tab's and AI Analysis Controls' pickers
 (news_reasoning_model, expert_thinking_budget, ...) are still honored when a step has no saved
@@ -44,43 +47,42 @@ FLASH_37 = "models/gemini-3.7-flash"
 FLASH_38 = "models/gemini-3.8-flash"
 
 MAX_ATTEMPTS = 10
-# Seconds one call may take before the ladder gives up on it (owner, 2026-10-31: 150, then on to the next).
-# The ceiling sits under llm_util.HTTP_TIMEOUT_SECONDS (180), the SDK's own cut-off, which a longer wait
-# would run into with a different error.
-DEFAULT_TIMEOUT_S = 150
+# Seconds one call may take before the ladder gives up on it (owner, 2026-11-01: 200 for every model,
+# then on to the next; it was 150). Each call's own SDK request timeout is set to it, so the call is
+# ended, not just abandoned, when it runs out (llm_util._with_request_timeout).
+DEFAULT_TIMEOUT_S = 200
 MIN_TIMEOUT_S = 10
-MAX_TIMEOUT_S = 170
+MAX_TIMEOUT_S = 200
 # What the budget picker offers. 0 = no thinking. Collation clamps to its own band
 # (news_summary._collation_thinking_budget), so it only offers that band.
 BUDGET_CHOICES = [0, 1024, 2048, 4096, 8192, 16384]
 COLLATION_BUDGET_CHOICES = [4096, 8192]
 
 # kind: search (grounded Google search, no thinking), reasoning/collation/read (JSON or text out,
-# a thinking budget). shape: how the chain turns into rungs -- "run" = each model's attempts in a
-# row; "pairs" = the first two models' attempts alternate (collation: when one of them is
-# "in high demand" the other answers, so they are not retried back to back).
+# a thinking budget). A chain always runs in order, one try after another (see the module docstring);
+# the alternating "pairs" shape collation used to have was removed 2026-11-01 (owner).
+# Owner, 2026-11-01: 3.8-flash and 3.6-flash twice each wherever they are in a chain, 3.5-flash-lite twice.
 STEPS = {
-    "N1": {"group": "News digest", "label": "News · grounded search", "kind": "search", "shape": "run",
+    "N1": {"group": "News digest", "label": "News · grounded search", "kind": "search",
            "chain": [(GEMMA_26B, 3)], "budget": None},
     "N2": {"group": "News digest", "label": "News · significance filter (per stock)", "kind": "reasoning",
-           "shape": "run", "chain": [(FLASH_LITE, 2), (GEMMA_26B, 1)], "budget": 8192},
-    "N3": {"group": "News digest", "label": "News · collation (one per watchlist)", "kind": "collation",
-           "shape": "pairs", "chain": [(FLASH_37, 2), (FLASH_36, 2), (FLASH_LITE, 1)], "budget": 8192},
-    "E1": {"group": "Expert Take", "label": "Expert Take · grounded search", "kind": "search", "shape": "run",
-           "chain": [(GEMMA_26B, 3)], "budget": None},
-    "E2": {"group": "Expert Take", "label": "Expert Take · write-up", "kind": "reasoning", "shape": "run",
            "chain": [(FLASH_LITE, 2), (GEMMA_26B, 1)], "budget": 8192},
-    "F1": {"group": "Sentiment", "label": "Sentiment · broad search", "kind": "search", "shape": "run",
+    "N3": {"group": "News digest", "label": "News · collation (one per watchlist)", "kind": "collation",
+           "chain": [(FLASH_37, 2), (FLASH_36, 2), (FLASH_LITE, 2)], "budget": 8192},
+    "E1": {"group": "Expert Take", "label": "Expert Take · grounded search", "kind": "search",
            "chain": [(GEMMA_26B, 3)], "budget": None},
-    "F2": {"group": "Sentiment", "label": "Sentiment · targeted-retry search", "kind": "search", "shape": "run",
+    "E2": {"group": "Expert Take", "label": "Expert Take · write-up", "kind": "reasoning",
+           "chain": [(FLASH_LITE, 2), (GEMMA_26B, 1)], "budget": 8192},
+    "F1": {"group": "Sentiment", "label": "Sentiment · broad search", "kind": "search",
+           "chain": [(GEMMA_26B, 3)], "budget": None},
+    "F2": {"group": "Sentiment", "label": "Sentiment · targeted-retry search", "kind": "search",
            "chain": [(GEMMA_26B, 3)], "budget": None},
     "F3": {"group": "Sentiment", "label": "Sentiment · reasoning (both passes)", "kind": "reasoning",
-           "shape": "run", "chain": [(FLASH_LITE, 2), (GEMMA_26B, 1)], "budget": 8192},
+           "chain": [(FLASH_LITE, 2), (GEMMA_26B, 1)], "budget": 8192},
     "R1": {"group": "Market read", "label": "Market read · the index charts' summary", "kind": "read",
-           "shape": "run", "chain": [(FLASH_38, 4), (FLASH_36, 1)], "budget": 4096},
-    # R2 (owner, 2026-10-31): 3.6-flash gets 4 tries too, each on another key -- the invested-list read is the longer one
+           "chain": [(FLASH_38, 2), (FLASH_36, 2)], "budget": 4096},
     "R2": {"group": "Market read", "label": "Market read · invested lists and takeaways", "kind": "read",
-           "shape": "run", "chain": [(FLASH_38, 4), (FLASH_36, 4)], "budget": 4096},
+           "chain": [(FLASH_38, 2), (FLASH_36, 2)], "budget": 4096},
 }
 
 # The settings.json keys each step's model and budget were edited under before the sidebar panel.
@@ -165,7 +167,7 @@ def _legacy(step, settings):
     elif step == "N3":
         fallback = full_id(settings.get(keys["fallback"])) or default_chain[1][0]
         last = full_id(settings.get(keys["last"])) or default_chain[2][0]
-        chain = [(model, 2), (fallback, 2)] + ([(last, 1)] if last not in (model, fallback) else [])
+        chain = [(model, 2), (fallback, 2)] + ([(last, 2)] if last not in (model, fallback) else [])
     else:
         # standard_tiers(model, gemma): the model twice, then gemma once (just twice when it IS gemma).
         fallback = default_chain[1][0]
@@ -214,32 +216,20 @@ def budget(step, settings=None):
     return resolve(step, settings)["budget"]
 
 
-def tiers(step, settings=None, pair_backoff=30):
-    """The (model, seconds to wait first) rungs llm_util.run_model_ladder walks, from the step's chain."""
-    cfg = resolve(step, settings)
-    return build_tiers(cfg["chain"], STEPS[step]["shape"], pair_backoff)
+def tiers(step, settings=None):
+    """The (model, seconds to wait first, call timeout) rungs llm_util.run_model_ladder walks, from the step's chain."""
+    return build_tiers(resolve(step, settings)["chain"])
 
 
-def build_tiers(chain, shape="run", pair_backoff=30):
-    """(model, seconds to wait first, call timeout) for each try, in the order they are made."""
-    backoff = llm_util.RETRY_BACKOFF_SECONDS      # read at call time, like llm_util's own builders
-    out = []
-    rest = chain
-    if shape == "pairs" and len(chain) >= 2:
-        a, b = chain[0], chain[1]
-        for r in range(max(a["attempts"], b["attempts"])):
-            if a["attempts"] > r:
-                out.append((a["model"], pair_backoff if r else 0, a["timeout"]))
-            if b["attempts"] > r:
-                out.append((b["model"], 0, b["timeout"]))
-        rest = chain[2:]
-        for entry in rest:
-            for i in range(entry["attempts"]):
-                out.append((entry["model"], pair_backoff if i == 0 else backoff, entry["timeout"]))
-        return out
-    for entry in rest:
-        for i in range(entry["attempts"]):
-            out.append((entry["model"], 0 if i == 0 else backoff, entry["timeout"]))
+def build_tiers(chain):
+    """(model, seconds to wait first, call timeout) for each try, in the order they are made: one model's
+    tries, then the next model's, the wait before each retry exponential over the whole chain
+    (llm_util.retry_wait, read at call time)."""
+    out, n = [], 0
+    for entry in chain:
+        for _ in range(entry["attempts"]):
+            out.append((entry["model"], llm_util.retry_wait(n), entry["timeout"]))
+            n += 1
     return out
 
 
