@@ -597,6 +597,17 @@ def build_expert_prompt(row_data, news_text, active_alerts_text=None, fundamenta
     trend = row_data.get("trend", "N/A")
     trend_rank = row_data.get("trend_rank", "N/A")
     trend_detail = row_data.get("trend_detail") or {}
+    # A recent listing has no Trend (it needs ~40 weekly bars). Since 2026-11-01 such
+    # a stock still gets a write-up -- the verdict is Stage x TA Rules, not Trend -- so
+    # say so in words instead of printing "None (Rank: None)" for the model to misread.
+    _neutral = [name for key, name in (("slope_neutral", "slope"), ("ma_neutral", "10W vs 40W"),
+                                       ("rs_neutral", "RS")) if trend_detail.get(key)]
+    trend_line = (f"{trend} (Rank: {trend_rank}). Price > {w_slow} WEMA: {trend_detail.get('price_above_ma')}, "
+                  f"{w_slow} WEMA slope rising: {trend_detail.get('slope_rising')}, {w_fast} > {w_slow} WEMA: "
+                  f"{trend_detail.get('ema_aligned')}, RS positive: {trend_detail.get('rs_positive')}"
+                  + (f"; too close to call, not voting: {', '.join(_neutral)}" if _neutral else "")
+                  if row_data.get("trend") else
+                  "N/A (not enough price history yet: a recent listing; context only, not a verdict input)")
     vstop_weekly = row_data.get("vstop_weekly", "N/A")
     vstop_dir = row_data.get("vstop_weekly_direction", "N/A")
     vstop_wks = row_data.get("vstop_weekly_weeks_since_change", "N/A")
@@ -636,8 +647,6 @@ def build_expert_prompt(row_data, news_text, active_alerts_text=None, fundamenta
     base_verdict, verdict_reasons = decide_expert_verdict(row_data, sentiment)
     tu_detail = (row_data.get("tech_uptrend_detail") or {}).get("passed") or {}
     tu_failed = [k.replace("_", " ") for k, ok in tu_detail.items() if not ok]
-    neutral = [name for key, name in (("slope_neutral", "slope"), ("ma_neutral", "10W vs 40W"),
-                                      ("rs_neutral", "RS")) if trend_detail.get(key)]
 
     # Flag whether news is genuinely absent
     news_absent = not news_text or news_text.strip().lower() in (
@@ -674,7 +683,7 @@ fundamentals and the last {EXPERT_NEWS_WINDOW_DAYS} days of material news below.
 ======================================================================
 1. THE COLUMNS AND THE VERDICT THEY GIVE
 ======================================================================
-- Trend: {trend} (Rank: {trend_rank}). Price > {w_slow} WEMA: {trend_detail.get('price_above_ma')}, {w_slow} WEMA slope rising: {trend_detail.get('slope_rising')}, {w_fast} > {w_slow} WEMA: {trend_detail.get('ema_aligned')}, RS positive: {trend_detail.get('rs_positive')}{f"; too close to call, not voting: {', '.join(neutral)}" if neutral else ""}
+- Trend: {trend_line}
 - Tech Uptrend: {tech_uptrend} (Requires VStop uptrend > {tu_weeks} wks, Price > {w_slow} WEMA, median Vol 10D > {tu_vol}x median Vol 100D){f"; failing: {', '.join(tu_failed)}" if tu_failed else ""}
 - TA Rules (TheWrap weekly EMA flowchart): {_ta_rules_text(row_data)}
 - Sentiment (forward-looking, from section 4): {sentiment}
@@ -778,12 +787,12 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
     ticker = row_data.get("ticker", "UNKNOWN")
     market = row_data.get("market", "us_invested")
     company_name = row_data.get("company_name", ticker)
-    if not row_data.get("trend") or row_data.get("stage") not in STAGES:
-        # No Trend yet (too little price history) or no Stage Analysis upload
-        # for it: the verdict is Pending and needs no write-up, so spend no
-        # model calls on it.
-        return stale_view_fallback("no Stage Analysis yet" if row_data.get("trend")
-                                   else "not enough price history for a Trend yet")
+    if row_data.get("stage") not in STAGES:
+        # No Stage Analysis upload for it: the verdict is Pending and needs no
+        # write-up, so spend no model calls on it. (Until 2026-11-01 a stock with
+        # no Trend was skipped too; Trend is not a verdict input any more, so a
+        # recent listing with a Stage gets its write-up.)
+        return stale_view_fallback("no Stage Analysis yet")
 
     if news_text is None:
         try:

@@ -294,15 +294,23 @@ check(text == "No recent news found.", f"a 'nothing found' sentence is stored as
 check("do not refuse" in sp.lower(), "the search prompt says the dates are real and not to refuse")
 
 # --- self-review fixes, 2026-10-04 ----------------------------------------------------
-# R1 a ticker with no Trend yet cost two model calls a night and was then recorded
-#    as a FAILURE (feeding FailureFuse); it needs no write-up at all.
-llm_calls = []
-llm_util.run_model_ladder = lambda *a, **k: (llm_calls.append(1), (None, None))[1]
+# R1 a ticker with no verdict to explain cost two model calls a night and was then
+#    recorded as a FAILURE (feeding FailureFuse); it needs no write-up at all. Since
+#    2026-11-01 that means no Stage only: a recent listing with a Stage but no Trend
+#    (too little history) has a verdict, so it gets a write-up -- two S2 stocks sat on a
+#    weeks-old write-up and a "pending" placeholder the night the rule changed.
+llm_calls, prompts = [], []
+llm_util.run_model_ladder = lambda client, prompt, *a, **k: (llm_calls.append(1), prompts.append(prompt), (None, None))[2]
 try:
-    v = ev.generate_expert_view(None, {"ticker": "ACME", "market": "us_invested", "trend": None}, fundamental_view={})
+    v = ev.generate_expert_view(None, {"ticker": "ACME", "market": "us_invested",
+                                       **row(trend=None, ta=None, d=None)},
+                                news_text="No recent news found.", news_source="test", fundamental_view={})
 finally:
     llm_util.run_model_ladder = _real
-check(not llm_calls, f"R1: no Trend -> no model call ({len(llm_calls)} made)")
+check(len(llm_calls) == 1, f"R1: a Stage but no Trend -> the write-up is generated ({len(llm_calls)} call)")
+check(bool(prompts) and "- Trend: N/A (not enough price history yet" in prompts[0] and "Rank: None" not in prompts[0],
+      "R1: ...and its prompt says the Trend is missing for lack of history, not 'None (Rank: None)'")
+llm_calls = []
 llm_util.run_model_ladder = lambda *a, **k: (llm_calls.append(1), (None, None))[1]
 try:
     v = ev.generate_expert_view(None, {"ticker": "ACME", "market": "us_invested", **row(stage=None)},
@@ -311,8 +319,8 @@ finally:
     llm_util.run_model_ladder = _real
 check(not llm_calls and "no Stage Analysis" in str(v), f"R1: no Stage -> no model call either ({len(llm_calls)} made)")
 src_r = (REPO / "refresh_expert_views.py").read_text()
-check('if not row.get("trend") or row.get("stage") not in STAGES:' in src_r,
-      "R1: the nightly job skips a ticker with no Trend or no Stage, not as a failure")
+check('if row.get("stage") not in STAGES:' in src_r and 'if not row.get("trend")' not in src_r,
+      "R1: the nightly job skips a ticker with no Stage (not as a failure), and no longer one with no Trend")
 
 # R2 a news risk must survive a night whose search misses it, until it expires.
 if hasattr(ev, "resolve_persisted_view"):
