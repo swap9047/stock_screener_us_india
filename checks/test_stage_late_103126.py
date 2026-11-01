@@ -108,7 +108,7 @@ check(app.find("stage_analysis_now = load_stage_analysis()") < i_banner,
 # --- the research library's publish recomputes the verdict with the fresh Stage -------------
 import publish_market as pm
 snap = {"generated_at": "2026-10-31T10:00:00Z", "per_market": {"us_invested": [
-    {"ticker": "ACME", "company_name": "Acme", "last_close": 10.0, "ta_rules": "Maintain/Add", "trend": "Uptrend",
+    {"ticker": "ACME", "company_name": "Acme", "last_close": 10.0, "ema10": 9.9, "ta_rules": "Maintain/Add", "trend": "Uptrend",
      "sentiment": "Positive", "stage": "S4 Decline", "stage_mom": "Weak ↓", "expert_take": "Caution"}]}}
 recs = pm.screener_records(snap, {}, {}, settings={}, stage={"meta": {}, "tickers": {"ACME": entry("2026-10-28")}})
 check(recs[0]["metrics"]["expert_take"] == "Accumulate" and recs[0]["metrics"]["stage"] == "S2 Advancing",

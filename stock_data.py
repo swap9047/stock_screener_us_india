@@ -2905,10 +2905,10 @@ def apply_view_fields_to_rows(rows, fundamentals=None, expert_views=None, intere
     Semantics, unchanged from the app loop they came from:
       - sentiment is the GUARDED value (_validate_sentiment), not the raw one;
       - expert_take is LIVE (expert_views.expert_take_for_row): the verdict the
-        row's own columns give -- Stage, Stage Mom, TA Rules and the guarded
-        Sentiment, all set just above -- lowered one step by an active news risk
-        from the stored write-up. It needs no write-up at all, so a failed or
-        missing AI run no longer turns it Pending; only a row without a Stage is;
+        row's own columns give -- Stage and TA Rules, the 10W EMA distance, and
+        Stage Mom in S1 (Stage set just above); news from the stored write-up is
+        FYI only. It needs no write-up at all, so a failed or missing AI run
+        never turns it Pending; only a row without a Stage is;
       - expert_news_backed is "Yes"/"No" from expert_view_has_news.
 
     The Stage fields are attached FIRST: the verdict is Stage-led since

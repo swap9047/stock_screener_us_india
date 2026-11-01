@@ -333,9 +333,10 @@ its place.
 
 It used to show **Signal**, a Trend × Sentiment label. The owner retired Signal on
 2026-10-04, along with its two alert rules. Expert Take then covered both of Signal's
-inputs, plus Tech Uptrend, TA Rules and the news step; since 2026-10-31 it is led by
-Stage Analysis (Stage and Stage Mom) with TA Rules and Sentiment, and Trend and Tech
-Uptrend no longer decide it (see the glossary entry). The two also told different
+inputs, plus Tech Uptrend, TA Rules and the news step; since 2026-11-01 it is decided by
+Stage Analysis and the TA Rules flowchart alone (an S2 stock within 3% of its 10-week EMA
+is the buy zone; Stage Mom counts only for an S1 early turn), and news is an FYI that never
+changes it (see the glossary entry). The two also told different
 stories: 15 tickers read Signal "News divergence" (yellow) while Expert Take said Caution
 (red), because TA said Exit.
 

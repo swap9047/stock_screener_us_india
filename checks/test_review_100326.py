@@ -91,11 +91,13 @@ check(filters.CATEGORICAL_METRICS["trend"] == ["Strong Uptrend", "Uptrend", "Mix
 # Expert Take's verdict is decided in code since 2026-10-04 (decide_expert_verdict).
 # Since 2026-10-31 it is Stage-led and Trend is not an input at all, so a Mixed trend
 # changes nothing (it used to block Accumulate without Tech Uptrend).
-_s2 = {"stage": "S2 Advancing", "stage_mom": "Strong ↑", "ta_rules": "Maintain/Add", "tech_uptrend": 0}
+_s2 = {"stage": "S2 Advancing", "stage_mom": "Strong ↑", "ta_rules": "Maintain/Add", "tech_uptrend": 0,
+       "last_close": 101.0, "ema10": 100.0}
 check(ev.decide_expert_verdict({**_s2, "trend": "Mixed"}, "Positive")[0]
       == ev.decide_expert_verdict({**_s2, "trend": "Uptrend"}, "Positive")[0] == "ACCUMULATE",
       "L1: Trend (Mixed or not) no longer decides Expert Take")
-check("Trend and Tech Uptrend are context" in ev.VERDICT_RULES, "L1: the verdict rules tell the model Trend is context")
+check("Sentiment, Trend, Tech Uptrend, CE and PEAD are context" in ev.VERDICT_RULES,
+      "L1: the verdict rules tell the model Trend is context")
 check('["Any", "Strong Uptrend", "Uptrend", "Mixed", "Downtrend", "Strong Downtrend"]' in APP,
       "L1: the table's Trend filter offers Mixed")
 # The Trend hover text moved to glossary.py (shared with market_api); count Mixed across both.

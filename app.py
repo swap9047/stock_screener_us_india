@@ -950,9 +950,9 @@ def build_ai_review_payload(
             out.append("\n### Expert Take")
             # The live verdict, the same one the table shows and filters on.
             out.append(f"Verdict: {take['verdict']} — decided by the columns: {'; '.join(take['reasons'])}")
-            if take["news_lowered"]:
+            if take["news_noted"]:
                 risk = take["news_risk"]
-                out.append(f"Lowered from {take['base']} by news: {risk['category']} ({risk['date']}): {risk['quote']}")
+                out.append(f"News FYI (does not change the verdict): {risk['category']} ({risk['date']}): {risk['quote']}")
             if is_pending_view(v) or not v:
                 out.append("No AI write-up stored -- the last generation failed or has not run.")
             else:
@@ -4474,7 +4474,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
                 emoji = EXPERT_TAKE_EMOJI.get(take)
                 why = expert_take_for_row(r, expert_views.get(r["ticker"], {}))
                 reason = html.escape(f"Expert Take: {take} — {'; '.join(why['reasons'])}"
-                                     + (" (lowered by news ⚑)" if why["news_lowered"] else "")) if emoji else ""
+                                     + (" (news FYI ⚑)" if why["news_noted"] else "")) if emoji else ""
             markers = []
             if emoji and reason:
                 markers.append(f'<span title="{reason}">{emoji}</span>')
@@ -4547,10 +4547,10 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             verdict = take["verdict"]
             badge = {"ACCUMULATE": "🟢 Accumulate", "HOLD": "🟡 Hold",
                      "CAUTION": "🔴 Caution"}.get(verdict, "⚪ Pending")
-            # ⚑: news lowered the columns' verdict. It used to mark a model
-            # verdict that differed from a chart rule; the model no longer
-            # picks the verdict, so the only thing that can differ is news.
-            if take["news_lowered"]:
+            # ⚑: a material negative news item from the last 14 days, as FYI
+            # (owner, 2026-11-01: news no longer changes the verdict; from
+            # 2026-10-04 the flag meant news had lowered it one step).
+            if take["news_noted"]:
                 badge = f"{badge} ⚑"
             if is_pending_view(v):
                 # The verdict stands without a write-up, but a failed one
@@ -4559,11 +4559,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             parts = [f"Decided by the columns: {'; '.join(take['reasons'])}"]
             if take.get("news_noted"):
                 risk = take["news_risk"]
-                parts.append(f"News risk noted (the verdict is already Caution) -- {risk['category']} "
-                             f"({risk['date']}): {risk['quote']}")
-            if take["news_lowered"]:
-                risk = take["news_risk"]
-                parts.insert(0, f"⚑ Lowered from {take['base'].title()} by news -- {risk['category']} "
+                parts.insert(0, f"⚑ News FYI (does not change the verdict) -- {risk['category']} "
                                 f"({risk['date']}): {risk['quote']}")
             if is_pending_view(v) or not v:
                 parts.append("No AI write-up yet -- use 'Retry Failed' or 'Re-analyze' above.")

@@ -368,12 +368,14 @@ check(zed["ai"] == old_rec["ai"] and zed["metrics"]["expert_take"] == ma.columns
 _staged = ma.public_record(dict(row, stage="S2 Advancing", stage_mom="Strong ↑", cheat_entry="No", pead="No",
                                 stage_uploaded="2026-10-28"),
                            "screener", fundamental={"sentiment": "Positive", "reasoning": "r"}, as_of=now_iso(30))
-_out = ml.lookup(["ZED.NS"], db=FakeDB(LISTINGS, market={"ZED.NS": _staged}), compute=compute)
+# The recompute carries a 10W EMA 1.5% under the close: S2 + Maintain/Add in the 10W buy zone.
+_out = ml.lookup(["ZED.NS"], db=FakeDB(LISTINGS, market={"ZED.NS": _staged}),
+                 compute=lambda tickers, settings=None, **k: {t: dict(row, ticker=t, ema10=100.0) for t in tickers})
 _m = _out[0]["record"]["metrics"]
 check(_m["expert_take"] == "Accumulate" and _m["stage"] == "S2 Advancing",
-      f"a recomputed screener ticker keeps its stored Stage, and Expert Take uses it (S2, Maintain/Add, Mom up, "
-      f"Positive -> Accumulate; got {_m['expert_take']})")
-check(str(_m.get("expert_take_why", "")).startswith("Accumulate: Stage: S2 Advancing"),
+      f"a recomputed screener ticker keeps its stored Stage, and Expert Take uses it (S2, Maintain/Add, "
+      f"+1.5% from the 10W -> Accumulate; got {_m['expert_take']})")
+check(str(_m.get("expert_take_why", "")).startswith("Accumulate: S2 buy zone: +1.5% from the 10W EMA; Stage: S2 Advancing"),
       f"...and the explain group's reasons name the Stage ({_m.get('expert_take_why')})")
 check([r["ticker"] for r in db.saved] == ["ZED.NS"] and "india_invested" not in json.dumps(db.saved)
       and "core holding" not in json.dumps(db.saved), "the computed row is saved, with nothing private in it")
