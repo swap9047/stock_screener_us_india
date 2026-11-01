@@ -68,9 +68,9 @@ try:
 finally:
     llm_util.run_model_ladder = _real_ladder
 tiers = (captured.get("stage3") or [[]])[0]
-check(tiers == [(ns.COLLATION_MODEL, 0), (ns.COLLATION_FALLBACK_MODEL, 0), (ns.COLLATION_MODEL, 30),
-                (ns.COLLATION_FALLBACK_MODEL, 0), (ns.REASONING_MODEL, 30)],
-      f"D1: editor ladder waits 30 s between passes and ends on the filter model ({tiers})")
+check(tiers == [(ns.COLLATION_MODEL, 0), (ns.COLLATION_MODEL, 2), (ns.COLLATION_FALLBACK_MODEL, 4),
+                (ns.COLLATION_FALLBACK_MODEL, 8), (ns.REASONING_MODEL, 16), (ns.REASONING_MODEL, 30)],
+      f"D1: editor ladder (2026-11-01): each model twice, one after the other, an exponential wait, ending on the filter model ({tiers})")
 check(status == "fallback", f"D1: every model failing -> status 'fallback', not raw notes ({status})")
 check(summary.splitlines() == ["* **Acme Corp (ACME)** - Won a $2B defence contract.; Raised FY guidance.",
                                "* **Zed Industries Limited (ZED)** - Board approved a 1:2 bonus issue."],

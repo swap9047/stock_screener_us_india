@@ -4,13 +4,14 @@
       before the panel existed (llm_util's own builders are the expectation);
   S2  the settings the old pickers wrote (news_reasoning_model, expert_thinking_budget, ...)
       still decide a step until it is saved in the panel;
-  S3  a saved chain: each model's tries, in order, each retry on another key; the first two
-      collation models alternate; a saved chain beats the old keys; junk is ignored;
+  S3  a saved chain: each model's tries, in order, one call after another (no alternating between
+      two models), each retry on another key after an exponential wait; a saved chain beats the
+      old keys; junk is ignored;
   S4  saving and Default (the old keys go back to their defaults too), the model repository,
       and the new keys surviving settings.json's load/save and not counting as calculation settings;
   S5  Test: a grounded search for a search step, a thinking budget on Gemini only, a failure
       reported rather than raised;
-  S7  a timeout per model (150 s by default, 10-170): the rungs carry it, a saved one is kept and
+  S7  a timeout per model (200 s by default and at most, 10-200): the rungs carry it, a saved one is kept and
       clamped, the ladder gives each call its own, the stage-1 search loop too, the panel shows it
       only when it is not the default;
   S6  the pipelines take their rungs from the chain: search (news, Expert Take, both Sentiment
@@ -66,11 +67,17 @@ for step in ("N1", "E1", "F1", "F2"):
     check(two(ms.tiers(step, CLEAN)) == llm_util.same_model_tiers(G), f"S1: {step} is three tries on Gemma, as same_model_tiers built it")
 for step in ("N2", "E2", "F3"):
     check(two(ms.tiers(step, CLEAN)) == llm_util.standard_tiers(L, G), f"S1: {step} is flash-lite twice then Gemma, as standard_tiers built it")
-want = llm_util.retry_pair_tiers(F37, F36, backoff=30) + [(L, 30)]
-check(two(ms.tiers("N3", CLEAN, pair_backoff=30)) == want, f"S1: N3 alternates 3.7 and 3.6 twice, then flash-lite after 30 s: {ms.tiers('N3', CLEAN)}")
-want = llm_util.same_model_tiers(F38, attempts=4) + [(F36, 0)]
-check(two(ms.tiers("R1", CLEAN)) == want, "S1: R1 is 3.8-flash x4, then 3.6-flash (what market_read has; no flash-lite)")
-check([t[0] for t in ms.tiers("R2", CLEAN)] == [F38] * 4 + [F36] * 4, f"S1: R2 is 3.8-flash x4, then 3.6-flash x4 (owner, 2026-10-31): {[t[0][-9:] for t in ms.tiers('R2', CLEAN)]}")
+want = llm_util.sequential_tiers([(F37, 2), (F36, 2), (L, 2)])
+check(two(ms.tiers("N3", CLEAN)) == want and [t[0] for t in ms.tiers("N3", CLEAN)] == [F37, F37, F36, F36, L, L],
+      f"S1: N3 is 3.7, 3.6 and flash-lite twice each, one after the other (owner, 2026-11-01): {ms.tiers('N3', CLEAN)}")
+want = llm_util.sequential_tiers([(F38, 2), (F36, 2)])
+check(two(ms.tiers("R1", CLEAN)) == want, "S1: R1 is 3.8-flash x2, then 3.6-flash x2 (no flash-lite)")
+check([t[0] for t in ms.tiers("R2", CLEAN)] == [F38] * 2 + [F36] * 2, f"S1: R2 is 3.8-flash x2, then 3.6-flash x2 (owner, 2026-11-01): {[t[0][-9:] for t in ms.tiers('R2', CLEAN)]}")
+check(llm_util.RETRY_BACKOFF_SECONDS == 5 and [llm_util.retry_wait(n) for n in range(7)] == [0, 5, 10, 20, 30, 30, 30],
+      "S1: the wait before a retry doubles from the base and stops at 30 s (the base is read at call time)")
+llm_util.RETRY_BACKOFF_SECONDS = 2
+check([llm_util.retry_wait(n) for n in range(7)] == [0, 2, 4, 8, 16, 30, 30], "S1: from the real base, 2 s: 2, 4, 8, 16, 30, 30")
+llm_util.RETRY_BACKOFF_SECONDS = 5
 check([ms.budget(s, CLEAN) for s in ("N1", "N2", "N3", "E2", "F3", "R1")] == [None, 8192, 8192, 8192, 8192, 4096],
       "S1: the default thinking budgets (none for a search)")
 check(all(ms.resolve(s, CLEAN)["source"] == "default" for s in ms.STEPS) and len(ms.STEPS) == 10,
@@ -89,10 +96,10 @@ old = {"sentiment_reasoning_model": "models/gemini-3.5-flash", "sentiment_thinki
 check(two(ms.tiers("F3", old)) == llm_util.standard_tiers("models/gemini-3.5-flash", G) and ms.budget("F3", old) == 2048,
       "S2: a budget saved as text reads as a number")
 old = {"news_search_model": F36}
-check(two(ms.tiers("N1", old)) == llm_util.same_model_tiers(F36) + [(G, 0)], "S2: another search model keeps its extra rung on the default, as before")
+check(two(ms.tiers("N1", old)) == llm_util.sequential_tiers([(F36, 3), (G, 1)]), "S2: another search model keeps its extra rung on the default, as before")
 old = {"news_collation_model": F36, "news_collation_fallback_model": F37, "news_collation_thinking_budget": 4096,
        "news_reasoning_model": G}
-check(two(ms.tiers("N3", old, pair_backoff=30)) == llm_util.retry_pair_tiers(F36, F37, backoff=30) + [(G, 30)]
+check(two(ms.tiers("N3", old)) == llm_util.sequential_tiers([(F36, 2), (F37, 2), (G, 2)])
       and ms.budget("N3", old) == 4096, "S2: collation's old models, budget and last resort (the filter model) carry over")
 
 # --- S3 a saved chain ------------------------------------------------------------------------------
@@ -102,11 +109,11 @@ saved = {"ai_models": {"E2": {"chain": [{"model": F38, "attempts": 3}, {"model":
 r = ms.resolve("E2", saved)
 check(r["source"] == "saved" and r["budget"] == 2048 and [e["model"] for e in r["chain"]] == [F38, F36, L],
       "S3: a saved chain wins over the old key; a bare model id gets its models/ prefix")
-check(two(ms.tiers("E2", saved)) == [(F38, 0), (F38, 5), (F38, 5), (F36, 0), (L, 0), (L, 5)],
-      f"S3: each model's tries in a row, the first at once and the retries after a backoff: {ms.tiers('E2', saved)}")
-pairs = {"ai_models": {"N3": {"chain": [{"model": F37, "attempts": 3}, {"model": F36, "attempts": 1}, {"model": L, "attempts": 2}], "budget": 4096}}}
-check(two(ms.tiers("N3", pairs, pair_backoff=30)) == [(F37, 0), (F36, 0), (F37, 30), (F37, 30), (L, 30), (L, 5)],
-      f"S3: collation's first two alternate until their tries run out, the rest follow: {ms.tiers('N3', pairs, 30)}")
+check(two(ms.tiers("E2", saved)) == [(F38, 0), (F38, 5), (F38, 10), (F36, 20), (L, 30), (L, 30)],
+      f"S3: each model's tries in a row, the first at once, every retry after a wait that doubles over the whole ladder (a model switch too): {ms.tiers('E2', saved)}")
+seq = {"ai_models": {"N3": {"chain": [{"model": F37, "attempts": 3}, {"model": F36, "attempts": 1}, {"model": L, "attempts": 2}], "budget": 4096}}}
+check(two(ms.tiers("N3", seq)) == [(F37, 0), (F37, 5), (F37, 10), (F36, 20), (L, 30), (L, 30)],
+      f"S3: collation is a plain sequence too -- a model is finished before the next starts, no alternating, no second pass: {ms.tiers('N3', seq)}")
 junk = {"ai_models": {"N2": {"chain": [{"model": "", "attempts": 2}, {"attempts": 3}, "x", {"model": G, "attempts": "many"},
                                         {"model": L, "attempts": 99}], "budget": 4096}}}
 check([(e["model"], e["attempts"]) for e in ms.resolve("N2", junk)["chain"]] == [(G, 1), (L, ms.MAX_ATTEMPTS)],
@@ -115,7 +122,7 @@ check(ms.resolve("N2", {"ai_models": {"N2": {"chain": []}}})["source"] == "defau
       and ms.resolve("N2", {"ai_models": {"N2": "nonsense"}})["source"] == "default"
       and ms.resolve("N1", {"ai_models": {"N1": {"chain": [{"model": G, "attempts": 2}], "budget": 8192}}})["budget"] is None,
       "S3: an empty or malformed saved chain falls back; a search never has a budget")
-check(ms.describe(ms.resolve("N3", CLEAN)["chain"]) == "gemini-3.7-flash ×2 → gemini-3.6-flash ×2 → gemini-3.5-flash-lite",
+check(ms.describe(ms.resolve("N3", CLEAN)["chain"]) == "gemini-3.7-flash ×2 → gemini-3.6-flash ×2 → gemini-3.5-flash-lite ×2",
       "S3: the table text names each model and its tries")
 
 # --- S4 saving, Default, repository, plumbing ------------------------------------------------------
@@ -124,7 +131,7 @@ check(settings["ai_models"] == {} and settings["ai_model_repository"] == [], "S4
 models = ms.with_step(settings, "E2", [{"model": F38, "attempts": 2}], 4096)
 stock_data.save_settings({"ai_models": models})
 again = stock_data.load_settings()
-check(again["ai_models"]["E2"]["chain"] == [{"model": F38, "attempts": 2, "timeout": 150}] and ms.resolve("E2", again)["source"] == "saved",
+check(again["ai_models"]["E2"]["chain"] == [{"model": F38, "attempts": 2, "timeout": 200}] and ms.resolve("E2", again)["source"] == "saved",
       "S4: a saved step survives settings.json's save and load")
 stock_data.save_settings({"sma_length": again.get("sma_length", 200)})
 check(stock_data.load_settings()["ai_models"] == again["ai_models"], "S4: the Settings dialog's own save keeps it")
@@ -218,8 +225,8 @@ try:
 finally:
     llm_util.run_model_ladder = real_ladder
 labels = {lab: tiers for lab, tiers, _ in captured}
-check(two(labels["expert-search"]) == [(F36, 0)] + [(F36, 5)] * 3, f"S6: Expert Take's search uses E1 (4 tries): {labels.get('expert-search')}")
-check(two(labels["targeted-earnings"]) == [(F38, 0), (F38, 5), (F38, 5)], f"S6: Sentiment's targeted search uses F2: {labels.get('targeted-earnings')}")
+check(two(labels["expert-search"]) == [(F36, 0), (F36, 5), (F36, 10), (F36, 20)], f"S6: Expert Take's search uses E1 (4 tries, the wait doubling): {labels.get('expert-search')}")
+check(two(labels["targeted-earnings"]) == [(F38, 0), (F38, 5), (F38, 10)], f"S6: Sentiment's targeted search uses F2: {labels.get('targeted-earnings')}")
 if "fundamental-search" in labels:
     check(two(labels["fundamental-search"]) == [(F37, 0), (F37, 5)], f"S6: Sentiment's broad search uses F1: {labels['fundamental-search']}")
 
@@ -262,18 +269,19 @@ check(read_tiers[1][0] == two(ms.tiers("R1", CLEAN)) and read_tiers[1][1].thinki
 
 
 # --- S7 a timeout per model ----------------------------------------------------------------------
-check(ms.DEFAULT_TIMEOUT_S == 150 and ms.MAX_TIMEOUT_S < llm_util.HTTP_TIMEOUT_SECONDS,
-      "S7: 150 s by default, and the longest allowed is under the SDK's own cut-off")
-check(all(set(timeouts(ms.tiers(s, CLEAN))) == {150} for s in ms.STEPS), "S7: every step's models default to 150 s")
+check(ms.DEFAULT_TIMEOUT_S == 200 and ms.MAX_TIMEOUT_S == 200 and ms.MAX_TIMEOUT_S < llm_util.HTTP_TIMEOUT_SECONDS
+      and llm_util.CALL_TIMEOUT_SECONDS == 200 and llm_util.SEARCH_TIMEOUT_SECONDS == 200,
+      "S7: 200 s by default and at most (owner, 2026-11-01), under the client's own backstop")
+check(all(set(timeouts(ms.tiers(s, CLEAN))) == {200} for s in ms.STEPS), "S7: every step's models default to 200 s")
 tmo = {"ai_models": {"R1": {"chain": [{"model": F38, "attempts": 2, "timeout": 90}, {"model": F36, "attempts": 1},
                                        {"model": L, "attempts": 1, "timeout": 5000}, {"model": G, "attempts": 1, "timeout": "x"}], "budget": 4096}}}
-check(timeouts(ms.tiers("R1", tmo)) == [90, 90, 150, 170, 150],
+check(timeouts(ms.tiers("R1", tmo)) == [90, 90, 200, 200, 200],
       f"S7: each model's rungs carry its own timeout; too long is capped, junk reads as the default ({timeouts(ms.tiers('R1', tmo))})")
 check([e["timeout"] for e in ms.resolve("R1", {"ai_models": {"R1": {"chain": [{"model": F38, "attempts": 1, "timeout": 1}]}}})["chain"]] == [ms.MIN_TIMEOUT_S],
       "S7: too short is raised to the floor")
-check(timeouts(ms.tiers("N3", pairs, pair_backoff=30)) == [150] * 6
-      and timeouts(ms.build_tiers([{"model": F37, "attempts": 2, "timeout": 60}, {"model": F36, "attempts": 2, "timeout": 100}], "pairs")) == [60, 100, 60, 100],
-      "S7: collation's alternating pair keeps each model's own timeout")
+check(timeouts(ms.tiers("N3", seq)) == [200] * 6
+      and timeouts(ms.build_tiers([{"model": F37, "attempts": 2, "timeout": 60}, {"model": F36, "attempts": 2, "timeout": 100}])) == [60, 60, 100, 100],
+      "S7: each model keeps its own timeout through the sequence")
 check(ms.describe(ms.normalize_chain([{"model": F38, "attempts": 4, "timeout": 90}, {"model": F36}])) == "gemini-3.8-flash ×4 @90s → gemini-3.6-flash",
       "S7: the panel names a timeout only when it is not the default")
 models = ms.with_step(settings, "R1", [{"model": F38, "attempts": 2, "timeout": 75}], 4096)

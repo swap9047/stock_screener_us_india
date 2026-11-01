@@ -14,15 +14,18 @@ import re
 import threading
 import time
 
-CALL_TIMEOUT_SECONDS = 120
+# One call's cut-off (owner, 2026-11-01: 200 s for every model call). Every ladder rung carries
+# its own (model_settings), which beats this; it is what a rung with none, and the direct
+# call sites, use.
+CALL_TIMEOUT_SECONDS = 200
 
 # Request timeout handed to the Gemini SDK itself (HttpOptions, milliseconds).
 # Without one the SDK waits forever, which is what let a hung grounded search
 # outlive the run that made it -- see generate_with_timeout.
 #
-# Deliberately ABOVE CALL_TIMEOUT_SECONDS so generate_with_timeout stays the
-# primary control and its message is what callers see; this only guarantees the
-# abandoned call dies soon after, instead of never. Every call site passes 120.
+# This is the CLIENT's backstop, deliberately ABOVE CALL_TIMEOUT_SECONDS. Each call also
+# carries its own request timeout equal to its cut-off (_with_request_timeout), so a call
+# that has timed out is already dead on the wire when the ladder starts the next one.
 HTTP_TIMEOUT_SECONDS = CALL_TIMEOUT_SECONDS + 60
 
 # Ceiling for ONE grounded-search call. Named separately from
@@ -36,11 +39,25 @@ HTTP_TIMEOUT_SECONDS = CALL_TIMEOUT_SECONDS + 60
 # experiencing high demand", so load and ceiling moved together and the two
 # cannot be separated from those logs. 120s is the setting with a full, known
 # run behind it; reducing it again wants an overnight A/B at the same hour.
-SEARCH_TIMEOUT_SECONDS = 120
+SEARCH_TIMEOUT_SECONDS = 200
 
-# Short pause before re-trying the SAME model. Buys a transient 429/503 a second
-# chance on the good model before quality degrades to a fallback.
-RETRY_BACKOFF_SECONDS = 5
+# The wait before a retry (owner, 2026-11-01): exponential. The first retry of a stock's
+# ladder waits RETRY_BACKOFF_SECONDS, each one after it twice as long, never more than
+# RETRY_BACKOFF_MAX_SECONDS -- 2, 4, 8, 16, 30, 30... s. Counted over the whole ladder, so
+# a switch to the next model waits too. It buys a transient 429/503 time to clear instead of
+# hitting it again in 5 s, and it was a fixed 5 s (30 s in collation) before. Read at CALL
+# time, so a check that sets the base to 0 gets no waits at all.
+RETRY_BACKOFF_SECONDS = 2
+RETRY_BACKOFF_MAX_SECONDS = 30
+
+
+def retry_wait(n, base=None):
+    """Seconds to wait before the n-th retry of one ladder (n = 1 is the first retry; 0 = the
+    first try, no wait): base, 2 x base, 4 x base ... capped at RETRY_BACKOFF_MAX_SECONDS."""
+    base = RETRY_BACKOFF_SECONDS if base is None else base
+    if n <= 0 or base <= 0:
+        return 0
+    return min(RETRY_BACKOFF_MAX_SECONDS, base * 2 ** (n - 1))
 
 # Failures that re-running cannot fix. Everything else (rate limits, timeouts,
 # 5xx, transport errors) is worth another attempt. Without this gate an expired
@@ -129,6 +146,28 @@ def call_with_timeout(fn, timeout, name="call"):
     return box.get("result")
 
 
+def _with_request_timeout(config, timeout):
+    """`config` with the SDK's own request timeout set to `timeout` seconds.
+
+    The wrapper's cut-off alone only ABANDONS a slow call: its daemon thread (and the HTTP
+    request under it) kept running until the client-wide backstop, 60 s later, while the
+    ladder had already started the next try -- two calls to the model in flight at once.
+    Giving the request the same timeout makes the SDK itself end it at the same moment (not 60 s
+    later), so the calls of a ladder do not overlap (owner, 2026-11-01: all calls sequential). Imported
+    lazily (llm_util must import without the SDK); anything that is not an SDK config (a
+    check's stand-in) is returned as it was."""
+    try:
+        from google.genai import types
+        http = types.HttpOptions(timeout=int(timeout * 1000))
+        if config is None:
+            return types.GenerateContentConfig(http_options=http)
+        if hasattr(config, "model_copy"):
+            return config.model_copy(update={"http_options": http})
+    except Exception:
+        pass
+    return config
+
+
 def generate_with_timeout(client, model, contents, config, timeout=CALL_TIMEOUT_SECONDS,
                           avoid_key=None):
     """One generate_content call, bounded by `timeout` -- see call_with_timeout
@@ -149,6 +188,7 @@ def generate_with_timeout(client, model, contents, config, timeout=CALL_TIMEOUT_
         extra["_key_out"] = key_out
         if avoid_key:
             extra["_avoid_key"] = avoid_key
+    config = _with_request_timeout(config, timeout)
     try:
         return call_with_timeout(
             lambda: client.models.generate_content(model=model, contents=contents, config=config, **extra),
@@ -264,13 +304,27 @@ def run_model_ladder(client, prompt, tiers, config_for, label="llm", subject="",
     return None, None
 
 
+def sequential_tiers(chain, base=None):
+    """The rungs of a chain [(model, attempts), ...] in order, one call after another: a model's
+    tries, then the next model's. Each rung is (model, seconds to wait first); the wait grows
+    exponentially over the whole ladder (retry_wait), 0 before the first try. There is no
+    alternating between two models and no second pass: a model is finished with before the
+    next one starts (owner, 2026-11-01)."""
+    out, n = [], 0
+    for model, attempts in chain:
+        for _ in range(attempts):
+            out.append((model, retry_wait(n, base)))
+            n += 1
+    return out
+
+
 def standard_tiers(primary, fallback):
     """The ladder every pipeline should use: the good model, the good model
     again after a backoff, then the fallback."""
-    tiers = [(primary, 0), (primary, RETRY_BACKOFF_SECONDS)]
+    chain = [(primary, 2)]
     if fallback and fallback != primary:
-        tiers.append((fallback, 0))
-    return tiers
+        chain.append((fallback, 1))
+    return sequential_tiers(chain)
 
 
 def same_model_tiers(model, attempts=3, backoff=None):
@@ -287,26 +341,9 @@ def same_model_tiers(model, attempts=3, backoff=None):
     to. That is the honest position, because the model that was nominally there
     had not answered a single call in four runs.
     """
-    # Read at CALL time, like standard_tiers does. As a default argument it was
-    # bound at import and no caller (or check) could change the pacing.
-    backoff = RETRY_BACKOFF_SECONDS if backoff is None else backoff
-    return [(model, 0)] + [(model, backoff)] * max(0, attempts - 1)
-
-
-def retry_pair_tiers(primary, fallback, backoff=RETRY_BACKOFF_SECONDS):
-    """Try primary, then fallback, then BOTH again after a backoff.
-
-    For a stage where both models are strong enough to trust, so the second
-    pass is about riding out a transient 429/503 rather than degrading -- as
-    opposed to standard_tiers, which retries the good model before conceding to
-    a weaker one."""
-    tiers = [(primary, 0)]
-    if fallback and fallback != primary:
-        tiers.append((fallback, 0))
-    tiers.append((primary, backoff))
-    if fallback and fallback != primary:
-        tiers.append((fallback, 0))
-    return tiers
+    # `backoff` is the base of the exponential wait (None: RETRY_BACKOFF_SECONDS, read at CALL
+    # time, so a caller or check can change the pacing).
+    return sequential_tiers([(model, max(1, attempts))], base=backoff)
 
 
 # ---------------------------------------------------------------------------

@@ -43,10 +43,11 @@ MARKET_READ_FILE = os.path.join(SCRIPT_DIR, "market_read.json")
 # then 3.6-flash (owner, 2026-10-31: no flash-lite rung -- its reads were weaker than a missing one is
 # bad; a failed run is retried by the slot gate), every rung at a 4k thinking budget.
 PRIMARY_MODEL = "models/gemini-3.8-flash"
-PRIMARY_ATTEMPTS = 4
+PRIMARY_ATTEMPTS = 2
 FALLBACK_MODELS = ("models/gemini-3.6-flash",)
+FALLBACK_ATTEMPTS = 2        # owner, 2026-11-01: 3.8-flash and 3.6-flash twice each
 THINKING_BUDGET = 4096
-CALL_TIMEOUT_S = 150      # a call not answered by then fails and the ladder moves on (owner, 2026-10-31)
+CALL_TIMEOUT_S = 200      # a call not answered by then fails and the ladder moves on (owner, 2026-11-01; was 150)
 
 # Reads kept per index, and how many of the latest go back into the prompt.
 KEEP_ENTRIES = 10
@@ -500,8 +501,8 @@ def generate_read(client, label, facts, prior, tiers=None, budget=None, prompt=N
                 kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=int(thinking))
         return types.GenerateContentConfig(**kwargs)
 
-    tiers = tiers or (llm_util.same_model_tiers(PRIMARY_MODEL, attempts=PRIMARY_ATTEMPTS)
-                      + [(m, 0) for m in FALLBACK_MODELS])
+    tiers = tiers or llm_util.sequential_tiers([(PRIMARY_MODEL, PRIMARY_ATTEMPTS)]
+                                               + [(m, FALLBACK_ATTEMPTS) for m in FALLBACK_MODELS])
     return llm_util.run_model_ladder(
         client, (prompt or build_prompt)(label, facts, prior), tiers, config_for, label="market read", subject=label,
         timeout=CALL_TIMEOUT_S,
