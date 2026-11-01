@@ -387,6 +387,248 @@ def previous_note(prev_digest, ticker, slot_date):
     return None
 
 
+# --- results dates, big moves, retries and source links (2026-11-01 review) -------------
+# Owner, 2026-11-01. In the Oct 31 digest 7 of 16 bullets were "board meeting on X to
+# approve Q2 results" and 5 were a bare "stock fell 5%" on a market-wide sell-off day.
+# Results dates now go into ONE "Results due" line per watchlist (Stage 2 tags them,
+# RESULTS_TAG_RE), each date shown once, in the first digest that finds it. The
+# moves come from stored closes (dashboard_perf.json), not from search: one "Big moves"
+# line per watchlist, every move of MOVERS_MIN_PCT or more. Stage 2 keeps a move only
+# with a company-specific reason.
+MOVERS_MIN_PCT = 5.0
+# How many days after the window a tagged results date may fall: Stage 2 is told
+# "the next 3-4 days"; a date outside this is ignored (the tag line is dropped either way).
+RESULTS_MAX_DAYS_AHEAD = 7
+# A stored close this many days before the session at most counts as its previous
+# close. Further back is a hole in the data, not a weekend or a holiday, and the
+# "move" would span several sessions.
+MOVE_MAX_GAP_DAYS = 6
+RESULTS_TAG_RE = re.compile(r"^\s*[-*•]?\s*\**RESULTS:?\**:?\s*(\d{4}-\d{2}-\d{2})\b.*$", re.I)
+_NAME_SUFFIX_RE = re.compile(r"[,\s]+(Limited|Ltd\.?|Inc\.?|Incorporated|Corporation|Corp\.?|N\.V\.|plc|S\.A\.)$",
+                             re.I)
+
+
+def split_results_tag(text, window_date):
+    """(results date "YYYY-MM-DD" or None, `text` without RESULTS lines).
+
+    Stage 2 writes "RESULTS: YYYY-MM-DD" instead of a bullet for a scheduled results
+    date. Every such line leaves the note; a date is kept only from the window's day
+    to RESULTS_MAX_DAYS_AHEAD after it (a past date is results already out, or a
+    misread). Several lines: the earliest date that qualifies."""
+    try:
+        start = date.fromisoformat(str(window_date)[:10])
+    except ValueError:
+        start = None
+    kept, dates = [], []
+    for line in (text or "").splitlines():
+        m = RESULTS_TAG_RE.match(line)
+        if not m:
+            kept.append(line)
+            continue
+        try:
+            d = date.fromisoformat(m.group(1))
+        except ValueError:
+            continue
+        if start and start <= d <= start + timedelta(days=RESULTS_MAX_DAYS_AHEAD):
+            dates.append(d)
+    return (min(dates).isoformat() if dates else None), "\n".join(kept).strip()
+
+
+# What a digest keeps per ticker for the NEXT slot's repeat checks: the note (Stage 2's
+# "already reported"), the results date (shown once) and the sessions whose moves it
+# checked (each shown once).
+_PRIOR_KEYS = ("note", "results_date", "moves_checked")
+
+
+def earlier_slot_info(prev_digest, slot_date):
+    """{ticker: {note, results_date, moves_checked}} from the last digest of an
+    EARLIER slot -- what this slot must not repeat.
+
+    The previous file is usually that digest. When it is from this same slot (a
+    failed run being retried; owner, 2026-11-01: the retry searches only the stocks
+    that failed), the failed run overwrote the earlier digest, so it carries that
+    digest's info forward under "prior_slot" and this returns that."""
+    prev = prev_digest or {}
+    try:
+        prev_date = date.fromisoformat(str(prev.get("as_of"))[:10])
+    except ValueError:
+        return {}
+    if prev_date >= slot_date:
+        return dict(prev.get("prior_slot") or {})
+    info = {}
+    for entry in (prev.get("markets") or {}).values():
+        for ticker, rec in ((entry or {}).get("tickers") or {}).items():
+            kept = {k: rec[k] for k in _PRIOR_KEYS if rec.get(k)}
+            if kept and ticker not in info:
+                info[ticker] = kept
+    return info
+
+
+def reusable_outcomes(prev_digest, slot_date):
+    """{ticker: record} the retry of a FAILED run for this same slot can reuse: every
+    stock that run searched and filtered cleanly (material or quiet). Empty unless the
+    previous file is this slot's and was marked run_failed by news_check (a manual
+    re-run after a good digest redoes everything)."""
+    prev = prev_digest or {}
+    if not prev.get("run_failed"):
+        return {}
+    try:
+        if date.fromisoformat(str(prev.get("as_of"))[:10]) != slot_date:
+            return {}
+    except ValueError:
+        return {}
+    done = {}
+    for entry in (prev.get("markets") or {}).values():
+        for ticker, rec in ((entry or {}).get("tickers") or {}).items():
+            if (rec or {}).get("status") in (STATUS_MATERIAL, STATUS_QUIET):
+                done.setdefault(ticker, rec)
+    return done
+
+
+def _short_name(ticker, ticker_names):
+    """"Acme (ACME)": the company name without Limited / Inc. and the like, for the
+    one-line lists."""
+    bare = _bare_ticker(ticker)
+    company = (ticker_names or {}).get(ticker)
+    if not company or company == ticker:
+        return bare
+    return f"{_NAME_SUFFIX_RE.sub('', company.strip()).strip() or company} ({bare})"
+
+
+def _day_label(iso):
+    d = date.fromisoformat(iso)
+    return f"{d.day} {d:%b}"
+
+
+def _session_settled_at(ticker, day):
+    """When `day`'s session of the ticker's exchange closed and settled (UTC)."""
+    import stock_data as sd
+    tz, hour, minute = sd.EXCHANGE_SESSIONS[sd.exchange_session(ticker)]
+    close = datetime(day.year, day.month, day.day, hour, minute, tzinfo=ZoneInfo(tz))
+    return (close + timedelta(minutes=sd.SESSION_SETTLE_MINUTES)).astimezone(timezone.utc)
+
+
+def _perf_as_of(perf):
+    try:
+        return datetime.strptime(str((perf or {}).get("as_of")), "%Y-%m-%d %H:%M UTC").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def session_moves(ticker, perf, window_date, now, already_checked=()):
+    """({session: % move}, [sessions checked]) for one ticker, from dashboard_perf.json.
+
+    A session counts when it is in the ticker's 24-hour window (the day before
+    `window_date` to `window_date`, in its exchange's dates), had settled both by
+    `now` and by the time the closes were stored (perf "as_of": a run during the
+    session stores a live close), and no earlier digest checked it. Its move is the
+    close against the previous stored close, at most MOVE_MAX_GAP_DAYS before. Only
+    moves of MOVERS_MIN_PCT or more are returned; every session looked at is in the
+    checked list, so the next digest does not list it again."""
+    stored_at = _perf_as_of(perf)
+    series = next((block[ticker] for block in ((perf or {}).get("markets") or {}).values()
+                   if isinstance(block, dict) and isinstance(block.get(ticker), dict)), None)
+    if not series or stored_at is None:
+        return {}, []
+    try:
+        end = date.fromisoformat(str(window_date)[:10])
+    except ValueError:
+        return {}, []
+    start = end - timedelta(days=1)
+    days = sorted(series)
+    moves, checked = {}, []
+    for i, iso in enumerate(days):
+        try:
+            d = date.fromisoformat(iso)
+        except ValueError:
+            continue
+        if not (start <= d <= end) or iso in already_checked:
+            continue
+        settled = _session_settled_at(ticker, d)
+        if settled > now or settled > stored_at:
+            continue
+        checked.append(iso)
+        if i == 0:
+            continue
+        prev_iso = days[i - 1]
+        try:
+            gap = (d - date.fromisoformat(prev_iso)).days
+            close, prev_close = float(series[iso]), float(series[prev_iso])
+        except (TypeError, ValueError):
+            continue
+        if gap > MOVE_MAX_GAP_DAYS or not prev_close:
+            continue
+        pct = round((close / prev_close - 1) * 100, 1)
+        if abs(pct) >= MOVERS_MIN_PCT:
+            moves[iso] = pct
+    return moves, checked
+
+
+def results_line(results, ticker_names):
+    """"**Results due** · Acme (ACME) 3 Nov · ..." from {ticker: "YYYY-MM-DD"}, by date;
+    "" when there are none."""
+    if not results:
+        return ""
+    items = sorted(results.items(), key=lambda kv: (kv[1], _short_name(kv[0], ticker_names).lower()))
+    return "**Results due** · " + " · ".join(f"{_short_name(t, ticker_names)} {_day_label(d)}" for t, d in items)
+
+
+def moves_line(moves, ticker_names):
+    """"**Big moves (5%+)** · 30 Oct: ▲ Acme (ACME) +7.2% · ▼ Zed (ZED) -6.1%" from
+    {ticker: {session: pct}}: rises first (largest first), then falls (largest first),
+    one group per session; "" when there are none."""
+    by_day = {}
+    for ticker, per_day in (moves or {}).items():
+        for iso, pct in per_day.items():
+            by_day.setdefault(iso, []).append((ticker, pct))
+    if not by_day:
+        return ""
+    groups = []
+    for iso in sorted(by_day):
+        rows = by_day[iso]
+        ups = sorted((r for r in rows if r[1] > 0), key=lambda r: -r[1])
+        downs = sorted((r for r in rows if r[1] < 0), key=lambda r: r[1])
+        parts = [f"▲ {_short_name(t, ticker_names)} +{p:.1f}%" for t, p in ups]
+        parts += [f"▼ {_short_name(t, ticker_names)} {p:.1f}%" for t, p in downs]
+        groups.append(f"{_day_label(iso)}: " + " · ".join(parts))
+    return f"**Big moves ({MOVERS_MIN_PCT:g}%+)** · " + " | ".join(groups)
+
+
+def summary_with_source_links(entry, max_links=2):
+    """The digest's summary for the News tab, each "**Company (TICKER)**" bullet ending
+    in up to `max_links` links to the sources its stock's search used (owner,
+    2026-11-01: the app only -- each link is a ~250-character redirect URL, which would
+    bloat the Discord digest, and expires after ~30 days). A line whose ticker is not
+    found, or that has no sources, is unchanged."""
+    entry = entry or {}
+    summary = entry.get("summary") or ""
+    by_bare = {}
+    for ticker, rec in (entry.get("tickers") or {}).items():
+        if (rec or {}).get("sources"):
+            by_bare.setdefault(_bare_ticker(ticker).upper(), rec["sources"])
+    if not by_bare:
+        return summary
+    out = []
+    for line in summary.splitlines():
+        m = re.match(r"^\s*[-*•]\s*\*\*[^*]*\(([^()*]+)\)\*\*", line)
+        sources = by_bare.get(m.group(1).strip().upper()) if m else None
+        if sources:
+            links, seen = [], set()
+            for s in sources:
+                title = (s.get("title") or "").strip() or "source"
+                if not s.get("url") or title in seen:
+                    continue
+                seen.add(title)
+                text = title[:40].replace("[", "(").replace("]", ")").replace("$", "\\$")
+                links.append(f"[{text}]({s['url']})")
+                if len(links) >= max_links:
+                    break
+            if links:
+                line = f"{line} · " + " · ".join(links)
+        out.append(line)
+    return "\n".join(out)
+
+
 # Both of these now live in llm_util so expert_views and fundamentals_eval get
 # the same behavior -- they had their own drifted copies with no retry tier and
 # no terminal-error gate. Kept as module-level aliases so this file's existing
@@ -430,7 +672,8 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None,
         f"You are a financial news researcher. For the {exchange} stock {name} -- "
         f"search for news, announcements, press releases, analyst notes, and stock moves between "
         f"{cutoff_date} and {as_of_date} (the last 24 hours), AND any major upcoming scheduled events in the next 3-4 days (e.g. earnings (latest quarter only), launches). Report any news items you find, "
-        "specifying the exact date of each item. Be extremely concise. If there is no news, output nothing."
+        f"specifying the exact date of each item. Report only news about {name} itself, not about other "
+        "companies (a peer, a customer, or another company's deal). Be extremely concise. If there is no news, output nothing."
     )
 
     grounding_tool = types.Tool(google_search=types.GoogleSearch())
@@ -563,21 +806,31 @@ def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date,
         f"{cutoff_date} or {as_of_date} (the last 24 hours), OR major upcoming scheduled events in the "
         f"next 3-4 days. Drop anything older or undated.\n\n"
         "STRICT MATERIALITY RULE:\n"
-        "- KEEP ONLY: earnings released in the last 2 days (latest quarter only), upcoming earnings/events in the "
-        "next 3-4 days (latest quarter only), M&A/acquisitions, FDA/regulatory approvals, important board "
+        "- KEEP ONLY: earnings released in the last 2 days (latest quarter only), other major upcoming events "
+        "in the next 3-4 days, M&A/acquisitions, FDA/regulatory approvals, important board "
         "announcements (EXCLUDING dividend and generic day-to-day announcements), rating changes and price targets "
-        "from named brokerages, major contract wins/losses, big institutional and promoter activity, and share-price "
-        "moves of 5% or more -- or of 3% or more when the news states a company-specific reason.\n"
+        "from named brokerages, major contract wins/losses, big institutional and promoter activity, and a "
+        "share-price move of 3% or more ONLY when the news states a company-specific reason for it (write the move "
+        "and its reason in one bullet).\n"
         "- DROP ENTIRELY: routine scheduled board meetings/AGMs/EGMs with no outcome yet, ordinary insider option "
-        "exercises, routine block trades, price moves under 5% with no stated reason, dividend announcements, "
+        "exercises, routine block trades, any price move with no company-specific reason (a bare 'fell 5%', or a "
+        "move explained only by the market or the sector -- the digest lists every move of 5% or more from price "
+        "data itself), dividend announcements, "
         "law-firm class-action solicitations and 'investigation' notices, ratings/valuations/notes from rating "
         "websites or algorithms (Simply Wall St, Zacks, MarketBeat, TipRanks, StockInvest, MarketsMojo, "
         "Trendlyne) and Seeking Alpha contributor articles, attendance at a conference, trade show or investor "
-        "meet (unless the company launches a product or releases data there), and generic no-news filler.\n\n"
+        "meet (unless the company launches a product or releases data there), any item about a DIFFERENT company "
+        f"(a peer, a customer, another company's deal -- keep only news about {subject} itself, including its own "
+        "deals with others), and generic no-news filler.\n"
+        "- RESULTS DATES: when this company's quarterly results -- or the board meeting to approve them, or its "
+        "results call -- are scheduled in the next 3-4 days and are not out yet, do NOT write a bullet for it. "
+        "Write one line, exactly 'RESULTS: YYYY-MM-DD', with the date the results are due. If that meeting will "
+        "also consider something else material (a bonus issue, a split, a buyback, a fund-raise), write a bullet "
+        "for that item.\n\n"
         f"{already}"
-        "For items that pass both rules, write short, clear bullet points, one per item. Output ONLY the bullets: "
-        "no header, no company or ticker heading. If nothing qualifies, output nothing -- do NOT write "
-        "'no significant news'.\n\n"
+        "For items that pass both rules, write short, clear bullet points, one per item. Output ONLY the bullets "
+        "(and the RESULTS line, if any): no header, no company or ticker heading. If nothing qualifies, output "
+        "nothing -- do NOT write 'no significant news'.\n\n"
         f"RAW TEXT:\n{raw_text}"
     )
 
@@ -702,11 +955,14 @@ def collation_dropped_tickers(summary, material_tickers):
             if not re.search(rf"\b{re.escape(_bare_ticker(t).upper())}\b", haystack)]
 
 
-def build_news_summary(watchlists, api_key, now=None):
+def build_news_summary(watchlists, api_key, now=None, reuse_failed_run=True):
     """Runs the 3-stage pipeline for every market in `watchlists`, respecting
     the ``news_watchlist_scope`` setting (empty = the all_invested group).
 
-    `now` (tests) fixes the clock that picks the 6 AM ET slot.
+    `now` (tests) fixes the clock that picks the 6 AM ET slot. With
+    `reuse_failed_run` (every run but a partial smoke test), the retry of a failed
+    run for this same slot searches only the stocks that failed and reuses the rest
+    (reusable_outcomes).
 
     Returns a dict shaped:
         {"as_of", "generated_at", "totals": {...},
@@ -774,8 +1030,20 @@ def build_news_summary(watchlists, api_key, now=None):
                 row_by_ticker.setdefault(row["ticker"], row)
                 if "company_name" in row:
                     ticker_names[row["ticker"]] = row["company_name"]
-    # The last digest, for Stage 2's repeat check (previous_note).
+    # The last digest, for Stage 2's repeat check (previous_note) and the "shown
+    # once" rules of the results and moves lines (earlier_slot_info).
     previous_digest = load_news_summary()
+    prior = earlier_slot_info(previous_digest, slot_date)
+    # Owner, 2026-11-01: a failed run's retry searches only what failed. On
+    # 2026-10-26 Gemma's search returned 500 for 29 of 50 stocks, and the slot's
+    # retry searched all 50 again.
+    reused = reusable_outcomes(previous_digest, slot_date) if reuse_failed_run else {}
+    result["prior_slot"] = prior
+    perf = _load_dashboard_perf()
+    now_utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+
+    def prior_note(ticker):
+        return (prior.get(ticker) or {}).get("note") or previous_note(previous_digest, ticker, slot_date)
 
     # Stages 1 and 2 are purely per-ticker, so they run ONCE per unique (ticker,
     # window) for the whole run -- a ticker in three watchlists costs one search
@@ -797,14 +1065,24 @@ def build_news_summary(watchlists, api_key, now=None):
             if key not in planned:
                 planned.add(key)
                 plan.append((key, market))
+    outcomes = {}
+    if reused:
+        for key, _market in plan:
+            rec = reused.get(key[0])
+            if rec:
+                outcomes[key] = ("ok", rec.get("sources") or [], rec.get("note") or "", "ok",
+                                 rec.get("results_date"))
+        plan = [entry for entry in plan if entry[0] not in outcomes]
+        print(f"[news] retrying a failed run for this slot: {len(outcomes)} stocks reused, "
+              f"{len(plan)} to search")
 
     def _ts():
         return datetime.now(timezone.utc).strftime("%H:%M:%S")
 
     def process(entry, is_retry=False):
         """Stages 1-2 for one stock -> (key, outcome): ("ok", sources, note,
-        status) | ("retry", exc) | ("failed", exc). A worker; the pause after
-        each stock is per worker, as in the Sentiment job."""
+        status, results_date) | ("retry", exc) | ("failed", exc). A worker; the
+        pause after each stock is per worker, as in the Sentiment job."""
         (ticker, window), market = entry
         tag = f"[{'RETRY ' if is_retry else ''}{ticker}]"
         t0 = time.time()
@@ -822,6 +1100,7 @@ def build_news_summary(watchlists, api_key, now=None):
             if not is_retry:
                 time.sleep(SECONDS_BETWEEN_CALLS)
             return (ticker, window), outcome
+        results_date = None
         if not raw_text:
             # Search succeeded but found nothing -- no reasoning call to prove it.
             clean, status = "", "ok"
@@ -830,24 +1109,25 @@ def build_news_summary(watchlists, api_key, now=None):
             clean, status = filter_batch_with_reasoning(
                 client, header, [ticker], market, window,
                 ticker_names=ticker_names, model=reasoning_model, budget=thinking_budget,
-                previous=previous_note(previous_digest, ticker, slot_date), tiers=filter_tiers,
+                previous=prior_note(ticker), tiers=filter_tiers,
             )
             if status != STATUS_DEGRADED:
-                # Bullets only from here: filler lines out, then the code's
+                # Bullets only from here: the RESULTS line out (it goes into the
+                # watchlist's "Results due" line), filler lines out, then the code's
                 # "**Company (TICKER)**" header on top (note_with_header).
-                body = drop_filler_lines(_strip_header(clean))
+                results_date, body = split_results_tag(_strip_header(clean), window)
+                body = drop_filler_lines(body)
                 clean = note_with_header(ticker, body, ticker_names) if body else ""
         label = STATUS_DEGRADED if status == STATUS_DEGRADED else (STATUS_MATERIAL if clean else STATUS_QUIET)
         print(f"[{_ts()}] {tag} {label} ({time.time() - t0:.1f}s)")
         if not is_retry:
             time.sleep(SECONDS_BETWEEN_CALLS)
-        return (ticker, window), ("ok", sources, clean, status)
+        return (ticker, window), ("ok", sources, clean, status, results_date)
 
     # Every Gemini call inside a worker is bounded by llm_util's call timeout, so
     # the workers always finish and `with` joins them (see refresh_fundamentals'
     # _run_all for why a ThreadPoolExecutor is safe here).
     print(f"[news] {len(plan)} unique stocks, {NEWS_CONCURRENT_TICKERS} at a time")
-    outcomes = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=NEWS_CONCURRENT_TICKERS) as pool:
         for key, outcome in pool.map(process, plan):
             outcomes[key] = outcome
@@ -882,11 +1162,29 @@ def build_news_summary(watchlists, api_key, now=None):
         all_sources = []
         ticker_records = {}
 
-        def record(ticker, status, sources=None, note=None):
+        results_due = {}
+        moves = {}
+
+        def record(ticker, status, sources=None, note=None, results_date=None):
             ticker_records[ticker] = {"status": status, "sources": sources or []}
             if note:
                 # Stored for the next digest's repeat check (previous_note).
                 ticker_records[ticker]["note"] = note
+            if results_date:
+                ticker_records[ticker]["results_date"] = results_date
+                # Shown once: not when the earlier slot's digest already had this date.
+                if (prior.get(ticker) or {}).get("results_date") != results_date:
+                    results_due[ticker] = results_date
+            # Big moves, from stored closes, for every stock in the list (funds too:
+            # it is price data, not news). The sessions checked are stored so the next
+            # digest does not list them again.
+            per_day, checked = session_moves(ticker, perf, slot_window_date(ticker, slot_date), now_utc,
+                                             (prior.get(ticker) or {}).get("moves_checked") or ())
+            if checked:
+                ticker_records[ticker]["moves_checked"] = checked
+            if per_day:
+                ticker_records[ticker]["moves"] = per_day
+                moves[ticker] = per_day
 
         for ticker in tickers:
             if is_fund(row_by_ticker.get(ticker)):
@@ -901,7 +1199,7 @@ def build_news_summary(watchlists, api_key, now=None):
             if outcome[0] != "ok":
                 record(ticker, STATUS_FAILED)
                 continue
-            _, sources, clean, status = outcome
+            _, sources, clean, status, results_date = outcome
             all_sources.extend(sources)
             if status == STATUS_DEGRADED:
                 filtered_texts.append(clean)
@@ -910,9 +1208,11 @@ def build_news_summary(watchlists, api_key, now=None):
             elif clean:
                 filtered_texts.append(clean)
                 note_by_ticker[ticker] = clean
-                record(ticker, STATUS_MATERIAL, sources, note=clean)
+                record(ticker, STATUS_MATERIAL, sources, note=clean, results_date=results_date)
             else:
-                record(ticker, STATUS_QUIET, sources)
+                # A results date alone is not "news": the stock stays quiet and
+                # appears only in the Results due line.
+                record(ticker, STATUS_QUIET, sources, results_date=results_date)
 
         counts = {
             status: sum(1 for r in ticker_records.values() if r["status"] == status)
@@ -965,6 +1265,13 @@ def build_news_summary(watchlists, api_key, now=None):
                 seen_urls.add(s["url"])
                 deduped.append(s)
 
+        # The code's own lines, after the editor (which never sees them): the results
+        # dates and the big moves.
+        extra = [line for line in (results_line(results_due, ticker_names), moves_line(moves, ticker_names)) if line]
+        if extra:
+            collated = f"{collated}\n\n" + "\n".join(extra)
+        print(f"[{market}] results due={len(results_due)} big moves={sum(len(v) for v in moves.values())}")
+
         result["markets"][market] = {
             "summary": collated,
             "sources": deduped,
@@ -1010,6 +1317,13 @@ def build_discord_messages(news_data, limit=1900):
         summary = (entry.get("summary") or "").strip()
         if not summary:
             continue
+        # Stocks whose search failed, said in the digest itself (owner, 2026-11-01):
+        # under news_check's 50% rule the digest goes out and was silent about them.
+        # The News tab shows the same count in its caption, so this is Discord only.
+        failed = ((entry.get("counts") or {}).get(STATUS_FAILED) or 0)
+        if failed:
+            summary += (f"\n_{failed} stock{'s' if failed != 1 else ''} could not be searched today "
+                        "(search errors), so {} not in this digest._").format("they are" if failed != 1 else "it is")
         label = escape_markdown(_market_label(market))
         title = f"**📰 {label} News — {as_of}**"
 
@@ -1025,6 +1339,19 @@ def load_news_summary():
         return None
     try:
         with open(NEWS_SUMMARY_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+DASHBOARD_PERF_FILE = os.path.join(SCRIPT_DIR, "dashboard_perf.json")
+
+
+def _load_dashboard_perf():
+    """dashboard_perf.json (the breadth job's stored closes), or None: without it the
+    digest simply has no Big moves line."""
+    try:
+        with open(DASHBOARD_PERF_FILE) as f:
             return json.load(f)
     except Exception:
         return None

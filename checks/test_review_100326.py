@@ -157,7 +157,7 @@ def run_news(totals):
     got = {}
     nc.get_gemini_api_key = lambda: "k"
     nc.load_watchlists = lambda: WL
-    nc.build_news_summary = lambda wl, key: {"as_of": "d", "totals": totals, "markets": {"us_invested": {"summary": "S"}}}
+    nc.build_news_summary = lambda wl, key, **kw: {"as_of": "d", "totals": totals, "markets": {"us_invested": {"summary": "S"}}}
     nc.load_news_summary = lambda: None
     nc.save_news_summary = lambda d: got.setdefault("saved", d)
     nc.load_discord_webhook = lambda: "https://discord.example/hook"

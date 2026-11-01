@@ -140,7 +140,8 @@ from github_sync import (get_github_config, get_data_repo_config, bootstrap_data
                          push_all_config, trigger_github_workflow, pull_generated_files, SYNCABLE_FILES, WORKFLOW_GENERATED_FILES,
                          push_json_entry_changes, read_remote_json, read_remote_bytes, refresh_snapshot_from_repo,
                          unpushed_config_files)
-from news_summary import (load_news_summary, MARKET_LABELS, get_gemini_api_keys, resolve_news_scope, DEFAULT_NEWS_SCOPE_GROUP)
+from news_summary import (load_news_summary, MARKET_LABELS, get_gemini_api_keys, resolve_news_scope, DEFAULT_NEWS_SCOPE_GROUP,
+                          summary_with_source_links)
 from expert_views import (load_expert_views, save_expert_views, analyze_single_ticker,
                           generate_expert_view, _is_valid_view, is_pending_view, apply_regenerated_view,
                           VERDICT_RULES, NEWS_RISK_RULES, EXPERT_NEWS_WINDOW_DAYS, EXPERT_STALE_DAYS,
@@ -6310,7 +6311,12 @@ with tab_news:
                 # `$` escaped: Streamlit renders $...$ as LaTeX, so a bullet quoting
                 # two dollar amounts ("raised $5B ... valued at $60B") came out as
                 # italic math with the text between them run together.
-                st.markdown(_escape_markdown_dollars(entry.get("summary") or "_No summary available._"))
+                # Each bullet ends in links to its stock's sources (owner, 2026-11-01: here,
+                # not in Discord -- news_summary.summary_with_source_links). Dollars are
+                # escaped first, so a link's URL is never touched.
+                _with_links = summary_with_source_links(
+                    {**entry, "summary": _escape_markdown_dollars(entry.get("summary") or "_No summary available._")})
+                st.markdown(_with_links)
 
                 # Per-ticker run health. Without this a quiet news day and a run
                 # where every search errored look identical -- both render as one

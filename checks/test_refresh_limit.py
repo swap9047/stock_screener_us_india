@@ -68,7 +68,7 @@ def run_news(env):
     got = {}
     nc.get_gemini_api_key = lambda: "k"
     nc.load_watchlists = lambda: WL
-    nc.build_news_summary = lambda wl, key: got.setdefault("built", wl) and {"as_of": "new", "totals": {"searched": 2, "failed": 0},
+    nc.build_news_summary = lambda wl, key, **kw: got.setdefault("built", wl) and {"as_of": "new", "totals": {"searched": 2, "failed": 0},
                                                                          "markets": {m: {"summary": "NEW"} for m in wl}}
     nc.load_news_summary = lambda: {"as_of": "old", "markets": {"us_invested": {"summary": "OLD"}, "india_invested": {"summary": "OLD"}}}
     nc.save_news_summary = lambda d: got.setdefault("saved", d)
