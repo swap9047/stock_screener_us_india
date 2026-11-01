@@ -80,7 +80,7 @@ METRIC_GROUPS = {
         ("trend", "Trend", "", "Strong Uptrend / Uptrend / Mixed / Downtrend / Strong Downtrend, from price vs the slow WEMA, its slope, fast vs slow WEMA and weekly RS."),
         ("tech_uptrend", "Tech Uptrend", "", "1 when the close is above an upward weekly VStop (up for 3+ weeks) and the slow WEMA, on reasonable volume."),
         ("ta_rules", "TA Rules", "", "The weekly EMA flowchart on the last completed week: Maintain/Add, Momentum Fading, Be Cautious, Exit, Bullish Signal or Wait/Watch."),
-        ("expert_take", "Expert Take", "", "Accumulate, Hold or Caution, decided in code from Stage Analysis (Stage, Stage Mom, CE), TA Rules and Sentiment; Pending without a Stage."),
+        ("expert_take", "Expert Take", "", "Accumulate, Hold or Caution, decided in code from Stage Analysis (Stage, Stage Mom), TA Rules and Sentiment; Pending without a Stage."),
         ("vstop_weekly", "VStop-W", "price", "Weekly volatility stop (ATR stop-and-reverse)."),
         ("vstop_weekly_direction", "VStop Dir", "", "Up or Down."),
         ("vstop_weekly_weeks_since_change", "VStop Weeks Ago", "", "Weeks since the weekly VStop last flipped."),
@@ -144,7 +144,7 @@ METRIC_GROUPS = {
         ("tech_uptrend_why", "Tech Uptrend: why", "", "Each requirement of Tech Uptrend, passed or failed, with the numbers."),
         ("ta_rules_why", "TA Rules: why", "", "The path taken through the weekly EMA flowchart on the last completed week, with the numbers each step was decided on."),
         ("volume_trend_why", "Vol Trend: why", "", "The 10-day vs 100-day median volume ratio against the Exploding and Declining thresholds."),
-        ("expert_take_why", "Expert Take: why", "", "What decided the Expert Take verdict (Stage, TA Rules, Stage Mom, Sentiment, and CE for an S1 early Accumulate), and a news event that lowered it, if any."),
+        ("expert_take_why", "Expert Take: why", "", "What decided the Expert Take verdict (Stage, TA Rules, Stage Mom, Sentiment), and a news event that lowered it, if any."),
     ]),
 }
 # Catalog fields whose glossary entry (glossary.column_definitions, keyed by column label) is under
@@ -354,7 +354,7 @@ def _compute_once(tickers, settings, ticker_index):
 
 
 def columns_verdict(row):
-    """Expert Take as the dashboard decides it from the columns (Stage, Stage Mom, CE, TA Rules, and
+    """Expert Take as the dashboard decides it from the columns (Stage, Stage Mom, TA Rules, and
     Sentiment when the row has it), for a row with no nightly write-up -- a library ticker the screener
     doesn't track, or a screener ticker recomputed live. Same function as the dashboard's
     (expert_views.expert_take_for_row), with no news step to apply. A row with no Stage Analysis (every

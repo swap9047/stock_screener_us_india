@@ -281,11 +281,13 @@ def expert_view_has_news(view):
 #
 #   S2 Advancing      CAUTION if TA Exit or 2+ Bad; ACCUMULATE if TA Good and
 #                     nothing Bad; else HOLD.
-#   S1 Accumulation   CAUTION if TA Exit or 2+ Bad; ACCUMULATE ("early") if TA
-#                     Good, Sentiment not Bad, and Stage Mom Good OR CE Yes --
-#                     a base that is turning (owner: "S1 could also be phases of
-#                     accumulate if looking promising"); a cheat entry is the
-#                     indicator's own early entry inside a base; else HOLD.
+#   S1 Accumulation   CAUTION if 2+ Bad, or TA Exit while Stage Mom is not Good;
+#                     ACCUMULATE ("early") if TA Good, Stage Mom Good and
+#                     Sentiment not Bad -- a base that is turning (owner: "S1
+#                     could also be phases of accumulate if looking promising");
+#                     else HOLD. A TA Exit with Stage Mom turning up is a HOLD
+#                     here (owner, 2026-11-01): the base is turning before the
+#                     price has got back over its slow weekly EMA.
 #   S3 Distribution   CAUTION if anything Bad, else HOLD. Never ACCUMULATE.
 #   S4 Decline        HOLD if Stage Mom Good and nothing Bad (an early turn),
 #                     else CAUTION. Never ACCUMULATE.
@@ -294,7 +296,8 @@ def expert_view_has_news(view):
 #                     stand-in from Trend; a late upload is flagged instead (a red
 #                     banner in the app and a Discord post, stage_analysis.late_upload_notice).
 #
-# CE (outside S1) and PEAD are shown with the reasons but never decide.
+# CE and PEAD are shown with the reasons but never decide (owner, 2026-11-01: CE
+# was briefly a stand-in for Stage Mom in S1; kept out).
 _GRADES = {
     "ta_rules": {"Bullish Signal": "Good", "Maintain/Add": "Good",
                  "Wait/Watch": "Neutral", "Momentum Fading": "Neutral",
@@ -315,35 +318,37 @@ def _grade(field, value):
 
 
 def decide_expert_verdict(row, sentiment):
-    """(verdict, reasons) from the row's Stage, Stage Mom, TA Rules, CE and the
+    """(verdict, reasons) from the row's Stage, Stage Mom, TA Rules and the
     guarded Sentiment label -- see the rule above. Reasons are short phrases for
     the hover; the last one names CE and PEAD, which are shown, not counted."""
     row = row or {}
     stage = row.get("stage")
     if stage not in STAGES:
         return "PENDING", [NO_STAGE_REASON]
-    ta, mom, ce = row.get("ta_rules"), row.get("stage_mom"), row.get("cheat_entry")
+    ta, mom = row.get("ta_rules"), row.get("stage_mom")
     g_ta, g_mom, g_sent = _grade("ta_rules", ta), _grade("stage_mom", mom), _grade("sentiment", sentiment)
     bad = [g_ta, g_mom, g_sent].count("Bad")
     exit_ = ta == "Exit"
     reasons = [f"Stage: {stage}", f"TA Rules: {ta or 'n/a'} ({g_ta.lower()})",
                f"Stage Mom: {mom or 'n/a'} ({g_mom.lower()})",
                f"Sentiment: {sentiment or 'Unknown'} ({g_sent.lower()})"]
-    shown = f"Shown, not counted: CE {ce or 'n/a'} · PEAD {row.get('pead') or 'n/a'}"
+    shown = f"Shown, not counted: CE {row.get('cheat_entry') or 'n/a'} · PEAD {row.get('pead') or 'n/a'}"
 
-    if stage.startswith(("S1", "S2")):
+    if stage.startswith("S2"):
         if exit_ or bad >= 2:
             verdict = "CAUTION"
-        elif stage.startswith("S2"):
+        else:
             verdict = "ACCUMULATE" if g_ta == "Good" and not bad else "HOLD"
-        elif g_ta == "Good" and g_sent != "Bad" and (g_mom == "Good" or ce == "Yes"):
+    elif stage.startswith("S1"):
+        if bad >= 2 or (exit_ and g_mom != "Good"):
+            verdict = "CAUTION"
+        elif g_ta == "Good" and g_mom == "Good" and g_sent != "Bad":
             verdict = "ACCUMULATE"
-            reasons.insert(1, "Early Accumulate: an S1 base that is turning ("
-                           + ("Stage Mom up" if g_mom == "Good" else "Cheat Entry") + ")")
-            if g_mom != "Good":
-                shown = f"CE Yes counted (S1) · PEAD {row.get('pead') or 'n/a'}"
+            reasons.insert(1, "Early Accumulate: an S1 base that is turning (Stage Mom up)")
         else:
             verdict = "HOLD"
+            if exit_:
+                reasons.insert(1, "S1 with Stage Mom up: a TA Exit is a Hold here, not Caution")
     elif stage.startswith("S3"):
         verdict = "CAUTION" if bad else "HOLD"
     else:
@@ -462,10 +467,10 @@ def _view_age_days(view):
 VERDICT_RULES = """HOW THE VERDICT IS DECIDED (in code, from the dashboard's columns -- not by the model):
 TheWrap Stage Analysis sets the bar; TA Rules, Stage Mom and Sentiment move the stock within it. Each of those three is Good, Neutral or Bad -- TA Rules: Bullish Signal / Maintain/Add Good, Wait/Watch / Momentum Fading Neutral, Be Cautious / Exit Bad; Stage Mom: Strong / Recovering Good, Weakening Neutral, Weak Bad; Sentiment: Positive Good, Neutral / Unknown Neutral, Negative Bad.
 - S2 Advancing: CAUTION if TA Rules is Exit or 2+ are Bad; ACCUMULATE if TA Rules is Good and none is Bad; else HOLD.
-- S1 Accumulation: CAUTION if TA Rules is Exit or 2+ are Bad; an early ACCUMULATE if TA Rules is Good, Sentiment is not Bad, and Stage Mom is Good or CE (Cheat Entry) is Yes; else HOLD.
+- S1 Accumulation: CAUTION if 2+ are Bad, or TA Rules is Exit while Stage Mom is not Good; an early ACCUMULATE if TA Rules is Good, Stage Mom is Good and Sentiment is not Bad; else HOLD (a TA Exit with Stage Mom Good is a HOLD).
 - S3 Distribution: CAUTION if any is Bad, else HOLD (never Accumulate).
 - S4 Decline: HOLD if Stage Mom is Good and none is Bad (an early turn), else CAUTION (never Accumulate).
-- No Stage: PENDING. Trend and Tech Uptrend are context for the write-up, not inputs; CE outside S1 and PEAD are shown, not counted."""
+- No Stage: PENDING. Trend and Tech Uptrend are context for the write-up, not inputs; CE (Cheat Entry) and PEAD are shown, not counted."""
 
 NEWS_RISK_RULES = f"""THE NEWS STEP: the model reads the last {EXPERT_NEWS_WINDOW_DAYS} days of material company news. A dated, quoted NEGATIVE event in one of these categories lowers the verdict ONE step (Accumulate -> Hold, Hold -> Caution) until the item is more than {EXPERT_NEWS_WINDOW_DAYS} days old: {"; ".join(NEWS_RISK_CATEGORIES)}. News never raises the verdict, and quarterly results, guidance and analyst ratings are not news here -- Sentiment decides those."""
 

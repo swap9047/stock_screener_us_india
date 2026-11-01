@@ -9,8 +9,9 @@ Fading Neutral -- Be Cautious, Exit Bad; Mom: Strong, Recovering Good --
 Weakening Neutral -- Weak Bad; Sentiment: Positive Good, Negative Bad):
 
   S2  CAUTION on TA Exit or 2+ Bad; ACCUMULATE if TA Good and nothing Bad; else HOLD
-  S1  CAUTION on TA Exit or 2+ Bad; ACCUMULATE (early) if TA Good, Sentiment not
-      Bad, and Mom Good or CE Yes; else HOLD
+  S1  CAUTION on 2+ Bad, or on TA Exit unless Mom is Good (then HOLD: owner,
+      2026-11-01); ACCUMULATE (early) if TA Good, Mom Good and Sentiment not Bad;
+      else HOLD. CE and PEAD never count (owner, 2026-11-01: CE kept out of S1 too)
   S3  CAUTION if anything Bad, else HOLD
   S4  HOLD if Mom Good and nothing Bad (an early turn), else CAUTION
   no Stage (or "Unknown")  PENDING
@@ -85,11 +86,17 @@ if decide:
         # S1: early Accumulate when the base is turning
         (row(stage=S1, mom=UP), "Neutral", "ACCUMULATE", "S1, TA Good, Mom Strong: early Accumulate"),
         (row(stage=S1, mom=REC), "Positive", "ACCUMULATE", "S1, TA Good, Mom Recovering: early Accumulate"),
-        (row(stage=S1, mom=WEAK, ce="Yes"), "Neutral", "ACCUMULATE", "S1, TA Good, CE Yes stands in for Mom"),
+        (row(stage=S1, mom=WEAK, ce="Yes"), "Neutral", "HOLD", "S1: CE Yes does NOT stand in for Mom (kept out)"),
+        (row(stage=S1, mom=WKG, ce="Yes"), "Positive", "HOLD", "...nor with Mom Weakening"),
         (row(stage=S1, mom=WKG, ce="No"), "Positive", "HOLD", "S1, TA Good, Mom Weakening and no CE: Hold"),
         (row(stage=S1, mom=UP), "Negative", "HOLD", "S1 with a Negative Sentiment: no early Accumulate"),
         (row(stage=S1, ta="Momentum Fading", mom=UP, ce="Yes"), "Positive", "HOLD", "S1 needs TA Good too"),
-        (row(stage=S1, ta="Exit", mom=REC), "Positive", "CAUTION", "S1 with TA Exit: Caution even with Mom Recovering"),
+        (row(stage=S1, ta="Exit", mom=REC), "Positive", "HOLD", "S1 with TA Exit but Mom Recovering: Hold, not Caution"),
+        (row(stage=S1, ta="Exit", mom=UP), "Neutral", "HOLD", "...and with Mom Strong"),
+        (row(stage=S1, ta="Exit", mom=WKG), "Positive", "CAUTION", "S1 with TA Exit and Mom Weakening: Caution"),
+        (row(stage=S1, ta="Exit", mom=WEAK), "Positive", "CAUTION", "S1 with TA Exit and Mom Weak: Caution"),
+        (row(stage=S1, ta="Exit", mom=REC), "Negative", "CAUTION", "S1, Exit + Mom up but Negative (2 Bad): Caution"),
+        (row(stage=S2, ta="Exit", mom=REC), "Positive", "CAUTION", "...the Exit exception is S1's only: S2 Exit is Caution"),
         (row(stage=S1, ta="Maintain/Add", mom=WEAK, ce="Yes"), "Negative", "CAUTION", "S1 with 2 Bad: Caution"),
         (row(stage=S1, ta="Wait/Watch", mom=WEAK), "Neutral", "HOLD", "S1 with 1 Bad and no Exit: Hold"),
         # S3: any Bad is Caution, never Accumulate
@@ -119,10 +126,13 @@ if decide:
           f"the reasons name each input and its grade ({reasons})")
     check(reasons[-1].startswith("Shown, not counted: CE No") and "PEAD No" in reasons[-1],
           f"CE and PEAD are shown, not counted ({reasons[-1]})")
-    v, reasons = decide(row(stage=S1, mom=WEAK, ce="Yes", pead="Strong"), "Neutral")
-    check(v == "ACCUMULATE" and any("Early Accumulate" in x and "Cheat Entry" in x for x in reasons)
-          and reasons[-1] == "CE Yes counted (S1) · PEAD Strong",
-          f"an early Accumulate on CE says so, and that CE counted ({reasons})")
+    v, reasons = decide(row(stage=S1, mom=REC, ce="Yes", pead="Strong"), "Neutral")
+    check(v == "ACCUMULATE" and any("Early Accumulate" in x and "Stage Mom up" in x for x in reasons)
+          and reasons[-1] == "Shown, not counted: CE Yes · PEAD Strong",
+          f"an S1 early Accumulate says why, and CE is shown, not counted ({reasons})")
+    v, reasons = decide(row(stage=S1, ta="Exit", mom=REC), "Positive")
+    check(v == "HOLD" and any("TA Exit is a Hold here" in x for x in reasons),
+          f"an S1 Exit-with-Mom-up Hold says why ({reasons})")
     v, reasons = decide(row(stage=S4, mom=REC), "Neutral")
     check(any("early turn" in x for x in reasons), f"an S4 early-turn Hold says so ({reasons})")
     v, reasons = decide(row(stage=None), "Positive")
