@@ -2905,16 +2905,21 @@ def apply_view_fields_to_rows(rows, fundamentals=None, expert_views=None, intere
     Semantics, unchanged from the app loop they came from:
       - sentiment is the GUARDED value (_validate_sentiment), not the raw one;
       - expert_take is LIVE (expert_views.expert_take_for_row): the verdict the
-        row's own columns give -- Trend, Tech Uptrend, TA Rules and the guarded
-        Sentiment set just above -- lowered one step by an active news risk from
-        the stored write-up. It needs no write-up at all, so a failed or missing
-        AI run no longer turns it Pending; only a row without a Trend is;
-      - expert_news_backed is "Yes"/"No" from expert_view_has_news."""
+        row's own columns give -- Stage and TA Rules, the 10W EMA distance, and
+        Stage Mom in S1 (Stage set just above); news from the stored write-up is
+        FYI only. It needs no write-up at all, so a failed or missing AI run
+        never turns it Pending; only a row without a Stage is;
+      - expert_news_backed is "Yes"/"No" from expert_view_has_news.
+
+    The Stage fields are attached FIRST: the verdict is Stage-led since
+    2026-10-31, and with them attached after it (as they were until then) every
+    row would have read Pending."""
     from expert_views import load_expert_views, expert_take_for_row, expert_view_has_news
     from fundamentals_eval import load_fundamentals, _validate_sentiment
     fundamentals = load_fundamentals() if fundamentals is None else fundamentals
     expert_views = load_expert_views() if expert_views is None else expert_views
     interested = load_interested() if interested is None else interested
+    apply_stage_to_rows(rows, stage)
     for row in rows:
         ticker = row.get("ticker")
         row["interested"] = ticker in interested
@@ -2922,7 +2927,6 @@ def apply_view_fields_to_rows(rows, fundamentals=None, expert_views=None, intere
         view = expert_views.get(ticker, {})
         row["expert_take"] = expert_take_for_row(row, view)["verdict"].title()
         row["expert_news_backed"] = "Yes" if expert_view_has_news(view) else "No"
-    apply_stage_to_rows(rows, stage)
     return rows
 
 

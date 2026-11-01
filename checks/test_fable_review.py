@@ -362,9 +362,9 @@ try:
     run(alert_check, "evaluate_and_fire", cap_alerts)
     r = got["rows"][0]
     check(r["data_end"] == STORED_END, "F13 alert_check: the stored (newer) row was substituted")
-    # expert_take is the LIVE verdict since 2026-10-04: Uptrend + Tech Uptrend but
-    # no TA Rules verdict is Hold -- recomputed, not the stored row's Accumulate.
-    check(r["flag"] == "Red" and r["note"] == "watch" and r["interested"] is True and r["expert_take"] == "Hold",
+    # expert_take is the LIVE verdict since 2026-10-04, Stage-led since 2026-10-31: a row
+    # with no Stage Analysis upload is Pending -- recomputed, not the stored row's Accumulate.
+    check(r["flag"] == "Red" and r["note"] == "watch" and r["interested"] is True and r["expert_take"] == "Pending",
           f"F13 alert_check: ...and re-enriched from the files before judging ({r['flag']}, {r['note']!r}, {r['interested']}, {r['expert_take']})")
 
     def cap_wrapup(rules, rows, state, **kw):

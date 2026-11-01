@@ -11,9 +11,10 @@ MOM, AvgVol, MCap, Fast, Med, Slow, Beta, Bal, CE, PEAD. Four of those become
 columns (plus three parts of the Stage cell, offered hidden):
 
   Stage  "S1 - S2 (Developing 8P)"  = previous stage - current stage (confidence,
-         weeks in that stage; the "P" is a weekly bar). Read as previous-then-current because on every row
-         it agrees with the screener's own Trend (an Uptrend row ends in S2 and a
-         Strong Downtrend row in S4). "S? - S?" is a ticker with too little history.
+         weeks in that stage; the "P" is a weekly bar). Read as previous-then-current because at the first
+         upload it agreed with the screener's own Trend on every row (an Uptrend row ended in S2 and
+         a Strong Downtrend row in S4); it is a weekly read, so it does not always (on 2026-10-31,
+         12 Uptrend rows sat in S3/S4). "S? - S?" is a ticker with too little history.
   MOM    Strong / Recovering / Weakening / Weak, with an arrow.
   CE     Cheat Entry, Yes / No.
   PEAD   Post-earnings announcement drift: Strong / Mod / Weak / No.
@@ -259,3 +260,58 @@ def apply_stage_to_rows(rows, data=None):
             row[field] = entry.get(field)
         row["stage_uploaded"] = entry.get("uploaded")
     return rows
+
+
+# --- A late upload (owner, 2026-10-31) ----------------------------------------------
+# Expert Take is Stage-led since 2026-10-31, and the Stage comes only from this weekly
+# upload. A missed week changes nothing on screen by itself -- the verdicts keep using
+# the last upload -- so a late one is flagged instead: a red banner at the top of the
+# app and a Discord post from the 9 PM ET alerts job (daily-alerts.yml's gate counts it
+# as due, so the post goes out once per slot even when no alert rule is due).
+# "Late" means more than STAGE_STALE_DAYS old for a stock the watchlists hold: an
+# entry for a ticker that left every watchlist is ignored, or it would flag forever.
+STAGE_STALE_DAYS = 10
+
+
+def _upload_day(value):
+    try:
+        return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+
+
+def upload_status(data, tickers, today=None):
+    """How old the Stage of the watchlists' stocks is: {"held", "covered", "stale",
+    "oldest", "days"} -- `stale` the held tickers whose entry is more than
+    STAGE_STALE_DAYS old, `oldest` / `days` that entry's date and age. A held ticker
+    with no entry is not stale (its Expert Take is Pending, which shows)."""
+    entries = (data or {}).get("tickers") or {}
+    today = today or datetime.now(timezone.utc).date()
+    held = list(dict.fromkeys(t for t in tickers if t))
+    dated = {t: d for t in held if t in entries and (d := _upload_day((entries[t] or {}).get("uploaded")))}
+    stale = sorted(t for t, d in dated.items() if (today - d).days > STAGE_STALE_DAYS)
+    oldest = min(dated.values()) if dated else None
+    return {"held": len(held), "covered": len(dated), "stale": stale,
+            "oldest": oldest, "days": (today - oldest).days if oldest else None}
+
+
+def late_upload_notice(status):
+    """The banner / Discord text when the upload is late, else "". Counts only, no
+    tickers (the alerts job's log is public)."""
+    if not status["stale"]:
+        return ""
+    n, covered = len(status["stale"]), status["covered"]
+    who = "every watchlist stock" if n == covered else f"{n} of {covered} watchlist stocks"
+    return (f"Stage Analysis upload is late: the Stage of {who} is more than {STAGE_STALE_DAYS} days old "
+            f"(oldest from {status['oldest']:%d %b %Y}, {status['days']} days ago). Expert Take is still "
+            "using it -- upload this week's TheWrap CSV in the sidebar's Stage Analysis upload.")
+
+
+def watchlist_tickers(path=None):
+    """Every ticker watchlist.json holds, stdlib only, for the alerts gate (which does not
+    install the app's dependencies). A missing file holds none."""
+    path = path or os.path.join(SCRIPT_DIR, "watchlist.json")
+    if not os.path.exists(path):
+        return []
+    data = read_json_strict(path, {})
+    return [t for tickers in data.values() if isinstance(tickers, list) for t in tickers]

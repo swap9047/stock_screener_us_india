@@ -104,6 +104,7 @@ def screener_records(snapshot, expert_views, fundamentals, settings=None, stage=
     Analysis fields are taken from stage_analysis.json (`stage`) when given, not from the snapshot:
     an upload lands between refreshes (and on a weekend, when none run), so the snapshot's copy can
     be a week behind the file."""
+    from expert_views import expert_take_for_row
     as_of = snapshot.get("generated_at") or _now()
     records = {}
     for rows in (snapshot.get("per_market") or {}).values():
@@ -113,6 +114,9 @@ def screener_records(snapshot, expert_views, fundamentals, settings=None, stage=
                 continue
             if stage is not None:
                 row = apply_stage_to_rows([dict(row)], stage)[0]
+                # The verdict is Stage-led (2026-10-31): recompute it with the Stage just attached,
+                # not the snapshot's, which was decided with the copy the last refresh had.
+                row["expert_take"] = expert_take_for_row(row, expert_views.get(t))["verdict"].title()
             fundamental = dict(fundamentals.get(t) or {})
             if fundamental and row.get("sentiment"):
                 fundamental["sentiment"] = row["sentiment"]

@@ -267,73 +267,110 @@ def expert_view_has_news(view):
 # The model's own verdict matched a rule over the existing columns for 97-100
 # of 124 tickers, and most of the rest re-weighed those same columns or cited a
 # past EPS miss that the forward-looking Sentiment rule deliberately ignores.
-# So the columns decide, live (it cannot disagree with the table), and the AI
-# explains it and reads the news for what no column sees:
+# So the columns decide, live (it cannot disagree with the table, the filters,
+# the alerts or Claude chat), and the AI explains it and reports the news.
 #
-#   ACCUMULATE  (Trend Up/Strong Up OR Tech Uptrend Yes) + TA Rules Maintain/Add
-#               or Bullish Signal + Sentiment not Negative. One of the two trend
-#               reads is enough (owner, same day): TA and Sentiment must agree.
-#           or  TA Rules Bullish Signal + Trend not down + Sentiment not Negative.
-#               The breakout fires off CONVERGING EMAs, where Trend is usually
-#               Mixed, so requiring an Uptrend would never act on TA's entry.
-#   CAUTION     2+ points: TA Exit 2 (the flowchart's own exit call), TA Be
-#               Cautious 1, Trend Down/Strong Down 1, Sentiment Negative 1.
-#   HOLD        otherwise; PENDING when there is no Trend yet.
+# Stage x TA Rules since 2026-11-01 (owner: "stage and ta should suffice"):
+# TheWrap Stage Analysis and the TA Rules flowchart decide, plus the owner's two
+# trading rules -- an S2 stock near its 10-week EMA is a buying opportunity, and
+# an S2 stock that breaks its 40-week EMA is an exit (the flowchart's own Exit:
+# a weekly close more than 3% below the 40W, or a broken support in a base).
+# Tested top to bottom, first match wins:
 #
-# Overbought RSI is deliberately not a point: in a trend-following read it is
-# strength, and "extended, add on a pullback" belongs in the trade plan.
-_UP_TRENDS = ("Uptrend", "Strong Uptrend")
+#   no Stage / Unknown          PENDING (no stand-in: a late upload is flagged
+#                               instead, stage_analysis.late_upload_notice)
+#   S1 + Stage Mom up           ACCUMULATE, an early turn, whatever TA says (owner,
+#                               2026-11-01: in a base the price is often still under
+#                               its 40W when momentum turns; the only use of Stage Mom)
+#   TA Exit / Be Cautious       CAUTION (broke the 40W or support / the 20W)
+#   S2 + Bullish Signal         ACCUMULATE (a breakout)
+#   S2 + Maintain/Add           ACCUMULATE within EXPERT_10W_BAND_PCT of the 10W EMA
+#                               (the buy zone), else HOLD (extended: wait for a
+#                               pullback; or already under the 10W this week)
+#   S2 otherwise                HOLD (Momentum Fading, Wait/Watch)
+#   S1 + Bullish Signal         ACCUMULATE (base breakout), else HOLD
+#   S3                          HOLD (topping: don't add)
+#   S4 + Maintain/Add / Bullish HOLD (an early turn), else CAUTION
+#
+# Sentiment, Trend, Tech Uptrend, CE and PEAD are shown with the reasons as
+# context but never decide. The 10W distance is the LIVE close against the 10W
+# EMA (last_close vs ema10), so it follows the price on screen; TA Rules itself
+# is read on the last completed weekly close.
+EXPERT_10W_BAND_PCT = 3.0
+STAGES = ("S1 Accumulation", "S2 Advancing", "S3 Distribution", "S4 Decline")
 # The dot beside the ticker when you have not set a Flag (app._ticker_cell),
 # keyed by the row's expert_take value. It replaced the Signal dot, 2026-10-04.
 EXPERT_TAKE_EMOJI = {"Accumulate": "🟢", "Hold": "🟡", "Caution": "🔴", "Pending": "⚪"}
-_DOWN_TRENDS = ("Downtrend", "Strong Downtrend")
-_TA_BULLISH = ("Maintain/Add", "Bullish Signal")
-_CAUTION_POINTS = {"Exit": 2, "Be Cautious": 1}
+NO_STAGE_REASON = "No Stage Analysis for this stock yet -- upload the weekly CSV"
+_MOM_UP = ("Strong ↑", "Recovering ↑")
 
 
-def decide_expert_verdict(row, sentiment):
-    """(verdict, reasons) from the row's columns and the guarded Sentiment
-    label -- see the rule above. Reasons are short phrases for the hover."""
+def distance_to_10w(row):
+    """% of the live close above (+) or below (-) the 10-week EMA, or None.
+    Rounded to 4 places: 103 / 100 - 1 is 3.0000000000000027% in floating point,
+    which put a close exactly 3% from the 10W outside the 3% buy zone."""
+    close, ema = (row or {}).get("last_close"), (row or {}).get("ema10")
+    try:
+        return round((float(close) / float(ema) - 1) * 100, 4) if close and ema else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _ta_reason(row, ta):
+    """TA Rules with the flowchart path that decided it, when the row has it."""
+    test = ((row.get("ta_rules_detail") or {}).get("decided_by") or {}).get("test")
+    why = {"slow": "broke the 40W EMA", "mid": "broke the 20W EMA", "fast": "broke the 10W EMA",
+           "support": "broke support", "resistance": "broke resistance"}.get(test)
+    return f"TA Rules: {ta or 'n/a'}" + (f" ({why})" if why else "")
+
+
+def decide_expert_verdict(row, sentiment=None):
+    """(verdict, reasons) from the row's Stage, TA Rules, 10W distance (and Stage
+    Mom in S1) -- see the rule above. `sentiment` is accepted for the callers'
+    signature and shown as context, never counted."""
     row = row or {}
-    trend, ta, tu = row.get("trend"), row.get("ta_rules"), row.get("tech_uptrend")
-    if not trend:
-        return "PENDING", ["Not enough price history for a Trend yet"]
-    negative = sentiment == "Negative"
-    sent_txt = f"Sentiment: {sentiment or 'Unknown'}"
-    ta_txt = f"TA Rules: {ta or 'n/a'}"
-    up_reasons = [f"Trend: {trend}", f"Tech Uptrend: {'Yes' if tu else 'No'}", ta_txt, sent_txt]
-    if (trend in _UP_TRENDS or tu) and ta in _TA_BULLISH and not negative:
-        return "ACCUMULATE", up_reasons
-    if ta == "Bullish Signal" and trend not in _DOWN_TRENDS and not negative:
-        return "ACCUMULATE", [ta_txt + " (breakout from a converging base)", f"Trend: {trend}", sent_txt]
+    stage = row.get("stage")
+    if stage not in STAGES:
+        return "PENDING", [NO_STAGE_REASON]
+    s, ta, mom = stage[:2], row.get("ta_rules"), row.get("stage_mom")
+    d = distance_to_10w(row)
+    reasons = [f"Stage: {stage}", _ta_reason(row, ta)]
+    if s == "S1" and mom in _MOM_UP:
+        verdict, why = "ACCUMULATE", f"Early Accumulate: an S1 base turning (Stage Mom {mom}; TA Rules not counted in S1)"
+    elif ta in ("Exit", "Be Cautious"):
+        verdict, why = "CAUTION", ("Exit signal" if ta == "Exit" else "Trend cracking") + f" in {s}"
+    elif s == "S2" and ta == "Bullish Signal":
+        verdict, why = "ACCUMULATE", "S2 breakout"
+    elif s == "S2" and ta == "Maintain/Add":
+        if d is not None and abs(d) <= EXPERT_10W_BAND_PCT:
+            verdict, why = "ACCUMULATE", f"S2 buy zone: {d:+.1f}% from the 10W EMA"
+        elif d is not None and d > 0:
+            verdict, why = "HOLD", f"S2 extended: {d:+.1f}% above the 10W EMA -- wait for a pullback"
+        else:
+            verdict, why = "HOLD", ("S2, under the 10W EMA this week" if d is not None
+                                    else "S2, distance to the 10W EMA unknown")
+    elif s == "S2":
+        verdict, why = "HOLD", "S2, no entry signal"
+    elif s == "S1":
+        verdict, why = ("ACCUMULATE", "S1 base breakout") if ta == "Bullish Signal" else ("HOLD", "S1 basing")
+    elif s == "S3":
+        verdict, why = "HOLD", "S3 topping: don't add"
+    elif ta in ("Maintain/Add", "Bullish Signal"):
+        verdict, why = "HOLD", "S4 with TA turning up: an early turn"
+    else:
+        verdict, why = "CAUTION", "S4 decline"
+    if d is not None and "10W" not in why:
+        reasons.append(f"10W EMA distance: {d:+.1f}%")
+    context = [f"Stage Mom {mom or 'n/a'}", f"Sentiment {sentiment or 'Unknown'}",
+               f"CE {row.get('cheat_entry') or 'n/a'}", f"PEAD {row.get('pead') or 'n/a'}"]
+    return verdict, [why] + reasons + ["Context, not counted: " + " · ".join(context)]
 
-    caution = []
-    if _CAUTION_POINTS.get(ta):
-        caution.append((ta_txt, _CAUTION_POINTS[ta]))
-    if trend in _DOWN_TRENDS:
-        caution.append((f"Trend: {trend}", 1))
-    if negative:
-        caution.append((sent_txt, 1))
-    if sum(n for _, n in caution) >= 2:
-        return "CAUTION", [t for t, _ in caution]
 
-    # A Hold: say what kept it from Accumulate (and any single Caution point).
-    blockers = []
-    if trend not in _UP_TRENDS and not tu:
-        blockers.append(f"Trend: {trend} and Tech Uptrend: No")
-    if ta not in _TA_BULLISH:
-        blockers.append(ta_txt)
-    if negative:
-        blockers.append(sent_txt)
-    return "HOLD", blockers or up_reasons
-
-
-# --- The news step: a material negative event lowers one step, never raises ------
-# Owner, 2026-10-04. Bad news can hit before the chart reacts, good news is
-# confirmed by the chart anyway, and the model reads tone upbeat (outlook
-# "improving" ~11x as often as "cautious" on 2026-10-03), so letting news RAISE a
-# verdict would amplify that bias. Results, guidance and ratings are not here:
-# Sentiment decides those.
+# --- The news step: FYI only (owner, 2026-11-01) --------------------------------
+# A material negative event from the last 14 days is reported with the verdict --
+# the hover, the write-up, Claude chat -- but never changes it. From 2026-10-04 to
+# 2026-11-01 it lowered the verdict one step; the owner wants the verdict to be
+# Stage and TA Rules alone. Results, guidance and ratings are not news here.
 EXPERT_NEWS_WINDOW_DAYS = 14
 NEWS_RISK_CATEGORIES = (
     "fraud or accounting irregularities",
@@ -345,7 +382,6 @@ NEWS_RISK_CATEGORIES = (
     "plant or operations disruption",
     "debt default or credit-rating downgrade",
 )
-_LOWER = {"ACCUMULATE": "HOLD", "HOLD": "CAUTION", "CAUTION": "CAUTION"}
 
 
 def _parse_day(value):
@@ -356,8 +392,8 @@ def _parse_day(value):
 
 
 def news_risk_active(news_risk, today=None, window=EXPERT_NEWS_WINDOW_DAYS):
-    """True when news_risk records a material negative event that can still
-    lower the verdict: flagged, in one of NEWS_RISK_CATEGORIES, quoted, and
+    """True when news_risk records a material negative event that is still
+    shown as FYI: flagged, in one of NEWS_RISK_CATEGORIES, quoted, and
     dated within the last `window` days (it expires once it would drop out of
     the search window anyway)."""
     r = news_risk or {}
@@ -371,21 +407,19 @@ def news_risk_active(news_risk, today=None, window=EXPERT_NEWS_WINDOW_DAYS):
 
 
 def expert_take_for_row(row, view, sentiment=None, today=None):
-    """The Expert Take shown and filtered on: the columns' verdict, lowered one
-    step by an active news risk from the stored write-up. Computed LIVE, so it
-    follows the columns on screen; the write-up only contributes news_risk.
-    Returns {"verdict", "base", "reasons", "news_lowered", "news_risk"}."""
+    """The Expert Take shown and filtered on: the columns' verdict, with an
+    active news risk from the stored write-up attached as FYI (news_noted /
+    news_risk) -- it never changes the verdict (owner, 2026-11-01). Computed
+    LIVE, so it follows the columns on screen. news_lowered is always False; the
+    key stays for callers. Returns {"verdict", "base", "reasons",
+    "news_lowered", "news_noted", "news_risk"}."""
     row = row or {}
     sentiment = row.get("sentiment") if sentiment is None else sentiment
     base, reasons = decide_expert_verdict(row, sentiment)
     risk = (view or {}).get("news_risk")
-    active = base in _LOWER and news_risk_active(risk, today)
-    lowered = active and _LOWER[base] != base
-    # news_noted: an active risk on a verdict that is already Caution -- it
-    # cannot lower it, but the reader should still see it.
-    return {"verdict": _LOWER[base] if lowered else base, "base": base, "reasons": reasons,
-            "news_lowered": lowered, "news_noted": active and not lowered,
-            "news_risk": risk if active else None}
+    active = base != "PENDING" and news_risk_active(risk, today)
+    return {"verdict": base, "base": base, "reasons": reasons,
+            "news_lowered": False, "news_noted": active, "news_risk": risk if active else None}
 
 
 def is_pending_view(view):
@@ -434,12 +468,16 @@ def _view_age_days(view):
 # prompt AND the copy-for-AI payload in app.py quote them -- two copies would
 # drift the moment the rule is tuned. Kept in step with decide_expert_verdict
 # and news_risk_active (checks/test_expert_take_100426.py).
-VERDICT_RULES = """HOW THE VERDICT IS DECIDED (in code, from the dashboard's columns -- not by the model):
-- ACCUMULATE: Trend is Uptrend or Strong Uptrend, OR Tech Uptrend is Yes (one is enough), AND TA Rules is "Maintain/Add" or "Bullish Signal", AND Sentiment is not Negative. Or: TA Rules is "Bullish Signal" (a breakout from converging EMAs, where Trend is usually Mixed), Trend is not a Downtrend, and Sentiment is not Negative.
-- CAUTION: at least 2 points, where TA Rules "Exit" counts 2 (the flowchart's own exit call), TA Rules "Be Cautious" 1, Trend Downtrend/Strong Downtrend 1, and Sentiment Negative 1.
-- HOLD: everything else. Overbought RSI is not a Caution point: in a trend it is strength."""
+VERDICT_RULES = """HOW THE VERDICT IS DECIDED (in code, from TheWrap Stage Analysis and the TA Rules flowchart -- not by the model). First match wins:
+- No Stage: PENDING.
+- S1 with Stage Mom Strong or Recovering: an early ACCUMULATE (a base turning), whatever TA Rules says.
+- TA Rules Exit (weekly close more than 3% under the 40W EMA, or a broken support in a base) or Be Cautious (under the 20W): CAUTION.
+- S2 with TA Rules Bullish Signal (a breakout): ACCUMULATE.
+- S2 with TA Rules Maintain/Add: ACCUMULATE when the price is within 3% of the 10W EMA (the buy zone); HOLD when it is further above it (extended: wait for a pullback) or already under it.
+- S2 otherwise: HOLD. S1 with a Bullish Signal: ACCUMULATE, otherwise HOLD. S3: HOLD (topping: don't add). S4: HOLD on Maintain/Add or a Bullish Signal (an early turn), otherwise CAUTION.
+Sentiment, Trend, Tech Uptrend, CE and PEAD are context for the write-up, not inputs."""
 
-NEWS_RISK_RULES = f"""THE NEWS STEP: the model reads the last {EXPERT_NEWS_WINDOW_DAYS} days of material company news. A dated, quoted NEGATIVE event in one of these categories lowers the verdict ONE step (Accumulate -> Hold, Hold -> Caution) until the item is more than {EXPERT_NEWS_WINDOW_DAYS} days old: {"; ".join(NEWS_RISK_CATEGORIES)}. News never raises the verdict, and quarterly results, guidance and analyst ratings are not news here -- Sentiment decides those."""
+NEWS_RISK_RULES = f"""THE NEWS FYI: the model reads the last {EXPERT_NEWS_WINDOW_DAYS} days of material company news and reports a dated, quoted NEGATIVE event in one of these categories: {"; ".join(NEWS_RISK_CATEGORIES)}. It is shown next to the verdict until it is more than {EXPERT_NEWS_WINDOW_DAYS} days old and never changes the verdict. Quarterly results, guidance and analyst ratings are not news here -- Sentiment covers those."""
 
 
 def _fmt(v, suffix="", digits=1):
@@ -596,7 +634,6 @@ def build_expert_prompt(row_data, news_text, active_alerts_text=None, fundamenta
     # guarded label when the caller attached it, else guarded here.
     sentiment = _row_sentiment(row_data, fundamental_view)
     base_verdict, verdict_reasons = decide_expert_verdict(row_data, sentiment)
-    lowered_verdict = _LOWER.get(base_verdict, base_verdict)
     tu_detail = (row_data.get("tech_uptrend_detail") or {}).get("passed") or {}
     tu_failed = [k.replace("_", " ") for k, ok in tu_detail.items() if not ok]
     neutral = [name for key, name in (("slope_neutral", "slope"), ("ma_neutral", "10W vs 40W"),
@@ -686,11 +723,11 @@ You do not choose the verdict: the columns give {base_verdict}. Your two jobs:
 
 A. NEWS RISK. {NEWS_RISK_RULES}
    Report one in "news_risk" ONLY if section 5 shows a specific, dated negative event of one of those
-   categories, and copy the news's own words into "quote". If you report one, the verdict will be
-   lowered one step to {lowered_verdict}. Anything else (no such event, or a general worry) is
+   categories, and copy the news's own words into "quote". It is shown to the reader as an FYI next to
+   the verdict and does NOT change it. Anything else (no such event, or a general worry) is
    "material_negative": false with the other fields null.
 
-B. THE NOTE, for the final verdict ({base_verdict}, or {lowered_verdict} if you reported a news risk):
+B. THE NOTE, for the verdict {base_verdict}:
 1. A 1-line headline with the key reason.
 2. Technical & volume assessment (2-3 sentences), from sections 1 and 1b.
 3. Catalyst assessment covering sections 4 and 5 -- if both are empty, say "No material news found;
@@ -741,10 +778,12 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
     ticker = row_data.get("ticker", "UNKNOWN")
     market = row_data.get("market", "us_invested")
     company_name = row_data.get("company_name", ticker)
-    if not row_data.get("trend"):
-        # No Trend yet (too little price history): the verdict is Pending and
-        # needs no write-up, so spend no model calls on it.
-        return stale_view_fallback("not enough price history for a Trend yet")
+    if not row_data.get("trend") or row_data.get("stage") not in STAGES:
+        # No Trend yet (too little price history) or no Stage Analysis upload
+        # for it: the verdict is Pending and needs no write-up, so spend no
+        # model calls on it.
+        return stale_view_fallback("no Stage Analysis yet" if row_data.get("trend")
+                                   else "not enough price history for a Trend yet")
 
     if news_text is None:
         try:
@@ -831,16 +870,16 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
         on_success=lambda resp: normalize_view(llm_util.json_object(_clean_json_text(resp.text))),
     )
     if used is not None:
-        # The verdict is the columns', lowered one step by an active news risk
-        # (expert_take_for_row) -- stored with the note so the write-up says
-        # which verdict it was written for. The app recomputes it live.
+        # The verdict is the columns' (expert_take_for_row; news is FYI only)
+        # -- stored with the note so the write-up says which verdict it was
+        # written for. The app recomputes it live.
         if "news_risk" not in data or search_found_nothing(news_text):
             # No field, or no news found: a "risk" with nothing behind it is
-            # the model's imagination, so it never lowers a verdict.
+            # the model's imagination, so it is never shown.
             data["news_risk"] = normalize_view({"news_risk": None})["news_risk"]
         take = expert_take_for_row(row_data, data, sentiment=_row_sentiment(row_data, fundamental_view))
         if take["base"] == "PENDING":
-            return _pending_fallback("not enough price history for a Trend yet")
+            return _pending_fallback("no Stage Analysis yet")
         data["base_verdict"], data["verdict"] = take["base"], take["verdict"]
         data["verdict_reasons"] = take["reasons"]
         data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")

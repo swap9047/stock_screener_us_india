@@ -91,14 +91,24 @@ check(why["trend_why"] == glossary.trend_tooltip(full, glossary.ema_col_labels(s
       and "Close > Weekly VStop" in why["tech_uptrend_why"] and why["ta_rules_why"].endswith("→ Maintain/Add")
       and "10D ÷ 100D" in why["volume_trend_why"],
       "the explain group is the dashboard's hover text for Trend, Tech Uptrend, TA Rules and Vol Trend")
-check(why["expert_take_why"].startswith("Accumulate: ") and "Sentiment: Unknown" in why["expert_take_why"],
-      f"Expert Take's reasons, for a library ticker with no Sentiment ({why['expert_take_why']!r})")
+# A library-only ticker has no Stage Analysis (the weekly upload covers the watchlists), and the
+# verdict is Stage-led since 2026-10-31: Pending, saying why.
+check(why["expert_take_why"] == "Pending: No Stage Analysis for this stock yet -- upload the weekly CSV",
+      f"Expert Take's reasons, for a library ticker with no Stage ({why['expert_take_why']!r})")
+# Stage x TA Rules since 2026-11-01: S2 + Maintain/Add within 3% of the 10W EMA is the buy zone.
+full = dict(full, stage="S2 Advancing", stage_mom="Strong ↑", cheat_entry="No", pead="Mod",
+            last_close=101.0, ema10=100.0)
+why = ma.public_record(full, "library", settings=settings)["metrics"]
+check(why["expert_take_why"].startswith("Accumulate: S2 buy zone: +1.0% from the 10W EMA; Stage: S2 Advancing")
+      and "Sentiment Unknown" in why["expert_take_why"] and "PEAD Mod" in why["expert_take_why"],
+      f"Expert Take's reasons, for a row with a Stage and no Sentiment ({why['expert_take_why']!r})")
 import datetime as _dt  # noqa: E402
 
 risk = {"material_negative": True, "category": "regulatory or legal action", "date": _dt.date.today().isoformat(), "quote": "SEBI order"}
-lowered = ma.explanations(full, settings, {"news_risk": risk})["expert_take_why"]
-check(lowered.startswith("Hold: ") and "Lowered one step for news: regulatory or legal action" in lowered and "SEBI order" in lowered,
-      f"a news event that lowered the verdict is named ({lowered!r})")
+fyi = ma.explanations(full, settings, {"news_risk": risk})["expert_take_why"]
+check(fyi.startswith("Accumulate: ") and "News FYI (does not change the verdict): regulatory or legal action" in fyi
+      and "SEBI order" in fyi,
+      f"a news event is named as FYI, and the verdict stays (owner, 2026-11-01) ({fyi!r})")
 check(ma.explanations({"ticker": "NEW"}, settings) == {}, "a row without signals has nothing to explain")
 
 # --- choosing groups --------------------------------------------------------------------

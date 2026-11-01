@@ -80,7 +80,7 @@ METRIC_GROUPS = {
         ("trend", "Trend", "", "Strong Uptrend / Uptrend / Mixed / Downtrend / Strong Downtrend, from price vs the slow WEMA, its slope, fast vs slow WEMA and weekly RS."),
         ("tech_uptrend", "Tech Uptrend", "", "1 when the close is above an upward weekly VStop (up for 3+ weeks) and the slow WEMA, on reasonable volume."),
         ("ta_rules", "TA Rules", "", "The weekly EMA flowchart on the last completed week: Maintain/Add, Momentum Fading, Be Cautious, Exit, Bullish Signal or Wait/Watch."),
-        ("expert_take", "Expert Take", "", "Accumulate, Hold or Caution, decided in code from Trend, Tech Uptrend, TA Rules and Sentiment."),
+        ("expert_take", "Expert Take", "", "Accumulate, Hold or Caution, decided in code from Stage Analysis and the TA Rules flowchart (S2 within 3% of the 10W EMA is the buy zone); Pending without a Stage."),
         ("vstop_weekly", "VStop-W", "price", "Weekly volatility stop (ATR stop-and-reverse)."),
         ("vstop_weekly_direction", "VStop Dir", "", "Up or Down."),
         ("vstop_weekly_weeks_since_change", "VStop Weeks Ago", "", "Weeks since the weekly VStop last flipped."),
@@ -144,7 +144,7 @@ METRIC_GROUPS = {
         ("tech_uptrend_why", "Tech Uptrend: why", "", "Each requirement of Tech Uptrend, passed or failed, with the numbers."),
         ("ta_rules_why", "TA Rules: why", "", "The path taken through the weekly EMA flowchart on the last completed week, with the numbers each step was decided on."),
         ("volume_trend_why", "Vol Trend: why", "", "The 10-day vs 100-day median volume ratio against the Exploding and Declining thresholds."),
-        ("expert_take_why", "Expert Take: why", "", "What decided the Expert Take verdict (Trend, Tech Uptrend, TA Rules, Sentiment), and a news event that lowered it, if any."),
+        ("expert_take_why", "Expert Take: why", "", "What decided the Expert Take verdict (Stage, TA Rules, the 10W EMA distance; Stage Mom in S1), and any news FYI, and a news event that lowered it, if any."),
     ]),
 }
 # Catalog fields whose glossary entry (glossary.column_definitions, keyed by column label) is under
@@ -244,12 +244,12 @@ def explanations(row, settings=None, expert_view=None):
         out["ta_rules_why"] = glossary.ta_rules_tooltip(row)
     if "volume_trend" in row:
         out["volume_trend_why"] = glossary.vol_trend_tooltip(row, settings)
-    if row.get("trend"):
+    if row.get("trend") or row.get("stage"):
         take = expert_take_for_row(row, expert_view or {})
         why = f"{take['verdict'].title()}: " + "; ".join(take["reasons"])
         risk = take.get("news_risk") or {}
-        if take.get("news_lowered") or take.get("news_noted"):
-            why += (f". {'Lowered one step' if take.get('news_lowered') else 'Noted (already Caution)'} for news: "
+        if take.get("news_noted"):
+            why += (". News FYI (does not change the verdict): "
                     f"{risk.get('category') or 'a material negative event'} ({risk.get('date') or 'undated'})"
                     + (f' - "{risk["quote"]}"' if risk.get("quote") else ""))
         out["expert_take_why"] = why
@@ -354,8 +354,10 @@ def _compute_once(tickers, settings, ticker_index):
 
 
 def columns_verdict(row):
-    """Expert Take as the dashboard decides it from the columns (Trend, Tech Uptrend, TA Rules), for a row
-    that has no Sentiment or nightly write-up -- a library ticker the screener doesn't track. Same
-    function as the dashboard's (expert_views.expert_take_for_row), with no news step to apply."""
+    """Expert Take as the dashboard decides it from the columns (Stage, TA Rules, the 10W EMA distance,
+    Stage Mom in S1), for a row with no nightly write-up -- a library ticker the screener doesn't track, or
+    a screener ticker recomputed live. Same function as the dashboard's (expert_views.expert_take_for_row),
+    with no news FYI to attach. A row with no Stage Analysis (every
+    library-only ticker: the weekly upload covers the watchlists only) is Pending."""
     from expert_views import expert_take_for_row
     return expert_take_for_row(row, {})["verdict"].title()
