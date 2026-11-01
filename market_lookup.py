@@ -497,9 +497,16 @@ def lookup(queries, refresh=False, db=None, compute=None, yahoo=yahoo_symbol, se
             priced_as[t] = row["priced_as"]
             old = stored.get(t) or {}
             sentiment = ((old.get("ai") or {}).get("sentiment") or {}).get("sentiment")
-            if sentiment:
-                # A screener ticker's guarded Sentiment, so Expert Take and its reasons match the dashboard's.
-                row["sentiment"] = sentiment
+            prev = old.get("metrics") or {}
+            stage = {f: prev[f] for f in STAGE_FIELDS if row.get(f) in (None, "") and prev.get(f) not in (None, "")}
+            if sentiment or stage:
+                # A screener ticker's guarded Sentiment and its Stage Analysis (only the screener's
+                # publish has those, from the weekly upload), so Expert Take and its reasons match the
+                # dashboard's: the verdict is Stage-led since 2026-10-31, and without the stored Stage a
+                # live recompute read Pending.
+                row.update(stage)
+                if sentiment:
+                    row["sentiment"] = sentiment
                 row["expert_take"] = market_api.columns_verdict(row)
             record = priced_record(t, row, "live", settings=settings)
             keep_previous(record, old, row.get("details_failed"))

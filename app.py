@@ -152,6 +152,7 @@ from glossary import (ema_col_labels, column_definitions, trend_tooltip, ta_rule
                       vol_trend_tooltip, tech_uptrend_tooltip, stage_tooltip)
 from stage_analysis import (
     load_stage_analysis, save_stage_analysis, parse_stage_csv, stage_label, match_to_universe, merge_upload,
+    upload_status as stage_upload_status, late_upload_notice as stage_late_notice,
     STAGE_ANALYSIS_FILE, COLUMN_DEFS as STAGE_COLUMN_DEFS, DEFAULT_VISIBLE_KEYS as STAGE_VISIBLE_KEYS,
     DEFAULT_HIDDEN_LABELS as STAGE_HIDDEN_LABELS,
 )
@@ -5217,6 +5218,14 @@ for _market_rows in per_market.values():
     # The age behind the "haven't updated in 3+ days" caption is stored at
     # fetch time; recomputed here so it keeps counting when the refresh stops.
     refresh_data_end_age(_market_rows)
+
+# A late Stage Analysis upload (owner, 2026-10-31): Expert Take is Stage-led, and a
+# missed week changes nothing on screen by itself, so it is flagged in red at the top
+# of the page, above the tabs (the 9 PM ET alerts job posts the same text to Discord).
+_stage_late = stage_late_notice(stage_upload_status(
+    stage_analysis_now, [r.get("ticker") for _rows in per_market.values() for r in _rows]))
+if _stage_late:
+    st.error(_stage_late, icon="🔴")
 
 # Read from the snapshot already parsed above when there is one; the served
 # and live-fetch paths fall back to the file. Only used for the per-tab

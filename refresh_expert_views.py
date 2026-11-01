@@ -24,7 +24,7 @@ from stock_data import load_data_snapshot, load_watchlists
 from expert_views import (
     load_expert_views, save_expert_views, generate_expert_view, _is_valid_view, carry_news_risk,
     resolve_persisted_view,
-    EXPERT_STALE_DAYS, _view_age_days, stale_view_fallback,
+    EXPERT_STALE_DAYS, STAGES, _view_age_days, stale_view_fallback,
 )
 from alerts import active_alerts_for_prompt, alerts_text_for
 from fundamentals_eval import load_fundamentals
@@ -233,11 +233,14 @@ def main():
                     counters["failed"] += 1
                 continue
 
-            if not row.get("trend"):
-                # Too little history for a Trend: Expert Take is Pending and
-                # needs no write-up. Not a failure -- it used to cost two model
-                # calls a night and count toward the FailureFuse.
-                print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - SKIP (no Trend yet)")
+            if not row.get("trend") or row.get("stage") not in STAGES:
+                # Too little history for a Trend, or no Stage Analysis upload
+                # covers it (the Stage leads the verdict since 2026-10-31):
+                # Expert Take is Pending and needs no write-up. Not a failure --
+                # it used to cost two model calls a night and count toward the
+                # FailureFuse.
+                why = "no Trend yet" if not row.get("trend") else "no Stage Analysis yet"
+                print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - SKIP ({why})")
                 continue
             if resume_since is not None and written_since(expert_views.get(tk), resume_since):
                 print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - SKIP (already analysed this slot)")

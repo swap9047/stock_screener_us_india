@@ -43,7 +43,7 @@ check(not rev.written_since(None, since) and not rev.written_since({**good, "as_
 
 # --- the job itself, stubbed
 WL = {"wl_a": [f"A{i}" for i in range(6)], "wl_b": ["A1"] + [f"B{i}" for i in range(4)]}
-SNAP = {"per_market": {m: [{"ticker": t, "company_name": t, "trend": "Uptrend"} for t in tks] for m, tks in WL.items()}}
+SNAP = {"per_market": {m: [{"ticker": t, "company_name": t, "trend": "Uptrend", "stage": "S2 Advancing"} for t in tks] for m, tks in WL.items()}}
 real_sleep = time.sleep          # rev.time IS the time module: keep the real one for the stub
 rev.time.sleep = lambda s: None
 

@@ -1,23 +1,25 @@
-"""Expert Take, redesigned 2026-10-04: the columns decide, the AI explains.
+"""Expert Take: the columns decide, the AI explains (2026-10-04), Stage-led since 2026-10-31.
 
 The model's verdict matched a rule over the existing columns for ~81% of
-tickers, and most of the rest re-weighed those same columns (or cited a past
-EPS miss the forward-looking Sentiment rule rules out). So:
+tickers, so the columns decide. Since 2026-10-31 (owner) TheWrap Stage Analysis
+sets the bar and TA Rules, Stage Mom and Sentiment move the stock within it;
+Trend and Tech Uptrend are no longer inputs. Each of the three is Good /
+Neutral / Bad (TA: Bullish Signal, Maintain/Add Good -- Wait/Watch, Momentum
+Fading Neutral -- Be Cautious, Exit Bad; Mom: Strong, Recovering Good --
+Weakening Neutral -- Weak Bad; Sentiment: Positive Good, Negative Bad):
 
-  ACCUMULATE  (Trend Up/Strong Up OR Tech Uptrend Yes -- owner, same day: one of
-              the two is enough) AND TA Rules Maintain/Add or Bullish Signal AND
-              Sentiment not Negative
-          or  TA Rules Bullish Signal (a breakout from a converging base, where
-              Trend is usually Mixed) AND Trend not down AND Sentiment not Negative
-  CAUTION     2+ points: TA Exit 2 (the flowchart's own exit), TA Be Cautious 1,
-              Trend Down/Strong Down 1, Sentiment Negative 1
-  HOLD        otherwise; PENDING without a Trend (too little history)
+  S2  CAUTION on TA Exit or 2+ Bad; ACCUMULATE if TA Good and nothing Bad; else HOLD
+  S1  CAUTION on TA Exit or 2+ Bad; ACCUMULATE (early) if TA Good, Sentiment not
+      Bad, and Mom Good or CE Yes; else HOLD
+  S3  CAUTION if anything Bad, else HOLD
+  S4  HOLD if Mom Good and nothing Bad (an early turn), else CAUTION
+  no Stage (or "Unknown")  PENDING
 
 The verdict is computed LIVE from the row, so it cannot disagree with the
 columns on screen. The nightly AI writes the explanation and trade plan, and
 reads 14 days of material non-earnings news: a dated, quoted negative event in
 a named category lowers the verdict ONE step (never raises it), until the item
-is older than the window. Overbought RSI is not a Caution point.
+is older than the window.
 
 Offline: invented tickers, stubbed model calls, no network, no data files.
 """
@@ -51,47 +53,80 @@ def fn(name):
 decide = fn("decide_expert_verdict")
 
 
-def row(trend="Uptrend", tu=1, ta="Maintain/Add", **kw):
-    return {"trend": trend, "tech_uptrend": tu, "ta_rules": ta, **kw}
+S1, S2, S3, S4 = "S1 Accumulation", "S2 Advancing", "S3 Distribution", "S4 Decline"
+UP, REC, WKG, WEAK = "Strong ↑", "Recovering ↑", "Weakening ↓", "Weak ↓"
+
+
+def row(stage=S2, ta="Maintain/Add", mom=UP, ce="No", pead="No", trend="Uptrend", tu=1, **kw):
+    """A row with the Stage fields. trend / tu stay on it (the write-up's prompt reads
+    them) but no longer decide anything."""
+    return {"stage": stage, "ta_rules": ta, "stage_mom": mom, "cheat_entry": ce, "pead": pead,
+            "trend": trend, "tech_uptrend": tu, **kw}
 
 
 if decide:
     for r, sent, want, why in (
-        (row(), "Positive", "ACCUMULATE", "all three chart reads bullish, Sentiment Positive"),
-        (row(trend="Strong Uptrend", ta="Bullish Signal"), "Neutral", "ACCUMULATE", "Strong Uptrend + breakout"),
-        (row(), "Unknown", "ACCUMULATE", "an Unknown Sentiment does not block"),
-        (row(), "Negative", "HOLD", "a Bearish Sentiment blocks Accumulate (1 point: Hold)"),
-        (row(tu=0), "Positive", "ACCUMULATE", "Trend up is enough without Tech Uptrend"),
-        (row(trend="Mixed", tu=1), "Positive", "ACCUMULATE", "...and Tech Uptrend is enough without Trend up"),
-        (row(trend="Mixed", tu=0), "Positive", "HOLD", "neither Trend up nor Tech Uptrend: Hold"),
-        (row(trend="Downtrend", tu=0, ta="Maintain/Add"), "Neutral", "HOLD", "a Downtrend without Tech Uptrend: Hold"),
-        (row(trend="Mixed", tu=1, ta="Momentum Fading"), "Positive", "HOLD", "TA still has to agree"),
-        (row(trend="Mixed", tu=1), "Negative", "HOLD", "...and so does Sentiment"),
-        (row(ta="Momentum Fading"), "Positive", "HOLD", "TA Momentum Fading blocks Accumulate"),
-        (row(ta="Wait/Watch"), "Positive", "HOLD", "TA Wait/Watch blocks Accumulate"),
-        (row(trend="Mixed", tu=0, ta="Bullish Signal"), "Neutral", "ACCUMULATE",
-         "TA's breakout counts on its own while Trend is Mixed"),
-        (row(trend="Downtrend", tu=0, ta="Bullish Signal"), "Neutral", "HOLD", "...but not in a Downtrend"),
-        (row(trend="Mixed", tu=0, ta="Bullish Signal"), "Negative", "HOLD", "...nor against a Bearish Sentiment"),
-        (row(trend="Mixed", tu=0, ta="Exit"), "Neutral", "CAUTION", "TA Exit alone is Caution (it counts double)"),
-        (row(trend="Uptrend", tu=1, ta="Exit"), "Positive", "CAUTION", "...even in an Uptrend: the flowchart says Exit"),
-        (row(trend="Downtrend", tu=0, ta="Be Cautious"), "Neutral", "CAUTION", "Downtrend + Be Cautious"),
-        (row(trend="Downtrend", tu=0, ta="Maintain/Add"), "Negative", "CAUTION", "Downtrend + Bearish Sentiment"),
-        (row(trend="Mixed", tu=0, ta="Be Cautious"), "Negative", "CAUTION", "Be Cautious + Bearish Sentiment"),
-        (row(trend="Downtrend", tu=0, ta="Maintain/Add"), "Positive", "HOLD", "a Downtrend alone is 1 point: Hold"),
-        (row(trend="Mixed", tu=0, ta="Be Cautious"), "Neutral", "HOLD", "Be Cautious alone is 1 point: Hold"),
-        (row(trend="Strong Uptrend", rsi14_weekly=88.0, rsi14_monthly=91.0), "Positive", "ACCUMULATE",
-         "overbought RSI is strength in a trend, not a Caution point"),
-        (row(ta=None), "Positive", "HOLD", "no TA verdict yet: no Accumulate"),
-        ({"trend": None}, "Positive", "PENDING", "no Trend (too little history): Pending"),
+        # S2: TA Good and nothing Bad -> Accumulate
+        (row(), "Positive", "ACCUMULATE", "S2, Maintain/Add, Mom Strong, Positive"),
+        (row(ta="Bullish Signal", mom=WKG), "Neutral", "ACCUMULATE", "S2, Bullish Signal, Mom Weakening (Neutral)"),
+        (row(mom=REC), "Unknown", "ACCUMULATE", "an Unknown Sentiment is Neutral, not Bad"),
+        (row(ta="Maintain/Add", mom=WEAK), "Positive", "HOLD", "S2 with Mom Weak (1 Bad): Hold"),
+        (row(), "Negative", "HOLD", "S2 with a Negative Sentiment (1 Bad): Hold"),
+        (row(ta="Momentum Fading"), "Positive", "HOLD", "S2 with TA Momentum Fading (Neutral TA): Hold"),
+        (row(ta="Wait/Watch"), "Positive", "HOLD", "S2 with TA Wait/Watch: Hold"),
+        (row(ta="Be Cautious", mom=UP), "Positive", "HOLD", "S2 with Be Cautious alone (1 Bad): Hold"),
+        (row(ta="Be Cautious", mom=WEAK), "Positive", "CAUTION", "S2 with Be Cautious + Mom Weak (2 Bad): Caution"),
+        (row(mom=WEAK), "Negative", "CAUTION", "S2 with Mom Weak + Negative (2 Bad): Caution"),
+        (row(ta="Exit", mom=UP), "Positive", "CAUTION", "S2 with TA Exit: Caution whatever else"),
+        (row(ta=None), "Positive", "HOLD", "S2 with no TA verdict yet: Hold"),
+        # Trend and Tech Uptrend are not inputs any more
+        (row(trend="Strong Downtrend", tu=0), "Positive", "ACCUMULATE", "a Downtrend / no Tech Uptrend no longer counts"),
+        (row(stage=S3, trend="Strong Uptrend", tu=1), "Positive", "HOLD", "...nor does an Uptrend lift an S3"),
+        # S1: early Accumulate when the base is turning
+        (row(stage=S1, mom=UP), "Neutral", "ACCUMULATE", "S1, TA Good, Mom Strong: early Accumulate"),
+        (row(stage=S1, mom=REC), "Positive", "ACCUMULATE", "S1, TA Good, Mom Recovering: early Accumulate"),
+        (row(stage=S1, mom=WEAK, ce="Yes"), "Neutral", "ACCUMULATE", "S1, TA Good, CE Yes stands in for Mom"),
+        (row(stage=S1, mom=WKG, ce="No"), "Positive", "HOLD", "S1, TA Good, Mom Weakening and no CE: Hold"),
+        (row(stage=S1, mom=UP), "Negative", "HOLD", "S1 with a Negative Sentiment: no early Accumulate"),
+        (row(stage=S1, ta="Momentum Fading", mom=UP, ce="Yes"), "Positive", "HOLD", "S1 needs TA Good too"),
+        (row(stage=S1, ta="Exit", mom=REC), "Positive", "CAUTION", "S1 with TA Exit: Caution even with Mom Recovering"),
+        (row(stage=S1, ta="Maintain/Add", mom=WEAK, ce="Yes"), "Negative", "CAUTION", "S1 with 2 Bad: Caution"),
+        (row(stage=S1, ta="Wait/Watch", mom=WEAK), "Neutral", "HOLD", "S1 with 1 Bad and no Exit: Hold"),
+        # S3: any Bad is Caution, never Accumulate
+        (row(stage=S3, ta="Bullish Signal", mom=UP), "Positive", "HOLD", "S3, all Good: still only Hold"),
+        (row(stage=S3, mom=WEAK), "Positive", "CAUTION", "S3 with Mom Weak: Caution"),
+        (row(stage=S3), "Negative", "CAUTION", "S3 with a Negative Sentiment: Caution"),
+        (row(stage=S3, ta="Be Cautious"), "Positive", "CAUTION", "S3 with Be Cautious: Caution"),
+        (row(stage=S3, ta="Momentum Fading", mom=WKG), "Neutral", "HOLD", "S3, all Neutral: Hold"),
+        # S4: Caution unless an early turn
+        (row(stage=S4, ta="Maintain/Add", mom=REC), "Neutral", "HOLD", "S4, Mom Recovering, nothing Bad: an early-turn Hold"),
+        (row(stage=S4, ta="Wait/Watch", mom=UP), "Positive", "HOLD", "S4, Mom Strong, nothing Bad: Hold"),
+        (row(stage=S4, ta="Exit", mom=UP), "Positive", "CAUTION", "S4 with Mom up but TA Exit: Caution"),
+        (row(stage=S4, ta="Maintain/Add", mom=WKG), "Positive", "CAUTION", "S4 with Mom Weakening: Caution"),
+        (row(stage=S4, ta="Bullish Signal", mom=UP, ce="Yes"), "Positive", "HOLD", "S4 is never Accumulate, CE or not"),
+        # no Stage
+        (row(stage=None), "Positive", "PENDING", "no Stage upload for the ticker: Pending"),
+        (row(stage="Unknown"), "Positive", "PENDING", "Stage Unknown (too little history): Pending"),
+        ({"trend": "Uptrend", "tech_uptrend": 1, "ta_rules": "Maintain/Add"}, "Positive", "PENDING",
+         "a row without the Stage fields at all: Pending, not the old Trend rule"),
+        (row(rsi14_weekly=88.0, rsi14_monthly=91.0), "Positive", "ACCUMULATE", "overbought RSI is not an input"),
     ):
         got = decide(r, sent)
         check(isinstance(got, tuple) and got[0] == want, f"{why} -> {want} (got {got[0] if isinstance(got, tuple) else got})")
-    v, reasons = decide(row(trend="Mixed", tu=0, ta="Exit"), "Negative")
-    check(v == "CAUTION" and any("TA Rules: Exit" in x for x in reasons) and any("Sentiment" in x for x in reasons),
-          f"the reasons name what decided it ({reasons})")
-    v, reasons = decide(row(ta="Momentum Fading"), "Positive")
-    check(any("Momentum Fading" in x for x in reasons), f"a Hold's reasons name what blocked Accumulate ({reasons})")
+    v, reasons = decide(row(stage=S2, ta="Exit"), "Negative")
+    check(v == "CAUTION" and any("TA Rules: Exit (bad)" in x for x in reasons)
+          and any("Sentiment: Negative (bad)" in x for x in reasons) and any("Stage: S2" in x for x in reasons),
+          f"the reasons name each input and its grade ({reasons})")
+    check(reasons[-1].startswith("Shown, not counted: CE No") and "PEAD No" in reasons[-1],
+          f"CE and PEAD are shown, not counted ({reasons[-1]})")
+    v, reasons = decide(row(stage=S1, mom=WEAK, ce="Yes", pead="Strong"), "Neutral")
+    check(v == "ACCUMULATE" and any("Early Accumulate" in x and "Cheat Entry" in x for x in reasons)
+          and reasons[-1] == "CE Yes counted (S1) · PEAD Strong",
+          f"an early Accumulate on CE says so, and that CE counted ({reasons})")
+    v, reasons = decide(row(stage=S4, mom=REC), "Neutral")
+    check(any("early turn" in x for x in reasons), f"an S4 early-turn Hold says so ({reasons})")
+    v, reasons = decide(row(stage=None), "Positive")
+    check(reasons == [ev.NO_STAGE_REASON], f"a Pending names the missing upload ({reasons})")
 
 # --- news can lower one step, never raise ---------------------------------------
 TODAY = date(2026, 10, 4)
@@ -111,12 +146,12 @@ if active:
     check(not active({**RISK, "date": "2026-10-09"}, TODAY), "a future date is not news")
 if lower:
     view = {"verdict": "HOLD", "news_risk": RISK, "as_of": "2026-10-04 05:00", "headline": "x", "model_used": "m"}
-    for r, sent, want in ((row(), "Positive", "HOLD"), (row(trend="Mixed", tu=0, ta="Wait/Watch"), "Neutral", "CAUTION"),
-                          (row(trend="Mixed", tu=0, ta="Exit"), "Neutral", "CAUTION")):
+    for r, sent, want in ((row(), "Positive", "HOLD"), (row(ta="Wait/Watch"), "Neutral", "CAUTION"),
+                          (row(ta="Exit"), "Neutral", "CAUTION")):
         got = lower(r, view, sentiment=sent, today=TODAY)
         check(got["verdict"] == want and got["news_lowered"] == (got["base"] != want),
               f"news lowers {got['base']} one step -> {want} (got {got['verdict']})")
-    got = lower(row(trend="Mixed", tu=0, ta="Wait/Watch"), {"news_risk": {**RISK, "material_negative": False}},
+    got = lower(row(ta="Wait/Watch"), {"news_risk": {**RISK, "material_negative": False}},
                 sentiment="Neutral", today=TODAY)
     check(got["verdict"] == "HOLD" and not got["news_lowered"], "no active risk: the columns' verdict stands")
     got = lower(row(), {}, sentiment="Positive", today=TODAY)
@@ -129,10 +164,17 @@ if lower:
 
 # --- the row field every consumer filters on --------------------------------------
 import stock_data as sd
-rows = [{"ticker": "ACME", **row()}, {"ticker": "ZED.NS", "trend": None}]
-sd.apply_view_fields_to_rows(rows, fundamentals={}, expert_views={}, interested=set())
+# The Stage comes from stage_analysis.json, attached by this same function: BEFORE the
+# verdict (until 2026-10-31 it was attached after it, which the Stage-led rule would
+# have read as Pending on every row).
+_bare = {k: v for k, v in row().items() if k not in ("stage", "stage_mom", "cheat_entry", "pead")}
+rows = [{"ticker": "ACME", **_bare}, {"ticker": "ZED.NS", **_bare}]
+_stage = {"meta": {}, "tickers": {"ACME": {"stage": S2, "stage_mom": UP, "cheat_entry": "No", "pead": "No",
+                                           "uploaded": "2026-10-28"}}}
+sd.apply_view_fields_to_rows(rows, fundamentals={}, expert_views={}, interested=set(), stage=_stage)
 check(rows[0]["expert_take"] == "Accumulate" and rows[1]["expert_take"] == "Pending",
-      f"apply_view_fields_to_rows attaches the live verdict ({rows[0]['expert_take']}, {rows[1]['expert_take']})")
+      f"apply_view_fields_to_rows attaches the Stage, then the live verdict ({rows[0]['expert_take']}, "
+      f"{rows[1]['expert_take']}: ZED.NS has no upload)")
 
 # --- the search and the prompt -----------------------------------------------------
 captured = {}
@@ -248,8 +290,16 @@ try:
 finally:
     llm_util.run_model_ladder = _real
 check(not llm_calls, f"R1: no Trend -> no model call ({len(llm_calls)} made)")
+llm_util.run_model_ladder = lambda *a, **k: (llm_calls.append(1), (None, None))[1]
+try:
+    v = ev.generate_expert_view(None, {"ticker": "ACME", "market": "us_invested", **row(stage=None)},
+                                fundamental_view={})
+finally:
+    llm_util.run_model_ladder = _real
+check(not llm_calls and "no Stage Analysis" in str(v), f"R1: no Stage -> no model call either ({len(llm_calls)} made)")
 src_r = (REPO / "refresh_expert_views.py").read_text()
-check('if not row.get("trend"):' in src_r, "R1: the nightly job skips a ticker with no Trend, not as a failure")
+check('if not row.get("trend") or row.get("stage") not in STAGES:' in src_r,
+      "R1: the nightly job skips a ticker with no Trend or no Stage, not as a failure")
 
 # R2 a news risk must survive a night whose search misses it, until it expires.
 if hasattr(ev, "resolve_persisted_view"):
@@ -290,7 +340,7 @@ check(ev.normalize_view({"news_risk": {"material_negative": True, "category": "d
       "R4: a one-letter category does not match by prefix")
 
 # R5 an active risk on a stock already at Caution still shows in the hover.
-got = ev.expert_take_for_row(row(trend="Mixed", tu=0, ta="Exit"), {"news_risk": RISK, "news_used": "x"},
+got = ev.expert_take_for_row(row(ta="Exit"), {"news_risk": RISK, "news_used": "x"},
                              sentiment="Neutral", today=TODAY)
 check(got["verdict"] == "CAUTION" and not got["news_lowered"] and got.get("news_noted"),
       "R5: a risk that cannot lower a Caution is still reported (news_noted)")

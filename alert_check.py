@@ -34,7 +34,33 @@ from alerts import (load_rules, load_state_status, save_state, load_discord_webh
 MAX_MISSING_FRACTION = 0.10
 
 
+def post_late_stage_notice():
+    """Post the late-Stage-Analysis notice to Discord when the upload is more than
+    stage_analysis.STAGE_STALE_DAYS old (owner, 2026-10-31): the same text as the
+    app's red banner. daily-alerts.yml's gate counts a late upload as due, so this
+    runs once per 9 PM ET slot even when no rule is due. Never raises: a broken
+    notice must not cost the night's alerts."""
+    try:
+        from stage_analysis import load_stage_analysis, upload_status, late_upload_notice
+        notice = late_upload_notice(upload_status(
+            load_stage_analysis(), [t for tickers in load_watchlists().values() for t in tickers]))
+        if not notice:
+            return False
+        webhook = load_discord_webhook()
+        if not webhook:
+            print("Stage Analysis upload is late; no Discord webhook set, so it was not posted.")
+            return False
+        ok, detail = send_discord_batch(webhook, [f"🔴 **{notice}**"])
+        print("Stage Analysis upload is late: posted to Discord." if ok
+              else f"::warning::Stage Analysis upload is late; the Discord post failed: {detail}")
+        return ok
+    except Exception as e:  # noqa: BLE001 -- see the docstring
+        print(f"::warning::Could not check the Stage Analysis upload's age: {e}")
+        return False
+
+
 def main():
+    post_late_stage_notice()
     all_rules = load_rules()
     if not all_rules:
         print("No alert rules configured yet (alerts_config.json is empty). Nothing to check.")

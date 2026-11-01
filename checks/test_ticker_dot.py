@@ -61,11 +61,12 @@ check("EXPERT_TAKE_EMOJI.get(" in cell and 'r.get("expert_take")' in cell and "F
 check("Expert Take: " in cell and "expert_take_for_row" in cell, "the dot's hover names the verdict and its reasons")
 
 # --- ⚑ marks only a news downgrade ------------------------------------------------
-for row, want in (({"trend": "Uptrend", "tech_uptrend": 1, "ta_rules": "Maintain/Add"}, "ACCUMULATE"),
-                  ({"trend": "Strong Uptrend", "tech_uptrend": 0, "ta_rules": "Maintain/Add"}, "ACCUMULATE"),
-                  ({"trend": "Mixed", "tech_uptrend": 0, "ta_rules": "Maintain/Add"}, "HOLD"),
-                  ({"trend": "Downtrend", "tech_uptrend": 1, "ta_rules": "Exit"}, "CAUTION"),
-                  ({"trend": None}, "PENDING")):
+# Stage-led since 2026-10-31 (checks/test_expert_take_100426.py has the full table).
+for row, want in (({"stage": "S2 Advancing", "stage_mom": "Strong ↑", "ta_rules": "Maintain/Add"}, "ACCUMULATE"),
+                  ({"stage": "S1 Accumulation", "stage_mom": "Recovering ↑", "ta_rules": "Maintain/Add"}, "ACCUMULATE"),
+                  ({"stage": "S3 Distribution", "stage_mom": "Weakening ↓", "ta_rules": "Maintain/Add"}, "HOLD"),
+                  ({"stage": "S4 Decline", "stage_mom": "Weak ↓", "ta_rules": "Exit"}, "CAUTION"),
+                  ({"trend": "Uptrend", "ta_rules": "Maintain/Add"}, "PENDING")):
     check(ev.decide_expert_verdict(row, "Neutral")[0] == want, f"columns' verdict: {row} -> {want}")
 check('badge = f"{badge} ⚑"' in src and 'if take["news_lowered"]:' in src,
       "the Expert Take cell adds ⚑ only when news lowered the columns' verdict")

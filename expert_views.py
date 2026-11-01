@@ -268,64 +268,89 @@ def expert_view_has_news(view):
 # of 124 tickers, and most of the rest re-weighed those same columns or cited a
 # past EPS miss that the forward-looking Sentiment rule deliberately ignores.
 # So the columns decide, live (it cannot disagree with the table), and the AI
-# explains it and reads the news for what no column sees:
+# explains it and reads the news for what no column sees.
 #
-#   ACCUMULATE  (Trend Up/Strong Up OR Tech Uptrend Yes) + TA Rules Maintain/Add
-#               or Bullish Signal + Sentiment not Negative. One of the two trend
-#               reads is enough (owner, same day): TA and Sentiment must agree.
-#           or  TA Rules Bullish Signal + Trend not down + Sentiment not Negative.
-#               The breakout fires off CONVERGING EMAs, where Trend is usually
-#               Mixed, so requiring an Uptrend would never act on TA's entry.
-#   CAUTION     2+ points: TA Exit 2 (the flowchart's own exit call), TA Be
-#               Cautious 1, Trend Down/Strong Down 1, Sentiment Negative 1.
-#   HOLD        otherwise; PENDING when there is no Trend yet.
+# Stage-led since 2026-10-31 (owner): TheWrap Stage Analysis sets the bar and
+# TA Rules, Stage Mom and Sentiment move the stock within it. Trend and Tech
+# Uptrend are no longer inputs -- Stage is the same trend idea read on closed
+# weekly bars, and counting both counted one signal twice. On 2026-10-31's data
+# the old rule called 9 of its 26 Accumulates in S3 Distribution / S4 Decline.
 #
-# Overbought RSI is deliberately not a point: in a trend-following read it is
-# strength, and "extended, add on a pullback" belongs in the trade plan.
-_UP_TRENDS = ("Uptrend", "Strong Uptrend")
+# Three inputs are graded Good / Neutral / Bad (_GRADES below; anything else,
+# a blank included, is Neutral). Then the Stage decides:
+#
+#   S2 Advancing      CAUTION if TA Exit or 2+ Bad; ACCUMULATE if TA Good and
+#                     nothing Bad; else HOLD.
+#   S1 Accumulation   CAUTION if TA Exit or 2+ Bad; ACCUMULATE ("early") if TA
+#                     Good, Sentiment not Bad, and Stage Mom Good OR CE Yes --
+#                     a base that is turning (owner: "S1 could also be phases of
+#                     accumulate if looking promising"); a cheat entry is the
+#                     indicator's own early entry inside a base; else HOLD.
+#   S3 Distribution   CAUTION if anything Bad, else HOLD. Never ACCUMULATE.
+#   S4 Decline        HOLD if Stage Mom Good and nothing Bad (an early turn),
+#                     else CAUTION. Never ACCUMULATE.
+#   no Stage          PENDING: no upload covers the ticker yet (or the indicator
+#                     had too little history, "Unknown"). Owner, 2026-10-31: no
+#                     stand-in from Trend; a late upload is flagged instead (a red
+#                     banner in the app and a Discord post, stage_analysis.late_upload_notice).
+#
+# CE (outside S1) and PEAD are shown with the reasons but never decide.
+_GRADES = {
+    "ta_rules": {"Bullish Signal": "Good", "Maintain/Add": "Good",
+                 "Wait/Watch": "Neutral", "Momentum Fading": "Neutral",
+                 "Be Cautious": "Bad", "Exit": "Bad"},
+    "stage_mom": {"Strong ↑": "Good", "Recovering ↑": "Good",
+                  "Weakening ↓": "Neutral", "Weak ↓": "Bad"},
+    "sentiment": {"Positive": "Good", "Neutral": "Neutral", "Negative": "Bad"},
+}
+STAGES = ("S1 Accumulation", "S2 Advancing", "S3 Distribution", "S4 Decline")
 # The dot beside the ticker when you have not set a Flag (app._ticker_cell),
 # keyed by the row's expert_take value. It replaced the Signal dot, 2026-10-04.
 EXPERT_TAKE_EMOJI = {"Accumulate": "🟢", "Hold": "🟡", "Caution": "🔴", "Pending": "⚪"}
-_DOWN_TRENDS = ("Downtrend", "Strong Downtrend")
-_TA_BULLISH = ("Maintain/Add", "Bullish Signal")
-_CAUTION_POINTS = {"Exit": 2, "Be Cautious": 1}
+NO_STAGE_REASON = "No Stage Analysis for this stock yet -- upload the weekly CSV"
+
+
+def _grade(field, value):
+    return _GRADES[field].get(value, "Neutral")
 
 
 def decide_expert_verdict(row, sentiment):
-    """(verdict, reasons) from the row's columns and the guarded Sentiment
-    label -- see the rule above. Reasons are short phrases for the hover."""
+    """(verdict, reasons) from the row's Stage, Stage Mom, TA Rules, CE and the
+    guarded Sentiment label -- see the rule above. Reasons are short phrases for
+    the hover; the last one names CE and PEAD, which are shown, not counted."""
     row = row or {}
-    trend, ta, tu = row.get("trend"), row.get("ta_rules"), row.get("tech_uptrend")
-    if not trend:
-        return "PENDING", ["Not enough price history for a Trend yet"]
-    negative = sentiment == "Negative"
-    sent_txt = f"Sentiment: {sentiment or 'Unknown'}"
-    ta_txt = f"TA Rules: {ta or 'n/a'}"
-    up_reasons = [f"Trend: {trend}", f"Tech Uptrend: {'Yes' if tu else 'No'}", ta_txt, sent_txt]
-    if (trend in _UP_TRENDS or tu) and ta in _TA_BULLISH and not negative:
-        return "ACCUMULATE", up_reasons
-    if ta == "Bullish Signal" and trend not in _DOWN_TRENDS and not negative:
-        return "ACCUMULATE", [ta_txt + " (breakout from a converging base)", f"Trend: {trend}", sent_txt]
+    stage = row.get("stage")
+    if stage not in STAGES:
+        return "PENDING", [NO_STAGE_REASON]
+    ta, mom, ce = row.get("ta_rules"), row.get("stage_mom"), row.get("cheat_entry")
+    g_ta, g_mom, g_sent = _grade("ta_rules", ta), _grade("stage_mom", mom), _grade("sentiment", sentiment)
+    bad = [g_ta, g_mom, g_sent].count("Bad")
+    exit_ = ta == "Exit"
+    reasons = [f"Stage: {stage}", f"TA Rules: {ta or 'n/a'} ({g_ta.lower()})",
+               f"Stage Mom: {mom or 'n/a'} ({g_mom.lower()})",
+               f"Sentiment: {sentiment or 'Unknown'} ({g_sent.lower()})"]
+    shown = f"Shown, not counted: CE {ce or 'n/a'} · PEAD {row.get('pead') or 'n/a'}"
 
-    caution = []
-    if _CAUTION_POINTS.get(ta):
-        caution.append((ta_txt, _CAUTION_POINTS[ta]))
-    if trend in _DOWN_TRENDS:
-        caution.append((f"Trend: {trend}", 1))
-    if negative:
-        caution.append((sent_txt, 1))
-    if sum(n for _, n in caution) >= 2:
-        return "CAUTION", [t for t, _ in caution]
-
-    # A Hold: say what kept it from Accumulate (and any single Caution point).
-    blockers = []
-    if trend not in _UP_TRENDS and not tu:
-        blockers.append(f"Trend: {trend} and Tech Uptrend: No")
-    if ta not in _TA_BULLISH:
-        blockers.append(ta_txt)
-    if negative:
-        blockers.append(sent_txt)
-    return "HOLD", blockers or up_reasons
+    if stage.startswith(("S1", "S2")):
+        if exit_ or bad >= 2:
+            verdict = "CAUTION"
+        elif stage.startswith("S2"):
+            verdict = "ACCUMULATE" if g_ta == "Good" and not bad else "HOLD"
+        elif g_ta == "Good" and g_sent != "Bad" and (g_mom == "Good" or ce == "Yes"):
+            verdict = "ACCUMULATE"
+            reasons.insert(1, "Early Accumulate: an S1 base that is turning ("
+                           + ("Stage Mom up" if g_mom == "Good" else "Cheat Entry") + ")")
+            if g_mom != "Good":
+                shown = f"CE Yes counted (S1) · PEAD {row.get('pead') or 'n/a'}"
+        else:
+            verdict = "HOLD"
+    elif stage.startswith("S3"):
+        verdict = "CAUTION" if bad else "HOLD"
+    else:
+        verdict = "HOLD" if g_mom == "Good" and not bad else "CAUTION"
+        if verdict == "HOLD":
+            reasons.insert(1, "S4 with Stage Mom up and nothing Bad: an early turn")
+    return verdict, reasons + [shown]
 
 
 # --- The news step: a material negative event lowers one step, never raises ------
@@ -435,9 +460,12 @@ def _view_age_days(view):
 # drift the moment the rule is tuned. Kept in step with decide_expert_verdict
 # and news_risk_active (checks/test_expert_take_100426.py).
 VERDICT_RULES = """HOW THE VERDICT IS DECIDED (in code, from the dashboard's columns -- not by the model):
-- ACCUMULATE: Trend is Uptrend or Strong Uptrend, OR Tech Uptrend is Yes (one is enough), AND TA Rules is "Maintain/Add" or "Bullish Signal", AND Sentiment is not Negative. Or: TA Rules is "Bullish Signal" (a breakout from converging EMAs, where Trend is usually Mixed), Trend is not a Downtrend, and Sentiment is not Negative.
-- CAUTION: at least 2 points, where TA Rules "Exit" counts 2 (the flowchart's own exit call), TA Rules "Be Cautious" 1, Trend Downtrend/Strong Downtrend 1, and Sentiment Negative 1.
-- HOLD: everything else. Overbought RSI is not a Caution point: in a trend it is strength."""
+TheWrap Stage Analysis sets the bar; TA Rules, Stage Mom and Sentiment move the stock within it. Each of those three is Good, Neutral or Bad -- TA Rules: Bullish Signal / Maintain/Add Good, Wait/Watch / Momentum Fading Neutral, Be Cautious / Exit Bad; Stage Mom: Strong / Recovering Good, Weakening Neutral, Weak Bad; Sentiment: Positive Good, Neutral / Unknown Neutral, Negative Bad.
+- S2 Advancing: CAUTION if TA Rules is Exit or 2+ are Bad; ACCUMULATE if TA Rules is Good and none is Bad; else HOLD.
+- S1 Accumulation: CAUTION if TA Rules is Exit or 2+ are Bad; an early ACCUMULATE if TA Rules is Good, Sentiment is not Bad, and Stage Mom is Good or CE (Cheat Entry) is Yes; else HOLD.
+- S3 Distribution: CAUTION if any is Bad, else HOLD (never Accumulate).
+- S4 Decline: HOLD if Stage Mom is Good and none is Bad (an early turn), else CAUTION (never Accumulate).
+- No Stage: PENDING. Trend and Tech Uptrend are context for the write-up, not inputs; CE outside S1 and PEAD are shown, not counted."""
 
 NEWS_RISK_RULES = f"""THE NEWS STEP: the model reads the last {EXPERT_NEWS_WINDOW_DAYS} days of material company news. A dated, quoted NEGATIVE event in one of these categories lowers the verdict ONE step (Accumulate -> Hold, Hold -> Caution) until the item is more than {EXPERT_NEWS_WINDOW_DAYS} days old: {"; ".join(NEWS_RISK_CATEGORIES)}. News never raises the verdict, and quarterly results, guidance and analyst ratings are not news here -- Sentiment decides those."""
 
@@ -741,10 +769,12 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
     ticker = row_data.get("ticker", "UNKNOWN")
     market = row_data.get("market", "us_invested")
     company_name = row_data.get("company_name", ticker)
-    if not row_data.get("trend"):
-        # No Trend yet (too little price history): the verdict is Pending and
-        # needs no write-up, so spend no model calls on it.
-        return stale_view_fallback("not enough price history for a Trend yet")
+    if not row_data.get("trend") or row_data.get("stage") not in STAGES:
+        # No Trend yet (too little price history) or no Stage Analysis upload
+        # for it: the verdict is Pending and needs no write-up, so spend no
+        # model calls on it.
+        return stale_view_fallback("no Stage Analysis yet" if row_data.get("trend")
+                                   else "not enough price history for a Trend yet")
 
     if news_text is None:
         try:
@@ -840,7 +870,7 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
             data["news_risk"] = normalize_view({"news_risk": None})["news_risk"]
         take = expert_take_for_row(row_data, data, sentiment=_row_sentiment(row_data, fundamental_view))
         if take["base"] == "PENDING":
-            return _pending_fallback("not enough price history for a Trend yet")
+            return _pending_fallback("no Stage Analysis yet")
         data["base_verdict"], data["verdict"] = take["base"], take["verdict"]
         data["verdict_reasons"] = take["reasons"]
         data["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")

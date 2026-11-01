@@ -38,7 +38,8 @@ def check(ok, label):
 stock_data.load_settings = lambda: dict(stock_data.DEFAULT_SETTINGS)
 
 BASE = {"ticker": "ACME", "company_name": "Acme Corp", "market": "us_invested",
-        "last_close": 100.0, "trend": "Uptrend", "tech_uptrend": 1}
+        "last_close": 100.0, "trend": "Uptrend", "tech_uptrend": 1,
+        "stage": "S2 Advancing", "stage_mom": "Strong ↑", "cheat_entry": "No", "pead": "No"}
 AUTO = {**BASE, "flag": "Green", "note": "sold half in March",
         "flag_reason": "3/4 bullish votes (Expert Take=Accumulate, Trend=Uptrend, Tech Uptrend=Yes)"}
 MANUAL = {**BASE, "flag": "Red", "note": "sold half in March", "flag_reason": MANUAL_FLAG_REASON}
