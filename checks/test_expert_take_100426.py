@@ -9,9 +9,9 @@ Fading Neutral -- Be Cautious, Exit Bad; Mom: Strong, Recovering Good --
 Weakening Neutral -- Weak Bad; Sentiment: Positive Good, Negative Bad):
 
   S2  CAUTION on TA Exit or 2+ Bad; ACCUMULATE if TA Good and nothing Bad; else HOLD
-  S1  CAUTION on 2+ Bad, or on TA Exit unless Mom is Good (then HOLD: owner,
-      2026-11-01); ACCUMULATE (early) if TA Good, Mom Good and Sentiment not Bad;
-      else HOLD. CE and PEAD never count (owner, 2026-11-01: CE kept out of S1 too)
+  S1  ACCUMULATE (early) if Mom Good and Sentiment not Bad, whatever TA says
+      (owner, 2026-11-01: a TA Exit is not considered); otherwise CAUTION on TA
+      Exit or 2+ Bad, else HOLD. CE and PEAD never count (CE kept out of S1 too)
   S3  CAUTION if anything Bad, else HOLD
   S4  HOLD if Mom Good and nothing Bad (an early turn), else CAUTION
   no Stage (or "Unknown")  PENDING
@@ -88,14 +88,17 @@ if decide:
         (row(stage=S1, mom=REC), "Positive", "ACCUMULATE", "S1, TA Good, Mom Recovering: early Accumulate"),
         (row(stage=S1, mom=WEAK, ce="Yes"), "Neutral", "HOLD", "S1: CE Yes does NOT stand in for Mom (kept out)"),
         (row(stage=S1, mom=WKG, ce="Yes"), "Positive", "HOLD", "...nor with Mom Weakening"),
-        (row(stage=S1, mom=WKG, ce="No"), "Positive", "HOLD", "S1, TA Good, Mom Weakening and no CE: Hold"),
+        (row(stage=S1, mom=WKG, ce="No"), "Positive", "HOLD", "S1, TA Good, Mom Weakening: Hold"),
         (row(stage=S1, mom=UP), "Negative", "HOLD", "S1 with a Negative Sentiment: no early Accumulate"),
-        (row(stage=S1, ta="Momentum Fading", mom=UP, ce="Yes"), "Positive", "HOLD", "S1 needs TA Good too"),
-        (row(stage=S1, ta="Exit", mom=REC), "Positive", "HOLD", "S1 with TA Exit but Mom Recovering: Hold, not Caution"),
-        (row(stage=S1, ta="Exit", mom=UP), "Neutral", "HOLD", "...and with Mom Strong"),
+        (row(stage=S1, ta="Momentum Fading", mom=UP), "Positive", "ACCUMULATE", "S1: TA is not counted (Fading)"),
+        (row(stage=S1, ta="Be Cautious", mom=REC), "Neutral", "ACCUMULATE", "S1: ...nor Be Cautious"),
+        (row(stage=S1, ta="Exit", mom=REC), "Positive", "ACCUMULATE", "S1: ...nor a TA Exit, with Mom Recovering"),
+        (row(stage=S1, ta="Exit", mom=UP), "Neutral", "ACCUMULATE", "S1: ...or with Mom Strong"),
+        (row(stage=S1, ta=None, mom=UP), "Unknown", "ACCUMULATE", "S1: ...or with no TA verdict"),
         (row(stage=S1, ta="Exit", mom=WKG), "Positive", "CAUTION", "S1 with TA Exit and Mom Weakening: Caution"),
         (row(stage=S1, ta="Exit", mom=WEAK), "Positive", "CAUTION", "S1 with TA Exit and Mom Weak: Caution"),
         (row(stage=S1, ta="Exit", mom=REC), "Negative", "CAUTION", "S1, Exit + Mom up but Negative (2 Bad): Caution"),
+        (row(stage=S1, ta="Maintain/Add", mom=REC), "Negative", "HOLD", "S1, TA Good + Mom up but Negative: Hold"),
         (row(stage=S2, ta="Exit", mom=REC), "Positive", "CAUTION", "...the Exit exception is S1's only: S2 Exit is Caution"),
         (row(stage=S1, ta="Maintain/Add", mom=WEAK, ce="Yes"), "Negative", "CAUTION", "S1 with 2 Bad: Caution"),
         (row(stage=S1, ta="Wait/Watch", mom=WEAK), "Neutral", "HOLD", "S1 with 1 Bad and no Exit: Hold"),
@@ -131,8 +134,9 @@ if decide:
           and reasons[-1] == "Shown, not counted: CE Yes · PEAD Strong",
           f"an S1 early Accumulate says why, and CE is shown, not counted ({reasons})")
     v, reasons = decide(row(stage=S1, ta="Exit", mom=REC), "Positive")
-    check(v == "HOLD" and any("TA Exit is a Hold here" in x for x in reasons),
-          f"an S1 Exit-with-Mom-up Hold says why ({reasons})")
+    check(v == "ACCUMULATE" and any("TA Rules not counted in S1" in x for x in reasons)
+          and any("TA Rules: Exit (bad)" in x for x in reasons),
+          f"an S1 early Accumulate over a TA Exit says TA was not counted, and still shows it ({reasons})")
     v, reasons = decide(row(stage=S4, mom=REC), "Neutral")
     check(any("early turn" in x for x in reasons), f"an S4 early-turn Hold says so ({reasons})")
     v, reasons = decide(row(stage=None), "Positive")

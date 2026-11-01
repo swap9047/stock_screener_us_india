@@ -281,13 +281,13 @@ def expert_view_has_news(view):
 #
 #   S2 Advancing      CAUTION if TA Exit or 2+ Bad; ACCUMULATE if TA Good and
 #                     nothing Bad; else HOLD.
-#   S1 Accumulation   CAUTION if 2+ Bad, or TA Exit while Stage Mom is not Good;
-#                     ACCUMULATE ("early") if TA Good, Stage Mom Good and
-#                     Sentiment not Bad -- a base that is turning (owner: "S1
-#                     could also be phases of accumulate if looking promising");
-#                     else HOLD. A TA Exit with Stage Mom turning up is a HOLD
-#                     here (owner, 2026-11-01): the base is turning before the
-#                     price has got back over its slow weekly EMA.
+#   S1 Accumulation   ACCUMULATE ("early") if Stage Mom is Good and Sentiment is
+#                     not Bad, whatever TA Rules says -- a base that is turning
+#                     (owner: "S1 could also be phases of accumulate if looking
+#                     promising"; 2026-11-01: "dont consider ta exit" -- in a base
+#                     the price is often still under its slow weekly EMA when the
+#                     momentum turns). Otherwise CAUTION if 2+ Bad or TA Exit,
+#                     else HOLD.
 #   S3 Distribution   CAUTION if anything Bad, else HOLD. Never ACCUMULATE.
 #   S4 Decline        HOLD if Stage Mom Good and nothing Bad (an early turn),
 #                     else CAUTION. Never ACCUMULATE.
@@ -340,15 +340,14 @@ def decide_expert_verdict(row, sentiment):
         else:
             verdict = "ACCUMULATE" if g_ta == "Good" and not bad else "HOLD"
     elif stage.startswith("S1"):
-        if bad >= 2 or (exit_ and g_mom != "Good"):
-            verdict = "CAUTION"
-        elif g_ta == "Good" and g_mom == "Good" and g_sent != "Bad":
+        if g_mom == "Good" and g_sent != "Bad":
             verdict = "ACCUMULATE"
-            reasons.insert(1, "Early Accumulate: an S1 base that is turning (Stage Mom up)")
+            reasons.insert(1, "Early Accumulate: an S1 base that is turning (Stage Mom up"
+                           + ("; TA Rules not counted in S1" if g_ta != "Good" else "") + ")")
+        elif exit_ or bad >= 2:
+            verdict = "CAUTION"
         else:
             verdict = "HOLD"
-            if exit_:
-                reasons.insert(1, "S1 with Stage Mom up: a TA Exit is a Hold here, not Caution")
     elif stage.startswith("S3"):
         verdict = "CAUTION" if bad else "HOLD"
     else:
@@ -467,7 +466,7 @@ def _view_age_days(view):
 VERDICT_RULES = """HOW THE VERDICT IS DECIDED (in code, from the dashboard's columns -- not by the model):
 TheWrap Stage Analysis sets the bar; TA Rules, Stage Mom and Sentiment move the stock within it. Each of those three is Good, Neutral or Bad -- TA Rules: Bullish Signal / Maintain/Add Good, Wait/Watch / Momentum Fading Neutral, Be Cautious / Exit Bad; Stage Mom: Strong / Recovering Good, Weakening Neutral, Weak Bad; Sentiment: Positive Good, Neutral / Unknown Neutral, Negative Bad.
 - S2 Advancing: CAUTION if TA Rules is Exit or 2+ are Bad; ACCUMULATE if TA Rules is Good and none is Bad; else HOLD.
-- S1 Accumulation: CAUTION if 2+ are Bad, or TA Rules is Exit while Stage Mom is not Good; an early ACCUMULATE if TA Rules is Good, Stage Mom is Good and Sentiment is not Bad; else HOLD (a TA Exit with Stage Mom Good is a HOLD).
+- S1 Accumulation: an early ACCUMULATE if Stage Mom is Good and Sentiment is not Bad, whatever TA Rules says (an Exit included); otherwise CAUTION if TA Rules is Exit or 2+ are Bad, else HOLD.
 - S3 Distribution: CAUTION if any is Bad, else HOLD (never Accumulate).
 - S4 Decline: HOLD if Stage Mom is Good and none is Bad (an early turn), else CAUTION (never Accumulate).
 - No Stage: PENDING. Trend and Tech Uptrend are context for the write-up, not inputs; CE (Cheat Entry) and PEAD are shown, not counted."""
