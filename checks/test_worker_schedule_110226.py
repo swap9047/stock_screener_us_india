@@ -267,5 +267,24 @@ exp = (WF / "expert-views.yml").read_text()
 check("SCHEDULED_DISPATCH: ${{ github.event.inputs.scheduled }}" in exp and "SCHEDULED_DISPATCH" in (REPO / "refresh_expert_views.py").read_text(),
       "W5: Expert Take's resume reads the flag (checks/test_expert_views_resume.py runs it)")
 
+# --- W6 the Worker is the only clock (phase 2, owner 2026-11-02) -------------------------------------
+# Every workflow but checks.yml (it runs on a push) is started by the Worker and by nothing else: no GitHub
+# `schedule:` trigger, and every one is named in worker.js, so a job cannot be left without a clock.
+every = sorted(p.name for p in WF.glob("*.yml") if p.name != "checks.yml")
+for name in every:
+    wf = yaml.safe_load((WF / name).read_text())
+    on = wf.get(True) or wf.get("on")
+    check(isinstance(on, dict) and "schedule" not in on and "workflow_dispatch" in on,
+          f"W6: {name} has no GitHub schedule and can be dispatched")
+    check(f'"{name}"' in WORKER, "W6: ...and cloudflare/worker.js names it (" + name + ")")
+for name in ("data-refresh.yml", "market-breadth.yml"):
+    wf = yaml.safe_load((WF / name).read_text())
+    check("gate" not in wf["jobs"] and all("needs" not in j for j in wf["jobs"].values()),
+          f"W6: {name} has no gate job (nothing but a dispatch reaches it)")
+check(sorted(every) == sorted(["daily-alerts.yml", "data-refresh.yml", "expert-views.yml", "fundamentals.yml", "keep-alive.yml",
+                               "market-breadth.yml", "market-library.yml", "market-read.yml", "news-summary.yml",
+                               "quarterly-results.yml", "weekly-wrapup.yml"]),
+      f"W6: the eleven scheduled workflows are exactly the Worker's ({every})")
+
 print(f"FAILURES: {fails}")
 sys.exit(1 if fails else 0)

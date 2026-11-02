@@ -37,7 +37,7 @@ commit their output.
    pull every 5 min / │ push on save or button    │ load-data + commit-data         │
                       │                           │                                 │
         ┌─────────────┴──────────┐     ┌──────────┴───────────────────────┐         │
-        │ Streamlit app (app.py) │     │ GitHub Actions (hourly wake-ups) │─────────┘
+        │ Streamlit app (app.py) │     │ GitHub Actions (Cloudflare Worker)│─────────┘
         │  tables · filters ·    │     │ data refresh · AI jobs · alerts ·│
         │  rule builder · AI     │     │ breadth · weekly wrap-up         │
         └─────┬───────────┬──────┘     └───┬────────────┬─────────────┬───┘
@@ -59,9 +59,9 @@ commit their output.
 | 1:00 AM | Expert Take | A fresh snapshot, then `expert_views.json`: the AI verdict per ticker |
 | Sunday 9:00 PM | Weekly wrap-up | A Discord digest of every enabled rule; `weekly_wrapup_state.json` |
 
-GitHub starts scheduled runs late, often by 2-5 hours, so the times above are when a
-job *becomes due*. A shared "slot gate" lets the first wake-up after that time do the
-work, up to 22 hours late (23 h for news; for breadth, until the next slot). See §10.
+A Cloudflare Worker (`cloudflare/worker.js`) starts every job at the time above, New
+York time, and again every hour for 8 hours as a retry. A shared "slot gate" lets only
+the first run that succeeds do the work. See §10.
 
 ---
 
@@ -663,8 +663,8 @@ This tab is rendered only while it is open.
   (the title says "intraday"), and every later run redoes it until the final close
   replaces it. Yahoo publishes a day's closes late and piecemeal, so a latest day at
   least half the index has a close for is computed from those stocks and marked
-  partial; one under half is held back. Either way the run reports it and the gate
-  retries at the next wake-up. A download never replaces a stored reading with an
+  partial; one under half is held back. Either way the run reports it and fails,
+  and the Worker's next hourly dispatch redoes it. A download never replaces a stored reading with an
   earlier day, the same day from fewer stocks, or a final close with an intraday
   reading. Each chart title names its latest day.
 - **% Down From 52-Week High** (2026-10-30, the third row, under the highs and lows). The
@@ -834,8 +834,10 @@ the two AI files wholesale.
 
 ## 10. Scheduling (`.github/workflows`, `.github/actions/slot-gate`)
 
-**How a job decides to run.** Every workflow wakes **hourly**, and a cheap `gate` job
-decides whether this wake-up does the work:
+**How a job decides to run.** The Cloudflare Worker starts each workflow at its slot and
+hourly for 8 hours after it (there is no GitHub schedule), always with `scheduled=true`, and
+a cheap `gate` job decides whether this start does the work (data refresh and breadth have
+no gate: the Worker's dispatch is their schedule):
 1. It finds the most recent slot in New York time.
 2. It skips the slot if the slot is older than the grace period: 22 h, or 23 h for news
    and breadth. Only the latest slot is ever worked, so breadth's window really ends when
@@ -849,8 +851,9 @@ The gate counts only a successful work job, because a run whose gate said "no" a
 reports success. A manual run given `markets` or `limit` is titled **"partial run"** and
 never counts, so one tab's *Re-analyze All* can't stand in for the nightly full run.
 
-**Why it works this way.** Daylight-saving time needs no arithmetic, and a cron run that
-GitHub drops or delays no longer costs a day.
+**Why it works this way.** Daylight-saving time needs no arithmetic, and a run that fails
+or is delayed no longer costs a day: the Worker's next hourly dispatch retries it, and
+the gate makes sure a slot that already succeeded is never worked twice.
 
 | Workflow | Work | Slot | Notes |
 |---|---|---|---|
@@ -909,7 +912,7 @@ one makes the app ask for **Refresh Data**.
 | Situation | Behaviour |
 |---|---|
 | Yahoo throttles the hourly refresh | Last-known rows are kept. "Data Thru" shows each row's real date |
-| Yahoo throttles the alert or wrap-up job | The job fails and retries at the next wake-up, within 22 h |
+| Yahoo throttles the alert or wrap-up job | The job fails and the Worker's next hourly dispatch retries it, for up to 8 h |
 | A data file is corrupt | The app stops and names the file. The jobs fail instead of writing an empty store |
 | A Gemini key is revoked or out of quota | It is retired or cooled down; other keys carry on. If all fail, the fuse stops the job, previous views are kept, and the run shows red |
 | The AI jobs stop running for days | After 4 days Sentiment reads ⚪ Unknown (STALE) and Expert Take reads ⚪ Pending; old verdicts aren't shown as current |

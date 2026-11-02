@@ -1,9 +1,10 @@
-"""The sidebar's refresh schedule (refresh_schedule.py) vs the breadth gate's real decisions (2026-10-23).
+"""The sidebar's refresh schedule (refresh_schedule.py) vs the window the data jobs run in (2026-10-23).
 
-The window lives in three places that cannot share code: the Cloudflare Worker, market-breadth.yml's
-gate, and refresh_schedule.py, which the app's stale-data warning reads. This holds the app's copy to
-the gate's, hour by hour over 14 months across both daylight-saving changes, with the gate's
-parameters read from the workflow file itself.
+The window lives in two places that cannot share code: the Cloudflare Worker (cloudflare/worker.js, the only
+clock since 2026-11-02) and refresh_schedule.py, which the app's stale-data warning reads. This holds the
+app's copy to the slot gate's decisions with the window as parameters (the breadth gate's until 2026-11-02),
+hour by hour over 14 months across both daylight-saving changes, and then to the Worker's own `isActive`,
+run under node (skipped without it) on every :00 tick.
 """
 
 import sys
@@ -16,8 +17,6 @@ sys.path.insert(0, str(REPO / ".github/actions/slot-gate"))
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-import yaml
-
 import refresh_schedule as rs
 import slot_gate
 
@@ -26,10 +25,9 @@ def check(ok, label):
     global fails; fails += not ok; print("PASS" if ok else "FAIL", label)
 
 ET = ZoneInfo("America/New_York")
-wf = yaml.safe_load((REPO / ".github/workflows/market-breadth.yml").read_text())
-w = next(s for s in wf["jobs"]["gate"]["steps"] if s.get("id") == "slot")["with"]
-slots = [int(h) for h in str(w["slots"]).split(",")]
-window = slot_gate.parse_window(w["window"])
+# The window as the gate took it (market-breadth.yml's gate until 2026-11-02): hourly slots but 18-21, SUN:22-FRI:17.
+slots = [h for h in range(24) if h not in (18, 19, 20, 21)]
+window = slot_gate.parse_window("SUN:22-FRI:17")
 
 mismatch = []
 t = datetime(2026, 10, 18, 0, 0, tzinfo=timezone.utc)
@@ -39,7 +37,30 @@ while t < datetime(2027, 12, 20, tzinfo=timezone.utc):
     if gate_says != rs.in_refresh_window(t):
         mismatch.append(f"{et:%a %Y-%m-%d %H:%M} ET gate={gate_says}")
     t += timedelta(hours=1)
-check(not mismatch, f"refresh_schedule agrees with the breadth gate every hour for 14 months, both DST changes ({mismatch[:3]})")
+check(not mismatch, f"refresh_schedule agrees with the gate's decisions for that window every hour for 14 months, both DST changes ({mismatch[:3]})")
+
+# And with the Worker itself: its isActive, run under node, on every :00 tick (the :30 ticks of the 17:00 hour
+# are the one place a minute-level rule and an hour-level one differ, so only :00 is compared).
+import json, shutil, subprocess, tempfile
+node = shutil.which("node")
+if node:
+    tmp = Path(tempfile.mkdtemp(prefix="worker_rs_"))
+    (tmp / "w.mjs").write_text((REPO / "cloudflare/worker.js").read_text() + "\nexport { isActive };\n")
+    (tmp / "r.mjs").write_text('import { isActive } from "./w.mjs"; const [a, b] = process.argv.slice(2).map(Number); const out = [];'
+                              ' for (let t = a; t <= b; t += 3600000) if (isActive(new Date(t))) out.push(t); console.log(JSON.stringify(out));')
+    lo, hi = datetime(2026, 10, 18, 0, 0, tzinfo=timezone.utc), datetime(2027, 12, 20, tzinfo=timezone.utc)
+    r = subprocess.run([node, "r.mjs", str(int(lo.timestamp() * 1000)), str(int(hi.timestamp() * 1000))], cwd=tmp, capture_output=True, text=True, timeout=120)
+    worker_on = {datetime.fromtimestamp(ms / 1000, tz=timezone.utc) for ms in json.loads(r.stdout)}
+    app_on, t = set(), lo
+    while t <= hi:
+        if rs.in_refresh_window(t):
+            app_on.add(t)
+        t += timedelta(hours=1)
+    diff = sorted(worker_on ^ app_on)
+    check(not diff, f"refresh_schedule agrees with the Worker's own window on every :00 tick for 14 months ({[d.astimezone(ET).strftime('%a %m-%d %H:%M') for d in diff[:3]]})")
+    shutil.rmtree(tmp, ignore_errors=True)
+else:
+    print("SKIP node is not installed: the Worker's window was not compared")
 
 et = lambda *a: datetime(*a, tzinfo=ET)
 # 2026-10-23 is a Friday, 10-24 Saturday, 10-25 Sunday, 10-26 Monday, 10-21 Wednesday.

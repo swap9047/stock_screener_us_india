@@ -374,8 +374,9 @@ check("7:15 AM ET" in mr.box_markdown(None, "Nifty 500", "7:15 AM ET")
 text = open(f"{REPO}/.github/workflows/market-read.yml").read()
 wf = yaml.safe_load(text)
 on = wf.get(True) or wf.get("on")
-check(on["schedule"] == [{"cron": "15 * * * *"}] and "backfill" in on["workflow_dispatch"]["inputs"]
-      and "force" in on["workflow_dispatch"]["inputs"], "M8: wakes hourly at :15; backfill and force are dispatch inputs")
+check("schedule" not in on and "backfill" in on["workflow_dispatch"]["inputs"]
+      and "force" in on["workflow_dispatch"]["inputs"],
+      "M8: no GitHub schedule (the Worker dispatches it, owner 2026-11-02); backfill and force are dispatch inputs")
 gate = next(s for s in wf["jobs"]["gate"]["steps"] if s.get("id") == "slot")["with"]
 check(gate["slots"] == "6,17" and gate["days"] == "MON,TUE,WED,THU,FRI" and gate["grace-hours"] == "23"
       and gate["work-job"] == "write_reads"

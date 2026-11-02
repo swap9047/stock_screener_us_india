@@ -81,11 +81,11 @@ For **local runs**, the equivalent is a `.streamlit/secrets.toml` file (same for
 
 Streamlit Cloud only runs the interactive web app — it can't run `alert_check.py` on a timer. Free fix: a **GitHub Actions** workflow, already committed at `.github/workflows/daily-alerts.yml`.
 
-The alert trigger cadence is managed by the GitHub Actions YAML, not by Streamlit. Like every scheduled workflow here, `daily-alerts.yml` wakes **hourly**, and a shared slot gate (`.github/actions/slot-gate`) lets the first wake-up after **9:00 PM ET** do that evening's check, up to 22 hours late. Slots are wall-clock ET hours, so daylight saving needs no arithmetic, and a cron run GitHub delays or drops no longer costs a day.
+The alert trigger cadence is managed by the GitHub Actions YAML, not by Streamlit. Like every scheduled workflow here, `daily-alerts.yml` is started by the Cloudflare Worker (`cloudflare/worker.js`, which has no GitHub schedule beside it): at **9:00 PM ET**, and again every hour for 8 hours as a retry, each time through a shared slot gate (`.github/actions/slot-gate`) that lets only the first run that succeeds do that evening's check. Slots are wall-clock ET hours, so daylight saving needs no arithmetic, and a run that fails or is delayed no longer costs a day.
 
 The app's Alert Rules tab lets you choose which **days** a scheduled rule should run. The hour picker is intentionally limited to the one hour the workflow actually supports: **9:00 PM ET**. If you ever want alerts at more times, update both places together:
 
-1. Add the ET hour to the slot gate's `slots` input in `.github/workflows/daily-alerts.yml` (every workflow wakes hourly; the gate decides which run does a slot's work).
+1. Add the ET hour to the slot gate's `slots` input in `.github/workflows/daily-alerts.yml` (the gate decides which run does a slot's work) AND to the slot's entry in `cloudflare/worker.js` (a Worker edit you paste into the Cloudflare dashboard); `checks/test_worker_schedule_110226.py` fails when the two disagree.
 2. Add the corresponding ET hour(s) to `ALLOWED_HOURS` / `HOUR_LABELS` in `alerts.py`.
 
 On each scheduled wakeup, a cheap "gate" job installs only `requests` and asks `alerts.is_rule_due()` whether any enabled rule is due at that ET day/hour. The full check job installs all app dependencies, fetches live prices, and runs `alert_check.py` only when the gate says something is due. `alert_state.json` tracks which rule/ticker pairs were already active so you don't get duplicate pings every day a condition remains true; the workflow commits it to the private data repo after each run (it used to live in `actions/cache`, where an eviction reset it and re-fired everything). If the file is ever missing, `alert_check.py` records the current state and sends nothing that run instead of flooding Discord.
@@ -98,7 +98,7 @@ Rough cost: an hourly gate run (a few seconds each) plus one full check per due 
 
 A second, independent GitHub Actions workflow, `.github/workflows/news-summary.yml`, builds a daily news digest for every watchlist in scope (`news_watchlist_scope` in Settings — blank means the *All Invested* group; pick groups or individual watchlists on the News tab): for each ticker, it uses Gemini (with Google Search grounding, so it's real, cited web search — not the model's training data) to find important announcements, results, and stock moves from the last 24 hours, collates each watchlist into its own summary, saves the result to `news_summary.json`, and sends each summary to Discord. The app's **News** tab just displays that same `news_summary.json`.
 
-It does its work once per **6:00 AM ET** slot, up to 23 hours late: the workflow wakes hourly and the shared slot gate lets the first run after the slot through (same pattern as every other scheduled workflow — see AGENTS.md).
+It does its work once per **6:00 AM ET** slot: the Cloudflare Worker dispatches it at 6:00 AM and hourly for 8 hours after, and the shared slot gate lets the first run that succeeds through (same pattern as every other scheduled workflow — see AGENTS.md).
 
 To enable it, add one more repo secret (repo → Settings → Secrets and variables → Actions → New repository secret):
 
@@ -119,7 +119,7 @@ A few things worth knowing:
 
 ## 8. Data refresh (faster page loads)
 
-A third GitHub Actions workflow, `.github/workflows/data-refresh.yml`, fetches all watchlist tickers via yfinance and saves the result to `data_snapshot.json`. It is driven by the Cloudflare Worker, every 30 minutes inside Sunday 22:00 ET to Friday 17:00 ET (not 17:30-21:30 ET on weekdays), which covers India's session of roughly 23:45-06:00 ET. A GitHub cron every 15 minutes is the fallback for when the Worker is down, and a slot gate limits it to one run an hour in that same window (the same slots as the breadth workflow). Idle hours cost nothing extra: the commit step no-ops when the snapshot is byte-identical to the last run. The app loads this snapshot on open instead of hitting yfinance live every session — much faster, and avoids every visitor re-fetching identical data.
+A third GitHub Actions workflow, `.github/workflows/data-refresh.yml`, fetches all watchlist tickers via yfinance and saves the result to `data_snapshot.json`. It is driven by the Cloudflare Worker, every 30 minutes inside Sunday 22:00 ET to Friday 17:00 ET (not 17:30-21:30 ET on weekdays), which covers India's session of roughly 23:45-06:00 ET. There is no GitHub fallback cron: the Worker is the only trigger. Idle hours cost nothing extra: the commit step no-ops when the snapshot is byte-identical to the last run. The app loads this snapshot on open instead of hitting yfinance live every session — much faster, and avoids every visitor re-fetching identical data.
 
 No new secret needed beyond `DATA_REPO_TOKEN` — it commits `data_snapshot.json` to the private data repo.
 
@@ -127,7 +127,7 @@ A few things worth knowing:
 
 - **The "Refresh Data" button in the sidebar still works exactly as before** — clicking it always fetches live data for that session, bypassing the snapshot entirely. The sidebar caption shows which one you're looking at: "(daily snapshot)" or "(live fetch)".
 - **The snapshot is skipped automatically, falling back to a live fetch, if it's stale in a way that matters**: if you've added a ticker to the watchlist since the last scheduled refresh (the snapshot won't have it yet), or changed a calc parameter in Settings (EMA lengths, thresholds, etc. — the snapshot was computed with whatever settings were live at refresh time), or the calculation code in `stock_data.py` changed since the snapshot was made (comment- and docstring-only edits don't count). Any of these just means one live fetch until the next hourly refresh catches up — after deploying a change to `stock_data.py`, you can run the data refresh workflow by hand to skip the wait.
-- GitHub's scheduler is best-effort, so a run can occasionally be delayed — with an hourly cron this self-heals within the hour. The once-a-day workflows (news digest, Expert Views, Fundamentals, alerts) wake hourly too, and a shared slot gate lets the first run after their ET slot do the work, up to 22 hours late, on the reasoning that a late run beats a skipped one (see AGENTS.md, "GitHub Actions").
+- GitHub's own scheduler was best-effort (it started runs hours late and dropped some), so every job is started by the Cloudflare Worker instead, and a missed or failed run self-heals at the Worker's next hourly retry. The once-a-day workflows (news digest, Expert Views, Fundamentals, alerts) are dispatched at their ET slot and hourly for 8 hours after, and a shared slot gate lets the first run that succeeds do the work (see AGENTS.md, "GitHub Actions").
 
 ## 8b. Expert Views generation
 

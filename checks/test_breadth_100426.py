@@ -381,7 +381,9 @@ if nd:
 
 # --- B2 / B4 / workflow ---------------------------------------------------------------
 WF = (REPO / ".github/workflows/market-breadth.yml").read_text()
-check('window: "SUN:22-FRI:17"' in WF, "B2: the breadth slots run Sunday 10 PM to Friday 5 PM ET, no Saturday slot")
+check("workflow_dispatch:" in WF and "cron:" not in WF and "slot-gate" not in WF,
+      "B2: market-breadth.yml is dispatched only, by the Cloudflare Worker (no GitHub schedule, no gate since 2026-11-02); "
+      "the Worker's window -- Sunday 10 PM to Friday 5 PM ET, no Saturday -- is held by checks/test_worker_schedule_110226.py")
 check("missing = sorted(set(index_registry.KEYS) - set(status))" in WF and "import index_registry" in WF,
       "the verify step expects every index_registry block (Nasdaq 100, the three Nifty indexes)")
 check('("ok", "unchanged", "live", "awaiting", "partial")' in WF and 'v in ("awaiting", "partial")' in WF and "sys.exit(1)" in WF,

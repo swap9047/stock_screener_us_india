@@ -6,10 +6,9 @@ name: Quarterly Results Updater
 # fetches all ~1,100, a day in results season a few hundred, a quiet day a few
 # dozen.
 on:
-  # ONE hourly wake-up; the slot gate decides whether this run does the work, so
-  # a cron line GitHub drops or fires hours late does not cost the day.
-  schedule:
-    - cron: "0 * * * *"
+  # No GitHub schedule (owner, 2026-11-02): the Cloudflare Worker (cloudflare/worker.js) dispatches this
+  # workflow with scheduled=true at its slot and hourly for 8 hours after it as a retry; the slot gate
+  # below skips a slot that is already done.
   workflow_dispatch:
     inputs:
       scheduled:

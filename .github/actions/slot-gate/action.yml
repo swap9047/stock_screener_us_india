@@ -1,6 +1,6 @@
 name: Slot gate
 description: >
-  Should this run do its schedule slot's work? Workflows wake hourly and this
+  Should this run do its schedule slot's work? A workflow the Cloudflare Worker dispatches with scheduled=true goes through this, and it
   answers once per slot, so a cron line GitHub never fires (or fires hours late)
   no longer costs a slot. See slot_gate.py for why.
 inputs:

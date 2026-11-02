@@ -12,10 +12,9 @@ name: Market Read Writer
 # is written once, whichever slot finds it
 # missing, so a late or repeated run costs nothing.
 on:
-  # ONE hourly wake-up at :15, not a cron per DST season; the slot gate decides
-  # whether this run does the work (see the other workflows).
-  schedule:
-    - cron: "15 * * * *"
+  # No GitHub schedule (owner, 2026-11-02): the Cloudflare Worker (cloudflare/worker.js) dispatches this
+  # workflow with scheduled=true at its slot and hourly for 8 hours after it as a retry; the slot gate
+  # below skips a slot that is already done.
   workflow_dispatch:
     inputs:
       scheduled:
