@@ -1,11 +1,13 @@
 name: Market Breadth Updater
 
 on:
-  # ONE hourly wake-up, not a cron line per DST season. The gate job decides
-  # whether this run owns an hourly slot inside the Sunday-10-PM-to-Friday-5-PM
-  # window, skipping 5-10 PM ET each day (see the gate job).
-  schedule:
-    - cron: "0 * * * *"
+  # No GitHub schedule (owner, 2026-11-02): only the Cloudflare Worker dispatches this, at the top of
+  # each hour inside its window (Sunday 22:00 ET to Friday 17:00 ET, none 17:30-21:30 ET): the Worker
+  # enforces the window itself (cloudflare/worker.js), and so does nothing here. NSE's Monday open is
+  # ~23:45 ET Sunday and Friday 17:00 is an hour after the US close (and ~11 h after NSE's Friday
+  # close), so the window holds every NSE and US session of the week; Saturday has none. A market with
+  # nothing new in a run is skipped as "unchanged", and one still trading gets a "live" reading that
+  # the next run redoes.
   workflow_dispatch:
 
 concurrency:
@@ -14,50 +16,9 @@ concurrency:
 
 permissions:
   contents: read   # data is committed to the private data repo, never to this public one
-  actions: read    # the slot gate reads this workflow's own run history
 
 jobs:
-  # Every hour from Sunday 10 PM ET to Friday 5 PM ET, except 6-9 PM ET each day
-  # (owner, 2026-10-21; it was 1 AM / 7 AM / 1 PM / 7 PM ET, Mon-Fri). The daily
-  # gap is just the slot list: hours 18-21 are not slots, so a run landing in
-  # them finds 17:00 as the latest slot, more than grace-hours old, and skips.
-  # Sunday 10 PM is ahead of the NSE
-  # Monday open (~23:45 ET Sunday) and Friday 5 PM is an hour after the US close
-  # (and ~11 h after NSE's Friday close), so the window holds every NSE and US
-  # session of the week; Saturday has none. A Cloudflare Worker also dispatches
-  # this workflow at the top of each hour in the same window (a dispatch skips
-  # this gate, so the Worker enforces the window itself); this gate is the
-  # fallback for when it is down.
-  # A market with nothing new in a slot is skipped as "unchanged", and one still
-  # trading gets a "live" reading that the next slot redoes.
-  # `window` limits the slots by their START time, in ET. Hourly slots all day plus
-  # `days` could not say "Sunday from 18:00", hence the window input.
-  # grace-hours 1: the gate always works the LATEST slot, and an hourly slot is
-  # replaced by the next one after an hour anyway. GitHub still throttles a cron to
-  # a few runs a day, so the real cadence is however often it fires; a late run
-  # works the slot it lands in and the others are skipped. A run landing after
-  # Friday 5:59 PM ET finds a slot outside the window and does nothing.
-  gate:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      run: ${{ steps.slot.outputs.run }}
-    steps:
-      - uses: actions/checkout@v5
-
-      - id: slot
-        uses: ./.github/actions/slot-gate
-        with:
-          slots: "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,22,23"
-          grace-hours: "1"
-          window: "SUN:22-FRI:17"
-          work-job: update_breadth
-          workflow-file: market-breadth.yml
-          token: ${{ github.token }}
-
   update_breadth:
-    needs: gate
-    if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
 
     steps:

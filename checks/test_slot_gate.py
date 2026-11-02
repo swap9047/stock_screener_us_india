@@ -92,10 +92,10 @@ check(slot_gate.latest_slot(et(2026, 10, 14, 12, 59), (7, 13, 19)).hour == 7,
       "12:59 ET -> still the 07:00 slot's window")
 WF_BREADTH = (Path(__file__).resolve().parents[1] / ".github/workflows/market-breadth.yml").read_text()
 BREADTH_SLOTS = tuple(h for h in range(24) if h not in (18, 19, 20, 21))
-check('slots: "' + ",".join(str(h) for h in BREADTH_SLOTS) + '"' in WF_BREADTH and 'window: "SUN:22-FRI:17"' in WF_BREADTH,
-      "market-breadth.yml runs hourly, Sunday 10 PM to Friday 5 PM ET, none at 6-9 PM ET (owner, 2026-10-21)")
-check("days:" not in WF_BREADTH.split("gate:")[1].split("update_breadth:")[0].replace("`days`", ""),
-      "the breadth gate uses window, not days")
+# The slot list and window breadth's gate used until 2026-11-02 (owner, 2026-10-21): the Worker dispatches it now,
+# with no gate, so these only exercise decide()'s `window` input, which the gate keeps.
+check("slot-gate" not in WF_BREADTH and "cron:" not in WF_BREADTH and "workflow_dispatch:" in WF_BREADTH,
+      "market-breadth.yml has no gate and no GitHub schedule: the Worker is its clock (owner, 2026-11-02)")
 
 # --- breadth since 2026-10-21: hourly slots inside a Sunday 18:00 -> Friday 23:00 window
 W = dict(slots=tuple(range(24)), grace=1, window=slot_gate.parse_window("SUN:18-FRI:23"))
@@ -148,15 +148,10 @@ sat = slot_gate.latest_slot(et(2026, 10, 24, 12, 0), tuple(range(24)))
 check(slot_gate.in_window(sat, wrap) and not slot_gate.in_window(et(2026, 10, 21, 12, 0), wrap),
       "a FRI:20-MON:6 window wraps through the weekend")
 WF_DATA = (Path(__file__).resolve().parents[1] / ".github/workflows/data-refresh.yml").read_text()
-check('cron: "*/15 * * * *"' in WF_DATA, "data-refresh.yml wakes every 15 minutes")
-# data-refresh.yml's GitHub fallback is gated like breadth (owner, 2026-10-28): the same slots and
-# window, the refresh job as the work job, and the Worker's dispatches (which skip the gate) untouched.
-check('slots: "' + ",".join(str(h) for h in BREADTH_SLOTS) + '"' in WF_DATA and 'window: "SUN:22-FRI:17"' in WF_DATA,
-      "data-refresh.yml's fallback works breadth's slots and its Sunday-22:00-to-Friday-17:00 window")
-check("work-job: refresh" in WF_DATA and "workflow-file: data-refresh.yml" in WF_DATA and "actions: read" in WF_DATA,
-      "data-refresh.yml's gate counts its refresh job, reads its own history, and holds actions: read")
-check("needs: gate" in WF_DATA and "github.event_name == 'workflow_dispatch' || needs.gate.outputs.run == 'true'" in WF_DATA,
-      "data-refresh.yml's refresh job runs on a dispatch, or when the gate says this slot is unworked")
+# data-refresh.yml's GitHub fallback (a gated */15 cron, 2026-10-28) is gone (owner, 2026-11-02): only the Worker
+# (and a run by hand) dispatches it, ungated.
+check("cron:" not in WF_DATA and "slot-gate" not in WF_DATA and "workflow_dispatch:" in WF_DATA and "needs: gate" not in WF_DATA,
+      "data-refresh.yml has no GitHub schedule and no gate: the Worker is its clock")
 
 # --- news digest: one 06:00 slot a day, 23h window
 N = dict(slots=(6,), grace=23)

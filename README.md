@@ -33,7 +33,7 @@ automated alerts to Discord.
     the flowchart itself can be viewed from the sidebar.
 *   **Ticker notes & flags:** Per-ticker free-text notes plus a colour flag that only you
     set — it takes the place of the Expert Take dot next to the ticker.
-*   **Discord integrations:** GitHub Actions cron jobs evaluate your rules and ping a
+*   **Discord integrations:** GitHub Actions jobs (started on a schedule by a Cloudflare Worker) evaluate your rules and ping a
     Discord webhook when they trigger, plus a weekly wrap-up digest. Every post ends with
     a short "not investment advice" footer.
 *   **State persistence:** Configuration changed in the UI — watchlists, alert rules,
@@ -106,7 +106,7 @@ to just the tab you clicked from.
 *   `llm_util.py` — shared Gemini timeout/retry/model-ladder plumbing used by all three AI
     pipelines, including the fuse that stops a nightly job early when its calls keep
     failing.
-*   `alerts.py` / `alert_check.py` — rule evaluation and the Discord cron job.
+*   `alerts.py` / `alert_check.py` — rule evaluation and the scheduled Discord job.
 *   `ticker_notes.py` — notes and manual flags.
 *   `github_sync.py` — atomic commits via the GitHub API, and workflow dispatch.
 *   `refresh_*.py` — background entry points run by GitHub Actions.

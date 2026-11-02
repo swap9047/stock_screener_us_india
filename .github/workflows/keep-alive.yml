@@ -19,8 +19,8 @@ env:
 # data steps the other workflows share; test_workflows.py
 # asserts that exemption (it holds only APP_URL and prints nothing from the app).
 on:
-  schedule:
-    - cron: "17 */4 * * *"
+  # No GitHub schedule (owner, 2026-11-02): the Cloudflare Worker (cloudflare/worker.js) dispatches this
+  # every 4 hours, at 00, 04, 08, 12, 16 and 20 UTC.
   workflow_dispatch: {}    # run manually from the Actions tab anytime
 
 concurrency:

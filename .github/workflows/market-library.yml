@@ -12,8 +12,9 @@ env:
 # twice a day: 7 AM ET, after NSE's close (~6 AM ET), and 5 PM ET, after the US close. Commits nothing: the only output is rows in that database, written as its
 # market_writer role (MARKET_DB_URL), which can touch nothing else there.
 on:
-  schedule:
-    - cron: "0 * * * *"
+  # No GitHub schedule (owner, 2026-11-02): the Cloudflare Worker (cloudflare/worker.js) dispatches this
+  # workflow with scheduled=true at its slot and hourly for 8 hours after it as a retry; the slot gate
+  # below skips a slot that is already done.
   workflow_dispatch:
     inputs:
       scheduled:

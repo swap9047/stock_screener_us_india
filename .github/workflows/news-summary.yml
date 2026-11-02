@@ -17,11 +17,9 @@ env:
 # just past its close (owner, 2026-10-08; it was 8 PM ET). 23 h grace: a late
 # start still does the slot, up to 5 AM the next day.
 on:
-  # ONE hourly wake-up, not a cron per DST season. The slot gate below decides
-  # whether this run does the work, so a line GitHub never fires (it dropped the
-  # 9:15 PM ET alert line on 2026-09-14) or fires 5 h late no longer costs a slot.
-  schedule:
-    - cron: "0 * * * *"
+  # No GitHub schedule (owner, 2026-11-02): the Cloudflare Worker (cloudflare/worker.js) dispatches this
+  # workflow with scheduled=true at its slot and hourly for 8 hours after it as a retry; the slot gate
+  # below skips a slot that is already done.
   # Run manually from the Actions tab anytime, bypasses the gate. `markets` and
   # `limit` make it a partial smoke-test run: only those watchlists' first N
   # tickers, only their digests replaced, and nothing posted to Discord (see
