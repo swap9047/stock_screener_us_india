@@ -4,8 +4,9 @@ name: Market Read Writer
 # its breadth, highs/lows, drawdown and list-vs-index charts say, written by Gemini
 # from facts computed in code (market_read.py) and shown behind the (i) button above
 # the charts. Twice a day, after each market's close and once the breadth job has
-# stored the final reading: 7:15 AM ET (NSE closed ~6 AM) and 5:15 PM ET (US closed
-# 4 PM). Only Nifty 500 and the S&P 500 get an index read, and India Invested and US Invested
+# stored the final reading: 6:30 AM ET (NSE closed at 5 AM EST / 6 AM EDT; owner,
+# 2026-11-02: the Cloudflare Worker dispatches it at 6:30 ET, right after breadth's 6 AM
+# ET refresh -- it is not in this repo, see AGENTS.md) and 5:15 PM ET (US closed 4 PM). Only Nifty 500 and the S&P 500 get an index read, and India Invested and US Invested
 # (the Watchlist Breadth panels) a list read with key takeaways (owner, 2026-10-31). Their latest final session
 # is written once, whichever slot finds it
 # missing, so a late or repeated run costs nothing.
@@ -35,7 +36,9 @@ permissions:
   actions: read    # the slot gate reads this workflow's run history; the wait step lists the breadth runs
 
 jobs:
-  # Two slots, weekdays: 7 AM and 5 PM ET. grace-hours 23 (owner, 2026-10-31): the gate
+  # Two slots, weekdays: 6 AM and 5 PM ET (the 6 AM slot's clock is the Worker's 6:30 ET
+  # dispatch, which skips this gate; these hourly wake-ups are the fallback, and a repeated
+  # run is a no-op). grace-hours 23 (owner, 2026-10-31): the gate
   # always works the LATEST slot, so a run starting any time before the next slot still
   # does a slot that was missed or failed (GitHub starts scheduled runs late and drops
   # some), once a run's work job has succeeded the slot is done, and the next slot
@@ -52,7 +55,7 @@ jobs:
       - id: slot
         uses: ./.github/actions/slot-gate
         with:
-          slots: "7,17"
+          slots: "6,17"
           grace-hours: "23"
           days: "MON,TUE,WED,THU,FRI"
           work-job: write_reads

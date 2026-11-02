@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Write the News tab's market reads (market_read.py) into market_read.json.
 
-Run by market-read.yml at 7:15 AM ET (after NSE's close) and 5:15 PM ET (after the
+Run by market-read.yml at 6:30 AM ET (after NSE's close) and 5:15 PM ET (after the
 US close). For Nifty 500 and the S&P 500 (market_read.READ_INDEX_KEYS), and then for India Invested and US
 Invested (list_read.LIST_READ_KEYS: the Watchlist Breadth panels, read in the market the index read
 describes), when the latest breadth reading is final and has no read yet, it asks Gemini for one,

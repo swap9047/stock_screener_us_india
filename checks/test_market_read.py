@@ -377,9 +377,11 @@ on = wf.get(True) or wf.get("on")
 check(on["schedule"] == [{"cron": "15 * * * *"}] and "backfill" in on["workflow_dispatch"]["inputs"]
       and "force" in on["workflow_dispatch"]["inputs"], "M8: wakes hourly at :15; backfill and force are dispatch inputs")
 gate = next(s for s in wf["jobs"]["gate"]["steps"] if s.get("id") == "slot")["with"]
-check(gate["slots"] == "7,17" and gate["days"] == "MON,TUE,WED,THU,FRI" and gate["grace-hours"] == "23"
+check(gate["slots"] == "6,17" and gate["days"] == "MON,TUE,WED,THU,FRI" and gate["grace-hours"] == "23"
       and gate["work-job"] == "write_reads"
-      and wf["jobs"]["gate"]["steps"][-1]["with"]["workflow-file"] == "market-read.yml", "M8: slots 7 and 17 ET on weekdays, a missed one still done up to 23 hours later")
+      and wf["jobs"]["gate"]["steps"][-1]["with"]["workflow-file"] == "market-read.yml", "M8: slots 6 and 17 ET on weekdays (the Worker dispatches the morning one at 6:30 ET, owner 2026-11-02), a missed one still done up to 23 hours later")
+check("workflow_dispatch" in str(wf["jobs"]["write_reads"].get("if", "")),
+      "M8: a dispatch (the Worker's 6:30 AM ET one, owner 2026-11-02) skips the gate, so the Worker's clock is the one that counts")
 steps = wf["jobs"]["write_reads"]["steps"]
 uses = [s.get("uses", "") for s in steps]
 wait = next(i for i, s in enumerate(steps) if "market-breadth.yml" in s.get("run", ""))
