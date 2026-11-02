@@ -175,9 +175,13 @@ def main():
     # on 2026-10-20 four attempts (~16 h of runtime) re-analysed what earlier ones
     # had finished and spent the quota that then tripped the fuse again. A manual
     # dispatch, or a scoped/limited one (the app's Re-analyze buttons, smoke
-    # tests), still redoes everything: someone asked for it.
+    # tests), still redoes everything: someone asked for it. A dispatch the Cloudflare
+    # Worker sends for the slot (SCHEDULED_DISPATCH=true, owner 2026-11-02) is the
+    # scheduled run, so it resumes too.
     resume_since = None
-    if os.environ.get("GITHUB_EVENT_NAME") == "schedule" and not only_markets and not limit:
+    scheduled_run = (os.environ.get("GITHUB_EVENT_NAME") == "schedule"
+                     or os.environ.get("SCHEDULED_DISPATCH", "").strip().lower() == "true")
+    if scheduled_run and not only_markets and not limit:
         resume_since = slot_start_utc()
         print(f"[{_ts()}] Resume: skipping views already written since {resume_since:%Y-%m-%d %H:%M} UTC (this slot)")
 

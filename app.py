@@ -5839,13 +5839,13 @@ with tab_news:
                     st.button(f"ⓘ {_rlabel} read", key=f"{_rstate}_button", on_click=_flip_market_read,
                               args=(_rstate, True),
                               help="What this index's charts say, written after each market's close "
-                                   "(Nifty 6:30 AM ET, US 5:15 PM ET).")
+                                   "(Nifty 6:30 AM ET, US 5:30 PM ET).")
                     if st.session_state.get(_rstate, True):
                         with st.container(border=True):
                             _rix = index_registry.BY_KEY.get(_rkey) or {}
                             st.markdown(market_read.box_markdown(
                                 market_read.latest_entry(_read_data, _rkey), _rlabel,
-                                "6:30 AM ET" if _rix.get("region") == "INDIA" else "5:15 PM ET"))
+                                "6:30 AM ET" if _rix.get("region") == "INDIA" else "5:30 PM ET"))
 
             # market_breadth.json's "INDIA"/"US" keys are fixed national-index
             # breadth (Nifty 500 / S&P 500), independent of the watchlist
@@ -6134,13 +6134,13 @@ with tab_news:
                     continue
                 st.button(f"ⓘ {_sd['name']} read", key=f"{_lstate}_button", on_click=_flip_market_read, args=(_lstate,),
                           help="What this list's charts say, in the market around it, with key takeaways "
-                               "(Nifty 6:30 AM ET, US 5:15 PM ET).")
+                               "(Nifty 6:30 AM ET, US 5:30 PM ET).")
                 if st.session_state.get(_lstate):
                     with st.container(border=True):
                         _lix = index_registry.BY_KEY.get(market_read.LIST_READ_KEYS[_lkey]) or {}
                         st.markdown(market_read.box_markdown(
                             market_read.latest_entry(_list_read_data, _lkey, "lists"), _sd["name"],
-                            "6:30 AM ET" if _lix.get("region") == "INDIA" else "5:15 PM ET"))
+                            "6:30 AM ET" if _lix.get("region") == "INDIA" else "5:30 PM ET"))
         # Only each side's selected watchlist's radio is drawn, and Streamlit drops
         # a widget's state on any run that does not draw it -- so the others'
         # choices are re-assigned here or each would reset on the next switch.

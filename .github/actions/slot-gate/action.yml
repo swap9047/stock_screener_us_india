@@ -26,6 +26,13 @@ inputs:
   workflow-file:
     description: This workflow's file name, e.g. daily-alerts.yml
     required: true
+  scheduled:
+    description: >
+      "true" when a workflow_dispatch run stands in for a scheduled one (the Cloudflare Worker's
+      dispatch, owner 2026-11-02): the gate then reads the run history and decides like any
+      scheduled run. A dispatch without it (a run by hand) works regardless.
+    required: false
+    default: "false"
   token:
     description: Token with actions:read on this repo (github.token is enough)
     required: true
@@ -47,5 +54,6 @@ runs:
         WORKFLOW_FILE: ${{ inputs.workflow-file }}
         REPO: ${{ github.repository }}
         RUN_ID: ${{ github.run_id }}
+        SCHEDULED_DISPATCH: ${{ inputs.scheduled }}
         GH_TOKEN: ${{ inputs.token }}
       run: python3 "$GITHUB_ACTION_PATH/slot_gate.py" >> "$GITHUB_OUTPUT"

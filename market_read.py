@@ -7,7 +7,7 @@ your invested list against the index -- code works out
 the facts (where today's reading sits against its own history, how it moved over
 the last sessions, when it last crossed a line) and a Gemini ladder writes the
 reading from those facts and the last few reads, so it can say what CHANGED.
-Written twice a day by market-read.yml (6:30 AM ET after NSE's close, 5:15 PM ET
+Written twice a day by market-read.yml (6:30 AM ET after NSE's close, 5:30 PM ET
 after the US close) into market_read.json, which the tab shows behind an (i)
 button above the charts.
 

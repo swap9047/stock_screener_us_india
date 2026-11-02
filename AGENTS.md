@@ -38,7 +38,7 @@ for a model (Google's `...PerDay...` quota id) is retired for that model for the
 run, and once every key is out the ladder steps to its fallback model at once. Before
 2026-10-23 a daily-exhausted key rejoined every 120 s and failed again.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 2150
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 2237
 offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
@@ -377,7 +377,7 @@ Each of these has actually bitten this codebase.
 | `market-breadth.yml` | `refresh_market_breadth.py` (every `index_registry` index), `refresh_dashboard_perf.py`, `refresh_data.py`, then `publish_market.py watchlists` | `market_breadth.json`, `dashboard_perf.json`, `data_snapshot.json` | Every hour from Sunday 10 PM ET to Friday 5 PM ET, none 6-9 PM ET (the gate's `window` plus a slot list without hours 18-21; no Saturday slot) (a market with no new session is skipped; a mid-session run stores today's forming bar as "live", redone next run; a latest day Yahoo has only part-published is "partial"/"awaiting" and fails the run, so the gate retries) | 1 h (the next hourly slot takes over) |
 | `weekly-wrapup.yml` | `weekly_wrapup_check.py` | `weekly_wrapup_state.json` | Sunday 9:00 PM | 22 h |
 | `quarterly-results.yml` | `refresh_quarterly_results.py` (only the companies that are due; a 100-minute budget; exits 1 when Yahoo refuses most of a run) | `quarterly_results.json` | 4:00 AM | 22 h |
-| `market-read.yml` | `refresh_market_read.py` (waits first for a running `market-breadth.yml` run, up to 30 min, then writes the missing reads for Nifty 500 and the S&P 500 when their latest reading is final, saving after each read, then the invested lists' reads (`list_read.py`), and last publishes `market_read.json` to the research library with `publish_market.py reads` (`continue-on-error`, `MARKET_DB_URL`) for the connector's `get_market_read`; `backfill` and `force` dispatch inputs; exits 1 while a reading is still forming or every model failed, so the gate retries) | `market_read.json` | 6:30 AM and 5:15 PM, Mon-Fri (owner, 2026-11-02: the Worker dispatches the 6:30 AM ET one, right after breadth's 6 AM ET refresh; cron `15 * * * *` is the fallback, slots 6 and 17, grace 23 h; after NSE's close and after the US close) | 12 h |
+| `market-read.yml` | `refresh_market_read.py` (waits first for a running `market-breadth.yml` run, up to 30 min, then writes the missing reads for Nifty 500 and the S&P 500 when their latest reading is final, saving after each read, then the invested lists' reads (`list_read.py`), and last publishes `market_read.json` to the research library with `publish_market.py reads` (`continue-on-error`, `MARKET_DB_URL`) for the connector's `get_market_read`; `backfill` and `force` dispatch inputs; exits 1 while a reading is still forming or every model failed, so the gate retries) | `market_read.json` | 6:30 AM and 5:30 PM, Mon-Fri (owner, 2026-11-02: the Worker dispatches both, the morning one right after breadth's 6 AM ET refresh; cron `15 * * * *` is the interim fallback, slots 6 and 17, grace 23 h; after NSE's close and after the US close) | 12 h |
 | `market-library.yml` | `publish_market.py library` (`--min-gap 50` on its schedule) | nothing (rows in the research library's database) | 7:00 AM, 5:00 PM (the fallback; data-refresh publishes the library hourly) | 9 h |
 
 **The research library's copy.** `data-refresh.yml` ends with `publish_market.py screener` (after its commit, `continue-on-error`): the snapshot's tickers and their AI write-ups go into the transcription app's knowledge database (Supabase), where its Q&A and Claude chat read them. The companies that library discusses and no watchlist tracks are computed hourly by the same workflow's last step (`publish_market.py library --min-gap 50`: the first run in an hour publishes, every later one sees the database's own timestamp and skips), and at 7 AM / 5 PM ET by `market-library.yml`, the fallback for when the Worker is down or quiet (it skips too when the hourly step just ran; a run by hand always publishes). Both write as the `market_writer` role (`MARKET_DB_URL` secret; unset = skipped), which can touch only the `kg_market*` tables there, and print counts only: library tickers are not in `log_redact.py`'s lists, so `publish_market.py` swallows the computation's per-ticker lines. What may be published in a row is `market_api.py`'s whitelist -- never notes, flags, Interested or custom columns. **The tabs themselves** (owner, 2026-10-23: holdings included, so a chat can answer "how did my India watchlist do this week?") go in from `market-breadth.yml`, after its commit and before its verify step (`publish_market.py watchlists`, `continue-on-error`): each tab and combined group with its stocks (`kg_watchlists`, `kg_watchlist_members`, replaced whole), breadth per index and per tab (`kg_breadth_series`, `kg_breadth`; a tab's by `breadth_math`, the app's Watchlist Breadth numbers; `kg_breadth`'s drawdown columns `pct_down_10/20/30/40` are added to the table BY HAND with `docs/kg_breadth_drawdown.sql` -- `market_writer` cannot alter a table -- and until then `write_breadth` writes the other columns and logs it, while the latest reading's jsonb already carries `drawdown`; the first run after one is added rewrites every series in full, as it counts the least-filled drawdown column; the breadth job likewise redoes a block whose drawdown series lacks a level, `lacks_series`), two years of daily closes of every tab stock and benchmark (`kg_prices`), and the News tab's market reads (`reads_payload`, from `market-read.yml`'s own publish step: `market_read.json` stored whole as one JSON value under `kg_market_meta`'s `market_read` key), and the News tab's quarterly results medians for every index and tab, YoY and QoQ (`quarterly_records`: `quarterly_results.summarize` over `quarterly_results.json`, stored whole as one JSON value under `kg_market_meta`'s `quarterly_results` key -- no new table). A stored series gets only its last `REWRITE_DAYS` (10) rewritten each run, a new or short one in full; an empty set of tabs (data files not loaded) publishes nothing. `test_workflows.py` exempts `market-library.yml` (`DB_ONLY`) from commit-data and pins its secrets.
@@ -436,11 +436,13 @@ slot, which is the point, but it means a slot's work can start hours after the s
 Worker, below), and `SNAPSHOT_STALE_WARN_HOURS = 6` counts only hours inside the Worker's
 schedule (`refresh_schedule.py`), so a weekend or the evening pause does not warn.
 
-**A Cloudflare Worker is the real clock for `data-refresh.yml`, `market-breadth.yml` and (since 2026-11-02) the morning run of `market-read.yml`**
-(owner, 2026-10-21; deployed by hand in the Cloudflare dashboard, its code is not in this
-repo). The market read is dispatched Mon-Fri at **6:30 AM ET** (the Worker's :30 tick when New York is at 6:30; a dispatch skips that workflow's gate too, and a read that already exists makes a repeat a no-op), right after breadth's 6 AM ET refresh; `market-read.yml`'s hourly wake-up (slot 6) is the fallback. In summer (EDT) NSE closes at 6:00 ET, so a 6:30 run finds India's reading not yet final: it exits 1 and the next wake-up writes the read. Its cron trigger (`0,30 * * * *`) fires at :00 and :30 UTC and it calls `workflow_dispatch` through a
-fine-grained token scoped to THIS repo with Actions: write (never the data repo). Only
-inside Sunday 22:00 ET to Friday 17:00 ET, and not between 17:30 and 21:30 ET on any day:
+**A Cloudflare Worker is the real clock for every scheduled job (owner, 2026-11-02; first `data-refresh.yml` and `market-breadth.yml`, 2026-10-21)**
+(deployed by hand in the Cloudflare dashboard; its code is `cloudflare/worker.js` in this repo, which is
+versioned and checked but never deployed from here -- paste it into the Worker's editor).
+`checks/test_worker_schedule_110226.py` runs that file under node, tick by tick across both clock changes, against
+an independent model. Its cron trigger (`0,30 * * * *`) fires at :00 and :30 UTC and it calls `workflow_dispatch` through a
+fine-grained token scoped to THIS repo with Actions: write (never the data repo). The ungated pair
+runs only inside Sunday 22:00 ET to Friday 17:00 ET, and not between 17:30 and 21:30 ET on any day:
 `data-refresh.yml` every 30 minutes, `market-breadth.yml` at :00 only. A dispatch skips `market-breadth.yml`'s gate
 (`github.event_name == 'workflow_dispatch'`), so the Worker enforces the window itself;
 keep it equal to the gate's `window` and `slots`, which are the fallback if the Worker is down. The
@@ -449,6 +451,38 @@ GitHub `*/15` cron on `data-refresh.yml` is a backup, gated to the same slots an
 21:53 ET on 2026-10-21, and each run committed). Every successful
 snapshot write is stamped `generated_at = now`, so every run commits to the data repo --
 that is why the Worker is limited to the window and not left running around the clock.
+
+**The gated jobs and the `scheduled` input** (owner, 2026-11-02). Every other job has a slot (New York time) in
+`cloudflare/worker.js`'s `GATED_JOBS`, which must say what its gate's `slots` / `days` say (the check compares them):
+
+| Job | Worker slot (ET) | Days |
+|---|---|---|
+| `news-summary.yml` | 6:00 AM | daily |
+| `market-read.yml` | 6:30 AM and 5:30 PM | Mon-Fri |
+| `market-library.yml` | 7:00 AM and 5:00 PM | daily |
+| `quarterly-results.yml` | 4:00 AM | daily |
+| `expert-views.yml` | 1:00 AM | daily |
+| `fundamentals.yml` | 9:00 PM | daily |
+| `daily-alerts.yml` | 9:00 PM | daily |
+| `weekly-wrapup.yml` | 9:00 PM | Sundays (the slot's day: its retries run into Monday) |
+| `data-refresh.yml` | every :00 and :30 in the active period, ungated | Sun 22:00 - Fri 17:00 ET, never 17:30-21:30 |
+| `market-breadth.yml` | every :00 in the same period, ungated | same |
+| `keep-alive.yml` | every 4 hours, 00/04/08/12/16/20 UTC, no gate | daily |
+
+The Worker dispatches a gated job at its slot and again every hour for 8 hours (`RETRY_HOURS`), always with
+**`scheduled=true`**. That boolean `workflow_dispatch` input makes the run a scheduled one in all but name: the
+slot gate reads the history and skips it when the slot's work already succeeded (so a repeat is a retry and never a
+second Discord post; an unreadable history is a red gate and the next hour asks again), alerts run the normal
+edge-triggered check (a dispatch by hand passes `--force`, which makes every rule post again), Expert Take resumes
+(`refresh_expert_views.py` reads `SCHEDULED_DISPATCH`), and the library keeps its `--min-gap 50`. A dispatch WITHOUT
+it is a run by hand and bypasses all of that, as before. The input must be on `main` before the Worker sends it (a
+dispatch with an unknown input is a 422). Cloudflare ticks only at :00 and :30, so a slot is on one of those. In
+summer (EDT) NSE closes at 6:00 ET, so the 6:30 market read finds India's reading not final and its next retry
+(7:30) writes it. The Worker's token (a fine-grained PAT) expiring stops every job without an alert: renew it
+before its date.
+
+Until the GitHub `schedule:` triggers are removed (a second step, once this Worker is verified live), each
+workflow still has its hourly wake-up: it goes through the same gate, so the two never double-run a slot.
 
 This replaced a cron pair per workflow (one line per DST season) plus a gate that rejected
 the line belonging to the other season. It only worked while GitHub fired the right line:
