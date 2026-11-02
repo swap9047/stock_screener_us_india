@@ -16,6 +16,11 @@ on:
     - cron: "0 * * * *"
   workflow_dispatch:
     inputs:
+      scheduled:
+        description: "Set by the Cloudflare Worker (owner, 2026-11-02): go through the slot gate and behave exactly like a scheduled run. Leave false when running by hand: a manual run bypasses the gate."
+        type: boolean
+        required: false
+        default: false
       limit:
         description: "Compute only the first N library tickers (blank = all). A number, never ticker names: step env is printed in this public repo's logs"
         required: false
@@ -46,11 +51,13 @@ jobs:
           grace-hours: "9"
           work-job: publish
           workflow-file: market-library.yml
+          # A Worker dispatch (scheduled=true) goes through the gate like a schedule would.
+          scheduled: ${{ github.event.inputs.scheduled }}
           token: ${{ github.token }}
 
   publish:
     needs: gate
-    if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.run == 'true'
+    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.scheduled != 'true') || needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -73,7 +80,7 @@ jobs:
         shell: bash
         # --min-gap on a schedule only: data-refresh.yml publishes the library hourly, so this fallback
         # skips when that ran in the last 50 minutes. A run by hand always publishes.
-        run: python -u publish_market.py library ${{ github.event_name == 'schedule' && '--min-gap 50' || '' }} 2>&1 | python -u log_redact.py
+        run: python -u publish_market.py library ${{ (github.event_name == 'schedule' || github.event.inputs.scheduled == 'true') && '--min-gap 50' || '' }} 2>&1 | python -u log_redact.py
         env:
           MARKET_DB_URL: ${{ secrets.MARKET_DB_URL }}
           MARKET_LIMIT: ${{ github.event.inputs.limit }}

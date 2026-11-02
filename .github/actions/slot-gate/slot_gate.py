@@ -194,8 +194,12 @@ def main():
     days = [d.strip().upper() for d in os.environ.get("DAYS", "").split(",") if d.strip()]
     window = parse_window(os.environ.get("WINDOW", ""))
     now_et = datetime.now(ET)
-    if os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
-        # Every gated work job runs on a dispatch whatever this says (its `if:`
+    # A dispatch the Cloudflare Worker sends for a slot (scheduled=true, owner 2026-11-02) is a
+    # scheduled run in all but name: it is gated like one, so the Worker can dispatch a slot again
+    # every hour as a retry and the first run that succeeds closes it.
+    scheduled_dispatch = os.environ.get("SCHEDULED_DISPATCH", "").strip().lower() == "true"
+    if os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch" and not scheduled_dispatch:
+        # Every gated work job runs on a dispatch by hand whatever this says (its `if:`
         # starts with github.event_name == 'workflow_dispatch'), so do not read
         # the history at all: a red gate would block the dispatched run -- the
         # Cloudflare Worker's hourly breadth run among them.

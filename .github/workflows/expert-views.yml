@@ -25,6 +25,11 @@ on:
   # re-running every watchlist. Blank (and every scheduled run) = all.
   workflow_dispatch:
     inputs:
+      scheduled:
+        description: "Set by the Cloudflare Worker (owner, 2026-11-02): go through the slot gate and behave exactly like a scheduled run. Leave false when running by hand: a manual run bypasses the gate."
+        type: boolean
+        required: false
+        default: false
       markets:
         description: "Comma-separated market keys to process (blank = all watchlists)"
         required: false
@@ -58,11 +63,13 @@ jobs:
           grace-hours: "22"
           work-job: build
           workflow-file: expert-views.yml
+          # A Worker dispatch (scheduled=true) goes through the gate like a schedule would.
+          scheduled: ${{ github.event.inputs.scheduled }}
           token: ${{ github.token }}
 
   build:
     needs: gate
-    if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.run == 'true'
+    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.scheduled != 'true') || needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     # GitHub's full 6h cap for a hosted runner -- written out rather than left
     # implicit so it is visibly a decision, not an oversight.
@@ -127,6 +134,9 @@ jobs:
           # no inputs at all, resolve to an empty string = every watchlist.
           REFRESH_MARKETS: ${{ github.event.inputs.markets }}
           REFRESH_LIMIT: ${{ github.event.inputs.limit }}
+          # A Worker dispatch (scheduled=true) resumes like a scheduled run: refresh_expert_views.py
+          # reads this next to GITHUB_EVENT_NAME.
+          SCHEDULED_DISPATCH: ${{ github.event.inputs.scheduled }}
 
       - name: Commit updated data_snapshot.json and expert_views.json
         # always(): commit whatever the run produced even when it failed, so

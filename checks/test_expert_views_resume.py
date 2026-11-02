@@ -48,7 +48,7 @@ real_sleep = time.sleep          # rev.time IS the time module: keep the real on
 rev.time.sleep = lambda s: None
 
 def run(env, store):
-    for k in ("REFRESH_MARKETS", "REFRESH_LIMIT", "GITHUB_EVENT_NAME"):
+    for k in ("REFRESH_MARKETS", "REFRESH_LIMIT", "GITHUB_EVENT_NAME", "SCHEDULED_DISPATCH"):
         os.environ.pop(k, None)
     os.environ.update(env)
     calls, live, peak, lock = [], [0], [0], threading.Lock()
@@ -93,6 +93,14 @@ check(len(calls) == len(set(calls)), "a ticker in two watchlists is analysed onc
 
 calls, _ = run({"GITHUB_EVENT_NAME": "workflow_dispatch"}, store_with_done())
 check(sorted(calls) == ALL, "a manual dispatch redoes everything")
+# The Cloudflare Worker's dispatch for the slot (owner, 2026-11-02) is the scheduled run, so it resumes.
+calls, _ = run({"GITHUB_EVENT_NAME": "workflow_dispatch", "SCHEDULED_DISPATCH": "true"}, store_with_done())
+check(sorted(calls) == sorted(set(ALL) - {"A0", "A1", "B2"}),
+      f"a Worker dispatch for the slot (scheduled=true) resumes like a schedule ({sorted(calls)})")
+calls, _ = run({"GITHUB_EVENT_NAME": "workflow_dispatch", "SCHEDULED_DISPATCH": "false"}, store_with_done())
+check(sorted(calls) == ALL, "a dispatch by hand (scheduled=false) still redoes everything")
+calls, _ = run({"GITHUB_EVENT_NAME": "workflow_dispatch", "SCHEDULED_DISPATCH": "true", "REFRESH_LIMIT": "2"}, store_with_done())
+check(sorted(calls) == ["A0", "A1"], "a Worker dispatch with a limit is still a smoke test, not a resume")
 calls, _ = run({"GITHUB_EVENT_NAME": "schedule", "REFRESH_MARKETS": "wl_b"}, store_with_done())
 check(sorted(calls) == sorted(WL["wl_b"]), "a scoped run (the app's Re-analyze All) redoes its whole watchlist")
 calls, _ = run({"GITHUB_EVENT_NAME": "schedule", "REFRESH_LIMIT": "2"}, store_with_done())

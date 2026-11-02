@@ -288,7 +288,7 @@ def market_read(db, name=None, history=1):
         "parts": {part: label for part, label in READ_PARTS},
         "note": ("AI-written from the screener's own chart data (the same numbers as get_market_breadth, get_price_history "
                  "and get_quarterly_results) after each market's close: Nifty 500 and India Invested about 6:30 AM ET, the "
-                 "S&P 500 and US Invested about 5:15 PM ET; 'session' is the trading day it reads. A part is left out when "
+                 "S&P 500 and US Invested about 5:30 PM ET; 'session' is the trading day it reads. A part is left out when "
                  "the chart had nothing to add. Every number in a read comes from that data. It is analysis, not advice. "
                  "The 'return' part of an index read compares the user's own invested list with the index; an invested "
                  "list's read is set against its home index ('against'), names holdings, and ends with key_takeaways "

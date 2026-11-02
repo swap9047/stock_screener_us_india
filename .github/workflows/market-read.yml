@@ -5,8 +5,9 @@ name: Market Read Writer
 # from facts computed in code (market_read.py) and shown behind the (i) button above
 # the charts. Twice a day, after each market's close and once the breadth job has
 # stored the final reading: 6:30 AM ET (NSE closed at 5 AM EST / 6 AM EDT; owner,
-# 2026-11-02: the Cloudflare Worker dispatches it at 6:30 ET, right after breadth's 6 AM
-# ET refresh -- it is not in this repo, see AGENTS.md) and 5:15 PM ET (US closed 4 PM). Only Nifty 500 and the S&P 500 get an index read, and India Invested and US Invested
+# 2026-11-02: the Cloudflare Worker, cloudflare/worker.js, dispatches it at 6:30 ET, right
+# after breadth's 6 AM ET refresh) and 5:30 PM ET (US closed 4 PM). Only Nifty 500 and the
+# S&P 500 get an index read, and India Invested and US Invested
 # (the Watchlist Breadth panels) a list read with key takeaways (owner, 2026-10-31). Their latest final session
 # is written once, whichever slot finds it
 # missing, so a late or repeated run costs nothing.
@@ -17,6 +18,11 @@ on:
     - cron: "15 * * * *"
   workflow_dispatch:
     inputs:
+      scheduled:
+        description: "Set by the Cloudflare Worker (owner, 2026-11-02): go through the slot gate and behave exactly like a scheduled run. Leave false when running by hand: a manual run bypasses the gate."
+        type: boolean
+        required: false
+        default: false
       backfill:
         description: "Also write this many earlier sessions that have no read yet (a number; 0 = just the latest)"
         required: false
@@ -60,11 +66,13 @@ jobs:
           days: "MON,TUE,WED,THU,FRI"
           work-job: write_reads
           workflow-file: market-read.yml
+          # A Worker dispatch (scheduled=true) goes through the gate like a schedule would.
+          scheduled: ${{ github.event.inputs.scheduled }}
           token: ${{ github.token }}
 
   write_reads:
     needs: gate
-    if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.run == 'true'
+    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.scheduled != 'true') || needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
 

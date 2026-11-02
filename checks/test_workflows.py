@@ -79,8 +79,8 @@ check(len(wpub) == 1 and wcom and wver and wcom[0] < wpub[0] < wver[0] and mb[wp
       and mb[wpub[0]].get("env") == {"MARKET_DB_URL": "${{ secrets.MARKET_DB_URL }}"},
       "market-breadth.yml publishes watchlists/breadth/closes after its commit and before the verify step, never failing the run")
 ml = open(f"{R}/workflows/market-library.yml").read()
-check("github.event_name == 'schedule' && '--min-gap" in ml,
-      "market-library.yml: the scheduled fallback skips when the hourly step just ran; a run by hand always publishes")
+check("(github.event_name == 'schedule' || github.event.inputs.scheduled == 'true') && '--min-gap" in ml,
+      "market-library.yml: a scheduled run (GitHub's wake-up or the Worker's scheduled=true dispatch) skips when the hourly step just ran; a run by hand always publishes")
 for a in ("load-data", "commit-data"):
     act = yaml.safe_load(open(f"{R}/actions/{a}/action.yml"))
     for s in act["runs"]["steps"]:

@@ -17,7 +17,13 @@ on:
   # 9:15 PM ET alert line on 2026-09-14) or fires 5 h late no longer costs a slot.
   schedule:
     - cron: "0 * * * *"
-  workflow_dispatch: {}   # run manually from the Actions tab anytime, bypasses the gate
+  workflow_dispatch:
+    inputs:
+      scheduled:
+        description: "Set by the Cloudflare Worker (owner, 2026-11-02): go through the slot gate and behave exactly like a scheduled run. Leave false when running by hand: a manual run bypasses the gate."
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}
@@ -45,11 +51,13 @@ jobs:
           days: "SUN"
           work-job: wrapup
           workflow-file: weekly-wrapup.yml
+          # A Worker dispatch (scheduled=true) goes through the gate like a schedule would.
+          scheduled: ${{ github.event.inputs.scheduled }}
           token: ${{ github.token }}
 
   wrapup:
     needs: gate
-    if: github.event_name == 'workflow_dispatch' || needs.gate.outputs.run == 'true'
+    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.scheduled != 'true') || needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
