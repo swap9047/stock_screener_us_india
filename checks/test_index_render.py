@@ -190,7 +190,9 @@ if at:
     check("India Invested: % Down From 52-Week High" in wtexts and "Nifty 500 ≥20%" in wnames
           and wnames.count("≥20%") == 2,
           f"X6: each watchlist side draws its own levels, India Invested with Nifty 500's 20% line dotted ({wnames})")
-    check("(Oct" in wtexts.split("India Invested: % Down From 52-Week High", 1)[-1][:12]
+    # The title's date is the last synthetic session (PDAYS ends yesterday), so its month
+    # moves with the calendar: this said "(Oct" until the clock rolled into November.
+    check(f"({PDAYS[-1].strftime('%b')}" in wtexts.split("India Invested: % Down From 52-Week High", 1)[-1][:12]
           and "vs Nifty 500 ≥20% 40.5%" in wtexts,
           "X6: the watchlist title names its benchmark's latest 20% share")
 

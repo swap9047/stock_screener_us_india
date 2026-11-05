@@ -7,7 +7,7 @@ week (the indicator is weekly), so it only changes once a week: upload after a w
 source, so every value is exactly what the indicator showed.
 
 The export's header is: Ticker, Exchange, Watchlists, Close, Stage, RS, Benchmark,
-MOM, AvgVol, MCap, Fast, Med, Slow, Beta, Bal, CE, PEAD. Four of those become
+MOM, AvgVol, MCap, Fast, Med, Slow, Beta, Bal, CE, PEAD. Five of those become
 columns (plus three parts of the Stage cell, offered hidden):
 
   Stage  "S1 - S2 (Developing 8P)"  = previous stage - current stage (confidence,
@@ -18,6 +18,12 @@ columns (plus three parts of the Stage cell, offered hidden):
   MOM    Strong / Recovering / Weakening / Weak, with an arrow.
   CE     Cheat Entry, Yes / No.
   PEAD   Post-earnings announcement drift: Strong / Mod / Weak / No.
+  AvgVol "281.83Cr Stable": an average-volume figure and the indicator's word for where
+         volume is heading. Only the WORD is kept (owner, 2026-11-05: "without numbers"):
+         Explosive / Rising / Stable / Declining / Drying Up, shown as Stage Vol. The
+         figure is dropped, as is the arrow some labels carry ("Explosive \u2191\u2191"), so
+         a filter sees five values. It is the indicator's reading, not the screener's own
+         10D/100D Vol Trend, which stays as it was.
 
 The export carries bare symbols ("AARTIPHARM", "KMEW") and an exchange, while the
 screener's tickers carry Yahoo suffixes ("AARTIPHARM.NS", "KMEW.BO"). A row is matched
@@ -50,6 +56,9 @@ STAGE_CONF_VALUES = ["Mature", "Established", "Developing", "New"]
 STAGE_MOM_VALUES = ["Strong ↑", "Recovering ↑", "Weakening ↓", "Weak ↓"]
 CE_VALUES = ["Yes", "No"]
 PEAD_VALUES = ["Strong", "Mod", "Weak", "No"]
+# Best-first like every categorical: a volume surge, then growing, flat, shrinking and
+# dried-up volume.
+STAGE_VOL_VALUES = ["Explosive", "Rising", "Stable", "Declining", "Drying Up"]
 
 # row field -> the values it may hold, for filters.CATEGORICAL_METRICS. stage_weeks
 # is a count, so it is not here.
@@ -60,10 +69,11 @@ CATEGORICAL_FIELDS = {
     "stage_mom": STAGE_MOM_VALUES,
     "cheat_entry": CE_VALUES,
     "pead": PEAD_VALUES,
+    "stage_vol": STAGE_VOL_VALUES,
 }
 
 # The fields a stored ticker entry carries, in the order they are attached to rows.
-ROW_FIELDS = ("stage", "stage_prev", "stage_conf", "stage_weeks", "stage_mom", "cheat_entry", "pead")
+ROW_FIELDS = ("stage", "stage_prev", "stage_conf", "stage_weeks", "stage_mom", "cheat_entry", "pead", "stage_vol")
 
 # (row field, column label) in display order. ONE list, so the table's column
 # registry (app.build_column_defs) and the filter registry
@@ -76,11 +86,12 @@ COLUMN_DEFS = [
     ("stage_mom", "Stage Mom"),
     ("cheat_entry", "CE"),
     ("pead", "PEAD"),
+    ("stage_vol", "Stage Vol"),
     ("stage_prev", "Prev Stage"),
     ("stage_conf", "Stage Conf"),
     ("stage_weeks", "Stage Weeks"),
 ]
-DEFAULT_VISIBLE_KEYS = ("stage", "stage_mom", "cheat_entry", "pead")
+DEFAULT_VISIBLE_KEYS = ("stage", "stage_mom", "cheat_entry", "pead", "stage_vol")
 DEFAULT_HIDDEN_LABELS = {"Prev Stage", "Stage Conf", "Stage Weeks"}
 METRIC_LABELS = {label: key for key, label in COLUMN_DEFS}
 
@@ -93,6 +104,22 @@ def _stage_label(digit):
 
 def _clean(text):
     return re.sub(r"\s+", " ", str(text or "")).strip()
+
+
+def parse_avg_vol_label(text):
+    """The volume WORD of an export's AvgVol cell, or None when it is not one of
+    STAGE_VOL_VALUES. "281.83Cr Stable" -> "Stable", "85.13M Rising" -> "Rising",
+    "66.97Cr Explosive \u2191\u2191" -> "Explosive", "12.4B Drying Up" -> "Drying Up".
+    The leading figure (a number with its unit, one token) and any arrow are dropped;
+    the match is case-insensitive. A cell that is only the word is read too."""
+    t = _clean(text)
+    m = re.match(r"^\S*\d\S*\s+(.+)$", t)
+    word = re.sub(r"[^A-Za-z ]", "", m.group(1) if m else t)
+    word = _clean(word).lower()
+    for value in STAGE_VOL_VALUES:
+        if word == value.lower():
+            return value
+    return None
 
 
 def parse_stage_cell(text):
@@ -194,6 +221,14 @@ def parse_stage_csv(raw):
                 parsed[field] = None
                 if value:
                     report["bad_values"].setdefault(column.upper(), set()).add(value)
+        # AvgVol is optional (an export from before this column was read, or one
+        # without it, simply leaves Stage Vol blank); a word outside the vocabulary
+        # is reported like a renamed MOM label, not guessed at.
+        avg_vol = cell(row, "avgvol")
+        parsed["stage_vol"] = parse_avg_vol_label(avg_vol)
+        if avg_vol and parsed["stage_vol"] is None:
+            word = re.sub(r"^\S*\d\S*\s+", "", avg_vol)
+            report["bad_values"].setdefault("AVGVOL", set()).add(word)
         records[(symbol, _export_region(cell(row, "exchange")))] = parsed
     report["bad_values"] = {k: sorted(v) for k, v in report["bad_values"].items()}
     return records, report

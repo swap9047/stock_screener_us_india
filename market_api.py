@@ -93,6 +93,7 @@ METRIC_GROUPS = {
         ("stage_mom", "Stage Mom", "", "The indicator's momentum: Strong, Recovering, Weakening or Weak."),
         ("cheat_entry", "CE", "", "Cheat Entry: Yes or No."),
         ("pead", "PEAD", "", "Post-earnings announcement drift: Strong, Mod, Weak or No."),
+        ("stage_vol", "Stage Vol", "", "The indicator's volume word: Explosive, Rising, Stable, Declining or Drying Up."),
         ("stage_prev", "Prev Stage", "", "The stage before the current one."),
         ("stage_conf", "Stage Conf", "", "How well-formed the current stage is: New, Developing, Established, Mature."),
         ("stage_weeks", "Stage Weeks", "", "Weeks the current stage has lasted."),
