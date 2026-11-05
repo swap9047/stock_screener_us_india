@@ -206,10 +206,10 @@ app_tree = ast.parse((REPO / "app.py").read_text())
 fn = next(n for n in ast.walk(app_tree) if isinstance(n, ast.FunctionDef) and n.name == "build_column_defs")
 check(any(isinstance(n, ast.Starred) and getattr(n.value, "id", "") == "STAGE_COLUMN_DEFS" for n in ast.walk(fn)),
       "build_column_defs lists the Stage columns from the same list the filters use")
-check(sa.DEFAULT_VISIBLE_KEYS == ("stage", "stage_mom", "cheat_entry", "pead")
+check(sa.DEFAULT_VISIBLE_KEYS == ("stage", "stage_mom", "cheat_entry", "pead", "stage_vol")
       and sa.DEFAULT_HIDDEN_LABELS == {"Prev Stage", "Stage Conf", "Stage Weeks"}
-      and [k for k, _l in sa.COLUMN_DEFS[:4]] == list(sa.DEFAULT_VISIBLE_KEYS),
-      "stage, mom, CE and PEAD show by default; the three parts of the Stage cell start hidden")
+      and [k for k, _l in sa.COLUMN_DEFS[:5]] == list(sa.DEFAULT_VISIBLE_KEYS),
+      "stage, mom, CE, PEAD and Stage Vol show by default; the three parts of the Stage cell start hidden")
 
 # a lightweight job (the alert gate) must still import filters without numpy
 imports = {n.module for n in ast.walk(ast.parse((REPO / "stage_analysis.py").read_text()))

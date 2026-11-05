@@ -199,6 +199,11 @@ def column_definitions(settings, labels):
             "Post-Earnings Announcement Drift, from TheWrap Stage Analysis indicator: Strong, Mod (moderate), Weak or "
             "No. Taken as exported, not computed here."
         ),
+        "Stage Vol": (
+            "Where volume is heading, from TheWrap Stage Analysis indicator (the word in the AvgVol column of its "
+            "export, without the figure): Explosive, Rising, Stable, Declining or Drying Up. Taken as exported, not "
+            "computed here -- it is the indicator's weekly reading, separate from Vol Trend (10D vs 100D median volume)."
+        ),
         "Prev Stage": "The stage before the current one, from the same upload as Stage.",
         "Stage Conf": (
             "How well-formed the current stage is (the indicator's confidence rating): New (recently identified, just "

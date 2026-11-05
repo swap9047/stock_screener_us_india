@@ -608,6 +608,10 @@ STAGE_COLORS = {"S2 Advancing": "#1e8449", "S1 Accumulation": "#9a7d0a",
                 "S3 Distribution": "#d35400", "S4 Decline": "#c0392b"}
 STAGE_MOM_COLORS = {"Strong ↑": "#1e8449", "Recovering ↑": "#138d75",
                     "Weakening ↓": "#d35400", "Weak ↓": "#c0392b"}
+# Stage Vol (the indicator's volume word), best-first like the value list: a surge and
+# growing volume green, flat volume amber, shrinking volume orange, dried-up volume red.
+STAGE_VOL_COLORS = {"Explosive": "#1e8449", "Rising": "#138d75", "Stable": "#9a7d0a",
+                    "Declining": "#d35400", "Drying Up": "#c0392b"}
 
 
 def style_row(row, ema_labels):
@@ -678,6 +682,10 @@ def style_row(row, ema_labels):
                 styles[i] = f"color:{color};font-weight:700"
         elif col == "Stage Mom" and isinstance(val, str):
             color = STAGE_MOM_COLORS.get(val)
+            if color:
+                styles[i] = f"color:{color};font-weight:600"
+        elif col == "Stage Vol" and isinstance(val, str):
+            color = STAGE_VOL_COLORS.get(val)
             if color:
                 styles[i] = f"color:{color};font-weight:600"
         elif col in ("CE", "PEAD") and val in ("Yes", "Strong"):
@@ -2901,6 +2909,17 @@ def render_shared_column_picker(labels, active_market=None, active_market_label=
         _prefs_now["order"] = order
         _prefs_now["stage_columns_added"] = True
         atomic_write_json(COLUMN_PREFS_FILE, _prefs_now)
+    # Stage Vol (2026-11-05) came after the four above, so a layout saved with them lacks
+    # it. Same rule: placed once, right after PEAD (or the last Stage column shown), and
+    # recorded, so hiding it afterwards sticks.
+    if not _prefs_now.get("stage_vol_added"):
+        order = st.session_state[SHARED_ORDER_KEY]
+        if "stage_vol" in label_by_key and "stage_vol" not in order:
+            anchors = [order.index(k) for k in ("pead", "cheat_entry", "stage_mom", "stage") if k in order]
+            order.insert((anchors[0] + 1) if anchors else len(order), "stage_vol")
+        _prefs_now["order"] = order
+        _prefs_now["stage_vol_added"] = True
+        atomic_write_json(COLUMN_PREFS_FILE, _prefs_now)
 
     with st.sidebar.expander("Columns to show / reorder", expanded=False):
         st.caption(
@@ -3244,7 +3263,7 @@ def render_custom_columns_manager():
 
 def render_stage_analysis_upload():
     """Sidebar 'Stage Analysis upload': import the CSV exported from TheWrap Stage
-    Analysis indicator (see stage_analysis.py) into the Stage, Stage Mom, CE and PEAD
+    Analysis indicator (see stage_analysis.py) into the Stage, Stage Mom, CE, PEAD and Stage Vol
     columns. Nothing is written until 'Import' is pressed, and the preview says what
     matched first -- the export carries bare symbols, so a ticker held under another
     exchange suffix would otherwise just stay blank."""
@@ -3268,7 +3287,7 @@ def render_stage_analysis_upload():
             st.caption("Nothing uploaded yet.")
         st.caption(
             "Upload the CSV exported from TheWrap Stage Analysis indicator (columns Ticker, Exchange, "
-            "Stage, MOM, CE, PEAD...). Tickers it lists replace their stored values; the rest are kept. "
+            "Stage, MOM, AvgVol, CE, PEAD...). Tickers it lists replace their stored values; the rest are kept. "
             "The indicator reads the latest full closed week, so upload once a week, after it closes. "
             "Saved to stage_analysis.json and pushed to the data repo."
         )
@@ -4680,7 +4699,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         # long this one has run and the upload date. A ticker no upload covers shows a
         # dash (a missing value, not a stage called None).
         raw_df["stage"] = [with_tooltip(stage_label(r), stage_tooltip(r), nowrap=True) for r in filtered]
-        for _stage_key in ("stage_mom", "cheat_entry", "pead", "stage_prev", "stage_conf"):
+        for _stage_key in ("stage_mom", "cheat_entry", "pead", "stage_vol", "stage_prev", "stage_conf"):
             raw_df[_stage_key] = [r.get(_stage_key) or "—" for r in filtered]
 
         # Column visibility/order is chosen ONCE via the shared sidebar

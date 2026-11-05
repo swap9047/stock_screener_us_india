@@ -255,9 +255,9 @@ import stage_analysis as _sa  # noqa: E402
 _stage_cat = [c for c in cat if c["group"] == "stage"]
 _defs = _gl.column_definitions(settings, _gl.ema_col_labels(settings))
 check([c["field"] for c in _stage_cat] == [f for f, _ in _sa.COLUMN_DEFS] + ["stage_uploaded"]
-      and [c["label"] for c in _stage_cat][:7] == [lbl for _, lbl in _sa.COLUMN_DEFS]
-      and all(c["description"] == _defs[c["label"]] for c in _stage_cat[:7]) and "uploaded" in _stage_cat[7]["description"],
-      "the stage group carries the seven Stage Analysis columns (the dashboard's labels and glossary text) and the upload date")
+      and [c["label"] for c in _stage_cat][:8] == [lbl for _, lbl in _sa.COLUMN_DEFS]
+      and all(c["description"] == _defs[c["label"]] for c in _stage_cat[:8]) and "uploaded" in _stage_cat[8]["description"],
+      "the stage group carries the eight Stage Analysis columns (the dashboard's labels and glossary text) and the upload date")
 _stage_file = {"meta": {}, "tickers": {"ZED.NS": {"stage": "S2 Advancing", "stage_prev": "S1 Accumulation", "stage_conf": "Developing",
                                                    "stage_weeks": 8, "stage_mom": "Strong ↑", "cheat_entry": "No", "pead": "Mod",
                                                    "uploaded": "2026-10-25"}}}
