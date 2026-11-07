@@ -12,6 +12,9 @@ repo (as test_market_read_render.py), over synthetic prices.
   P5  the old pickers are gone from the News tab and AI Analysis Controls, which point here;
   P6  the repository lists the models and Add puts a new one in the pickers;
   P7  Test with no Gemini key says so instead of failing.
+  P8  the "Skip Gemini 3.8 Flash calls" switch is the panel's first control; ticking it saves it in
+      settings.json (inside ai_models, the chains untouched) and notes the skip on the two market read
+      steps only; unticking takes it out again (owner, 2026-11-07).
 """
 
 import json
@@ -241,6 +244,28 @@ if at:
     at.sidebar.button(key="ms_test_btn_R1").click().run()
     warn = " ".join(w.value for w in at.sidebar.warning)
     check("No Gemini API key" in warn, f"P7: Test with no key says so ({warn[:80]})")
+
+# P8 the skip-3.8 switch
+at = render()
+if at:
+    boxes = [c for c in at.sidebar.checkbox if c.key == "model_settings_skip_38"]
+    check(len(boxes) == 1 and boxes[0].value is False and boxes[0].label == "Skip Gemini 3.8 Flash calls",
+          "P8: the panel has the switch, off by default")
+    _before = json.dumps((settings_file().get("ai_models") or {}), sort_keys=True)
+    boxes[0].check().run()
+    _after = settings_file().get("ai_models") or {}
+    lines, text = step_lines(at)
+    skipped = sorted(k[1] for k, l in lines.items() if "3.8 Flash skipped" in l)
+    check(_after.get("skip_flash_38") is True
+          and json.dumps({k: v for k, v in _after.items() if k != "skip_flash_38"}, sort_keys=True) == _before,
+          "P8: ticking it saves the switch inside ai_models and leaves every chain as it was")
+    check(len(skipped) == 2 and all(("Market read", n) in lines for n in skipped),
+          f"P8: the steps list notes the skip on the two market read steps only ({skipped})")
+    check(any("skipped" in s.value for s in at.sidebar.success), "P8: it says the skip applies from the next run")
+    [c for c in at.sidebar.checkbox if c.key == "model_settings_skip_38"][0].uncheck().run()
+    lines, text = step_lines(at)
+    check("skip_flash_38" not in (settings_file().get("ai_models") or {}) and "3.8 Flash skipped" not in text,
+          "P8: unticking takes the switch out again")
 
 # P5 the old pickers are gone
 at = render(open_panel=False, tab="News")

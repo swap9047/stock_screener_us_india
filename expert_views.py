@@ -828,7 +828,9 @@ def generate_expert_view(client, row_data, news_text=None, news_source=None, act
     # The chain and thinking budget saved in the sidebar's Settings · Models (model_settings, "E2"),
     # else the old settings keys, else the default: each model's attempts, in order.
     model_cfg = model_settings.resolve("E2", settings)
-    model = model_cfg["chain"][0]["model"]
+    # The first model of the chain as it RUNS (3.8 Flash left out while the Settings · Models switch is on),
+    # so an answer from it is not labelled "(Fallback)".
+    model = model_settings.effective_chain(model_cfg["chain"], settings)[0]["model"]
     budget = model_cfg["budget"]
 
     def _pending_fallback(reason, used_model="Error"):
