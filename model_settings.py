@@ -216,9 +216,51 @@ def budget(step, settings=None):
     return resolve(step, settings)["budget"]
 
 
+# The switch at the top of Settings · Models (owner, 2026-11-07) is stored INSIDE `ai_models`, under a key no
+# step uses, not as a settings key of its own: a new key would have to be declared in
+# stock_data.DEFAULT_SETTINGS (save_settings keeps only declared keys), and any edit to that module's code
+# changes its fingerprint and marks the stored snapshot out of date until the next refresh. resolve() reads
+# ai_models by step id, and with_step / reset_changes copy the whole dict, so the switch survives both.
+SKIP_38_KEY = "skip_flash_38"
+
+
+def skipping_38(settings=None):
+    """True while the switch at the top of Settings · Models says to leave Gemini 3.8 Flash out."""
+    settings = settings if settings is not None else _current_settings()
+    return bool((settings.get("ai_models") or {}).get(SKIP_38_KEY))
+
+
+def with_skip_38(settings, on):
+    """The `ai_models` value with the switch set to `on`, every saved chain kept as it is."""
+    models = copy.deepcopy(settings.get("ai_models") or {})
+    if on:
+        models[SKIP_38_KEY] = True
+    else:
+        models.pop(SKIP_38_KEY, None)
+    return models
+
+
+def effective_chain(chain, settings=None):
+    """`chain` as the jobs run it: with Gemini 3.8 Flash left out while the switch is on (owner, 2026-11-07),
+    so a run makes no call to it and waits on none. The SAVED chain is never edited -- resolve() still
+    returns it whole, which is what the step editor shows and saves, so unticking the switch brings 3.8 back.
+    A chain made of nothing but 3.8 is kept as it is: skipping must not leave a step with no model."""
+    if not skipping_38(settings):
+        return chain
+    kept = [e for e in chain if e["model"] != FLASH_38]
+    return kept or chain
+
+
+def skipped_38_in(chain, settings=None):
+    """True when the switch is on and `chain` has a 3.8 rung it takes out (for the steps list's note)."""
+    return effective_chain(chain, settings) != chain
+
+
 def tiers(step, settings=None):
-    """The (model, seconds to wait first, call timeout) rungs llm_util.run_model_ladder walks, from the step's chain."""
-    return build_tiers(resolve(step, settings)["chain"])
+    """The (model, seconds to wait first, call timeout) rungs llm_util.run_model_ladder walks, from the step's chain
+    (without Gemini 3.8 Flash while the switch at the top of Settings · Models is on)."""
+    settings = settings if settings is not None else _current_settings()
+    return build_tiers(effective_chain(resolve(step, settings)["chain"], settings))
 
 
 def build_tiers(chain):

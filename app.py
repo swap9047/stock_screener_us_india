@@ -3622,6 +3622,20 @@ def render_model_settings():
         notice = st.session_state.pop("model_settings_notice", None)
         if notice:
             st.success(notice)
+        # The switch comes first (owner, 2026-11-07). One widget for one setting, saved on change; the chains
+        # below are left as they are, so unticking it puts 3.8 Flash back in every chain that has it.
+        _skip_now = model_settings.skipping_38(settings)
+        _skip_new = st.checkbox(
+            "Skip Gemini 3.8 Flash calls", value=_skip_now, key="model_settings_skip_38",
+            help="While ticked, every AI step runs as if Gemini 3.8 Flash were not in its chain: no call is made "
+                 "to it and nothing waits on it (the next model in the chain is tried first). Your saved chains "
+                 "are not changed. Applies from each job's next run.")
+        if _skip_new != _skip_now:
+            save_settings({"ai_models": model_settings.with_skip_38(settings, _skip_new)})
+            st.session_state["model_settings_notice"] = (
+                "⚙️ Gemini 3.8 Flash is skipped from the next run of every step that uses it." if _skip_new
+                else "⚙️ Gemini 3.8 Flash is back in the chains that have it.")
+            st.rerun()
         st.caption("Every AI step, the models it tries in order and how many times each (a retry goes to "
                    "another key). A change applies from each job's next run: the scheduled workflows read "
                    "settings.json, which the app pushes to the data repo automatically.")
@@ -3635,7 +3649,8 @@ def render_model_settings():
             name = spec["label"].split(" · ", 1)[-1]
             thinking = "" if spec["kind"] == "search" else f" · thinking {_model_settings_budget_text(sid, cfg['budget'])}"
             mark = " · ✎ custom" if cfg["source"] != "default" else ""
-            lines.append(f"- {name}: `{model_settings.describe(cfg['chain'])}`{thinking}{mark}")
+            skipped = " · 3.8 Flash skipped" if model_settings.skipped_38_in(cfg["chain"], settings) else ""
+            lines.append(f"- {name}: `{model_settings.describe(cfg['chain'])}`{thinking}{mark}{skipped}")
         st.markdown("\n".join(lines))
 
         step = st.selectbox("Change a step", list(model_settings.STEPS), index=None, key="model_settings_step",
