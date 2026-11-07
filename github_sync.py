@@ -367,6 +367,25 @@ def get_github_config(st_secrets=None):
             _config_value(st_secrets, "GITHUB_BRANCH", "main"))
 
 
+# The workflow a Stage Analysis upload starts once its file is pushed (owner, 2026-11-07): data-refresh.yml ends
+# with publish_market.py screener, which takes the Stage fields from stage_analysis.json and recomputes Expert Take
+# with them, so the research library's rows catch up at once. Without it an upload made outside the Cloudflare
+# Worker's window (a Friday evening, a weekend) reached the library only at Sunday 22:00 ET.
+STAGE_REFRESH_WORKFLOW = "data-refresh.yml"
+
+
+def start_refresh_after_stage_upload(st_secrets=None):
+    """Start the full data refresh after a Stage Analysis upload was pushed. Returns (started, message); never
+    raises, so the upload's own success stands whatever happens here."""
+    token, repo, _ = get_github_config(st_secrets)
+    if not token or not repo:
+        return False, "no GITHUB_TOKEN / GITHUB_REPO set"
+    try:
+        return trigger_github_workflow(token, repo, STAGE_REFRESH_WORKFLOW)
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+
+
 def get_data_repo_config(st_secrets=None):
     """(token, repo, branch) of the private DATA repo, from DATA_REPO_TOKEN,
     DATA_REPO (default DATA_REPO_DEFAULT) and DATA_REPO_BRANCH (default "main").

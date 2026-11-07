@@ -217,5 +217,31 @@ imports = {n.module for n in ast.walk(ast.parse((REPO / "stage_analysis.py").rea
                                                 if isinstance(n, ast.Import) for a in n.names}
 check(imports <= {"csv", "io", "os", "re", "datetime", "json_store"}, f"stage_analysis stays stdlib-only ({sorted(imports)})")
 
+# After an upload is pushed, the full data refresh starts (owner, 2026-11-07): its publish step sends the new Stage
+# (and the Expert Take worked out with it) to the research library at once, not at the Worker's next window.
+_calls = []
+_real_cfg, _real_trigger = github_sync.get_github_config, github_sync.trigger_github_workflow
+github_sync.get_github_config = lambda s=None: ("tok", "owner/repo", "main")
+github_sync.trigger_github_workflow = lambda token, repo, workflow_file="x", ref="main", inputs=None: (
+    _calls.append((token, repo, workflow_file, inputs)) or (True, "Workflow triggered successfully."))
+_ok = github_sync.start_refresh_after_stage_upload()
+def _boom(*a, **k): raise OSError("network down")
+github_sync.trigger_github_workflow = _boom
+_raised = github_sync.start_refresh_after_stage_upload()
+github_sync.get_github_config = lambda s=None: (None, None, "main")
+_none = github_sync.start_refresh_after_stage_upload()
+github_sync.get_github_config, github_sync.trigger_github_workflow = _real_cfg, _real_trigger
+check(_ok == (True, "Workflow triggered successfully.") and _calls == [("tok", "owner/repo", "data-refresh.yml", None)]
+      and _raised[0] is False and "network down" in _raised[1] and _none[0] is False and "GITHUB_TOKEN" in _none[1],
+      "a pushed upload starts data-refresh.yml with no inputs (a full run); no config or a failed request is reported, never raised")
+_up = next(n for n in ast.walk(app_tree) if isinstance(n, ast.FunctionDef) and n.name == "render_stage_analysis_upload")
+_src = ast.get_source_segment((REPO / "app.py").read_text(), _up)
+check("started, why = start_refresh_after_stage_upload(st.secrets)" in _src
+      and _src.index("push_all_config(") < _src.index("if ok:") < _src.index("start_refresh_after_stage_upload("),
+      "the upload starts the refresh only after its push to the data repo succeeded")
+_wf = (REPO / ".github/workflows/data-refresh.yml").read_text()
+check("workflow_dispatch" in _wf and "publish_market.py screener" in _wf,
+      "data-refresh.yml can be dispatched and ends with the library publish that reads stage_analysis.json")
+
 print(f"\nFAILURES: {fails}")
 sys.exit(1 if fails else 0)

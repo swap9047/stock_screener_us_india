@@ -136,7 +136,7 @@ from weekly_wrapup import (
 from filters import (load_custom_filters, get_market_filters, save_market_filters, apply_filters, describe_filter,
                      describe_chain, describe_chain_with_values, passes_filter_chain, CATEGORICAL_METRICS,
                      TEXT_METRICS)
-from github_sync import (get_github_config, get_data_repo_config, bootstrap_data_files,
+from github_sync import (get_github_config, get_data_repo_config, bootstrap_data_files, start_refresh_after_stage_upload,
                          push_all_config, trigger_github_workflow, pull_generated_files, SYNCABLE_FILES, WORKFLOW_GENERATED_FILES,
                          push_json_entry_changes, read_remote_json, read_remote_bytes, refresh_snapshot_from_repo,
                          unpushed_config_files)
@@ -3321,9 +3321,19 @@ def render_stage_analysis_upload():
             if gh_token and gh_repo and not os.environ.get("SKIP_GITHUB_PULL"):
                 ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=["stage_analysis.json"],
                                           message="Update Stage Analysis")
-                st.session_state["stage_upload_notice"] = (
-                    f"Imported {len(matched)} tickers and pushed to GitHub." if ok
-                    else f"Imported {len(matched)} tickers, but the push to GitHub failed: {msg}")
+                if ok:
+                    # The research library reads the Stage only when a data refresh publishes it, and the Worker
+                    # runs none on a Friday evening or a weekend: start one now (github_sync.STAGE_REFRESH_WORKFLOW).
+                    started, why = start_refresh_after_stage_upload(st.secrets)
+                    st.session_state["stage_upload_notice"] = (
+                        f"Imported {len(matched)} tickers and pushed to GitHub. "
+                        + ("Started a data refresh: the research library gets the new Stage and Expert Take in about "
+                           "10 minutes." if started else
+                           f"The data refresh failed to start ({why}); the research library gets the new Stage at the "
+                           "next scheduled refresh."))
+                else:
+                    st.session_state["stage_upload_notice"] = (
+                        f"Imported {len(matched)} tickers, but the push to GitHub failed: {msg}")
             else:
                 st.session_state["stage_upload_notice"] = f"Imported {len(matched)} tickers (not pushed: no data-repo token)."
             st.rerun()
