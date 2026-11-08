@@ -182,8 +182,13 @@ def main():
     # the nightly schedule always gets.
     only_markets = {m.strip() for m in os.environ.get("REFRESH_MARKETS", "").split(",") if m.strip()}
     limit = llm_util.refresh_limit()
+    # The dashboard's "Retry Pending" (owner, 2026-11-08): only the tickers whose
+    # stored view is not valid -- the same test as the button's count
+    # (fundamentals_eval._is_valid_view), so the run does what the button said.
+    pending_only = llm_util.pending_only()
     print(f"[{_ts()}] Scope: {', '.join(sorted(only_markets)) if only_markets else 'all watchlists'}"
-          + (f", first {limit} ticker(s) only" if limit else ""))
+          + (f", first {limit} ticker(s) only" if limit else "")
+          + (", pending tickers only" if pending_only else ""))
 
     # A ticker in several watchlists is one analysis, not several. The store is
     # keyed by bare ticker, so the extra runs were pure waste that overwrote
@@ -221,6 +226,9 @@ def main():
             row = next((r for r in results if r["ticker"] == tk), None)
             if not row:
                 print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - SKIP (no data in snapshot)")
+                continue
+            if pending_only and _is_valid_view(fundamentals.get(tk)):
+                print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - SKIP (not pending)")
                 continue
             plan.append((market, idx, len(mkt_tickers), tk, row))
 

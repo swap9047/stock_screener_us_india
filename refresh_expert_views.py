@@ -19,7 +19,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 import llm_util
-from json_store import DataFileError
+from json_store import DataFileError, atomic_write_json
 from stock_data import load_data_snapshot, load_watchlists
 from expert_views import (
     load_expert_views, save_expert_views, generate_expert_view, _is_valid_view, carry_news_risk,
@@ -27,7 +27,11 @@ from expert_views import (
     EXPERT_STALE_DAYS, STAGES, _view_age_days, stale_view_fallback,
 )
 from alerts import active_alerts_for_prompt, alerts_text_for
-from fundamentals_eval import load_fundamentals
+from fundamentals_eval import (
+    load_fundamentals, save_fundamentals, generate_fundamental_view, FUNDAMENTALS_FILE,
+    _is_valid_view as _is_valid_sentiment,
+)
+from refresh_fundamentals import _apply_result as _apply_sentiment_result
 from news_summary import get_gemini_api_key
 
 
@@ -165,8 +169,13 @@ def main():
     # the nightly schedule always gets.
     only_markets = {m.strip() for m in os.environ.get("REFRESH_MARKETS", "").split(",") if m.strip()}
     limit = llm_util.refresh_limit()
+    # The dashboard's "Retry Pending" (owner, 2026-11-08): only the tickers whose
+    # stored view is not valid -- the button's own count (_is_valid_view), which
+    # leaves out a stock with no Stage, as this run does below.
+    pending_only = llm_util.pending_only()
     print(f"[{_ts()}] Scope: {', '.join(sorted(only_markets)) if only_markets else 'all watchlists'}"
-          + (f", first {limit} ticker(s) only" if limit else ""))
+          + (f", first {limit} ticker(s) only" if limit else "")
+          + (", pending tickers only" if pending_only else ""))
     counters = {"processed": 0, "failed": 0, "fallback": 0}
     # Resume (2026-10-23): a SCHEDULED run of the full scope skips tickers whose
     # view was already written after tonight's slot. The gate retries a slot whose
@@ -184,6 +193,24 @@ def main():
     if scheduled_run and not only_markets and not limit:
         resume_since = slot_start_utc()
         print(f"[{_ts()}] Resume: skipping views already written since {resume_since:%Y-%m-%d %H:%M} UTC (this slot)")
+
+    # Sentiment first (owner, 2026-11-08): a run someone asked for -- the app's
+    # Retry Pending or Re-analyze All -- generates a stock's missing Sentiment
+    # before its Expert Take, so the write-up gets the quarter's checked facts
+    # (prompt section 4) instead of "not provided". expert-views.yml sets
+    # REFRESH_SENTIMENT_FIRST on a dispatch that is not the Worker's scheduled
+    # one; never on the scheduled run either way: Sentiment has its own 9 PM job,
+    # and on a night its fuse tripped (spent quota) this would double the calls
+    # into the same dead keys. The verdict does not use Sentiment. Only the
+    # entries written here are committed (`fundamentals.json.entries`,
+    # commit-data's `entries-only`), so a Sentiment run that finished meanwhile
+    # is never reverted by this job's copy.
+    sentiment_first = (os.environ.get("REFRESH_SENTIMENT_FIRST", "").strip().lower() == "true"
+                       and not scheduled_run and fundamental_views is not None)
+    if sentiment_first:
+        print(f"[{_ts()}] Sentiment first: a stock with no valid Sentiment gets one before its Expert Take")
+    sentiment_written = set()
+    entries_file = FUNDAMENTALS_FILE + ".entries"
 
     # One analysis per ticker, not one per watchlist membership. The store is
     # keyed by bare ticker so duplicates overwrote each other -- and not even
@@ -246,6 +273,9 @@ def main():
                 # S2 stocks on a weeks-old write-up and a "pending" placeholder.
                 print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - SKIP (no Stage Analysis yet)")
                 continue
+            if pending_only and _is_valid_view(expert_views.get(tk)):
+                print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - SKIP (not pending)")
+                continue
             if resume_since is not None and written_since(expert_views.get(tk), resume_since):
                 print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - SKIP (already analysed this slot)")
                 resumed += 1
@@ -259,6 +289,30 @@ def main():
 
     store_lock = threading.Lock()
     fuse = llm_util.FailureFuse()
+
+    def _sentiment_if_missing(tag, tk, row):
+        """Generate and store tk's Sentiment when the stored one is not valid.
+        A failure is logged and the Expert Take goes ahead without it: it is
+        not counted toward the FailureFuse, which judges the Expert calls."""
+        with store_lock:
+            old = fundamental_views.get(tk)
+        if _is_valid_sentiment(old):
+            return
+        try:
+            t0 = time.time()
+            # is_retry=True: an exhausted search settles for "no news" rather
+            # than raising the batch job's requeue signal, which nothing here
+            # would catch.
+            view = generate_fundamental_view(client, row, is_retry=True)
+            with store_lock:
+                _failed, detail = _apply_sentiment_result(fundamental_views, tk, view, old, time.time() - t0)
+                if fundamental_views.get(tk) is not old:
+                    sentiment_written.add(tk)
+                    save_fundamentals(fundamental_views)
+                    atomic_write_json(entries_file, sorted(sentiment_written))
+            print(f"[{_ts()}] {tag} {tk} - Sentiment first: {detail}")
+        except Exception as e:
+            print(f"[{_ts()}] {tag} {tk} - Sentiment first failed, Expert Take goes ahead without it: {e}")
 
     def _analyse(entry, is_retry=False):
         """One ticker, start to stored result. Runs on a worker thread.
@@ -275,6 +329,8 @@ def main():
         tag = "[RETRY]" if is_retry else f"[{market}] [{idx+1}/{total}]"
         old_view = expert_views.get(tk)
         print(f"[{_ts()}] {tag} {tk} ({row.get('company_name', tk)}) - starting...")
+        if sentiment_first and not is_retry:
+            _sentiment_if_missing(tag, tk, row)
         requeue = None
         try:
             t0 = time.time()
@@ -345,6 +401,8 @@ def main():
         _run_all(retry_queue, is_retry=True)
 
     print(f"\nDone. Processed {counters['processed']} analyses ({len(retry_queue)} of them retries).")
+    if sentiment_first:
+        print(f"Sentiment generated first for {len(sentiment_written)} ticker(s) that had none.")
     print(f"No-Source Fallbacks: {counters['fallback']} times.")
     print(f"Final failures: {counters['failed']}.")
     # Per-key calls and failures, worst key first -- see usage_summary.

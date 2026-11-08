@@ -9,12 +9,21 @@ inputs:
   message:
     description: Commit message (keep it generic -- no tickers)
     required: true
+  entries-only:
+    description: >
+      Files among `files` that this job does not own and commits per entry: only
+      the keys listed in its `<file>.entries` (a JSON list the job writes) take
+      this run's value, every other key keeps the branch's, and with no list the
+      file is left out (merge_entries.py). For a keyed file another workflow owns.
+    required: false
+    default: ""
 runs:
   using: composite
   steps:
     - shell: bash
       env:
         FILES: ${{ inputs.files }}
+        ENTRIES_ONLY: ${{ inputs.entries-only }}
         MESSAGE: ${{ inputs.message }}
         ACTION_PATH: ${{ github.action_path }}
       run: |
@@ -59,6 +68,15 @@ runs:
 
           staged=()
           for f in "${present[@]}"; do
+            if [[ " $ENTRIES_ONLY " == *" $f "* ]]; then
+              # Per entry: never the whole file over another workflow's commits.
+              if python3 "$ACTION_PATH/merge_entries.py" "$f" "$SRC/$f" "$SRC/$f.entries"; then
+                staged+=("$f")
+              else
+                echo "$f: no entries written by this run -- leaving it out"
+              fi
+              continue
+            fi
             # Never move a timestamped file backwards -- same rule the running
             # app applies when it pulls these (github_sync._FRESHNESS_KEYS).
             if python3 "$ACTION_PATH/newer_on_branch.py" "$f" "$SRC/$f"; then

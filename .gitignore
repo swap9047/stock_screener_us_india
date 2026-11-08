@@ -39,3 +39,6 @@ docs/review-checks-*/
 data/
 # Local-only design notes about what this public repo exposed.
 docs/private/
+# Which entries a job wrote into a file it commits per entry (commit-data's
+# `entries-only`): a list of tickers, so never in this public repo.
+*.entries
