@@ -144,7 +144,7 @@ from news_summary import (load_news_summary, MARKET_LABELS, get_gemini_api_keys,
                           summary_with_source_links)
 from expert_views import (load_expert_views, save_expert_views, analyze_single_ticker,
                           generate_expert_view, _is_valid_view, is_pending_view, apply_regenerated_view,
-                          VERDICT_RULES, NEWS_RISK_RULES, EXPERT_NEWS_WINDOW_DAYS, EXPERT_STALE_DAYS,
+                          VERDICT_RULES, NEWS_RISK_RULES, EXPERT_NEWS_WINDOW_DAYS, EXPERT_STALE_DAYS, STAGES,
                           expert_take_for_row, _view_age_days, EXPERT_TAKE_EMOJI,
                           expert_view_has_news as _expert_view_has_news)
 # The glossary and the per-signal "why" text, shared with market_api (what the research library reads).
@@ -3469,8 +3469,15 @@ def sync_ai_views_to_github(message, filenames=("expert_views.json", "fundamenta
         st.toast(f"✓ Saved locally! (GitHub sync: {msg})")
 
 
-def trigger_ai_refresh_workflow(workflow_file, name, label, markets):
+def trigger_ai_refresh_workflow(workflow_file, name, label, markets, pending_only=False):
     """Kick off ONE background AI refresh workflow, scoped to `markets`.
+
+    `pending_only` (owner, 2026-11-08) is the "Retry Pending" button: the job
+    analyses only the stocks in scope whose stored view is pending or failed,
+    worked out by the job itself from the data repo (the workflow's
+    `pending_only` switch). It used to run here, in the browser session, and
+    Streamlit stops a session's script when its browser closes or a phone puts
+    the tab to sleep -- the finished stocks were never pushed.
 
     `markets` is the list of REAL registry keys behind the tab the button was
     clicked from (a combined tab passes its member list). It's forwarded as the
@@ -3491,13 +3498,16 @@ def trigger_ai_refresh_workflow(workflow_file, name, label, markets):
         if not token or not repo:
             st.error("GitHub credentials not found.")
             return
-        ok, msg = trigger_github_workflow(
-            token, repo, workflow_file, inputs={"markets": ",".join(markets)}
-        )
+        inputs = {"markets": ",".join(markets)}
+        if pending_only:
+            inputs["pending_only"] = "true"
+        ok, msg = trigger_github_workflow(token, repo, workflow_file, inputs=inputs)
         if ok:
             # "queued", not "running": concurrency group is per-workflow with
             # cancel-in-progress false, so this waits out any nightly run.
-            st.success(f"{label}: {name} refresh queued in background for {', '.join(markets)}.")
+            what = "pending stocks" if pending_only else "refresh"
+            st.success(f"{label}: {name} {what} queued in background for {', '.join(markets)}. "
+                       "You can close the browser; the results show up here a few minutes after the run ends.")
         else:
             st.error(f"{name} refresh failed: {msg}")
     except Exception as e:
@@ -3547,6 +3557,11 @@ def _reanalyze_tickers_in_dashboard(tickers, results, api_key, sync_message,
         except Exception as e:
             print(f"[re-analyze] fundamentals.json unreadable, Expert Take runs without it: {e}")
 
+    # Sentiment first (owner, 2026-11-08): a stock with no valid Sentiment gets
+    # one before its Expert Take, so the write-up has the quarter's checked facts
+    # (prompt section 4). The same rule as the background runs
+    # (refresh_expert_views.py, on any run but the scheduled one).
+    sentiment_done = []
     for idx, tk in enumerate(tickers):
         row = next((r for r in results if r["ticker"] == tk), None)
         if not row:
@@ -3556,6 +3571,16 @@ def _reanalyze_tickers_in_dashboard(tickers, results, api_key, sync_message,
             (idx + 1) / len(tickers),
             text=f"{label} for {company_name} ({idx+1}/{len(tickers)})...",
         )
+        if scope == "expert" and fund_views is not None and not _is_valid_sentiment_view(fund_views.get(tk)):
+            progress_bar.progress((idx + 1) / len(tickers),
+                                  text=f"Sentiment first for {company_name} ({idx+1}/{len(tickers)})...")
+            try:
+                new_sentiment = analyze_single_ticker_sentiment(tk, row, api_key, is_retry=True, client=client)
+                if new_sentiment is not None:
+                    fund_views[tk] = new_sentiment
+                    sentiment_done.append(tk)
+            except Exception as e:
+                print(f"[re-analyze] sentiment first failed for {tk}, Expert Take goes ahead without it: {e}")
         if scope == "expert":
             try:
                 view = generate_expert_view(
@@ -3598,6 +3623,9 @@ def _reanalyze_tickers_in_dashboard(tickers, results, api_key, sync_message,
     # the old both-columns default.
     filename = "expert_views.json" if scope == "expert" else "fundamentals.json"
     sync_ai_views_to_github(sync_message, filenames=(filename,), tickers=tickers)
+    if sentiment_done:
+        sync_ai_views_to_github(f"Sentiment first for {len(sentiment_done)} ticker(s) via UI",
+                                filenames=("fundamentals.json",), tickers=sentiment_done)
     st.rerun()
 
 
@@ -3859,7 +3887,12 @@ def render_expert_analysis_control_bar(market, results, combined_markets=None):
     # one of these -- previously a single merged list forced both columns to
     # be regenerated for it.
     fundamentals_now = load_fundamentals()
-    expert_pending = [tk for tk in all_tickers if not _is_valid_view(expert_views.get(tk))]
+    # A stock with no Stage Analysis is left out of Expert Take's count (owner,
+    # 2026-11-08): its verdict is Pending until a Stage upload covers it, the
+    # nightly and retry jobs skip it ("no Stage Analysis yet"), and a retry could
+    # never clear it -- so it kept the button red.
+    expert_pending = [r["ticker"] for r in results
+                      if r.get("stage") in STAGES and not _is_valid_view(expert_views.get(r["ticker"]))]
     sentiment_pending = [
         tk for tk in all_tickers if not _is_valid_sentiment_view(fundamentals_now.get(tk))
     ]
@@ -3919,14 +3952,16 @@ def render_expert_analysis_control_bar(market, results, combined_markets=None):
         if c3.button(
             f"⚠️ Retry Pending ({pending_count})",
             key=f"btn_re_failed_{scope}_{market}",
-            disabled=pending_count == 0 or not api_key,
+            disabled=pending_count == 0 or not scope_markets,
             type="primary" if pending_count > 0 else "secondary",
+            help=(f"Runs {workflow_file} in the background for the pending stocks of "
+                  f"{', '.join(scope_markets)}: you can close the browser."
+                  + (" A stock with no Sentiment gets it first." if scope == "expert" else "")),
             width="stretch",
         ):
-            _reanalyze_tickers_in_dashboard(
-                pending, results, api_key,
-                f"Retry pending {scope} ({pending_count} tickers) via UI",
-                scope=scope,
+            trigger_ai_refresh_workflow(
+                workflow_file, workflow_name,
+                f"Retry Pending ({pending_count})", scope_markets, pending_only=True,
             )
 
         if c4.button(

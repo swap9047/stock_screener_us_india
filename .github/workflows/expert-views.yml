@@ -5,7 +5,7 @@ name: Daily Expert Views Generation
 # one tab's "Re-analyze All" could stand in for the night's full run. The title is
 # fixed text on purpose: the inputs themselves name watchlists, and this repo's
 # run list is public.
-run-name: ${{ (github.event.inputs.markets || github.event.inputs.limit) && 'partial run' || github.workflow }}
+run-name: ${{ (github.event.inputs.markets || github.event.inputs.limit || github.event.inputs.pending_only == 'true') && 'partial run' || github.workflow }}
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -36,6 +36,11 @@ on:
         description: "Analyse only the first N tickers in scope (blank = all). A number, never ticker names: step env is printed in this public repo's logs"
         required: false
         default: ""
+      pending_only:
+        description: "Only the tickers whose stored view is pending or failed (the app's Retry Pending, owner 2026-11-08). A switch, not a list: the job finds them itself, so no ticker name reaches this public repo's logs"
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}
@@ -132,6 +137,11 @@ jobs:
           # no inputs at all, resolve to an empty string = every watchlist.
           REFRESH_MARKETS: ${{ github.event.inputs.markets }}
           REFRESH_LIMIT: ${{ github.event.inputs.limit }}
+          REFRESH_PENDING_ONLY: ${{ github.event.inputs.pending_only }}
+          # A run someone asked for (the app's Retry Pending / Re-analyze All, a run by hand) writes a
+          # stock's missing Sentiment before its Expert Take (owner, 2026-11-08); the Worker's scheduled
+          # run never does -- Sentiment has its own 9 PM job.
+          REFRESH_SENTIMENT_FIRST: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.scheduled != 'true' }}
           # A Worker dispatch (scheduled=true) resumes like a scheduled run: refresh_expert_views.py
           # reads this next to GITHUB_EVENT_NAME.
           SCHEDULED_DISPATCH: ${{ github.event.inputs.scheduled }}
@@ -139,8 +149,12 @@ jobs:
       - name: Commit updated data_snapshot.json and expert_views.json
         # always(): commit whatever the run produced even when it failed, so
         # the partial results and any pruning survive for diagnosis.
+        # fundamentals.json only per entry: a run someone asked for writes a
+        # stock's missing Sentiment before its Expert Take (owner, 2026-11-08),
+        # and fundamentals.yml, which owns the file, may have committed meanwhile.
         if: always()
         uses: ./.github/actions/commit-data
         with:
-          files: data_snapshot.json expert_views.json
+          files: data_snapshot.json expert_views.json fundamentals.json
+          entries-only: fundamentals.json
           message: "Update data_snapshot.json + expert_views.json [automated]"

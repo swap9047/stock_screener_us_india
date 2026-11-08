@@ -756,3 +756,14 @@ def refresh_limit():
     """
     value = os.environ.get("REFRESH_LIMIT", "").strip()
     return int(value) if value.isdigit() and int(value) > 0 else None
+
+
+def pending_only():
+    """REFRESH_PENDING_ONLY: analyse only the tickers whose stored view is not a
+    valid one (owner, 2026-11-08) -- the dashboard's "Retry Pending" button, which
+    used to run inside the browser session and stopped when the browser closed
+    (Streamlit stops a session's script when its websocket drops). A switch, not
+    a list: the job works the pending tickers out itself from the data repo, so no
+    ticker name goes into this public repo's Actions logs, which print each step's
+    env verbatim."""
+    return os.environ.get("REFRESH_PENDING_ONLY", "").strip().lower() == "true"

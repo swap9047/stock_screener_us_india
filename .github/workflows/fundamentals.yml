@@ -5,7 +5,7 @@ name: Daily Fundamental Views Generation
 # one tab's "Re-analyze All" could stand in for the night's full run. The title is
 # fixed text on purpose: the inputs themselves name watchlists, and this repo's
 # run list is public.
-run-name: ${{ (github.event.inputs.markets || github.event.inputs.limit) && 'partial run' || github.workflow }}
+run-name: ${{ (github.event.inputs.markets || github.event.inputs.limit || github.event.inputs.pending_only == 'true') && 'partial run' || github.workflow }}
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -36,6 +36,11 @@ on:
         description: "Analyse only the first N tickers in scope (blank = all). A number, never ticker names: step env is printed in this public repo's logs"
         required: false
         default: ""
+      pending_only:
+        description: "Only the tickers whose stored view is pending or failed (the app's Retry Pending, owner 2026-11-08). A switch, not a list: the job finds them itself, so no ticker name reaches this public repo's logs"
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}
@@ -122,6 +127,7 @@ jobs:
           # no inputs at all, resolve to an empty string = every watchlist.
           REFRESH_MARKETS: ${{ github.event.inputs.markets }}
           REFRESH_LIMIT: ${{ github.event.inputs.limit }}
+          REFRESH_PENDING_ONLY: ${{ github.event.inputs.pending_only }}
 
       - name: Commit updated fundamentals.json
         # always(): commit whatever the run produced even when it failed, so
