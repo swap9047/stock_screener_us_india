@@ -139,7 +139,7 @@ from filters import (load_custom_filters, get_market_filters, save_market_filter
 from github_sync import (get_github_config, get_data_repo_config, bootstrap_data_files, start_refresh_after_stage_upload,
                          push_all_config, trigger_github_workflow, pull_generated_files, SYNCABLE_FILES, WORKFLOW_GENERATED_FILES,
                          push_json_entry_changes, read_remote_json, read_remote_bytes, refresh_snapshot_from_repo,
-                         unpushed_config_files)
+                         unpushed_config_files, recent_merge_note)
 from news_summary import (load_news_summary, MARKET_LABELS, get_gemini_api_keys, resolve_news_scope, DEFAULT_NEWS_SCOPE_GROUP,
                           summary_with_source_links)
 from expert_views import (load_expert_views, save_expert_views, analyze_single_ticker,
@@ -5334,6 +5334,11 @@ if _snap_age_h is not None:
         st.sidebar.caption(f"↻ {_snap_age_h:.1f}h old · sync: {_pull_note}{_paused}")
 # Set by the end-of-run push below when it failed; that push retries on every
 # run, so this clears itself once GitHub accepts the files.
+# A push that met a newer copy in the data repo merged the two (github_sync.push_all_config); say so for a
+# while, since a list on screen may predate the other side's changes until the page is reloaded.
+_merge_note = recent_merge_note()
+if _merge_note:
+    st.sidebar.info(f"🔀 {_merge_note} Reload the page if a list looks out of date.")
 if st.session_state.get("_config_push_error"):
     _failed_files, _failed_msg = st.session_state["_config_push_error"]
     st.sidebar.warning(

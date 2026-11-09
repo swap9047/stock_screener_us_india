@@ -53,6 +53,7 @@ import pandas as pd
 import yfinance as yf
 
 import price_gaps
+import quarterly_results
 
 from stage_analysis import METRIC_LABELS as STAGE_METRIC_LABELS, apply_stage_to_rows
 
@@ -1813,6 +1814,82 @@ def _statement_row(frame, row_name):
     return row.dropna()
 
 
+def _by_quarter(series):
+    """{calendar quarter end "YYYY-MM-DD": value} for one statement row, each period filed under its
+    nearest quarter end (quarterly_results.quarter_end, the News tab's quarterly charts' rule)."""
+    out = {}
+    for when, value in sorted(series.items(), key=lambda kv: pd.Timestamp(kv[0])):
+        try:
+            out[quarterly_results.quarter_end(pd.Timestamp(when).date())] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _newest_quarter(qinc):
+    """The calendar quarter end of the statement's newest period that reports anything, or None."""
+    ends = []
+    for col in qinc.columns:
+        try:
+            if qinc[col].notna().any():
+                ends.append(quarterly_results.quarter_end(pd.Timestamp(col).date()))
+        except (TypeError, ValueError):
+            continue
+    return max(ends) if ends else None
+
+
+def quarterly_eps_growth(qinc, profit_growth=None):
+    """(Qtr EPS Growth %, basis) for the latest quarter of a quarterly income statement.
+
+    basis "eps": diluted EPS against the SAME quarter a year earlier, found by its date. It used to be
+    the 5th column Yahoo returned, and Yahoo leaves holes: on 2026-11-09 most Indian companies had no
+    Sep '25 quarter, so Sep '26 was compared with Jun '25 -- 35 of 118 snapshot rows were a 15-month
+    change shown as a year's.
+    basis "profit" (owner, 2026-11-09): no comparable year-ago EPS -- that quarter is missing, or the
+    diluted share count moved more than quarterly_results.SHARE_JUMP (Yahoo leaves an older quarter's
+    EPS unadjusted for a bonus or split, so a 1:1 bonus read as EPS halving) -- so the quarter's profit
+    growth (Yahoo's earningsQuarterlyGrowth, Qtr Profit Growth %) stands in. It then says nothing about
+    dilution, which is why the basis is kept with it.
+    (None, None): a loss or zero a year earlier (no percentage, as before), nothing to stand in, or no
+    statement (`qinc` None: a failed fetch, which market_lookup.keep_previous fills from the stored row).
+    Only the statement's newest quarter counts: a blank EPS there is not answered with an older quarter's."""
+    if qinc is None or getattr(qinc, "empty", True):
+        return None, None
+    eps = _by_quarter(_statement_row(qinc, "Diluted EPS")) if "Diluted EPS" in qinc.index else {}
+    latest = _newest_quarter(qinc)
+    if latest in eps:
+        base = quarterly_results.shift(latest, -4)
+        shares = (_by_quarter(_statement_row(qinc, "Diluted Average Shares"))
+                  if "Diluted Average Shares" in qinc.index else {})
+        if base in eps and not quarterly_results.share_jump({"sh": shares.get(latest)}, {"sh": shares.get(base)}):
+            if eps[base] > 0:
+                return round((eps[latest] / eps[base] - 1) * 100, 1), "eps"
+            return None, None
+    if profit_growth is not None:
+        return profit_growth, "profit"
+    return None, None
+
+
+def quarterly_ttm_growth(qinc, row_name):
+    """Trailing-twelve-month growth % of one quarterly statement row: the latest 4 quarters against the
+    4 before them, or None. All 8 must be consecutive calendar quarters: positions alone would sum
+    across a quarter Yahoo left out (see quarterly_eps_growth)."""
+    if qinc is None or getattr(qinc, "empty", True) or row_name not in qinc.index:
+        return None
+    by_q = _by_quarter(_statement_row(qinc, row_name))
+    latest = _newest_quarter(qinc)
+    if latest not in by_q:
+        return None
+    window = [by_q.get(quarterly_results.shift(latest, -i)) for i in range(8)]
+    if any(v is None for v in window):
+        return None
+    recent, prior = sum(window[:4]), sum(window[4:])
+    # A non-positive base makes percentage growth meaningless (and sign-flips it).
+    if prior <= 0:
+        return None
+    return round((recent / prior - 1) * 100, 1)
+
+
 def _roce_from_statements(inc, bs):
     """ROCE % = Operating Income / (Stockholders Equity + Long Term Debt), all
     from ONE fiscal year: the latest year that reports both equity and
@@ -1936,7 +2013,8 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
         quote_type = None
         qtr_profit_growth = None
         qtr_revenue_growth = None
-        qtr_eps_growth = None
+        qtr_eps_growth = qtr_eps_growth_basis = None
+        eps_history_loaded = False
         # Assigned inside the statements try/except below; without a default
         # here a ticker whose statement fetch raises would NameError at
         # results.append instead of reporting blanks.
@@ -2016,13 +2094,12 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
             # earningsQuarterlyGrowth (which is net income, and drives
             # qtr_profit_growth above), this nets out share issuance -- profit
             # growth funded by a QIP or warrant conversion doesn't accrue per
-            # share. Columns come back newest-first, so iloc[4] is the same
-            # quarter a year earlier. A non-positive base makes percentage
-            # growth meaningless, so leave it blank rather than emit nonsense.
-            if qinc is not None and "Diluted EPS" in qinc.index:
-                eps_q = _statement_row(qinc, "Diluted EPS")
-                if len(eps_q) >= 5 and eps_q.iloc[4] > 0:
-                    qtr_eps_growth = round((eps_q.iloc[0] / eps_q.iloc[4] - 1) * 100, 1)
+            # share. The year-ago quarter is found by its DATE, and without a
+            # comparable one the profit growth stands in (basis "profit") -- see
+            # quarterly_eps_growth. eps_history_loaded: the statement came back,
+            # so a blank here is the answer, not a failed fetch (keep_previous).
+            qtr_eps_growth, qtr_eps_growth_basis = quarterly_eps_growth(qinc, qtr_profit_growth)
+            eps_history_loaded = qinc is not None and not qinc.empty
 
             # Trailing-twelve-month growth: the last 4 quarters against the 4
             # before them. This is NOT the same number as qtr_profit_growth /
@@ -2031,31 +2108,17 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
             # the seasonality out. The Turbo Surge scan specifies TTM, so
             # substituting the quarterly figure would quietly change the screen.
             #
-            # Needs 8 quarters, and Yahoo returns only ~5 for every ticker
-            # checked (US and India alike), so in practice BOTH of these are
-            # None today. Kept because they are correct as written and light
+            # Needs 8 consecutive quarters, and Yahoo returns only ~5 for every
+            # ticker checked (US and India alike), so in practice BOTH of these
+            # are None today. Kept because they are correct as written and light
             # up automatically if a deeper statement source is ever wired in;
             # the Turbo Surge rule uses qtr_profit_growth/qtr_revenue_growth
             # (single-quarter YoY) as the working substitute meanwhile.
             #
             # None, never 0, when the history is short -- a missing
             # denominator must not read as "no growth".
-            def _ttm_growth(row_name):
-                if qinc is None or row_name not in qinc.index:
-                    return None
-                q = _statement_row(qinc, row_name)
-                if len(q) < 8:
-                    return None
-                recent = float(q.iloc[0:4].sum())
-                prior = float(q.iloc[4:8].sum())
-                # A non-positive base makes percentage growth meaningless
-                # (and sign-flips it), same guard as qtr_eps_growth above.
-                if prior <= 0:
-                    return None
-                return round((recent / prior - 1) * 100, 1)
-
-            ttm_profit_growth = _ttm_growth("Net Income")
-            ttm_revenue_growth = _ttm_growth("Total Revenue")
+            ttm_profit_growth = quarterly_ttm_growth(qinc, "Net Income")
+            ttm_revenue_growth = quarterly_ttm_growth(qinc, "Total Revenue")
 
             if cf is not None and inc is not None:
                 if "Operating Cash Flow" in cf.index and "Operating Income" in inc.index:
@@ -2623,6 +2686,8 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
                 "perf_3y": perf_3y,
                 "qtr_profit_growth": qtr_profit_growth,
                 "qtr_eps_growth": qtr_eps_growth,
+                "qtr_eps_growth_basis": qtr_eps_growth_basis,
+                "eps_history_loaded": eps_history_loaded,
                 "qtr_revenue_growth": qtr_revenue_growth,
                 "ttm_profit_growth": ttm_profit_growth,
                 "ttm_revenue_growth": ttm_revenue_growth,

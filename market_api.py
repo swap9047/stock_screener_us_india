@@ -134,7 +134,14 @@ METRIC_GROUPS = {
         ("roce", "ROCE %", "%", "Return on capital employed, latest fiscal year."),
         ("cfo_op_5yr", "CFO/OP 5Y", "x", "Operating cash flow / operating income over up to 5 years (above 1 = good cash conversion)."),
         ("qtr_profit_growth", "Qtr Profit Growth %", "%", "Latest quarter's net income vs the same quarter a year ago."),
-        ("qtr_eps_growth", "Qtr EPS Growth %", "%", "Latest quarter's diluted EPS vs a year ago (lower than profit growth = dilution)."),
+        ("qtr_eps_growth", "Qtr EPS Growth %", "%", "Latest quarter's diluted EPS vs the same quarter a year ago (lower than "
+                                                    "profit growth = dilution). When Yahoo has no comparable year-ago EPS "
+                                                    "(EPS Growth basis 'profit'), this is the profit growth instead and "
+                                                    "says nothing about dilution."),
+        ("qtr_eps_growth_basis", "EPS Growth basis", "", "'eps': Qtr EPS Growth % is diluted EPS against the same quarter a "
+                                                         "year ago. 'profit': that quarter is missing from Yahoo's statements "
+                                                         "or the share count jumped (an unadjusted bonus or split), so it "
+                                                         "shows Qtr Profit Growth % instead."),
         ("qtr_revenue_growth", "Qtr Revenue Growth %", "%", "Latest quarter's revenue vs a year ago."),
         ("reported_qtr", "Reported Qtr", "", "The quarter those growth figures are for."),
     ]),

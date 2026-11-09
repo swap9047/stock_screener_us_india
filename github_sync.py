@@ -47,6 +47,7 @@ import base64
 import hashlib
 import json
 import os
+import tempfile
 import time
 
 import requests
@@ -285,7 +286,8 @@ def pull_generated_files(token, repo, branch="main", files=None,
         updated.append(name)
 
     checked_at = now if stamp_checked else (state.get("checked_at") or 0)
-    _write_sync_state({"checked_at": checked_at, "blobs": known})
+    # {**state}: keeps the other keys (merge_note) the push side writes.
+    _write_sync_state({**state, "checked_at": checked_at, "blobs": known})
     note = f"updated {len(updated)}" if updated else "up to date"
     if skipped:
         note += f"; kept newer local copy of {', '.join(skipped)}"
@@ -333,6 +335,29 @@ def unpushed_config_files(files=None):
         if name in known and os.path.exists(path) and _git_blob_sha(path) != known[name]:
             out.append(name)
     return out
+
+
+# How long the sidebar shows that a push merged with a newer copy in the data repo (recent_merge_note).
+MERGE_NOTE_SECONDS = 600
+
+
+def _note_merge(text):
+    """Remember, in this container's sync state, that the last push merged -- for the sidebar note."""
+    state = _read_sync_state()
+    _write_sync_state({**state, "merge_note": {"at": time.time(), "text": text}})
+
+
+def recent_merge_note(now=None):
+    """The note of a push that merged with a newer copy in the data repo in the last MERGE_NOTE_SECONDS,
+    or "". Kept in the sync state rather than the session: every push goes through push_all_config,
+    including the end-of-run push, which lands after the sidebar has been drawn."""
+    note = _read_sync_state().get("merge_note") or {}
+    now = time.time() if now is None else now
+    try:
+        fresh = now - float(note.get("at") or 0) < MERGE_NOTE_SECONDS
+    except (TypeError, ValueError):
+        return ""
+    return str(note.get("text") or "") if fresh else ""
 
 
 def _record_pushed(shas):
@@ -436,12 +461,53 @@ def _headers(token):
     }
 
 
-def push_all_config(token, repo, branch="main", filenames=None, message=None):
+def _blob_json(base_url, headers, sha):
+    """The parsed JSON of one blob, by SHA (content-addressed: an older version stays readable). Raises on
+    a failed request or a body that is not JSON."""
+    resp = requests.get(f"{base_url}/git/blobs/{sha}", headers={**headers, "Accept": "application/vnd.github.raw"},
+                        timeout=30)
+    if resp.status_code != 200:
+        raise RuntimeError(f"blob {sha[:7]} ({resp.status_code})")
+    return json.loads(resp.content.decode("utf-8"))
+
+
+def _merge_with_remote(base_url, headers, filename, body, known, remote_sha):
+    """(bytes to push, conflicts or None) for one config file. None for conflicts: no merge was needed --
+    the data repo's copy is the one this container last pulled or pushed (`known`), or already these bytes.
+    Otherwise the data repo moved on since then (a commit made by hand, another app instance) and pushing the
+    local copy whole would undo that commit: json_merge lays this app's edits since `known` over it. Raises
+    when the older copy or either side can't be read or parsed, so nothing is pushed over a version it
+    could not merge."""
+    if not known or not remote_sha or remote_sha in (known, _blob_sha(body)):
+        return body, None
+    import json_merge
+    base = _blob_json(base_url, headers, known)
+    remote = _blob_json(base_url, headers, remote_sha)
+    merged, conflicts = json_merge.merge(base, json.loads(body.decode("utf-8")), remote)
+    # json_store.atomic_write_json's format, so the file reads the same as one the app saved.
+    return json.dumps(merged, indent=2).encode("utf-8"), conflicts
+
+
+def push_all_config(token, repo, branch="main", filenames=None, message=None, attempts=3):
     """Pushes every file in `filenames` (defaults to all of SYNCABLE_FILES)
     as ONE atomic commit -- see module docstring for why this matters on
     Streamlit Cloud. Returns (ok, detail_message). On any failure, nothing
     is pushed at all (GitHub never sees a partial commit -- the ref move is
-    the last step and only happens if every prior step succeeded)."""
+    the last step and only happens if every prior step succeeded).
+
+    A user config file (CONFIG_PULLABLE_FILES) that changed in the data repo
+    since this container last pulled or pushed it is MERGED, not overwritten
+    (owner, 2026-11-09; _merge_with_remote, json_merge): this used to push the
+    local copy whole, so a commit made in the data repo up to a pull interval
+    before an edit here was silently undone. The merged file is written back
+    locally once the push lands; where both sides changed the same item the
+    app's value won, and the detail says how many. A file with no recorded
+    baseline (never pulled here) is still pushed whole, as before -- that is
+    the manual button's job.
+
+    If a commit lands between reading the branch and moving it, GitHub
+    refuses the move; the whole push is redone on the new tip, up to
+    `attempts` times."""
     targets = filenames if filenames is not None else [f for f, _ in SYNCABLE_FILES]
     if not targets:
         return False, "No files selected."
@@ -454,87 +520,141 @@ def push_all_config(token, repo, branch="main", filenames=None, message=None):
 
     headers = _headers(token)
     base_url = f"{GITHUB_API}/repos/{repo}"
+    known = _read_sync_state().get("blobs") or {}
 
-    # 1. Current tip of the branch -> base commit -> base tree.
-    try:
-        ref_resp = requests.get(f"{base_url}/git/ref/heads/{branch}", headers=headers, timeout=15)
-    except requests.RequestException as e:
-        return False, f"Network error reading branch ref: {e}"
-    if ref_resp.status_code != 200:
-        return False, f"Couldn't read branch '{branch}' ({ref_resp.status_code}): {_short(ref_resp)}"
-    base_commit_sha = ref_resp.json()["object"]["sha"]
-
-    try:
-        commit_resp = requests.get(f"{base_url}/git/commits/{base_commit_sha}", headers=headers, timeout=15)
-    except requests.RequestException as e:
-        return False, f"Network error reading base commit: {e}"
-    if commit_resp.status_code != 200:
-        return False, f"Couldn't read base commit ({commit_resp.status_code}): {_short(commit_resp)}"
-    base_tree_sha = commit_resp.json()["tree"]["sha"]
-
-    # 2. One blob per file.
-    tree_entries = []
-    pushed_shas = {}
-    for filename in targets:
-        with open(os.path.join(SCRIPT_DIR, filename), "rb") as f:
-            body = f.read()
-        pushed_shas[filename] = _blob_sha(body)
-        content_b64 = base64.b64encode(body).decode("ascii")
+    for attempt in range(max(1, attempts)):
+        # 1. Current tip of the branch -> base commit -> base tree (and its files' blob SHAs).
         try:
-            blob_resp = requests.post(
-                f"{base_url}/git/blobs", headers=headers,
-                json={"content": content_b64, "encoding": "base64"}, timeout=15,
+            ref_resp = requests.get(f"{base_url}/git/ref/heads/{branch}", headers=headers, timeout=15)
+        except requests.RequestException as e:
+            return False, f"Network error reading branch ref: {e}"
+        if ref_resp.status_code != 200:
+            return False, f"Couldn't read branch '{branch}' ({ref_resp.status_code}): {_short(ref_resp)}"
+        base_commit_sha = ref_resp.json()["object"]["sha"]
+
+        try:
+            commit_resp = requests.get(f"{base_url}/git/commits/{base_commit_sha}", headers=headers, timeout=15)
+        except requests.RequestException as e:
+            return False, f"Network error reading base commit: {e}"
+        if commit_resp.status_code != 200:
+            return False, f"Couldn't read base commit ({commit_resp.status_code}): {_short(commit_resp)}"
+        base_tree_sha = commit_resp.json()["tree"]["sha"]
+
+        remote_shas = {}
+        if any(f in CONFIG_PULLABLE_FILES and known.get(f) for f in targets):
+            try:
+                tree_resp = requests.get(f"{base_url}/git/trees/{base_tree_sha}", headers=headers, timeout=15)
+            except requests.RequestException as e:
+                return False, f"Network error reading the data repo's files: {e}"
+            if tree_resp.status_code != 200:
+                return False, f"Couldn't read the data repo's files ({tree_resp.status_code}): {_short(tree_resp)}"
+            remote_shas = {e.get("path"): e.get("sha") for e in (tree_resp.json().get("tree") or [])}
+
+        # 2. One blob per file (merged with the data repo's newer copy where it moved on).
+        tree_entries, pushed_shas, merged_bodies, conflicts = [], {}, {}, {}
+        for filename in targets:
+            with open(os.path.join(SCRIPT_DIR, filename), "rb") as f:
+                body = f.read()
+            if filename in CONFIG_PULLABLE_FILES:
+                try:
+                    merged_body, found = _merge_with_remote(base_url, headers, filename, body,
+                                                            known.get(filename), remote_shas.get(filename))
+                except Exception as e:   # noqa: BLE001 -- nothing is pushed over a version we could not merge
+                    return False, (f"{filename} changed in the data repo since this app loaded it, and the two "
+                                   f"could not be merged ({type(e).__name__}: {e}) -- not pushed, retried on your next click.")
+                if found is not None:
+                    body = merged_body
+                    merged_bodies[filename] = body
+                    if found:
+                        conflicts[filename] = found
+            pushed_shas[filename] = _blob_sha(body)
+            content_b64 = base64.b64encode(body).decode("ascii")
+            try:
+                blob_resp = requests.post(
+                    f"{base_url}/git/blobs", headers=headers,
+                    json={"content": content_b64, "encoding": "base64"}, timeout=15,
+                )
+            except requests.RequestException as e:
+                return False, f"Network error creating blob for {filename}: {e}"
+            if blob_resp.status_code != 201:
+                return False, f"Couldn't create blob for {filename} ({blob_resp.status_code}): {_short(blob_resp)}"
+            tree_entries.append({
+                "path": filename, "mode": "100644", "type": "blob",
+                "sha": blob_resp.json()["sha"],
+            })
+
+        # 3. One new tree (layered on the base tree -- untouched files are
+        # carried forward automatically, only `tree_entries` actually change).
+        try:
+            tree_resp = requests.post(
+                f"{base_url}/git/trees", headers=headers,
+                json={"base_tree": base_tree_sha, "tree": tree_entries}, timeout=15,
             )
         except requests.RequestException as e:
-            return False, f"Network error creating blob for {filename}: {e}"
-        if blob_resp.status_code != 201:
-            return False, f"Couldn't create blob for {filename} ({blob_resp.status_code}): {_short(blob_resp)}"
-        tree_entries.append({
-            "path": filename, "mode": "100644", "type": "blob",
-            "sha": blob_resp.json()["sha"],
-        })
+            return False, f"Network error creating tree: {e}"
+        if tree_resp.status_code != 201:
+            return False, f"Couldn't create tree ({tree_resp.status_code}): {_short(tree_resp)}"
+        new_tree_sha = tree_resp.json()["sha"]
 
-    # 3. One new tree (layered on the base tree -- untouched files are
-    # carried forward automatically, only `tree_entries` actually change).
-    try:
-        tree_resp = requests.post(
-            f"{base_url}/git/trees", headers=headers,
-            json={"base_tree": base_tree_sha, "tree": tree_entries}, timeout=15,
-        )
-    except requests.RequestException as e:
-        return False, f"Network error creating tree: {e}"
-    if tree_resp.status_code != 201:
-        return False, f"Couldn't create tree ({tree_resp.status_code}): {_short(tree_resp)}"
-    new_tree_sha = tree_resp.json()["sha"]
+        # 4. One new commit pointing at that tree.
+        commit_message = message or f"Update {', '.join(targets)} via app"
+        try:
+            new_commit_resp = requests.post(
+                f"{base_url}/git/commits", headers=headers,
+                json={"message": commit_message, "tree": new_tree_sha, "parents": [base_commit_sha]}, timeout=15,
+            )
+        except requests.RequestException as e:
+            return False, f"Network error creating commit: {e}"
+        if new_commit_resp.status_code != 201:
+            return False, f"Couldn't create commit ({new_commit_resp.status_code}): {_short(new_commit_resp)}"
+        new_commit_sha = new_commit_resp.json()["sha"]
 
-    # 4. One new commit pointing at that tree.
-    commit_message = message or f"Update {', '.join(targets)} via app"
-    try:
-        new_commit_resp = requests.post(
-            f"{base_url}/git/commits", headers=headers,
-            json={"message": commit_message, "tree": new_tree_sha, "parents": [base_commit_sha]}, timeout=15,
-        )
-    except requests.RequestException as e:
-        return False, f"Network error creating commit: {e}"
-    if new_commit_resp.status_code != 201:
-        return False, f"Couldn't create commit ({new_commit_resp.status_code}): {_short(new_commit_resp)}"
-    new_commit_sha = new_commit_resp.json()["sha"]
+        # 5. Move the branch pointer -- this is the single moment the change
+        # actually becomes visible/pullable, and the only step Streamlit Cloud's
+        # watcher can react to. Everything before this was invisible staging.
+        # Not forced: a commit that landed since step 1 makes this a
+        # non-fast-forward, which GitHub refuses (422) -- then redo it all on the new tip.
+        try:
+            move_resp = requests.patch(
+                f"{base_url}/git/refs/heads/{branch}", headers=headers,
+                json={"sha": new_commit_sha}, timeout=15,
+            )
+        except requests.RequestException as e:
+            return False, f"Network error moving branch ref: {e}"
+        if move_resp.status_code == 422 and attempt < max(1, attempts) - 1:
+            continue
+        if move_resp.status_code != 200:
+            return False, f"Couldn't move branch ref ({move_resp.status_code}): {_short(move_resp)}"
 
-    # 5. Move the branch pointer -- this is the single moment the change
-    # actually becomes visible/pullable, and the only step Streamlit Cloud's
-    # watcher can react to. Everything before this was invisible staging.
-    try:
-        move_resp = requests.patch(
-            f"{base_url}/git/refs/heads/{branch}", headers=headers,
-            json={"sha": new_commit_sha}, timeout=15,
-        )
-    except requests.RequestException as e:
-        return False, f"Network error moving branch ref: {e}"
-    if move_resp.status_code != 200:
-        return False, f"Couldn't move branch ref ({move_resp.status_code}): {_short(move_resp)}"
-
-    _record_pushed(pushed_shas)
-    return True, f"Pushed {len(targets)} file(s) in one commit ({new_commit_sha[:7]}): {', '.join(targets)}."
+        # The merged copies are what the data repo now holds: write them here too, so this container
+        # shows the other side's changes and its next edit starts from them.
+        # The exact bytes pushed, so the file's blob SHA is the baseline recorded below.
+        for filename, body in merged_bodies.items():
+            path = os.path.join(SCRIPT_DIR, filename)
+            fd, tmp = tempfile.mkstemp(dir=SCRIPT_DIR, suffix=".tmp")
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    f.write(body)
+                os.chmod(tmp, 0o644)
+                os.replace(tmp, path)
+            except Exception:   # noqa: BLE001 -- the push landed; the next pull brings the merged copy
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                pushed_shas.pop(filename, None)
+        _record_pushed(pushed_shas)
+        detail = f"Pushed {len(targets)} file(s) in one commit ({new_commit_sha[:7]}): {', '.join(targets)}."
+        if merged_bodies:
+            note = f"Merged with a newer copy in the data repo: {', '.join(merged_bodies)} -- both sides' changes kept."
+            if conflicts:
+                note += (" Changed in both places, your edit kept: "
+                         + "; ".join(f"{f} ({', '.join(c[:5])}{' ...' if len(c) > 5 else ''})"
+                                     for f, c in conflicts.items()) + ".")
+            _note_merge(note)
+            detail += " " + note
+        return True, detail
+    return False, "The data repo kept changing while pushing -- not pushed, retried on your next click."
 
 
 def read_remote_json(token, repo, branch, filename):

@@ -38,7 +38,7 @@ for a model (Google's `...PerDay...` quota id) is retired for that model for the
 run, and once every key is out the ladder steps to its fallback model at once. Before
 2026-10-23 a daily-exhausted key rejoined every 120 s and failed again.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 2403
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 2458
 offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
@@ -48,16 +48,17 @@ verified by rendering the app headlessly; recipe at the bottom.
 
 ## Module map
 
-~21.2k lines total (the app itself; checks/ adds ~8.7k). The weighting matters: `app.py` is over a third of it.
+~21.4k lines total (the app itself; checks/ adds ~8.7k). The weighting matters: `app.py` is over a third of it.
 
 | File | Lines | What it owns |
 |---|---:|---|
 | `app.py` | 6596 | The entire UI: tabs, tables, sidebar, filters, sort, editors, AI control bars, News + Alert Rules tabs |
-| `stock_data.py` | 3347 | yfinance fetching, all indicator maths (TradingView-exact RSI/ATR/ADX/VStop, held to bar-by-bar Pine ports by `checks/test_tv_parity.py`), watchlist/markets registry IO, `get_filterable_metrics` |
+| `stock_data.py` | 3448 | yfinance fetching, all indicator maths (TradingView-exact RSI/ATR/ADX/VStop, held to bar-by-bar Pine ports by `checks/test_tv_parity.py`), watchlist/markets registry IO, `get_filterable_metrics` |
 | `alerts.py` | 1127 | Alert rule evaluation + Discord message building; every Discord post goes through `send_discord_batch`, which appends the disclaimer |
 | `news_summary.py` | 1365 | The daily news digest (6 AM ET): search and filter (3 stocks at a time, `NEWS_CONCURRENT_TICKERS`), then edit. Dated by its 6 AM ET slot (`news_slot_date`), funds skipped (`is_fund`), the code sets each company header and drops filler lines, the filter drops repeats of the previous digest and items about another company, and a failed editor falls back to code-formatted bullets. Owner, 2026-11-01: the code adds two lines per watchlist after the editor -- **Results due** (the filter writes `RESULTS: YYYY-MM-DD` instead of a bullet, `split_results_tag`; each date shown once) and **Big moves (5%+)** (`session_moves`: from `dashboard_perf.json`'s stored closes, each settled session in the window once, never a live close; the filter keeps a move only with a company-specific reason). A failed run is saved `run_failed` (`news_check.py`, before posting), and the slot's retry searches only the stocks that failed (`reusable_outcomes`); the earlier slot's notes, results dates and checked sessions ride along as `prior_slot` (`earlier_slot_info`) so the retry's repeat checks still see them. The Discord digest says how many stocks could not be searched; the News tab adds each bullet's source links (`summary_with_source_links`; not Discord: the redirect URLs are ~250 characters and expire) |
 | `fundamentals_eval.py` | 1191 | Sentiment ("fundamental view") generation + validation. The model only extracts facts; `score_sentiment` decides the label, weighted toward forward signals (guidance ±15, quoted outlook ±6, guidance vs consensus ±3, named-firm action ±3; the quarter's profit >15% YoY or a beat/miss ±1 only breaks ties; with no forward signal, profit >+25% / <-20% YoY decides alone). The search window is anchored to each company's last results (`search_window_for`) |
-| `github_sync.py` | 715 | Atomic config push, the end-of-run push of edited config (`unpushed_config_files`) + `workflow_dispatch` trigger |
+| `github_sync.py` | 857 | Atomic config push, the end-of-run push of edited config (`unpushed_config_files`), merged with a newer copy in the data repo rather than pushed over it (`_merge_with_remote`, owner 2026-11-09) + `workflow_dispatch` trigger |
+| `json_merge.py` | 128 | The three-way merge behind that (owner, 2026-11-09): dicts key by key, lists of plain values (a watchlist's tickers) keeping both sides' additions and removals, lists of dicts with an `id` (alert rules, custom columns) item by item; the same item changed on both sides keeps the app's value and is named. Key and item order follow the app unless the data repo reordered them. Order-sensitive equality (`_same`): Python's `==` calls two dicts equal in any key order, so a tab reorder read as no change. Stdlib only |
 | `expert_views.py` | 936 | Expert Take. The verdict is decided in code, live (`decide_expert_verdict`, `expert_take_for_row`), from TheWrap Stage Analysis and the TA Rules flowchart since 2026-11-01 (owner: "stage and ta should suffice"), first match wins: no Stage is Pending (no stand-in: a late upload is flagged instead, `stage_analysis.late_upload_notice`); S1 with Stage Mom Strong/Recovering is an early Accumulate whatever TA says (the only use of Stage Mom); TA Exit or Be Cautious is Caution; S2 is Accumulate on a Bullish Signal, or on Maintain/Add with the LIVE close within `EXPERT_10W_BAND_PCT` (3%) of the 10W EMA either side (`distance_to_10w`, the owner's buy zone), else Hold (extended or under it); S1 Accumulate on a Bullish Signal, else Hold; S3 Hold; S4 Hold on Maintain/Add or a Bullish Signal (an early turn), else Caution. Sentiment, Trend, Tech Uptrend, CE and PEAD are shown in the reasons as context, never counted. News is FYI only (owner, 2026-11-01; from 2026-10-04 it lowered the verdict one step): an active news risk is attached (`news_noted`, `news_risk`, the ⚑ badge) and never changes the verdict; `news_lowered` is always False. The Stage fields must be on the row BEFORE the verdict (`apply_view_fields_to_rows` attaches them first; `publish_market.screener_records` and `market_lookup.lookup` recompute it with the stored Stage). The nightly model writes the explanation and trade plan and reports the news risk. Its prompt also gets Sentiment's checked facts for the quarter (section 4) |
 | `filters.py` | 485 | The boolean condition engine — shared by UI filters **and** background alerts |
 | `breadth_charts.py` | 222 | Plotly building blocks for the News tab's breadth / highs-lows / drawdown / return panels (both views; the drawdown row, 2026-10-30, is four lines, % of stocks 10 / 20 / 30 / 40%+ below their 52-week high), and the phone behaviour (`is_mobile`: stacked panels, no zoom or drag) |
@@ -121,6 +122,14 @@ of `app.py` pushes whatever `github_sync.unpushed_config_files()` reports (local
 longer match the blob this container last pulled or pushed) as one commit, and retries a
 failed push on the next run. A file with no pull/push record is never auto-pushed -- a
 stale copy must not overwrite the repo. The "Push to GitHub" button is the manual fallback.
+**A push never overwrites a newer copy** (owner, 2026-11-09): when the data repo's copy of a config
+file moved since this container last pulled or pushed it (a commit made by hand, another app instance),
+`push_all_config` merges three ways (`json_merge.merge`: the last-synced copy, the app's, the data
+repo's) instead of pushing the local copy whole, which used to undo that commit silently. Different
+items keep both sides' edits; the same item changed on both sides keeps the app's (owner's choice); the
+merged file is written back locally and the sidebar says so for 10 minutes (`recent_merge_note`). An
+older copy it cannot read blocks the push (retried next run). A commit landing mid-push is retried on
+the new tip, up to 3 times.
 The authoritative list is `SYNCABLE_FILES` in `github_sync.py`:
 `watchlist.json`, `markets.json`, `interested.json`, `custom_filters.json`,
 `settings.json`, `alerts_config.json`, `column_prefs.json`, `custom_columns.json`,
@@ -304,6 +313,14 @@ Each of these has actually bitten this codebase.
   `official_close` takes its close from the quote (NSE/BSE's official close is a half-hour
   average, not the last trade). Anything else -- no bars, a failed download, a blank older
   than `UNPUBLISHED_BAR_MAX_DAYS` -- leaves the row as it was.
+- **Yahoo's quarterly statements have holes.** On 2026-11-09 most Indian companies had no Sep '25
+  quarter, and Qtr EPS Growth % took "a year ago" as the 5th column Yahoo returned -- Jun '25, so 35 of
+  118 rows showed a 15-month change as a year's. `stock_data.quarterly_eps_growth` finds the year-ago
+  quarter by date (`quarterly_results.quarter_end` / `shift`, the quarterly charts' rule); without a
+  comparable one (missing, or a share count that moved more than 1.5x: an unadjusted bonus) Qtr Profit
+  Growth % stands in, marked `qtr_eps_growth_basis: "profit"` (owner's choice), published to the research
+  library and Claude chat. `eps_history_loaded` on the row stops `market_lookup.keep_previous` refilling an
+  honest blank from the stored row. Never index a statement by position.
 - **Yahoo does not adjust an Indian stock's history for a demerger.** On a scheme's record date
   (2026-10-08) a watchlist stock's close went from 454.55 to 41.4 overnight -- the value moved to
   the new company -- and the unadjusted history kept its 40-week EMA at 242.5 against a price near
