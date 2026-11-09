@@ -52,6 +52,8 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
+import price_gaps
+
 from stage_analysis import METRIC_LABELS as STAGE_METRIC_LABELS, apply_stage_to_rows
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1914,6 +1916,11 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
     raw, _rebuilt = fill_unpublished_daily_bars(raw, all_tickers)
     if _rebuilt:
         print(f"  [fetch_snapshot] rebuilt {len(_rebuilt)} daily bar(s) Yahoo had not published yet from 5-minute bars")
+    # A demerger's overnight gap Yahoo left unadjusted (owner, 2026-11-09): every price before it is scaled
+    # by the gap, as TradingView does, or the averages spanning it read a crash (price_gaps.py).
+    raw, _gapped = price_gaps.adjust_download(raw, tickers)
+    if _gapped:
+        print(f"  [fetch_snapshot] back-adjusted {len(_gapped)} ticker(s) across a corporate-action gap")
 
     bench_daily = raw[benchmark]["Close"].dropna()
     bench_df = raw[benchmark].dropna(how="all")

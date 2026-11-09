@@ -9,6 +9,7 @@ import yfinance as yf
 
 from breadth_math import compute_breadth
 import index_registry
+import price_gaps
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BREADTH_FILE = os.path.join(SCRIPT_DIR, "market_breadth.json")
@@ -351,6 +352,12 @@ def calculate_breadth(tickers, label, tz, close_hhmm):
     # fetch, not the day close); main() marks such a reading live. It used to be
     # dropped until 30 minutes after the close.
     closes = pd.concat(all_data, axis=1).sort_index()
+    # A demerger's overnight gap Yahoo left unadjusted (price_gaps.py): a stock 90% "down" in a day would read as
+    # far below its 52-week high and under its averages for a year. A count only (public index members).
+    closes, _gapped = price_gaps.adjust_closes_frame(closes)
+    if _gapped:
+        print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {label}: back-adjusted {len(_gapped)} "
+              "ticker(s) across a corporate-action gap")
     # Before dropna(how="all"): an unpublished day is a row of NaN, and dropping
     # it first would make it look like a holiday (no row at all).
     unpublished = unpublished_tail(closes)
