@@ -702,7 +702,7 @@ fundamentals and the last {EXPERT_NEWS_WINDOW_DAYS} days of material news below.
 - Volume: median day 10D={med_10d}, 100D={med_100d} (averages {vol_10d} / {vol_100d}); Vol Trend={vol_trend}; Net Volume 10D: {net_vol_dir}, {net_vol_ratio}%
 - 52-Week Range: High={h52}, Low={l52}
 - Valuation: Trailing P/E={_fmt(row_data.get('trailing_pe'))}, Forward P/E={_fmt(row_data.get('forward_pe'))}, P/B={_fmt(row_data.get('pb_ratio'))}, EV/EBITDA={_fmt(row_data.get('ev_ebitda'))}, ROE={_fmt(row_data.get('roe'), '%')}, ROCE={_fmt(row_data.get('roce'), '%')}
-- Latest quarter ({row_data.get('reported_qtr') or 'N/A'}) YoY growth: EPS={_fmt(row_data.get('qtr_eps_growth'), '%')}, Net profit={_fmt(row_data.get('qtr_profit_growth'), '%')}, Revenue={_fmt(row_data.get('qtr_revenue_growth'), '%')} (context only: Sentiment judges the fundamentals)
+- Latest quarter ({row_data.get('reported_qtr') or 'N/A'}) YoY growth: EPS={_fmt(row_data.get('qtr_eps_growth'), '%')}{' (no comparable year-ago EPS: this is the profit growth)' if row_data.get('qtr_eps_growth_basis') == 'profit' else ''}, Net profit={_fmt(row_data.get('qtr_profit_growth'), '%')}, Revenue={_fmt(row_data.get('qtr_revenue_growth'), '%')} (context only: Sentiment judges the fundamentals)
 
 ======================================================================
 2. ACTIVE ALERT RULES TRIGGERED

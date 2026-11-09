@@ -6,6 +6,7 @@ returns 422 the way GitHub does. `use(fake)` swaps it into github_sync in place
 of `requests` and makes the retry sleeps instant.
 """
 import base64
+import hashlib
 import itertools
 import json
 import types
@@ -19,7 +20,9 @@ class FakeGitHub:
         tree=self._tree({k:self._blob(json.dumps(v,indent=2).encode()) for k,v in files.items()})
         self.head=self._commit(tree,[]); self.on_patch=None; self.patches=0; self.commits_made=0
     def _id(self,p): return f"{p}{next(self.n)}"
-    def _blob(self,b): i=self._id("b"); self.blobs[i]=b; return i
+    # A blob's id is its real git SHA, as on GitHub: the sync state records local files by that SHA
+    # (github_sync._git_blob_sha), and push_all_config compares the two to see the data repo moved.
+    def _blob(self,b): i=hashlib.sha1(b"blob %d\0" % len(b) + b).hexdigest(); self.blobs[i]=b; return i
     def _tree(self,e): i=self._id("t"); self.trees[i]=dict(e); return i
     def _commit(self,tree,parents): i=self._id("c"); self.commits[i]={"tree":tree,"parents":parents}; return i
     def commit_file(self,name,data):

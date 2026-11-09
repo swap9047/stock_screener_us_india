@@ -125,14 +125,17 @@ def screener_records(snapshot, expert_views, fundamentals, settings=None, stage=
     return list(records.values())
 
 
-def keep_previous_values(conn, records, details_missing):
+def keep_previous_values(conn, records, details_missing, eps_loaded=None):
     """Fill each record's blanks from the row already stored (market_lookup.keep_previous): a run whose
     calls to Yahoo for company details failed must not blank out the name, valuation and growth the
-    last run stored. The number of tickers that kept something -- counts only, as everything here prints."""
+    last run stored. `eps_loaded` ({ticker: the row's eps_history_loaded}) keeps an honest blank EPS
+    growth blank. The number of tickers that kept something -- counts only, as everything here prints."""
     if not records:
         return 0
+    eps_loaded = eps_loaded or {}
     stored = market_lookup.MarketDB(conn).rows([r["ticker"] for r in records])
-    return sum(1 for r in records if market_lookup.keep_previous(r, stored.get(r["ticker"]), details_missing.get(r["ticker"])))
+    return sum(1 for r in records if market_lookup.keep_previous(r, stored.get(r["ticker"]), details_missing.get(r["ticker"]),
+                                                                 eps_loaded.get(r["ticker"])))
 
 
 def publish_screener(conn):
@@ -144,7 +147,10 @@ def publish_screener(conn):
         return 1
     settings = stock_data.load_settings()
     records = screener_records(snapshot, load_expert_views(), load_fundamentals(), settings, load_stage_analysis())
-    kept = keep_previous_values(conn, records, {r["ticker"]: r["company_name"] == r["ticker"] for r in records})
+    eps_loaded = {row.get("ticker"): row.get("eps_history_loaded")
+                  for rows in (snapshot.get("per_market") or {}).values() for row in rows}
+    kept = keep_previous_values(conn, records, {r["ticker"]: r["company_name"] == r["ticker"] for r in records},
+                                eps_loaded)
     n = upsert(conn, records)
     removed = 0
     if len(records) >= MIN_SNAPSHOT_ROWS:
@@ -226,7 +232,8 @@ def publish_library(conn, min_gap=None):
         yf_logger.handlers, yf_logger.propagate = saved
     as_of = _now()
     records = [market_lookup.priced_record(t, row, "library", settings=settings, as_of=as_of) for t, row in rows.items()]
-    kept = keep_previous_values(conn, records, {t: row.get("details_failed") for t, row in rows.items()})
+    kept = keep_previous_values(conn, records, {t: row.get("details_failed") for t, row in rows.items()},
+                                {t: row.get("eps_history_loaded") for t, row in rows.items()})
     n = upsert(conn, records) if records else 0
     write_catalog_and_settings(conn, settings)
     failures = sum(1 for line in log.getvalue().splitlines()

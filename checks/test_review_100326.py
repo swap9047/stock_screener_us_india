@@ -134,8 +134,14 @@ try:
 
     Path(tmp, "ticker_notes.json").write_text(json.dumps({"ACME": {"note": "x", "flag": "Red"}}))
     fk.on_patch = lambda: fk.commit_file("other.json", {})      # a workflow commits mid-push -> 422
-    ok, _ = gs.push_all_config("t", "o/r", "main", filenames=gs.unpushed_config_files(), message="m")
+    # attempts=1: a push whose every try meets a new commit (by default it retries on the new tip, below).
+    ok, _ = gs.push_all_config("t", "o/r", "main", filenames=gs.unpushed_config_files(), message="m", attempts=1)
     check(not ok and gs.unpushed_config_files() == ["ticker_notes.json"], "F1: a failed push leaves the file pending for the next run")
+    # Since 2026-11-09 one commit landing mid-push is retried on the new tip instead of failing the push.
+    fk.on_patch = lambda: fk.commit_file("other2.json", {})
+    ok, _ = gs.push_all_config("t", "o/r", "main", filenames=gs.unpushed_config_files(), message="m")
+    check(ok and fk.file("ticker_notes.json") == {"ACME": {"note": "x", "flag": "Red"}} and gs.unpushed_config_files() == [],
+          "F1: ...and one commit landing mid-push is retried on the new tip")
 except AttributeError as e:
     check(False, f"F1: github_sync.unpushed_config_files exists ({e})")
 finally:

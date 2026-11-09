@@ -55,7 +55,12 @@ DETAILS_RETRY_WAIT_S = 5
 # statement is fetched separately, so any of these can come back blank while the rest is fine).
 INFO_FIELDS = ("trailing_pe", "forward_pe", "pb_ratio", "ev_ebitda", "p_cashflow", "roe",
                "qtr_profit_growth", "qtr_revenue_growth", "reported_qtr", "shares_outstanding")
-STATEMENT_FIELDS = ("roce", "cfo_op_5yr", "qtr_eps_growth")
+STATEMENT_FIELDS = ("roce", "cfo_op_5yr", "qtr_eps_growth", "qtr_eps_growth_basis")
+# Qtr EPS Growth % and its basis come from the quarterly income statement: when that statement came back
+# (the row's eps_history_loaded), a blank is the answer -- no comparable year-ago quarter and no profit growth
+# to stand in -- and is not filled from the stored row, which until 2026-11-09 could be a 15-month change shown
+# as a year's (stock_data.quarterly_eps_growth).
+EPS_FIELDS = ("qtr_eps_growth", "qtr_eps_growth_basis")
 # TheWrap Stage Analysis: uploaded weekly in the dashboard, never computed here, so a live recompute of a
 # screener ticker (a stored row past STALE_HOURS) keeps the stored values instead of blanking them.
 STAGE_FIELDS = tuple(f for f, *_ in market_api.METRIC_GROUPS["stage"][1])
@@ -350,17 +355,20 @@ def compute_priced(tickers, settings, db=None, compute=None, search=yahoo_search
             for t, s in symbols.items() if s in rows}
 
 
-def keep_previous(record, old, details_missing):
+def keep_previous(record, old, details_missing, eps_loaded=False):
     """Fill what Yahoo didn't return this time from the stored row `old`, in place; the fields kept.
     Only when the company-details request failed (details_missing) are its name and fields taken
     from before -- otherwise a blank there is Yahoo's answer (no P/E for a loss-making year) and is
-    left blank. A blank statement field is always taken from before: each statement is fetched on
-    its own, and these figures change once a quarter or a year. The Stage Analysis fields are always taken
-    from before when blank: only the screener's publish has them (from the weekly upload)."""
+    left blank. A blank statement field is taken from before: each statement is fetched on its own,
+    and these figures change once a quarter or a year -- except EPS_FIELDS when the quarterly statement
+    came back (eps_loaded) and the details did too: then a blank is the answer (see EPS_FIELDS). The
+    Stage Analysis fields are always taken from before when blank: only the screener's publish has them
+    (from the weekly upload)."""
     if not old:
         return []
     new, prev = record["metrics"], old.get("metrics") or {}
-    fields = (INFO_FIELDS if details_missing else ()) + STATEMENT_FIELDS + STAGE_FIELDS
+    statement = tuple(f for f in STATEMENT_FIELDS if not (eps_loaded and not details_missing and f in EPS_FIELDS))
+    fields = (INFO_FIELDS if details_missing else ()) + statement + STAGE_FIELDS
     kept = [f for f in fields if new.get(f) in (None, "") and prev.get(f) not in (None, "")]
     for f in kept:
         new[f] = prev[f]
@@ -509,7 +517,7 @@ def lookup(queries, refresh=False, db=None, compute=None, yahoo=yahoo_symbol, se
                     row["sentiment"] = sentiment
                 row["expert_take"] = market_api.columns_verdict(row)
             record = priced_record(t, row, "live", settings=settings)
-            keep_previous(record, old, row.get("details_failed"))
+            keep_previous(record, old, row.get("details_failed"), row.get("eps_history_loaded"))
             if not record["ai"] and old.get("ai"):
                 record["ai"] = old["ai"]
             fresh[t] = record
