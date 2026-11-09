@@ -19,6 +19,7 @@ from statistics import mean, median
 import index_registry
 import market_api
 import market_lookup
+import price_gaps
 
 # market_breadth.json's indexes, by the words people use for them (index_registry's aliases).
 INDEX_ALIASES = {ix["key"]: ix["aliases"] for ix in index_registry.INDEXES}
@@ -319,6 +320,8 @@ def yahoo_closes(symbols, days):
             closes = (raw[s] if len(symbols) > 1 or s in raw.columns.get_level_values(0) else raw)["Close"].dropna()
         except Exception:
             continue
+        # A demerger's overnight gap Yahoo left unadjusted, as in the stored closes (price_gaps.py).
+        closes = price_gaps.adjust_series(closes, s)[0]
         out[s] = [(d.strftime("%Y-%m-%d"), round(float(c), 4)) for d, c in closes.items()]
     return out
 

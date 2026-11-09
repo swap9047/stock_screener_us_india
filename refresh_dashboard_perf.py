@@ -42,6 +42,7 @@ import pandas as pd
 import yfinance as yf
 
 import index_registry
+import price_gaps
 from stock_data import load_watchlists, load_settings, get_benchmarks
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -91,7 +92,9 @@ def _download_series(tickers):
             print(f"  {t} retry failed: {e}")
         time.sleep(1)
 
-    return series
+    # A demerger's overnight gap Yahoo left unadjusted is back-adjusted, as in the snapshot (price_gaps.py), so
+    # the charts, the watchlist breadth and Claude chat's price history read the same prices as the table.
+    return {t: price_gaps.adjust_series(s, t)[0] for t, s in series.items()}
 
 
 # Below this share of a market's requested series actually captured, the run is
