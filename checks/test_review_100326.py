@@ -147,7 +147,7 @@ except AttributeError as e:
 finally:
     gs.SCRIPT_DIR, gs.SYNC_STATE_FILE = saved_attrs
 
-i_push = APP.find("unpushed_config_files(")
+i_push = APP.rfind("unpushed_config_files(")   # the end-of-run block is the LAST caller (the Send-to-Claude-chat button also calls it)
 check(i_push > APP.find("with tab_alerts:") > 0, "F1: the app pushes pending config at the END of the run, after every tab")
 check("SKIP_GITHUB_PULL" in APP[i_push - 600:i_push + 600], "F1: ...and not under SKIP_GITHUB_PULL (local and AppTest runs)")
 

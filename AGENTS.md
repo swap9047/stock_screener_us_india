@@ -38,7 +38,7 @@ for a model (Google's `...PerDay...` quota id) is retired for that model for the
 run, and once every key is out the ladder steps to its fallback model at once. Before
 2026-10-23 a daily-exhausted key rejoined every 120 s and failed again.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 2458
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 2470
 offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
@@ -551,6 +551,8 @@ the list out itself, so no ticker name is sent. The button used to run the retry
 session, and Streamlit stops a session's script when its browser closes or a phone sleeps the tab,
 so the finished stocks were never pushed; only "⚡ Re-analyze (N)" (named tickers) still runs there.
 Expert Take's count leaves out a stock with no Stage (Pending by design; every job skips it).
+
+**Send to Claude chat** (owner, 2026-11-11): the sidebar's dropdown + **Send now** under Refresh Data / Settings. Refresh Data only updates the app and the data repo; the research library's database (what Claude chat's connector reads) is written by `data-refresh.yml` (`publish_market.py screener`: each stock's row, Stage, Expert Take) and `market-breadth.yml` (`publish_market.py watchlists`: tab members, breadth, closes), which the Worker starts on a schedule -- so a stock added in the app took up to an hour, and a weekend, to appear. The two choices are `github_sync.MCP_PUBLISH_WORKFLOWS`; manual only; pending config edits are pushed to the data repo first (the workflows read it) and a failed save blocks the dispatch; both workflows queue behind a run in progress (`cancel-in-progress: false`), so a click is never lost.
 
 **Sentiment first** (owner, 2026-11-08): an Expert Take run someone asked for -- Retry Pending,
 Re-analyze All, a run by hand, and the in-browser Re-analyze -- writes a stock's missing Sentiment

@@ -139,7 +139,7 @@ from filters import (load_custom_filters, get_market_filters, save_market_filter
 from github_sync import (get_github_config, get_data_repo_config, bootstrap_data_files, start_refresh_after_stage_upload,
                          push_all_config, trigger_github_workflow, pull_generated_files, SYNCABLE_FILES, WORKFLOW_GENERATED_FILES,
                          push_json_entry_changes, read_remote_json, read_remote_bytes, refresh_snapshot_from_repo,
-                         unpushed_config_files, recent_merge_note)
+                         unpushed_config_files, recent_merge_note, start_mcp_publish, MCP_PUBLISH_WORKFLOWS)
 from news_summary import (load_news_summary, MARKET_LABELS, get_gemini_api_keys, resolve_news_scope, DEFAULT_NEWS_SCOPE_GROUP,
                           summary_with_source_links)
 from expert_views import (load_expert_views, save_expert_views, analyze_single_ticker,
@@ -5129,6 +5129,31 @@ if "last_refresh_summary" in st.session_state:
 
 if sb2.button("⚙️ Settings", width="stretch"):
     settings_dialog()
+
+# Send to Claude chat (owner, 2026-11-11): starts the workflow that publishes to the research library's database
+# (github_sync.MCP_PUBLISH_WORKFLOWS), so a stock added here shows up there in minutes instead of at the Worker's
+# next tick. Manual only. The workflows read the DATA REPO, so pending config edits (a watchlist just saved) go
+# there first.
+_mcp_kind = st.sidebar.selectbox(
+    "Send to Claude chat", list(MCP_PUBLISH_WORKFLOWS), key="mcp_publish_kind",
+    format_func=lambda k: MCP_PUBLISH_WORKFLOWS[k][1],
+    help="Refresh Data only updates this app and the data repo. This starts the job that sends the data to the "
+         "database Claude chat reads. If one is already running, yours waits behind it.")
+if st.sidebar.button("Send now", key="mcp_publish_go", width="stretch"):
+    _mcp_ok, _mcp_msg = True, ""
+    if not os.environ.get("SKIP_GITHUB_PULL"):
+        _mcp_pending = unpushed_config_files()
+        _mcp_token, _mcp_repo, _mcp_branch = get_data_repo_config(st.secrets)
+        if _mcp_pending and _mcp_token and _mcp_repo:
+            _mcp_ok, _mcp_msg = push_all_config(_mcp_token, _mcp_repo, _mcp_branch, filenames=_mcp_pending,
+                                                message=f"Update {', '.join(_mcp_pending)} via app")
+            if not _mcp_ok:
+                _mcp_msg = f"Your edits to {', '.join(_mcp_pending)} could not be saved to GitHub first ({_mcp_msg})."
+    if _mcp_ok:
+        _mcp_ok, _mcp_msg = start_mcp_publish(_mcp_kind, st.secrets)
+        _mcp_msg = ("Started. It waits behind any run in progress and reaches Claude chat a few minutes after it ends."
+                    if _mcp_ok else f"Could not start it: {_mcp_msg}")
+    (st.sidebar.success if _mcp_ok else st.sidebar.error)(_mcp_msg)
 render_logout_button()
 
 # Resolve this run's per-market data WITHOUT ever hitting yfinance on a plain

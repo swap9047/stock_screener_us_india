@@ -411,6 +411,34 @@ def start_refresh_after_stage_upload(st_secrets=None):
         return False, f"{type(e).__name__}: {e}"
 
 
+# The sidebar's "Send to Claude chat" control (owner, 2026-11-11): what the app's Refresh Data does NOT do is send
+# anything to the research library's database, which Claude chat's connector and the research library read. These
+# two workflows do, and the Worker only starts them on a schedule (data-refresh.yml every 30 minutes, market-breadth.yml
+# hourly, inside its window), so a stock added in the app took up to an hour -- and a weekend -- to appear there.
+#   tickers:    data-refresh.yml re-computes every row, commits the snapshot, then publish_market.py screener sends the
+#               rows (with Stage and the Expert Take) and the library's other companies; ~4-10 minutes.
+#   watchlists: market-breadth.yml also publishes the tabs (members), their breadth and daily closes
+#               (publish_market.py watchlists); ~8 minutes.
+# Both queue behind a run in progress (their concurrency groups never cancel), so a click is never lost.
+MCP_PUBLISH_WORKFLOWS = {
+    "tickers": ("data-refresh.yml", "Tickers: each stock's row, Stage and Expert Take (~5-10 min)"),
+    "watchlists": ("market-breadth.yml", "Watchlists: tab members, breadth and price history (~8 min)"),
+}
+
+
+def start_mcp_publish(kind, st_secrets=None):
+    """Start the workflow behind MCP_PUBLISH_WORKFLOWS[kind]. Returns (started, message); never raises."""
+    if kind not in MCP_PUBLISH_WORKFLOWS:
+        return False, f"unknown choice {kind!r}"
+    token, repo, _ = get_github_config(st_secrets)
+    if not token or not repo:
+        return False, "no GITHUB_TOKEN / GITHUB_REPO set"
+    try:
+        return trigger_github_workflow(token, repo, MCP_PUBLISH_WORKFLOWS[kind][0])
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+
+
 def get_data_repo_config(st_secrets=None):
     """(token, repo, branch) of the private DATA repo, from DATA_REPO_TOKEN,
     DATA_REPO (default DATA_REPO_DEFAULT) and DATA_REPO_BRANCH (default "main").
