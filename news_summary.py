@@ -468,10 +468,12 @@ def earlier_slot_info(prev_digest, slot_date):
 def reusable_outcomes(prev_digest, slot_date):
     """{ticker: record} the retry of a FAILED run for this same slot can reuse: every
     stock that run searched and filtered cleanly (material or quiet). Empty unless the
-    previous file is this slot's and was marked run_failed by news_check (a manual
-    re-run after a good digest redoes everything)."""
+    previous file is this slot's and news_check marked it run_failed (half or more of
+    the stocks failed, nothing posted) or retry_pending (owner, 2026-11-15: some stocks
+    could not be searched; the digest went out and the next hourly retry searches only
+    those). A manual re-run after a complete digest redoes everything."""
     prev = prev_digest or {}
-    if not prev.get("run_failed"):
+    if not (prev.get("run_failed") or prev.get("retry_pending")):
         return {}
     try:
         if date.fromisoformat(str(prev.get("as_of"))[:10]) != slot_date:
@@ -1324,8 +1326,12 @@ def build_discord_messages(news_data, limit=1900):
         # The News tab shows the same count in its caption, so this is Discord only.
         failed = ((entry.get("counts") or {}).get(STATUS_FAILED) or 0)
         if failed:
-            summary += (f"\n_{failed} stock{'s' if failed != 1 else ''} could not be searched today "
-                        "(search errors), so {} not in this digest._").format("they are" if failed != 1 else "it is")
+            # They are searched again by the slot's next hourly retry, which posts what it finds as a
+            # follow-up (news_check, build_followup_messages; owner, 2026-11-15).
+            summary += (f"\n_{failed} stock{'s' if failed != 1 else ''} could not be searched yet "
+                        "(search errors), so {} not in this digest; the next hourly retry searches "
+                        "{} again and posts any news._").format("they are" if failed != 1 else "it is",
+                                                                "them" if failed != 1 else "it")
         label = escape_markdown(_market_label(market))
         title = f"**📰 {label} News — {as_of}**"
 
@@ -1333,6 +1339,39 @@ def build_discord_messages(news_data, limit=1900):
             return _title if part == 0 else f"**{_label} News (cont'd, part {part + 1})**"
 
         messages.extend(chunked_line_messages(summary, limit=limit, head_for_part=head_for_part))
+    return messages
+
+
+def failed_tickers(news_data):
+    """Every ticker whose search failed in this digest (any watchlist)."""
+    return {t for entry in (news_data.get("markets") or {}).values()
+            for t, rec in ((entry or {}).get("tickers") or {}).items() if (rec or {}).get("status") == STATUS_FAILED}
+
+
+def build_followup_messages(news_data, tickers, limit=1900):
+    """Discord messages for the stocks in `tickers` -- the ones the slot's first digest could not search, now
+    searched by a retry (owner, 2026-11-15) -- that have news: each watchlist's notes for them, under a
+    "follow-up" title. [] when none of them has news (a quiet result is not worth a ping)."""
+    from alerts import chunked_line_messages, escape_markdown
+
+    messages, as_of = [], news_data.get("as_of", "")
+    shown = set()
+    for market, entry in (news_data.get("markets") or {}).items():
+        notes = []
+        for t, rec in ((entry or {}).get("tickers") or {}).items():
+            if t in tickers and t not in shown and (rec or {}).get("status") in (STATUS_MATERIAL, STATUS_DEGRADED) \
+                    and (rec.get("note") or "").strip():
+                notes.append(rec["note"].strip())
+                shown.add(t)
+        if not notes:
+            continue
+        label = escape_markdown(_market_label(market))
+        title = f"**📰 {label} News — {as_of} (follow-up: stocks searched late)**"
+
+        def head_for_part(part, _title=title, _label=label):
+            return _title if part == 0 else f"**{_label} News follow-up (cont'd, part {part + 1})**"
+
+        messages.extend(chunked_line_messages("\n\n".join(notes), limit=limit, head_for_part=head_for_part))
     return messages
 
 

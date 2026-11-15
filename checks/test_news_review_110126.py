@@ -147,8 +147,11 @@ msgs = ns.build_discord_messages({"as_of": "2026-11-01", "markets": {
     "india_invested": {"summary": "* x", "counts": {"failed": 1}},
     "other": {"summary": "* y", "counts": {"failed": 0}}}})
 text = "\n".join(msgs)
-check("3 stocks could not be searched today (search errors), so they are not in this digest." in text
-      and "1 stock could not be searched today (search errors), so it is not in this digest." in text,
+# Since 2026-11-15 the slot's next hourly retry searches them again (news_check retry_pending).
+check("3 stocks could not be searched yet (search errors), so they are not in this digest; the next hourly "
+      "retry searches them again and posts any news." in text
+      and "1 stock could not be searched yet (search errors), so it is not in this digest; the next hourly "
+      "retry searches it again and posts any news." in text,
       f"N5: the count of stocks not searched is in the digest ({text!r})")
 check(text.count("could not be searched") == 2, "N5: ...and only where some failed")
 
@@ -274,7 +277,12 @@ try:
     check(code == 1 and data and data["run_failed"] is True and calls[-1] is True,
           "N1: a run with half its searches failed is saved marked run_failed (and fails)")
     code, data = run({"searched": 10, "failed": 4})
-    check(code == 0 and data["run_failed"] is False, "N1: a run under the limit is saved as not failed")
+    # Since 2026-11-15 any failed stock leaves the slot to its next hourly retry (retry_pending, exit 1).
+    check(code == 1 and data["run_failed"] is False and data["retry_pending"] is True,
+          "N1: a run under the limit is saved as not failed, but with its leftovers pending (exit 1)")
+    code, data = run({"searched": 10, "failed": 0})
+    check(code == 0 and data["run_failed"] is False and data["retry_pending"] is False,
+          "N1: a run with nothing failed is saved clean and succeeds")
     code, data = run({"searched": 1, "failed": 0}, env={"REFRESH_LIMIT": "1", "REFRESH_MARKETS": ""},
                      prev={"as_of": "2026-11-03", "run_failed": True, "markets": {}})
     check(data["run_failed"] is True and calls[-1] is False,
