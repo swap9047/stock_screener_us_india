@@ -59,8 +59,8 @@ for step in ("R1", "R2", "N3"):
     check(all(m != F38 for m, _w, _t in t), f"K2: {step} makes no 3.8 Flash call while skipped")
 check(ms.tiers("R1", ON) == [(F36, 0, 200), (F36, 2, 200), (L, 4, 150), (L, 8, 150)],
       f"K2: R1 starts at 3.6 with no wait, waits restart, each model keeps its timeout ({ms.tiers('R1', ON)})")
-check(ms.tiers("R1", CLEAN | {"ai_models": {ms.SKIP_38_KEY: True}}) == [(F36, 0, 200), (F36, 2, 200)],
-      "K2: the DEFAULT R1 chain (3.8 x2, 3.6 x2) runs 3.6 x2 while skipped")
+check(ms.tiers("R1", CLEAN | {"ai_models": {ms.SKIP_38_KEY: True}}) == [(ms.HYDROGEN, 0, 200), (ms.HYDROGEN, 2, 200), (F36, 4, 200), (F36, 8, 200)],
+      "K2: the DEFAULT R1 chain (3.8 x2, Hydrogen x2, 3.6 x2) runs Hydrogen x2 then 3.6 x2 while skipped (the legacy switch still reads)")
 check(ms.skipped_38_in(ms.resolve("R1", ON)["chain"], ON) and not ms.skipped_38_in(ms.resolve("R1", OFF)["chain"], OFF),
       "K2: the steps list notes the skip only while it is on")
 
@@ -70,7 +70,9 @@ check(ms.resolve("R1", ON)["chain"] == CHAIN and ms.resolve("R1", ON)["source"] 
 back = {"ai_models": ms.with_skip_38(ON, False)}
 check(ms.tiers("R1", back) == ms.tiers("R1", OFF) and ms.SKIP_38_KEY not in back["ai_models"],
       "K3: switching off brings 3.8 back exactly, and removes the key")
-check(ms.with_skip_38(OFF, True) == ON["ai_models"], "K3: switching on adds only the key, every chain kept")
+_on = ms.with_skip_38(OFF, True)
+check(_on == {**OFF["ai_models"], ms.SKIP_MODELS_KEY: [F38]} and ms.tiers("R1", {"ai_models": _on}) == ms.tiers("R1", ON),
+      "K3: switching on adds only the skip list (3.8 Flash on it), every chain kept, the same rungs as the legacy switch")
 
 # --- K4 never empty --------------------------------------------------------------------------------
 only38 = {"ai_models": {"R1": {"chain": [{"model": F38, "attempts": 2, "timeout": 200}], "budget": 4096},

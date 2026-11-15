@@ -42,10 +42,11 @@ MARKET_READ_FILE = os.path.join(SCRIPT_DIR, "market_read.json")
 # (run_model_ladder passes the failed rung's key as the next one's `avoid_key`),
 # then 3.6-flash (owner, 2026-10-31: no flash-lite rung -- its reads were weaker than a missing one is
 # bad; a failed run is retried by the slot gate), every rung at a 4k thinking budget.
+# Gemini 4 Hydrogen after 3.8 (owner, 2026-11-15: right after 3.8 Flash wherever 3.8 is, twice, at the same thinking budget).
 PRIMARY_MODEL = "models/gemini-3.8-flash"
 PRIMARY_ATTEMPTS = 2
-FALLBACK_MODELS = ("models/gemini-3.6-flash",)
-FALLBACK_ATTEMPTS = 2        # owner, 2026-11-01: 3.8-flash and 3.6-flash twice each
+FALLBACK_MODELS = ("models/gemini-4-hydrogen", "models/gemini-3.6-flash")
+FALLBACK_ATTEMPTS = 2        # owner, 2026-11-01: 3.8-flash and 3.6-flash twice each (and Hydrogen, 2026-11-15)
 THINKING_BUDGET = 4096
 CALL_TIMEOUT_S = 200      # a call not answered by then fails and the ladder moves on (owner, 2026-11-01; was 150)
 

@@ -45,6 +45,9 @@ FLASH_LITE = "models/gemini-3.5-flash-lite"
 FLASH_36 = "models/gemini-3.6-flash"
 FLASH_37 = "models/gemini-3.7-flash"
 FLASH_38 = "models/gemini-3.8-flash"
+# Gemini 4 Hydrogen (owner, 2026-11-15): placed right after 3.8 Flash in every chain that has 3.8, two tries,
+# at the step's own thinking budget (it accepts thinking_budget, though at 0 it still thinks a little).
+HYDROGEN = "models/gemini-4-hydrogen"
 
 MAX_ATTEMPTS = 10
 # Seconds one call may take before the ladder gives up on it (owner, 2026-11-01: 200 for every model,
@@ -80,9 +83,9 @@ STEPS = {
     "F3": {"group": "Sentiment", "label": "Sentiment · reasoning (both passes)", "kind": "reasoning",
            "chain": [(FLASH_LITE, 2), (GEMMA_26B, 1)], "budget": 8192},
     "R1": {"group": "Market read", "label": "Market read · the index charts' summary", "kind": "read",
-           "chain": [(FLASH_38, 2), (FLASH_36, 2)], "budget": 4096},
+           "chain": [(FLASH_38, 2), (HYDROGEN, 2), (FLASH_36, 2)], "budget": 4096},
     "R2": {"group": "Market read", "label": "Market read · invested lists and takeaways", "kind": "read",
-           "chain": [(FLASH_38, 2), (FLASH_36, 2)], "budget": 4096},
+           "chain": [(FLASH_38, 2), (HYDROGEN, 2), (FLASH_36, 2)], "budget": 4096},
 }
 
 # The settings.json keys each step's model and budget were edited under before the sidebar panel.
@@ -97,6 +100,7 @@ LEGACY = {
 
 DEFAULT_REPOSITORY = [
     {"id": FLASH_38, "label": "Gemini 3.8 Flash", "supports_thinking": True, "default_budget": 4096},
+    {"id": HYDROGEN, "label": "Gemini 4 Hydrogen", "supports_thinking": True, "default_budget": 4096},
     {"id": FLASH_37, "label": "Gemini 3.7 Flash", "supports_thinking": True, "default_budget": 4096},
     {"id": FLASH_36, "label": "Gemini 3.6 Flash", "supports_thinking": True, "default_budget": 4096},
     {"id": "models/gemini-3.5-flash", "label": "Gemini 3.5 Flash", "supports_thinking": True, "default_budget": 4096},
@@ -216,44 +220,73 @@ def budget(step, settings=None):
     return resolve(step, settings)["budget"]
 
 
-# The switch at the top of Settings · Models (owner, 2026-11-07) is stored INSIDE `ai_models`, under a key no
-# step uses, not as a settings key of its own: a new key would have to be declared in
-# stock_data.DEFAULT_SETTINGS (save_settings keeps only declared keys), and any edit to that module's code
-# changes its fingerprint and marks the stored snapshot out of date until the next refresh. resolve() reads
-# ai_models by step id, and with_step / reset_changes copy the whole dict, so the switch survives both.
+# The skip list at the top of Settings · Models (owner, 2026-11-07 for 3.8 Flash alone; 2026-11-15 any models) is
+# stored INSIDE `ai_models`, under a key no step uses, not as a settings key of its own: a new key would have to be
+# declared in stock_data.DEFAULT_SETTINGS (save_settings keeps only declared keys), and any edit to that module's code
+# changes its fingerprint and marks the stored snapshot out of date until the next refresh. resolve() reads ai_models
+# by step id, and with_step / reset_changes copy the whole dict, so the list survives both.
+SKIP_MODELS_KEY = "skip_models"
+# The 2026-11-07 switch, a plain true for 3.8 Flash; still read, so a setting saved then keeps skipping it.
 SKIP_38_KEY = "skip_flash_38"
 
 
-def skipping_38(settings=None):
-    """True while the switch at the top of Settings · Models says to leave Gemini 3.8 Flash out."""
+def skipped_models(settings=None):
+    """The models the skip list at the top of Settings · Models leaves out of every chain (full ids)."""
     settings = settings if settings is not None else _current_settings()
-    return bool((settings.get("ai_models") or {}).get(SKIP_38_KEY))
+    models = settings.get("ai_models") or {}
+    out = {full_id(m) for m in (models.get(SKIP_MODELS_KEY) or []) if isinstance(m, str) and m.strip()}
+    if models.get(SKIP_38_KEY):
+        out.add(FLASH_38)
+    return out
 
 
-def with_skip_38(settings, on):
-    """The `ai_models` value with the switch set to `on`, every saved chain kept as it is."""
+def skipping_38(settings=None):
+    """True while the skip list leaves Gemini 3.8 Flash out."""
+    return FLASH_38 in skipped_models(settings)
+
+
+def with_skipped(settings, models_to_skip):
+    """The `ai_models` value with the skip list set to `models_to_skip`, every saved chain kept as it is (the old
+    3.8-only switch is folded into the list)."""
     models = copy.deepcopy(settings.get("ai_models") or {})
-    if on:
-        models[SKIP_38_KEY] = True
+    models.pop(SKIP_38_KEY, None)
+    chosen = sorted({full_id(m) for m in models_to_skip or [] if m})
+    if chosen:
+        models[SKIP_MODELS_KEY] = chosen
     else:
-        models.pop(SKIP_38_KEY, None)
+        models.pop(SKIP_MODELS_KEY, None)
     return models
 
 
+def with_skip_38(settings, on):
+    """The `ai_models` value with Gemini 3.8 Flash added to or taken off the skip list."""
+    current = skipped_models(settings)
+    return with_skipped(settings, (current | {FLASH_38}) if on else (current - {FLASH_38}))
+
+
 def effective_chain(chain, settings=None):
-    """`chain` as the jobs run it: with Gemini 3.8 Flash left out while the switch is on (owner, 2026-11-07),
-    so a run makes no call to it and waits on none. The SAVED chain is never edited -- resolve() still
-    returns it whole, which is what the step editor shows and saves, so unticking the switch brings 3.8 back.
-    A chain made of nothing but 3.8 is kept as it is: skipping must not leave a step with no model."""
-    if not skipping_38(settings):
+    """`chain` as the jobs run it: without the models on the skip list, so a run makes no call to them and waits on
+    none. The SAVED chain is never edited -- resolve() still returns it whole, which is what the step editor shows and
+    saves, so taking a model off the list brings it back. A chain made of nothing but skipped models is kept as it is:
+    skipping must not leave a step with no model."""
+    skip = skipped_models(settings)
+    if not skip:
         return chain
-    kept = [e for e in chain if e["model"] != FLASH_38]
+    kept = [e for e in chain if e["model"] not in skip]
     return kept or chain
 
 
+def skipped_in(chain, settings=None):
+    """The skipped models `chain` has (in chain order) and runs without, for the steps list's note."""
+    if effective_chain(chain, settings) == chain:
+        return []
+    skip = skipped_models(settings)
+    return list(dict.fromkeys(e["model"] for e in chain if e["model"] in skip))
+
+
 def skipped_38_in(chain, settings=None):
-    """True when the switch is on and `chain` has a 3.8 rung it takes out (for the steps list's note)."""
-    return effective_chain(chain, settings) != chain
+    """True when 3.8 Flash is on the skip list and `chain` has a 3.8 rung it takes out."""
+    return FLASH_38 in skipped_in(chain, settings)
 
 
 def tiers(step, settings=None):

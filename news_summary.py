@@ -707,6 +707,11 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None,
     last_exc = None
     avoid_key = None
     unavailable = set()
+    # An empty or "no news" reply that recorded no search gets one more try on another key, and tool-call
+    # text is a failed try (llm_util.SearchReplyCheck, owner 2026-11-15); `held` is that first reply, used
+    # when no later rung answers.
+    check = llm_util.SearchReplyCheck()
+    held = None
     for tier in tiers:
         attempt_model, backoff = tier[0], tier[1]
         # A rung from the sidebar's chain carries its own timeout (model_settings); the old ones don't.
@@ -715,14 +720,22 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None,
             continue
         if backoff:
             time.sleep(backoff)
+        served = {}
         try:
             resp = _generate_with_timeout(client, attempt_model, prompt, config,
-                                          timeout=attempt_timeout, avoid_key=avoid_key)
-            return (resp.text or "").strip(), _extract_sources(resp)
+                                          timeout=attempt_timeout, avoid_key=avoid_key, key_sink=served)
+            check(resp)
+            return _search_reply(resp)
+        except llm_util.RecheckReply as e:
+            held = held or e.result
+            avoid_key = served.get("key")
+            print(f"  [stage1 {attempt_model} rechecking] {ticker}: {e}")
+            continue
         except Exception as e:
             last_exc = e
-            # Tagged by generate_with_timeout with the key that made THIS call.
-            avoid_key = getattr(e, "_gemini_key", None)
+            # Tagged by generate_with_timeout with the key that made THIS call (or, for a reply the
+            # check rejected, the key that served it).
+            avoid_key = getattr(e, "_gemini_key", None) or served.get("key")
             via = f" via {avoid_key}" if avoid_key else ""
             print(f"  [stage1 {attempt_model} failed{via}] {ticker}: {e}")
             if llm_util.is_model_unavailable(e):
@@ -730,7 +743,15 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None,
                 continue
             if not _is_retryable(e):
                 break
+    if held is not None:
+        return _search_reply(held)
     raise last_exc
+
+
+def _search_reply(resp):
+    """(text, sources) of a search reply; a reply that recorded no search and said "no news" is quiet ("")."""
+    text = "" if llm_util.unsearched_nothing(resp) else (resp.text or "").strip()
+    return text, _extract_sources(resp)
 
 
 def _run_reasoning(client, prompt, model, budget, label, subject="", tiers=None):

@@ -231,10 +231,10 @@ if at:
     # P6 the repository
     at.sidebar.toggle(key="model_settings_repo_open").set_value(True).run()
     repo_tables = [t for t in sidebar_df(at) if "Model ID" in getattr(t, "columns", [])]
-    check(repo_tables and len(repo_tables[0]) == 6, "P6: the repository lists the six default models")
+    check(repo_tables and len(repo_tables[0]) == 7, "P6: the repository lists the seven default models (Hydrogen since 2026-11-15)")
     at.sidebar.text_input(key="ms_repo_add_id").set_value("gemini-9-flash").run()
     at.sidebar.button(key="ms_repo_add_btn").click().run()
-    check(any(m["id"] == "models/gemini-9-flash" for m in settings_file()["ai_model_repository"]) and len(settings_file()["ai_model_repository"]) == 7,
+    check(any(m["id"] == "models/gemini-9-flash" for m in settings_file()["ai_model_repository"]) and len(settings_file()["ai_model_repository"]) == 8,
           "P6: Add puts the new model (with its models/ prefix) into the saved repository next to the defaults")
     at.sidebar.selectbox(key="model_settings_step").set_value("R1").run()
     opts = next(s for s in at.sidebar.selectbox if s.key == "ms_R1_model_0").options
@@ -245,27 +245,28 @@ if at:
     warn = " ".join(w.value for w in at.sidebar.warning)
     check("No Gemini API key" in warn, f"P7: Test with no key says so ({warn[:80]})")
 
-# P8 the skip-3.8 switch
+# P8 the skip list (owner, 2026-11-07 a 3.8 Flash checkbox; 2026-11-15 a pick-list of any models)
 at = render()
 if at:
-    boxes = [c for c in at.sidebar.checkbox if c.key == "model_settings_skip_38"]
-    check(len(boxes) == 1 and boxes[0].value is False and boxes[0].label == "Skip Gemini 3.8 Flash calls",
-          "P8: the panel has the switch, off by default")
+    boxes = [c for c in at.sidebar.multiselect if c.key == "model_settings_skip_models"]
+    check(len(boxes) == 1 and list(boxes[0].value) == [] and boxes[0].label == "Skip these models"
+          and "Gemini 4 Hydrogen" in boxes[0].options and "Gemini 3.8 Flash" in boxes[0].options,
+          f"P8: the panel has the pick-list, nothing skipped by default, every repository model offered ({list(boxes[0].options) if boxes else None})")
     _before = json.dumps((settings_file().get("ai_models") or {}), sort_keys=True)
-    boxes[0].check().run()
+    boxes[0].set_value(["models/gemini-3.8-flash", "models/gemini-4-hydrogen"]).run()
     _after = settings_file().get("ai_models") or {}
     lines, text = step_lines(at)
-    skipped = sorted(k[1] for k, l in lines.items() if "3.8 Flash skipped" in l)
-    check(_after.get("skip_flash_38") is True
-          and json.dumps({k: v for k, v in _after.items() if k != "skip_flash_38"}, sort_keys=True) == _before,
-          "P8: ticking it saves the switch inside ai_models and leaves every chain as it was")
+    skipped = sorted(k[1] for k, l in lines.items() if "skipped: Gemini 3.8 Flash, Gemini 4 Hydrogen" in l)
+    check(_after.get("skip_models") == ["models/gemini-3.8-flash", "models/gemini-4-hydrogen"]
+          and json.dumps({k: v for k, v in _after.items() if k != "skip_models"}, sort_keys=True) == _before,
+          f"P8: picking two saves the list inside ai_models and leaves every chain as it was ({_after.get('skip_models')})")
     check(len(skipped) == 2 and all(("Market read", n) in lines for n in skipped),
-          f"P8: the steps list notes the skip on the two market read steps only ({skipped})")
-    check(any("skipped" in s.value for s in at.sidebar.success), "P8: it says the skip applies from the next run")
-    [c for c in at.sidebar.checkbox if c.key == "model_settings_skip_38"][0].uncheck().run()
+          f"P8: the steps list names both skipped models on the two market read steps only ({skipped})")
+    check(any("Skipped from the next run" in s.value for s in at.sidebar.success), "P8: it says the skip applies from the next run")
+    [c for c in at.sidebar.multiselect if c.key == "model_settings_skip_models"][0].set_value([]).run()
     lines, text = step_lines(at)
-    check("skip_flash_38" not in (settings_file().get("ai_models") or {}) and "3.8 Flash skipped" not in text,
-          "P8: unticking takes the switch out again")
+    check("skip_models" not in (settings_file().get("ai_models") or {}) and "skipped:" not in text,
+          "P8: clearing the list takes it out again")
 
 # P5 the old pickers are gone
 at = render(open_panel=False, tab="News")

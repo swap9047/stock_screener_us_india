@@ -3660,19 +3660,25 @@ def render_model_settings():
         notice = st.session_state.pop("model_settings_notice", None)
         if notice:
             st.success(notice)
-        # The switch comes first (owner, 2026-11-07). One widget for one setting, saved on change; the chains
-        # below are left as they are, so unticking it puts 3.8 Flash back in every chain that has it.
-        _skip_now = model_settings.skipping_38(settings)
-        _skip_new = st.checkbox(
-            "Skip Gemini 3.8 Flash calls", value=_skip_now, key="model_settings_skip_38",
-            help="While ticked, every AI step runs as if Gemini 3.8 Flash were not in its chain: no call is made "
-                 "to it and nothing waits on it (the next model in the chain is tried first). Your saved chains "
-                 "are not changed. Applies from each job's next run.")
-        if _skip_new != _skip_now:
-            save_settings({"ai_models": model_settings.with_skip_38(settings, _skip_new)})
+        # The skip list comes first (owner, 2026-11-07 as a 3.8 Flash checkbox; 2026-11-15 any models). One widget for
+        # one setting, saved on change; the chains below are left as they are, so taking a model off the list puts
+        # it back in every chain that has it.
+        _skip_now = sorted(model_settings.skipped_models(settings))
+        _skip_labels = {m["id"]: m["label"] for m in model_settings.repository(settings)}
+        _skip_options = list(dict.fromkeys(list(_skip_labels) + _skip_now))
+        _skip_new = st.multiselect(
+            "Skip these models", _skip_options, default=_skip_now, key="model_settings_skip_models",
+            format_func=lambda m: _skip_labels.get(m, model_settings.short(m)),
+            placeholder="None skipped",
+            help="Every AI step runs as if these models were not in its chain: no call is made to them and nothing "
+                 "waits on them (the next model in the chain is tried first). A chain made only of skipped models "
+                 "still runs. Your saved chains are not changed. Applies from each job's next run.")
+        if sorted(_skip_new) != _skip_now:
+            save_settings({"ai_models": model_settings.with_skipped(settings, _skip_new)})
             st.session_state["model_settings_notice"] = (
-                "⚙️ Gemini 3.8 Flash is skipped from the next run of every step that uses it." if _skip_new
-                else "⚙️ Gemini 3.8 Flash is back in the chains that have it.")
+                "⚙️ Skipped from the next run of every step that uses them: "
+                + ", ".join(_skip_labels.get(m, model_settings.short(m)) for m in _skip_new)
+                if _skip_new else "⚙️ No model is skipped: every chain runs as saved.")
             st.rerun()
         st.caption("Every AI step, the models it tries in order and how many times each (a retry goes to "
                    "another key). A change applies from each job's next run: the scheduled workflows read "
@@ -3687,7 +3693,8 @@ def render_model_settings():
             name = spec["label"].split(" · ", 1)[-1]
             thinking = "" if spec["kind"] == "search" else f" · thinking {_model_settings_budget_text(sid, cfg['budget'])}"
             mark = " · ✎ custom" if cfg["source"] != "default" else ""
-            skipped = " · 3.8 Flash skipped" if model_settings.skipped_38_in(cfg["chain"], settings) else ""
+            _gone = model_settings.skipped_in(cfg["chain"], settings)
+            skipped = (" · skipped: " + ", ".join(_skip_labels.get(m, model_settings.short(m)) for m in _gone)) if _gone else ""
             lines.append(f"- {name}: `{model_settings.describe(cfg['chain'])}`{thinking}{mark}{skipped}")
         st.markdown("\n".join(lines))
 

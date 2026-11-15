@@ -169,7 +169,7 @@ def _with_request_timeout(config, timeout):
 
 
 def generate_with_timeout(client, model, contents, config, timeout=CALL_TIMEOUT_SECONDS,
-                          avoid_key=None):
+                          avoid_key=None, key_sink=None):
     """One generate_content call, bounded by `timeout` -- see call_with_timeout
     for why it is a daemon thread. The real defence is the SDK-level HTTP
     timeout on the client (see HTTP_TIMEOUT_SECONDS); this is the backstop for
@@ -181,7 +181,11 @@ def generate_with_timeout(client, model, contents, config, timeout=CALL_TIMEOUT_
     been an alias of TimeoutError since Python 3.10 -- so an HTTP read timeout
     that failed in 2s was logged by run_model_ladder as having taken the full
     120s budget, with its own message discarded. The ladder's log line is how a
-    nightly run gets diagnosed; it has to say what actually happened."""
+    nightly run gets diagnosed; it has to say what actually happened.
+
+    `key_sink`, a dict, is given the key that served a call that ANSWERED (`key_sink["key"]`): a reply the
+    caller then rejects (a search that did not search, SearchReplyCheck) is retried on another key, and only
+    an exception carried the key before."""
     key_out = {} if hasattr(client, "key_names") else None
     extra = {}
     if key_out is not None:
@@ -190,10 +194,13 @@ def generate_with_timeout(client, model, contents, config, timeout=CALL_TIMEOUT_
             extra["_avoid_key"] = avoid_key
     config = _with_request_timeout(config, timeout)
     try:
-        return call_with_timeout(
+        resp = call_with_timeout(
             lambda: client.models.generate_content(model=model, contents=contents, config=config, **extra),
             timeout, name=f"genai-{model}",
         )
+        if key_sink is not None and key_out and key_out.get("key"):
+            key_sink["key"] = key_out["key"]
+        return resp
     except BaseException as e:
         if key_out and key_out.get("key"):
             try:
@@ -274,23 +281,33 @@ def run_model_ladder(client, prompt, tiers, config_for, label="llm", subject="",
     # With the grounded searches now running every rung on ONE model, the key is
     # the only thing that varies between attempts.
     avoid_key = None
+    # A reply on_success held back for one recheck (RecheckReply): used when no later rung answers.
+    held = None
     for tier in tiers:
         model, backoff = tier[0], tier[1]
         tier_timeout = tier[2] if len(tier) > 2 and tier[2] else timeout
         if backoff:
             time.sleep(backoff)
+        served = {}
         try:
             resp = generate_with_timeout(client, model, prompt, config_for(model), timeout=tier_timeout,
-                                         avoid_key=avoid_key)
+                                         avoid_key=avoid_key, key_sink=served)
             return (on_success(resp) if on_success else resp), model
+        except RecheckReply as e:
+            held = held or (e.result, model)
+            avoid_key = served.get("key")
+            via = f" via {avoid_key}" if avoid_key else ""
+            print(f"  [{label} {model} rechecking{via}] {subject}: {e}")
+            continue
         except Exception as e:
             # The KEY as well as the model: a 500 says nothing about which key
             # served it, and without this a run log could not tell a model-wide
             # outage from one bad key. Read off the EXCEPTION, which
             # generate_with_timeout tags with the key that made the call -- never
             # off client.last_key_name, which another worker may have moved on.
-            # Absent on a plain genai.Client, and then nothing is claimed.
-            key = getattr(e, "_gemini_key", None)
+            # Absent on a plain genai.Client, and then nothing is claimed. A reply
+            # on_success rejected carries no key: the call's own key (`served`) then.
+            key = getattr(e, "_gemini_key", None) or served.get("key")
             avoid_key = key
             via = f" via {key}" if key else ""
             print(f"  [{label} {model} failed{via}] {subject}: {e}")
@@ -301,7 +318,84 @@ def run_model_ladder(client, prompt, tiers, config_for, label="llm", subject="",
             if not is_retryable(e):
                 # Bad request or every key failing auth: no model will work. Stop.
                 break
-    return None, None
+    return held if held else (None, None)
+
+
+# --- grounded search replies that did not search (owner, 2026-11-15) ---------------------------------
+# Gemma 26b, the search model, often answers WITHOUT searching: an empty reply, or "No news found." /
+# "Empty Response", with no search in its grounding metadata. On 2026-11-13 it did so for 4 of 10 stocks
+# that another model found real news for the same day. It also never records a search when a stock is
+# genuinely quiet (7 of 7 empty replies over a weekend window), so a missing search alone cannot mean
+# failure: the reply gets ONE more try on another key, and a second such reply is taken as quiet
+# (owner's choice). Leftover tool-call text ('{"action": "google_search", ...}' instead of an answer)
+# is never an answer and always moves the ladder on.
+_UNSEARCHED_NOTHING_RE = re.compile(
+    r"^[\W_]*(empty response|no (\w+ ){0,2}(news|updates|announcements|items|information|results)"
+    r"|nothing|none|n/?a)\b", re.I)
+_TOOL_CALL_RE = re.compile(
+    r'"(action|tool|tool_name|tool_code|name|function)"\s*:\s*"(google_search|search|web_search)', re.I)
+UNSEARCHED_MAX_CHARS = 200
+
+
+class RecheckReply(Exception):
+    """Raised by a reply check for a reply worth one more try; carries the reply (`result`), which
+    run_model_ladder returns if no later rung answers. Not an error: never counted as a failure."""
+
+    def __init__(self, reason, result):
+        super().__init__(reason)
+        self.result = result
+
+
+class UnusableSearchReply(RuntimeError):
+    """A grounded-search reply that is not an answer (tool-call text): a failed, retryable try."""
+
+
+def reply_text(resp):
+    try:
+        return (getattr(resp, "text", None) or "").strip()
+    except Exception:
+        return ""
+
+
+def search_query_count(resp):
+    """How many web searches the reply's grounding metadata records (0 when it records none)."""
+    try:
+        gm = resp.candidates[0].grounding_metadata if resp.candidates else None
+        return len(getattr(gm, "web_search_queries", None) or []) if gm else 0
+    except Exception:
+        return 0
+
+
+def looks_like_tool_call(text):
+    """True for leftover tool-call text: a JSON object naming the search tool, not an answer."""
+    t = str(text or "").strip()
+    head = t.lstrip("`").removeprefix("json").lstrip()[:300]
+    return head.startswith("{") and bool(_TOOL_CALL_RE.search(head))
+
+
+def unsearched_nothing(resp):
+    """True when the reply recorded no search and says nothing: empty, or a short "no news" line."""
+    if search_query_count(resp):
+        return False
+    text = reply_text(resp)
+    return not text or (len(text) <= UNSEARCHED_MAX_CHARS and bool(_UNSEARCHED_NOTHING_RE.match(text)))
+
+
+class SearchReplyCheck:
+    """One search's reply check (a ladder's on_success, or called by hand): returns the reply, raises
+    UnusableSearchReply for tool-call text, and RecheckReply the first `rechecks` times a reply recorded no
+    search and says nothing. Make a new one per search: it counts."""
+
+    def __init__(self, rechecks=1):
+        self.rechecks = rechecks
+
+    def __call__(self, resp):
+        if looks_like_tool_call(reply_text(resp)):
+            raise UnusableSearchReply("returned tool-call text instead of an answer")
+        if self.rechecks > 0 and unsearched_nothing(resp):
+            self.rechecks -= 1
+            raise RecheckReply("said nothing without searching: one more try on another key", resp)
+        return resp
 
 
 def sequential_tiers(chain, base=None):
