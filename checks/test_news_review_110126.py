@@ -39,7 +39,7 @@ def check(ok, label):
 
 ET = ZoneInfo("America/New_York")
 UTC = timezone.utc
-NAMES = {"ACME": "Acme Corp", "BETA": "Beta Inc.", "ZED.NS": "Zed Industries Limited", "CORE": "Core Corporation"}
+NAMES = {"ACME": "Acme Corp", "ZORP": "Zorp Inc.", "ZED.NS": "Zed Industries Limited", "CORE": "Core Corporation"}
 
 # --- N2 the RESULTS tag -------------------------------------------------------------------
 split = ns.split_results_tag
@@ -56,8 +56,8 @@ check(split("RESULTS: 2026-11-05\nRESULTS: 2026-11-03", "2026-11-01")[0] == "202
 check(split("- Results beat estimates: revenue up 20%.", "2026-11-01") == (None, "- Results beat estimates: revenue up 20%."),
       "N2: a bullet that merely mentions results is untouched")
 
-line = ns.results_line({"ZED.NS": "2026-11-04", "ACME": "2026-11-03", "BETA": "2026-11-03"}, NAMES)
-check(line == "**Results due** · Acme (ACME) 3 Nov · Beta (BETA) 3 Nov · Zed Industries (ZED) 4 Nov",
+line = ns.results_line({"ZED.NS": "2026-11-04", "ACME": "2026-11-03", "ZORP": "2026-11-03"}, NAMES)
+check(line == "**Results due** · Acme (ACME) 3 Nov · Zorp (ZORP) 3 Nov · Zed Industries (ZED) 4 Nov",
       f"N2: one line, by date, names without Corp / Inc. / Limited ({line!r})")
 check(ns.results_line({}, NAMES) == "", "N2: no dates -> no line")
 
@@ -65,7 +65,7 @@ check(ns.results_line({}, NAMES) == "", "N2: no dates -> no line")
 # A US stock on Tue 2026-11-03 (EST): Mon 11-02 closed and settled at 16:30 ET (21:30Z).
 PERF = {"as_of": "2026-11-03 15:05 UTC", "markets": {"us_invested": {
     "ACME": {"2026-10-29": 100.0, "2026-10-30": 100.0, "2026-11-02": 107.2, "2026-11-03": 90.0},
-    "BETA": {"2026-10-30": 50.0, "2026-11-02": 47.4},
+    "ZORP": {"2026-10-30": 50.0, "2026-11-02": 47.4},
     "CORE": {"2026-10-30": 10.0, "2026-11-02": 10.3}},
     "india_invested": {"ZED.NS": {"2026-10-30": 200.0, "2026-11-02": 188.0, "2026-11-03": 212.0},
                        "ACME": {"2026-11-02": 1.0}}}}
@@ -73,7 +73,7 @@ now = datetime(2026, 11, 3, 16, 0, tzinfo=UTC)            # Tue 11 AM ET, mid US
 mv, checked = ns.session_moves("ACME", PERF, "2026-11-03", now)
 check(mv == {"2026-11-02": 7.2} and checked == ["2026-11-02"],
       f"N3: a run during the US session lists Monday's move, not today's live close ({mv}, {checked})")
-check(ns.session_moves("BETA", PERF, "2026-11-03", now)[0] == {"2026-11-02": -5.2},
+check(ns.session_moves("ZORP", PERF, "2026-11-03", now)[0] == {"2026-11-02": -5.2},
       "N3: falls count too, from the previous stored close (Friday, over a weekend)")
 check(ns.session_moves("CORE", PERF, "2026-11-03", now) == ({}, ["2026-11-02"]),
       "N3: a 3% move is not listed, but its session is checked (so it is not looked at again)")
@@ -97,10 +97,10 @@ gap = {"as_of": "2026-11-03 15:05 UTC", "markets": {"x": {"ACME": {"2026-10-20":
 check(ns.session_moves("ACME", gap, "2026-11-03", now)[0] == {},
       "N3: a previous close more than MOVE_MAX_GAP_DAYS back is a data hole, not a move")
 check(ns.session_moves("NOPE", PERF, "2026-11-03", now) == ({}, []), "N3: no stored closes -> nothing")
-line = ns.moves_line({"ACME": {"2026-11-02": 7.2}, "BETA": {"2026-11-02": -5.2},
+line = ns.moves_line({"ACME": {"2026-11-02": 7.2}, "ZORP": {"2026-11-02": -5.2},
                       "ZED.NS": {"2026-11-02": -6.0, "2026-11-03": 12.8}}, NAMES)
 check(line == "**Big moves (5%+)** · 2 Nov: ▲ Acme (ACME) +7.2% · ▼ Zed Industries (ZED) -6.0% · "
-              "▼ Beta (BETA) -5.2% | 3 Nov: ▲ Zed Industries (ZED) +12.8%",
+              "▼ Zorp (ZORP) -5.2% | 3 Nov: ▲ Zed Industries (ZED) +12.8%",
       f"N3: rises then falls, largest first, one group per session ({line!r})")
 check(ns.moves_line({}, NAMES) == "", "N3: no moves -> no line")
 
@@ -162,20 +162,20 @@ check(ns.reusable_outcomes({"as_of": "2026-11-03", "markets": {"m": {"tickers": 
 check(ns.reusable_outcomes({"as_of": "2026-11-02", "run_failed": True,
                             "markets": {"m": {"tickers": {"A": {"status": "quiet"}}}}}, date(2026, 11, 3)) == {},
       "N1: ...nor from another slot's failed run")
-PRIOR = {"BETA": {"results_date": "2026-11-05"}, "ACME": {"note": "**Acme Corp (ACME)**\n- Old item."}}
+PRIOR = {"ZORP": {"results_date": "2026-11-05"}, "ACME": {"note": "**Acme Corp (ACME)**\n- Old item."}}
 PREV = {"as_of": "2026-11-03", "run_failed": True, "prior_slot": PRIOR, "markets": {"us_invested": {"tickers": {
     "ACME": {"status": "material", "sources": [{"title": "s", "url": "u"}],
              "note": "**Acme Corp (ACME)**\n- Won a $2B order."},
-    "BETA": {"status": "quiet", "sources": [], "results_date": "2026-11-05"},
+    "ZORP": {"status": "quiet", "sources": [], "results_date": "2026-11-05"},
     "CORE": {"status": "failed", "sources": []},
     "ZED.NS": {"status": "degraded", "sources": [], "note": "raw"}}}}}
-check(set(ns.reusable_outcomes(PREV, date(2026, 11, 3))) == {"ACME", "BETA"},
+check(set(ns.reusable_outcomes(PREV, date(2026, 11, 3))) == {"ACME", "ZORP"},
       "N1: a failed run's material and quiet stocks are reusable; failed and degraded are redone")
 check(ns.earlier_slot_info(PREV, date(2026, 11, 3)) == PRIOR,
       "N1: the retry's repeat checks use the EARLIER slot's info the failed run carried forward")
 earlier = ns.earlier_slot_info({"as_of": "2026-11-02", "markets": {"m": {"tickers": {
     "ACME": {"status": "material", "note": "n", "results_date": "2026-11-04", "moves_checked": ["2026-11-02"],
-             "sources": [1]}, "BETA": {"status": "quiet"}}}}}, date(2026, 11, 3))
+             "sources": [1]}, "ZORP": {"status": "quiet"}}}}}, date(2026, 11, 3))
 check(earlier == {"ACME": {"note": "n", "results_date": "2026-11-04", "moves_checked": ["2026-11-02"]}},
       f"N1: from an earlier slot's digest: each stock's note, results date and checked sessions ({earlier})")
 
@@ -203,18 +203,18 @@ llm_util.make_client = lambda *a, **k: object()
 ns.time.sleep = lambda s: None
 sd.load_settings = lambda: {**sd.DEFAULT_SETTINGS, "news_watchlist_scope": ["us_invested"]}
 sd.load_data_snapshot = lambda: {"per_market": {"us_invested": [
-    {"ticker": t, "company_name": NAMES[t], "quote_type": "EQUITY"} for t in ("ACME", "BETA", "CORE", "ZED.NS")]}}
+    {"ticker": t, "company_name": NAMES[t], "quote_type": "EQUITY"} for t in ("ACME", "ZORP", "CORE", "ZED.NS")]}}
 ns.load_news_summary = lambda: PREV
 ns._load_dashboard_perf = lambda: PERF
 try:
-    res = ns.build_news_summary({"us_invested": ["ACME", "BETA", "CORE", "ZED.NS"]}, "k",
+    res = ns.build_news_summary({"us_invested": ["ACME", "ZORP", "CORE", "ZED.NS"]}, "k",
                                 now=datetime(2026, 11, 3, 11, 0, tzinfo=ET))
-    full = ns.build_news_summary({"us_invested": ["ACME", "BETA", "CORE", "ZED.NS"]}, "k",
+    full = ns.build_news_summary({"us_invested": ["ACME", "ZORP", "CORE", "ZED.NS"]}, "k",
                                  now=datetime(2026, 11, 3, 11, 0, tzinfo=ET), reuse_failed_run=False)
 finally:
     (ns.fetch_single_raw_news, llm_util.run_model_ladder, llm_util.make_client, ns.time.sleep,
      sd.load_settings, sd.load_data_snapshot, ns.load_news_summary, ns._load_dashboard_perf) = _saved
-check(searched[:2] == ["CORE", "ZED.NS"] and sorted(searched[2:]) == ["ACME", "BETA", "CORE", "ZED.NS"],
+check(searched[:2] == ["CORE", "ZED.NS"] and sorted(searched[2:]) == sorted(["ACME", "ZORP", "CORE", "ZED.NS"]),
       f"N1: the retry searched only the failed and degraded stocks; a partial run searches all ({searched})")
 us = res["markets"]["us_invested"]
 summary = us["summary"]
@@ -225,11 +225,11 @@ check(us["tickers"]["ACME"]["status"] == "material" and us["tickers"]["ACME"]["s
       "N1: a reused stock keeps its status and sources; a results-only stock is quiet")
 check("**Results due** · Core (CORE) 5 Nov · Zed Industries (ZED) 4 Nov" not in summary
       and "**Results due** · Zed Industries (ZED) 4 Nov · Core (CORE) 5 Nov" in summary
-      and "Beta (BETA)" not in summary.split("Results due", 1)[1].split("\n")[0],
-      f"N2: the Results due line has the new dates by date; BETA's, shown by the earlier slot, is not repeated")
+      and "Zorp (ZORP)" not in summary.split("Results due", 1)[1].split("\n")[0],
+      f"N2: the Results due line has the new dates by date; ZORP's, shown by the earlier slot, is not repeated")
 check(us["tickers"]["CORE"].get("results_date") == "2026-11-05" and "RESULTS" not in summary,
       "N2: the date is stored on the stock (for tomorrow's 'shown once'), and no tag reaches the digest")
-check("**Big moves (5%+)** · 2 Nov: ▲ Acme (ACME) +7.2% · ▼ Zed Industries (ZED) -6.0% · ▼ Beta (BETA) -5.2%"
+check("**Big moves (5%+)** · 2 Nov: ▲ Acme (ACME) +7.2% · ▼ Zed Industries (ZED) -6.0% · ▼ Zorp (ZORP) -5.2%"
       " | 3 Nov: ▲ Zed Industries (ZED) +12.8%" in summary,
       f"N3: the Big moves line is in the digest ({summary!r})")
 check(us["tickers"]["CORE"].get("moves_checked") == ["2026-11-02"] and us["tickers"]["ACME"].get("moves") == {"2026-11-02": 7.2},
@@ -247,7 +247,7 @@ saved = []
 _nc = (nc.get_gemini_api_key, nc.load_watchlists, nc.build_news_summary, nc.save_news_summary,
        nc.load_discord_webhook, nc.load_news_summary)
 nc.get_gemini_api_key = lambda: "k"
-nc.load_watchlists = lambda: {"us_invested": ["ACME", "BETA"]}
+nc.load_watchlists = lambda: {"us_invested": ["ACME", "ZORP"]}
 nc.save_news_summary = lambda data: saved.append(data)
 nc.load_discord_webhook = lambda: None
 calls = []

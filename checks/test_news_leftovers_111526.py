@@ -49,7 +49,7 @@ def digest(statuses, as_of="2026-11-15"):
 state = {"file": None}
 sent = []
 nc.get_gemini_api_key = lambda: "k"
-nc.load_watchlists = lambda: {"us_invested": ["ACME", "ZED", "QUX", "BETA"]}
+nc.load_watchlists = lambda: {"us_invested": ["ACME", "ZED", "QUX", "ZORP"]}
 nc.load_news_summary = lambda: state["file"]
 nc.save_news_summary = lambda d: state.__setitem__("file", d)
 nc.load_discord_webhook = lambda: "https://discord.example/hook"
@@ -75,15 +75,15 @@ def run(statuses, as_of="2026-11-15", env=None):
 
 
 # --- L1 ---------------------------------------------------------------------------------------------
-code, msgs = run({"ACME": "material", "ZED": "quiet", "QUX": "quiet", "BETA": "failed"})
+code, msgs = run({"ACME": "material", "ZED": "quiet", "QUX": "quiet", "ZORP": "failed"})
 f = state["file"]
 check(code == 1 and any("digest" in m for m in msgs) and f["retry_pending"] and f["posted"] and not f["run_failed"],
       f"L1: 1 of 4 failed -> digest posted, saved retry_pending + posted, exit 1 ({code}, {f.get('retry_pending')}, {f.get('posted')})")
 check(any("1 stock could not be searched yet" in m for m in msgs), "L1: ...and the digest says one is still to be searched")
 
 # --- L2 ---------------------------------------------------------------------------------------------
-code, msgs = run({"ACME": "material", "ZED": "quiet", "QUX": "quiet", "BETA": "material"})
-check(code == 0 and len(msgs) == 1 and "follow-up" in msgs[0] and "news about BETA" in msgs[0]
+code, msgs = run({"ACME": "material", "ZED": "quiet", "QUX": "quiet", "ZORP": "material"})
+check(code == 0 and len(msgs) == 1 and "follow-up" in msgs[0] and "news about ZORP" in msgs[0]
       and "news about ACME" not in msgs[0] and "* digest" not in msgs[0],
       f"L2: the retry posts a follow-up with only the late stock, no second digest; exit 0 ({code}, {msgs})")
 check(state["file"]["retry_pending"] is False and state["file"]["posted"] is True, "L2: ...and the slot is complete")
@@ -91,20 +91,20 @@ check(state["file"]["retry_pending"] is False and state["file"]["posted"] is Tru
 # --- L3 ---------------------------------------------------------------------------------------------
 state["file"] = None
 X = {"ONE": "quiet", "TWO": "quiet"}          # 2 of 6 failed: under half, so the digest goes out
-run({"ACME": "quiet", "ZED": "failed", "QUX": "quiet", "BETA": "failed", **X})
-code, msgs = run({"ACME": "quiet", "ZED": "quiet", "QUX": "quiet", "BETA": "failed", **X})
+run({"ACME": "quiet", "ZED": "failed", "QUX": "quiet", "ZORP": "failed", **X})
+code, msgs = run({"ACME": "quiet", "ZED": "quiet", "QUX": "quiet", "ZORP": "failed", **X})
 check(code == 1 and msgs == [] and state["file"]["retry_pending"] and state["file"]["posted"],
       f"L3: one leftover quiet, one still failing -> nothing posted, exit 1 to try again ({code}, {msgs})")
-code, msgs = run({"ACME": "quiet", "ZED": "quiet", "QUX": "quiet", "BETA": "material", **X})
-check(code == 0 and len(msgs) == 1 and "news about BETA" in msgs[0] and "ZED" not in msgs[0],
+code, msgs = run({"ACME": "quiet", "ZED": "quiet", "QUX": "quiet", "ZORP": "material", **X})
+check(code == 0 and len(msgs) == 1 and "news about ZORP" in msgs[0] and "ZED" not in msgs[0],
       "L3: the next retry gets the last one: only it is posted (the one found quiet earlier is not repeated)")
 
 # --- L4 ---------------------------------------------------------------------------------------------
 state["file"] = None
-code, msgs = run({"ACME": "failed", "ZED": "failed", "QUX": "quiet", "BETA": "material"})
+code, msgs = run({"ACME": "failed", "ZED": "failed", "QUX": "quiet", "ZORP": "material"})
 check(code == 1 and msgs == [] and state["file"]["run_failed"] and not state["file"]["posted"],
       "L4: half failed -> nothing posted (as before), exit 1")
-code, msgs = run({"ACME": "material", "ZED": "failed", "QUX": "quiet", "BETA": "material"})
+code, msgs = run({"ACME": "material", "ZED": "failed", "QUX": "quiet", "ZORP": "material"})
 check(code == 1 and any("* digest" in m for m in msgs) and state["file"]["posted"] and state["file"]["retry_pending"],
       "L4: the retry that gets most through posts the FULL digest, and still leaves the last one pending")
 
@@ -113,21 +113,21 @@ before = dict(state["file"])
 code, msgs = run({"ACME": "quiet"}, env={"REFRESH_LIMIT": "1", "REFRESH_MARKETS": ""})
 check(msgs == [] and state["file"]["retry_pending"] == before["retry_pending"] and state["file"]["posted"] == before["posted"],
       "L5: a partial run posts nothing and keeps the slot's flags")
-code, msgs = run({"ACME": "quiet", "ZED": "quiet", "QUX": "quiet", "BETA": "quiet"}, as_of="2026-11-16")
+code, msgs = run({"ACME": "quiet", "ZED": "quiet", "QUX": "quiet", "ZORP": "quiet"}, as_of="2026-11-16")
 check(code == 0 and any("* digest" in m for m in msgs) and state["file"]["posted"] and not state["file"]["retry_pending"],
       "L5: the next slot's run is a fresh digest, not a follow-up")
 
 # --- L6 ---------------------------------------------------------------------------------------------
 from datetime import date
 
-prev = {**digest({"ACME": "material", "ZED": "quiet", "BETA": "failed"}), "retry_pending": True, "posted": True}
+prev = {**digest({"ACME": "material", "ZED": "quiet", "ZORP": "failed"}), "retry_pending": True, "posted": True}
 reused = ns.reusable_outcomes(prev, date(2026, 11, 15))
 check(set(reused) == {"ACME", "ZED"}, f"L6: a retry_pending slot's searched stocks are reused, the failed one is not ({sorted(reused)})")
 check(ns.reusable_outcomes({**prev, "retry_pending": False}, date(2026, 11, 15)) == {}
       and ns.reusable_outcomes(prev, date(2026, 11, 16)) == {},
       "L6: nothing is reused from a complete digest or from another slot")
-fu = ns.build_followup_messages(digest({"ACME": "material", "BETA": "material", "ZED": "quiet"}), {"BETA", "ZED"})
-check(len(fu) == 1 and "news about BETA" in fu[0] and "ACME" not in fu[0] and "follow-up" in fu[0],
+fu = ns.build_followup_messages(digest({"ACME": "material", "ZORP": "material", "ZED": "quiet"}), {"ZORP", "ZED"})
+check(len(fu) == 1 and "news about ZORP" in fu[0] and "ACME" not in fu[0] and "follow-up" in fu[0],
       "L6: the follow-up names only the late stocks with news")
 check(ns.build_followup_messages(digest({"ZED": "quiet"}), {"ZED"}) == [], "L6: late stocks with no news -> no message")
 
