@@ -181,6 +181,10 @@ g = run_news({"searched": 51, "failed": 25})
 check(g["exit"] == 1 and not g.get("sent") and g.get("saved"),
       f"F2: 25/51 failed -> saved for diagnosis, NOT posted, exit 1 so the gate retries ({g.get('exit')}, sent={g.get('sent')})")
 g = run_news({"searched": 51, "failed": 3})
+# Since 2026-11-15 the 3 leftovers make the run exit 1, so the slot's next hourly retry searches them.
+check(g["exit"] == 1 and g.get("sent") and g["saved"].get("retry_pending") is True,
+      "F2: a run with a few failures still posts, and leaves them to the next hourly retry")
+g = run_news({"searched": 51, "failed": 0})
 check(g["exit"] == 0 and g.get("sent"), "F2: a normal run still posts and succeeds")
 
 # --- F3 / F4 the slot gate -----------------------------------------------------

@@ -70,9 +70,9 @@ for step in ("N2", "E2", "F3"):
 want = llm_util.sequential_tiers([(F37, 2), (F36, 2), (L, 2)])
 check(two(ms.tiers("N3", CLEAN)) == want and [t[0] for t in ms.tiers("N3", CLEAN)] == [F37, F37, F36, F36, L, L],
       f"S1: N3 is 3.7, 3.6 and flash-lite twice each, one after the other (owner, 2026-11-01): {ms.tiers('N3', CLEAN)}")
-want = llm_util.sequential_tiers([(F38, 2), (F36, 2)])
-check(two(ms.tiers("R1", CLEAN)) == want, "S1: R1 is 3.8-flash x2, then 3.6-flash x2 (no flash-lite)")
-check([t[0] for t in ms.tiers("R2", CLEAN)] == [F38] * 2 + [F36] * 2, f"S1: R2 is 3.8-flash x2, then 3.6-flash x2 (owner, 2026-11-01): {[t[0][-9:] for t in ms.tiers('R2', CLEAN)]}")
+want = llm_util.sequential_tiers([(F38, 2), (ms.HYDROGEN, 2), (F36, 2)])
+check(two(ms.tiers("R1", CLEAN)) == want, "S1: R1 is 3.8-flash x2, Hydrogen x2 (owner, 2026-11-15), then 3.6-flash x2 (no flash-lite)")
+check([t[0] for t in ms.tiers("R2", CLEAN)] == [F38] * 2 + [ms.HYDROGEN] * 2 + [F36] * 2, f"S1: R2 is 3.8-flash x2, Hydrogen x2, then 3.6-flash x2: {[t[0][-9:] for t in ms.tiers('R2', CLEAN)]}")
 check(llm_util.RETRY_BACKOFF_SECONDS == 5 and [llm_util.retry_wait(n) for n in range(7)] == [0, 5, 10, 20, 30, 30, 30],
       "S1: the wait before a retry doubles from the base and stops at 30 s (the base is read at call time)")
 llm_util.RETRY_BACKOFF_SECONDS = 2
@@ -149,8 +149,9 @@ check(changes["ai_models"] == {"N2": {"chain": [{"model": G, "attempts": 1}]}} a
 check("news_reasoning_model" not in ms.reset_changes({}, "N3") and ms.reset_changes({}, "N3")["news_collation_model"] == F37,
       "S4: resetting collation leaves the filter's model alone (it is only collation's last resort)")
 repo = ms.repository(CLEAN)
-check([m["id"] for m in repo] == [F38, F37, F36, "models/gemini-3.5-flash", L, G] and not repo[-1]["supports_thinking"],
-      "S4: the default repository, Gemma without thinking")
+check([m["id"] for m in repo] == [F38, ms.HYDROGEN, F37, F36, "models/gemini-3.5-flash", L, G] and not repo[-1]["supports_thinking"]
+      and repo[1]["supports_thinking"] and repo[1]["default_budget"] == 4096,
+      "S4: the default repository (Hydrogen after 3.8, with thinking), Gemma without thinking")
 custom = {"ai_model_repository": [{"id": "gemini-9-flash", "label": "Nine"}, {"id": G, "supports_thinking": False}, {"nope": 1}]}
 check([m["id"] for m in ms.repository(custom)] == ["models/gemini-9-flash", G] and ms.repository(custom)[0]["supports_thinking"],
       "S4: a saved repository replaces the default, ids get their prefix, junk is dropped")
@@ -291,7 +292,7 @@ seen_timeouts = []
 real_gwt = llm_util.generate_with_timeout
 
 
-def fake_gwt(client, model, contents, config, timeout=None, avoid_key=None):
+def fake_gwt(client, model, contents, config, timeout=None, avoid_key=None, **_):
     seen_timeouts.append((model, timeout))
     raise RuntimeError("503 UNAVAILABLE")
 
@@ -305,7 +306,7 @@ check(seen_timeouts == [(F38, 90), (F36, 40), (L, 120)],
       f"S7: the ladder gives each call its rung's timeout, and the ladder's own to a rung without one ({seen_timeouts})")
 
 seen_timeouts.clear()
-news_summary._generate_with_timeout = lambda client, model, prompt, config, timeout=None, avoid_key=None: (
+news_summary._generate_with_timeout = lambda client, model, prompt, config, timeout=None, avoid_key=None, **_: (
     seen_timeouts.append((model, timeout)) or (_ for _ in ()).throw(RuntimeError("503 stop")))
 try:
     news_summary.fetch_single_raw_news(None, "ACME", "us_invested", "2026-10-03", tiers=[(F38, 0, 33), (F36, 0, 44)])

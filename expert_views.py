@@ -101,12 +101,15 @@ def fetch_gemma_expert_news(client, ticker, market, company_name, is_retry=False
     grounding_tool = types.Tool(google_search=types.GoogleSearch())
     config = types.GenerateContentConfig(tools=[grounding_tool])
 
+    check = llm_util.SearchReplyCheck()
+
     def _searched(resp):
         # A refusal is not an answer: raise, and the ladder retries on the next
         # attempt (another key). An ordinary error is retryable (is_retryable).
         if search_refused(getattr(resp, "text", "")):
             raise ValueError("search refused: answered from its training cutoff instead of searching")
-        return resp
+        # Tool-call text is a failed try; "nothing" without a search gets one more try (owner, 2026-11-15).
+        return check(resp)
 
     from stock_data import load_settings
     resp, used = llm_util.run_model_ladder(

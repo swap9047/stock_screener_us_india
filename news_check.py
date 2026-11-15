@@ -31,6 +31,8 @@ from news_summary import (
     build_news_summary,
     save_news_summary,
     build_discord_messages,
+    build_followup_messages,
+    failed_tickers,
     load_news_summary,
 )
 
@@ -75,6 +77,8 @@ def main():
           + (" (partial run)..." if partial else "..."))
     # A partial run never reuses a failed run's results: it is a smoke test of the
     # pipeline, so it searches what it was given.
+    # This slot's earlier run, if any: what it posted and which stocks it could not search.
+    previous = load_news_summary() or {}
     news_data = build_news_summary(watchlists, api_key, reuse_failed_run=not partial)
     totals = news_data.get("totals", {})
     # A run where every ticker threw used to be byte-indistinguishable from a
@@ -91,17 +95,27 @@ def main():
     # the day's only digest. Decided before SAVING too (2026-11-01): the file is
     # marked run_failed, and the retry searches only the stocks that failed
     # (news_summary.reusable_outcomes).
+    #
+    # Leftovers (owner, 2026-11-15): with fewer than half failed, the digest goes out, but the stocks that
+    # could not be searched used to stay unsearched for the day -- 16 of 38 on 2026-11-10, 9 on 11-13, when
+    # Google's search model returned 500 for most calls. Now the run is marked retry_pending and exits 1, so
+    # the Worker's next hourly dispatch for the slot runs again; that run reuses every stock already searched
+    # (reusable_outcomes), searches only the leftovers, and -- the digest being out (`posted`) -- posts a
+    # short follow-up with any news they have instead of a second digest.
     searched = totals.get("searched", 0)
     failed = totals.get("failed", 0)
     run_failed = bool(searched and failed >= max(1, searched // 2))
-    to_save = {**news_data, "run_failed": run_failed}
+    same_slot = previous.get("as_of") == news_data.get("as_of")
+    already_posted = bool(same_slot and previous.get("posted"))
+    retry_pending = bool(not partial and failed)
+    to_save = {**news_data, "run_failed": run_failed, "retry_pending": retry_pending, "posted": already_posted}
     if partial:
-        previous = load_news_summary() or {}
-        # A smoke test neither fails a slot nor clears a failed one: keep the flag --
-        # for the SAME slot only. Carried onto a new slot's date it would make that
+        # A smoke test neither fails a slot nor clears a failed one: keep the flags --
+        # for the SAME slot only. Carried onto a new slot's date they would make that
         # slot's first scheduled run reuse the older slot's records as its own.
-        same_slot = previous.get("as_of") == news_data.get("as_of")
         to_save = {**news_data, "run_failed": bool(same_slot and previous.get("run_failed")),
+                   "retry_pending": bool(same_slot and previous.get("retry_pending")),
+                   "posted": already_posted,
                    "markets": {**(previous.get("markets") or {}), **(news_data.get("markets") or {})}}
     save_news_summary(to_save)
     print(f"Saved news_summary.json (as_of {news_data['as_of']}). Totals: {totals}")
@@ -118,6 +132,20 @@ def main():
         print("Partial run -- summary was NOT sent to Discord.")
     elif run_failed:
         print("Search largely failed -- summary was NOT sent to Discord (the slot gate retries the run).")
+    elif already_posted:
+        # The digest went out on an earlier run of this slot: only the stocks it could not search are news now.
+        late = failed_tickers(previous) - failed_tickers(news_data)
+        messages = build_followup_messages(news_data, late)
+        if not late:
+            print("Digest already posted for this slot; no stock that failed then was searched now.")
+        elif not messages:
+            print(f"Digest already posted; {len(late)} stock(s) searched late, none with news -- nothing to post.")
+        elif webhook:
+            ok, detail = send_discord_batch(webhook, messages, stop_on_failure=False)
+            print(f"Posted a follow-up for {len(late)} stock(s) searched late." if ok
+                  else f"Failed to send the follow-up to Discord -- {detail}")
+        else:
+            print("No DISCORD_WEBHOOK_URL / discord_config.json set -- the follow-up was NOT sent to Discord.")
     elif webhook:
         messages = build_discord_messages(news_data)
         if messages:
@@ -128,6 +156,10 @@ def main():
             # messages mid-digest once the 429 retries ran out.
             ok, detail = send_discord_batch(webhook, messages, stop_on_failure=False)
             print("Sent to Discord." if ok else f"Failed to send to Discord -- {detail}")
+            if ok:
+                # Saved again with the flag, so this slot's retry posts a follow-up, never a second digest.
+                to_save["posted"] = True
+                save_news_summary(to_save)
         else:
             print("No summary content to send.")
     else:
@@ -135,6 +167,12 @@ def main():
 
     if run_failed:
         print(f"ERROR: {failed}/{searched} tickers failed their news search -- treating this run as failed.")
+        sys.exit(1)
+    if retry_pending:
+        # Red on purpose: the slot gate counts only a successful run as the slot's work, so the Worker's next
+        # hourly dispatch (8 of them after 6 AM ET) runs again and searches just these.
+        print(f"::warning::{failed}/{searched} ticker(s) could not be searched -- the slot's next hourly retry "
+              "searches only those and posts any news as a follow-up.")
         sys.exit(1)
 
 if __name__ == "__main__":

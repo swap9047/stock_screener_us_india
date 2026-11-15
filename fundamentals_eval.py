@@ -185,9 +185,11 @@ def fetch_fundamental_news(client, ticker, market, company_name, is_retry=False,
     resp, used = llm_util.run_model_ladder(
         client, prompt, model_settings.tiers("F1", load_settings()),
         lambda m: config, label="fundamental-search", subject=ticker, timeout=llm_util.SEARCH_TIMEOUT_SECONDS,
+        # Tool-call text is a failed try; "nothing" without a search gets one more try (owner, 2026-11-15).
+        on_success=llm_util.SearchReplyCheck(),
     )
     if used is not None:
-        text = (resp.text or "").strip()
+        text = "" if llm_util.unsearched_nothing(resp) else (resp.text or "").strip()
         return (text or "No recent fundamental news found."), SEARCH_SOURCE_LABELS.get(used, f"🔍 {used} (Google Search)")
     if not is_retry:
         raise TimeoutError("Search timed out. Add to retry queue.")
@@ -931,8 +933,9 @@ def fetch_targeted_earnings_numbers(client, ticker, company_name, market, announ
         client, prompt,
         model_settings.tiers("F2", load_settings()),
         lambda m: config, label="targeted-earnings", subject=ticker,
+        on_success=llm_util.SearchReplyCheck(),
     )
-    if used is None:
+    if used is None or llm_util.unsearched_nothing(resp):
         return ""
     return (resp.text or "").strip()
 
