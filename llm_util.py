@@ -861,3 +861,34 @@ def pending_only():
     ticker name goes into this public repo's Actions logs, which print each step's
     env verbatim."""
     return os.environ.get("REFRESH_PENDING_ONLY", "").strip().lower() == "true"
+
+
+def kept_previous(store, before):
+    """How many of `before`'s tickers ({ticker: the view object it held when the run
+    started}) still hold that very object -- i.e. the run wrote nothing new for them.
+    Judged by the outcome, not by which failure path a ticker took: a kept prior, a
+    second timeout and a stock skipped after the fuse tripped all leave the object
+    in place. A ticker that had no view before the run is not counted (a failure
+    writes it a stub, which the job's own failure count covers)."""
+    return sum(1 for tk, old in before.items() if old is not None and store.get(tk) is old)
+
+
+def leftover_warning(job, analysed, kept, no_source=0, kept_what="view"):
+    """The one line a nightly AI job ends with when some stocks did not get a fresh
+    result, as a GitHub `::warning::` annotation (shown on the run's summary page);
+    None when every stock did.
+
+    Owner, 2026-11-16: on 2026-11-14 Google's search model failed hundreds of calls;
+    12 of 136 Sentiment views and 2 Expert Take write-ups kept the previous night's
+    text and 14 Expert Takes were written with no news, yet both runs were green and
+    said so only in scattered per-stock lines. Counts only: this repo's logs are
+    public."""
+    parts = []
+    if kept:
+        parts.append(f"{kept} of {analysed} stock(s) kept their previous {kept_what} "
+                     "(the search or the model failed for them)")
+    if no_source:
+        parts.append(f"{no_source} were written with no news (the search failed)")
+    if not parts:
+        return None
+    return f"::warning::{job}: " + "; ".join(parts) + "."

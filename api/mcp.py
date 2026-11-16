@@ -101,7 +101,7 @@ TOOLS = [
         "description": (
             "Every tab of the user's stock screener -- watchlists and the holdings lists (India Invested, US Invested), "
             "plus groups combining them -- with how many stocks each holds, its benchmark and its latest breadth "
-            "(% of its stocks above the 200- and 50-day averages, and how many are 10 / 20 / 30 / 50%+ below their "
+            "(% of its stocks above the 200- and 50-day averages, and how many are 10 / 20 / 30 / 40%+ below their "
             "52-week high), and the indexes with breadth. Call first for any "
             "question about the user's watchlists or portfolio, then get_watchlist."),
         "inputSchema": {"type": "object", "properties": {}},

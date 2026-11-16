@@ -38,7 +38,7 @@ for a model (Google's `...PerDay...` quota id) is retired for that model for the
 run, and once every key is out the ladder steps to its fallback model at once. Before
 2026-10-23 a daily-exhausted key rejoined every 120 s and failed again.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 2528
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 2544
 offline regression checks in ~60 s (no secrets, no network, no data files), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the
 private data repo or a live API is run by hand — see `checks/README.md`. Changes are also
@@ -63,7 +63,7 @@ verified by rendering the app headlessly; recipe at the bottom.
 | `filters.py` | 485 | The boolean condition engine — shared by UI filters **and** background alerts |
 | `breadth_charts.py` | 222 | Plotly building blocks for the News tab's breadth / highs-lows / drawdown / return panels (both views; the drawdown row, 2026-10-30, is four lines, % of stocks 10 / 20 / 30 / 40%+ below their 52-week high), and the phone behaviour (`is_mobile`: stacked panels, no zoom or drag) |
 | `breadth_math.py` | 167 | Breadth maths (% above the 200-day and 50-day SMAs, 52-week highs/lows, % of stocks at least `DRAWDOWN_LEVELS` 10 / 20 / 30 / 40% below their 52-week high of closes -- `drawdown` / `drawdown_history`, owner 2026-10-30, 40% replacing 50% the same day -- per-day denominators), each over a stock's OWN sessions, so a mixed India + US group counts right — shared by the index-breadth job **and** the app's per-watchlist breadth view; `assemble_closes` builds a watchlist's panel from `dashboard_perf.json` |
-| `llm_util.py` | 863 | Shared Gemini-call plumbing (timeout wrapper, retry/model-ladder logic, `FailureFuse`, key rotation) for the three AI pipelines. **Searches that did not search** (owner, 2026-11-15): Gemma 26b often answers a grounded search with an empty reply or a "No news found." line and no search in its grounding metadata (4 of 10 stocks on 2026-11-13 that another model found news for), yet it never records a search for a stock that really is quiet either (7 of 7 over a weekend), so a missing search cannot mean failure on its own. `SearchReplyCheck` (the N1 loop, E1, F1, F2) gives such a reply ONE more try on another key and then takes it as quiet (`RecheckReply`: `run_model_ladder` returns the held reply when no later rung answers); leftover tool-call text (`{"action": "google_search", ...}`) is always a failed, retryable try (`UnusableSearchReply`). `generate_with_timeout(..., key_sink=)` reports the key that served a reply, so a rejected reply is retried on another key |
+| `llm_util.py` | 894 | Shared Gemini-call plumbing (timeout wrapper, retry/model-ladder logic, `FailureFuse`, key rotation) for the three AI pipelines. **Searches that did not search** (owner, 2026-11-15): Gemma 26b often answers a grounded search with an empty reply or a "No news found." line and no search in its grounding metadata (4 of 10 stocks on 2026-11-13 that another model found news for), yet it never records a search for a stock that really is quiet either (7 of 7 over a weekend), so a missing search cannot mean failure on its own. `SearchReplyCheck` (the N1 loop, E1, F1, F2) gives such a reply ONE more try on another key and then takes it as quiet (`RecheckReply`: `run_model_ladder` returns the held reply when no later rung answers); leftover tool-call text (`{"action": "google_search", ...}`) is always a failed, retryable try (`UnusableSearchReply`). `generate_with_timeout(..., key_sink=)` reports the key that served a reply, so a rejected reply is retried on another key. `leftover_warning` / `kept_previous` (owner, 2026-11-16) build the one `::warning::` line the two nightly jobs end with when stocks kept the previous night's view (below) |
 | `weekly_wrapup.py` | 365 | Weekly Discord digest |
 | `custom_columns.py` | 294 | User-defined formula columns |
 | `ticker_notes.py` | 117 | Per-ticker notes and manual flags. (`signal` was retired on 2026-10-04; the ticker dot is Expert Take's colour) |
@@ -526,6 +526,14 @@ news digest) -- serial runs had reached 4-6 h against GitHub's 360-minute job li
 SCHEDULED full run resumes: it skips tickers with a valid view written since tonight's 1 AM
 ET slot (`slot_start_utc`, `written_since`), so a retry after the fuse or the 6-hour cap does
 not redo finished work. Manual, scoped and limited runs redo everything.
+
+**A green nightly run can still leave stocks stale** (owner, 2026-11-16). Below the fuse's 10 in a row, a stock whose
+search or model call failed keeps its previous view and the run is green: on 2026-11-14 Google's search model failed
+hundreds of calls, 12 of 136 Sentiment views and 2 Expert Take write-ups kept the night before's text, and 14 Expert Takes
+were written with no news. Each job now ends with one `::warning::` annotation with those counts (`llm_util.leftover_warning`;
+counted by what the store holds at the end, `kept_previous`; none on a clean run), and the three search steps `E1`, `F1`
+and `F2` are saved at 6 tries in Settings · Models, as `N1` is (the default in `model_settings.STEPS` is still 3). A stale
+stock is not retried until the next night: only the news job re-runs its leftovers.
 
 `alerts.ALLOWED_HOURS` must match the alert gate's `slots`, or the app's schedule picker
 would offer an hour nothing wakes up for. `daily-alerts.yml`'s gate also asks

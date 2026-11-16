@@ -8,6 +8,7 @@ what is not on screen:
   P3  the Expert Views cards are built only while their expander is open.
 Desktop must render exactly as before:
   D1  every tab's table is built, and the Expert Views cards with them.
+  B1  (2026-11-16) a stock with no Reported Qtr / VStop Dir shows "—" there, not "nan".
 
 The app is rendered with AppTest from a throwaway copy of the repo, over a
 snapshot that the app's own fetch_all_markets computed from synthetic prices
@@ -111,6 +112,17 @@ sd.save_data_snapshot(_as_of, _per_market, settings=_settings)
 check(sd.snapshot_is_usable(sd.load_data_snapshot(), sd.load_watchlists(), _settings),
       "fixture: the synthetic snapshot is usable (no live fetch during the render)")
 
+# B1 fixture: one stock with no Reported Qtr and no VStop direction, beside others
+# that have them -- on 2026-11-15 such a cell printed "nan" on the real tables.
+_snap = json.load(open("data_snapshot.json"))
+_rows = _snap["per_market"]["wl1"]
+for _r in _rows:
+    _r["reported_qtr"] = "Q2 FY27"
+    _r["vstop_weekly_direction"] = "Up"
+_rows[0]["reported_qtr"] = None
+_rows[0]["vstop_weekly_direction"] = None
+json.dump(_snap, open("data_snapshot.json", "w"))
+
 # --- render helpers ---------------------------------------------------------------
 import breadth_charts
 from streamlit.testing.v1 import AppTest
@@ -146,6 +158,12 @@ def cards(at):
     return sum("<b>Headline:</b>" in b.value for b in at.markdown)
 
 
+def cell_texts(at):
+    """Every table cell's visible text."""
+    return [re.sub(r"<[^>]+>", "", c).strip() for b in at.markdown if "<table" in b.value
+            for c in re.findall(r"<td[^>]*>(.*?)</td>", b.value, flags=re.S)]
+
+
 # --- D1 desktop: unchanged ------------------------------------------------------
 at = render(phone=False)
 if ok_run(at, "D1 desktop render"):
@@ -153,6 +171,12 @@ if ok_run(at, "D1 desktop render"):
           "D1: desktop builds every tab's table (7 watchlists + 2 combined)")
     check(cards(at) == 7 * N + 5 * N,
           f"D1: desktop builds the Expert Views cards for every tab as before ({cards(at)})")
+    # B1 (2026-11-16): a blank in a text column is "—", never pandas' "nan"/"None".
+    texts = cell_texts(at)
+    check("Q2 FY27" in texts and "Up" in texts,
+          "B1 fixture: the Reported Qtr and VStop Dir columns are on the table")
+    bad = [t for t in texts if t.lower() in ("nan", "none")]
+    check(not bad, f"B1: no table cell reads nan / None ({len(bad)} do)")
 
 # --- P1-P3 phone ------------------------------------------------------------------
 at = render(phone=True)

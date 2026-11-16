@@ -391,6 +391,9 @@ def main():
         with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_CONCURRENT_TICKERS) as pool:
             return [r for r in pool.map(lambda e: _analyse(e, is_retry), entries) if r]
 
+    # What each planned ticker held before the run, to count at the end how many
+    # were left with it (llm_util.kept_previous).
+    held_before = {entry[3]: expert_views.get(entry[3]) for entry in plan}
     print(f"[{_ts()}] Analysing {len(plan)} ticker(s), {MAX_CONCURRENT_TICKERS} at a time")
     retry_queue = _run_all(plan)
 
@@ -405,6 +408,13 @@ def main():
         print(f"Sentiment generated first for {len(sentiment_written)} ticker(s) that had none.")
     print(f"No-Source Fallbacks: {counters['fallback']} times.")
     print(f"Final failures: {counters['failed']}.")
+    # One annotation when some stocks kept last night's write-up or were written
+    # without news: the run is green either way (owner, 2026-11-16).
+    leftover = llm_util.leftover_warning(
+        "Expert Take", len(plan), llm_util.kept_previous(expert_views, held_before),
+        no_source=counters["fallback"], kept_what="write-up")
+    if leftover:
+        print(leftover)
     # Per-key calls and failures, worst key first -- see usage_summary.
     llm_util.log_key_usage(client)
     fuse.exit_if_tripped()
