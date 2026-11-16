@@ -234,6 +234,9 @@ def main():
 
     store_lock = threading.Lock()
     counters = {"processed": 0, "failed": 0}
+    # What each planned ticker held before the run, to count at the end how many
+    # were left with it (llm_util.kept_previous).
+    held_before = {entry[3]: fundamentals.get(entry[3]) for entry in plan}
 
     fuse = llm_util.FailureFuse()
 
@@ -321,6 +324,12 @@ def main():
     print(f"\n[{_ts()}] Fundamentals refresh complete.")
     print(f"Processed: {total_processed}")
     print(f"Failed: {total_failed}")
+    # One annotation when some stocks kept last night's view: the run is green
+    # either way, and the per-stock lines are easy to miss (owner, 2026-11-16).
+    leftover = llm_util.leftover_warning(
+        "Sentiment", len(plan), llm_util.kept_previous(fundamentals, held_before))
+    if leftover:
+        print(leftover)
     # Per-key calls and failures, worst key first -- see usage_summary.
     llm_util.log_key_usage(client)
     fuse.exit_if_tripped()

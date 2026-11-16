@@ -4876,6 +4876,11 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             df.style
             .hide(axis="index")
             .apply(lambda row: style_row(row, labels), axis=1)
+            # First, for every column: a blank shows as "—". The formats below
+            # replace it for their own columns; a TEXT column with no format of
+            # its own (Reported Qtr, VStop Dir) used to print "nan" for a stock
+            # without the value (7 cells on 2026-11-15).
+            .format(na_rep="—")
             .format(_price_fmt, subset=price_cs + custom_price_cs, na_rep="—")
             .format("{:.1f}", subset=ratio_cs, na_rep="—")
             .format("{:,.0f}", subset=vol_cols, na_rep="—")
