@@ -705,9 +705,12 @@ def alerts_text_for(alerts_by_ticker, ticker):
     return alerts_by_ticker.get(ticker, "")
 
 
-def evaluate_and_fire(all_rules, snapshot_results, state, metric_labels=None, due_rules=None):
+def evaluate_and_fire(all_rules, snapshot_results, state, metric_labels=None, due_rules=None,
+                      message_rules=None):
     """Evaluation used by the scheduled alert_check.py run.
-    Returns (messages list, updated_state dict). `all_rules` is the COMPLETE
+    Returns (messages list, updated_state dict). A list passed as `message_rules`
+    gets one rule id per message, in order, so the caller can tell which rule a
+    message that failed to send belonged to. `all_rules` is the COMPLETE
     ruleset -- needed so rule->rule references resolve even when the
     referenced rule isn't due today. `due_rules` (default: all_rules) is the
     subset that actually fires. `messages` is one Discord-ready table PER RULE
@@ -774,7 +777,10 @@ def evaluate_and_fire(all_rules, snapshot_results, state, metric_labels=None, du
     for rule_id, tickers in reported_by_rule.items():
         rule = rules_by_id.get(rule_id)
         if rule:
-            messages.extend(build_discord_messages_for_rule(rule, tickers, by_ticker, metric_labels))
+            built = build_discord_messages_for_rule(rule, tickers, by_ticker, metric_labels)
+            messages.extend(built)
+            if message_rules is not None:
+                message_rules.extend([rule_id] * len(built))
 
     return messages, new_state
 
@@ -1093,7 +1099,7 @@ def with_disclaimer(messages):
     return messages
 
 
-def send_discord_batch(webhook_url, messages, stop_on_failure=True):
+def send_discord_batch(webhook_url, messages, stop_on_failure=True, failed=None):
     """Posts each of `messages` in order via _post_discord, pacing them
     slightly (see DISCORD_BATCH_PACING_SECONDS) so a multi-message batch
     -- the weekly wrap-up especially -- mostly avoids Discord's rate limit
@@ -1115,14 +1121,24 @@ def send_discord_batch(webhook_url, messages, stop_on_failure=True):
 
     Every batch ends with the DISCLAIMER footer (with_disclaimer) -- all
     Discord output (alerts, wrap-up, news digest, the app's buttons) comes
-    through here, so this is the one place it is added."""
+    through here, so this is the one place it is added.
+
+    A list passed as `failed` gets the index (into `messages`) of every message
+    that did not reach Discord -- with stop_on_failure, the failing one and every
+    one after it. The footer sent as a message of its own is not one of
+    `messages` and is never listed."""
     first_detail = ""
+    count = len(messages)
     for idx, content in enumerate(with_disclaimer(messages)):
         if idx > 0:
             time.sleep(DISCORD_BATCH_PACING_SECONDS)
         ok, detail = _post_discord(webhook_url, content)
         if not ok:
             if stop_on_failure:
+                if failed is not None:
+                    failed.extend(range(idx, count))
                 return False, detail
+            if failed is not None and idx < count:
+                failed.append(idx)
             first_detail = first_detail or detail
     return (not first_detail), first_detail

@@ -276,10 +276,17 @@ def build_wrapup(rules, snapshot_results, state, metric_labels=None,
     }
 
 
-def advance_state(state, wrapup, run_date=None):
+def advance_state(state, wrapup, run_date=None, unjudged=None):
     """The ONLY writer of tenure. Returns a new state dict -- keeps the
     entered date for every ticker already present, stamps run_date on every
     newly present one, and drops everything that didn't match this run.
+
+    `unjudged` is the tickers still in a watchlist that had NO ROW this run
+    (Yahoo returned nothing for them): they could not match or fail anything,
+    so their entries for the rules in this wrap-up are carried over as they
+    are. Dropping them reset "weeks in the list" to 0 for a stock that missed
+    one Sunday's fetch. The daily alerts keep their state the same way
+    (alerts.prune_state: membership, not tonight's rows).
 
     Call this exactly once per authoritative (scheduled) run, and only after
     the digest has actually been delivered -- advancing on a run nobody
@@ -295,6 +302,13 @@ def advance_state(state, wrapup, run_date=None):
             entries[key] = {
                 "entered": existing.get("entered") if existing else run_date.isoformat()
             }
+    if unjudged:
+        rule_ids = {alert["rule_id"] for alert in wrapup["alerts"]}
+        unjudged = set(unjudged)
+        for key, value in prev.items():
+            rule_id, _, ticker = key.partition(":")
+            if key not in entries and rule_id in rule_ids and ticker in unjudged:
+                entries[key] = value
     return {"last_run": run_date.isoformat(), "entries": entries}
 
 

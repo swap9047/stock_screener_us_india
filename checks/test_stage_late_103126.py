@@ -86,10 +86,14 @@ try:
     check(ac.post_late_stage_notice() is False, "a broken stage file never raises (the night's alerts still run)")
 finally:
     sa.load_stage_analysis = _real_load
+# Since 2026-11-16 the notice follows the rule check instead of leading it: posted first, it went out
+# again on every hourly retry of a run that then failed its data check. It is still posted when the
+# check returns early for no rules due (checks/test_review_fixes_111626.py N1-N4 run it).
 src = (REPO / "alert_check.py").read_text()
-main_body = src.split("def main():", 1)[1]
-check(main_body.lstrip().startswith("post_late_stage_notice()"),
-      "alert_check.main posts the notice first, before it returns for no rules due")
+main_body = src.split("def main():", 1)[1].split("\ndef check_rules():", 1)[0]
+check("check_rules()" in main_body and main_body.count("post_late_stage_notice()") == 2
+      and main_body.find("check_rules()") < main_body.find("post_late_stage_notice()"),
+      "alert_check.main posts the notice after the rule check, including when it returns for no rules due")
 
 # --- the gate counts a late upload as due -------------------------------------------------
 wf = (REPO / ".github/workflows/daily-alerts.yml").read_text()

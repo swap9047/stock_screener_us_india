@@ -161,7 +161,11 @@ def main():
               "counters left unchanged; will retry next run.")
         return
 
-    save_wrapup_state(advance_state(state, wrapup, run_date=run_date))
+    # A watchlist stock with no row this run could not be judged: its counters
+    # are carried, not reset (advance_state's `unjudged`).
+    judged = {r.get("ticker") for r in combined}
+    unjudged = {t for tickers in watchlists.values() for t in tickers} - judged
+    save_wrapup_state(advance_state(state, wrapup, run_date=run_date, unjudged=unjudged))
     print(f"Sent {len(messages)} message(s) to Discord and advanced tenure state "
           f"({len(wrapup['rollup'])} stock(s) tracked).")
 

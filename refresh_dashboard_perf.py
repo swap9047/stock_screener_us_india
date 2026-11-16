@@ -33,6 +33,7 @@ price-only here too, so both markets compare like with like.
 
 import io
 import json
+import math
 import os
 import time
 from contextlib import redirect_stderr
@@ -94,7 +95,14 @@ def _download_series(tickers):
 
     # A demerger's overnight gap Yahoo left unadjusted is back-adjusted, as in the snapshot (price_gaps.py), so
     # the charts, the watchlist breadth and Claude chat's price history read the same prices as the table.
-    return {t: price_gaps.adjust_series(s, t)[0] for t, s in series.items()}
+    out = {}
+    for t, s in series.items():
+        out[t], found = price_gaps.adjust_series(s, t)
+        if found:
+            GAPS_FOUND[t] = [(d.strftime("%Y-%m-%d"), float(r)) for d, r in found]
+        else:
+            GAPS_FOUND.pop(t, None)
+    return out
 
 
 # Below this share of a market's requested series actually captured, the run is
@@ -129,6 +137,44 @@ def keep_recent_closes(new, old, today=None):
     floor = (pd.Timestamp(today) - pd.Timedelta(days=KEEP_RECENT_DAYS)).strftime("%Y-%m-%d")
     kept = {d: v for d, v in old.items() if d >= floor and d not in new}
     return dict(sorted({**new, **kept}.items())) if kept else new
+
+
+# {ticker: [("YYYY-MM-DD" ex-date, ratio)]}: the corporate-action gaps _download_series adjusted in this run.
+GAPS_FOUND = {}
+
+
+def rescale_carried(merged, new, gaps):
+    """`merged` (keep_recent_closes' result) with each CARRIED close put on the same scale as `new`.
+
+    `new` is back-adjusted across the gaps in `gaps`; a close carried from the stored file was written by an
+    earlier run, which may have run BEFORE the gap existed -- then it is still on the old scale, and a 454.55
+    landed between adjusted closes near 41 (a one-day 10x spike in that stock's chart, its list's breadth and
+    the news digest's big moves, until the day aged out of KEEP_RECENT_DAYS). A carried day before an ex-date
+    takes whichever of its stored value and that value times the later gaps' ratios is nearer the closest
+    fresh close, so a close an earlier run had already adjusted is left alone. With no gap this run, or
+    nothing carried, `merged` comes back untouched."""
+    if not gaps or not new or merged is new:
+        return merged
+    carried = [d for d in merged if d not in new]
+    if not carried:
+        return merged
+    fresh_days = sorted(new)
+    out = dict(merged)
+    for d in carried:
+        factor = 1.0
+        for ex_date, ratio in gaps:
+            if d < ex_date:
+                factor *= ratio
+        value = merged[d]
+        if factor == 1.0 or not value or value <= 0:
+            continue
+        nearest = min(fresh_days, key=lambda f: abs((pd.Timestamp(f) - pd.Timestamp(d)).days))
+        ref = new[nearest]
+        if not ref or ref <= 0:
+            continue
+        if abs(math.log(value * factor / ref)) < abs(math.log(value / ref)):
+            out[d] = round(value * factor, 4)
+    return out
 
 
 def load_previous():
@@ -173,7 +219,8 @@ def main():
             for col, s in series.items()
         }
         prev_block = prev_markets.get(market) or {}
-        outer = {col: keep_recent_closes(closes, prev_block.get(col)) for col, closes in outer.items()}
+        outer = {col: rescale_carried(keep_recent_closes(closes, prev_block.get(col)), closes, GAPS_FOUND.get(col))
+                 for col, closes in outer.items()}
         if len(outer) < MIN_COVERAGE_FRACTION * len(all_tickers):
             # Not a reading. Keep the previous block if there is one; a market
             # with no previous block stays absent, which is honest -- an empty
