@@ -21,7 +21,7 @@ on:
   # No GitHub schedule (owner, 2026-11-02): the Cloudflare Worker (cloudflare/worker.js) dispatches this
   # workflow with scheduled=true at its slot and hourly for 8 hours after it as a retry; the slot gate
   # below skips a slot that is already done.
-  workflow_dispatch:   # run manually from the Actions tab anytime: bypasses the gate and forces every rule
+  workflow_dispatch:   # run manually from the Actions tab anytime: bypasses the gate and checks every rule whatever its day
     inputs:
       scheduled:
         description: "Set by the Cloudflare Worker (owner, 2026-11-02): go through the slot gate and behave exactly like a scheduled run. Leave false when running by hand: a manual run bypasses the gate. (Without it a dispatch forces every rule to post again.)"
@@ -130,8 +130,9 @@ jobs:
       - name: Run alert check
         shell: bash
         run: |
-          # --force re-posts every rule: only for a run by hand. A Worker dispatch (scheduled=true) is
-          # the 9 PM slot like a schedule was, so it runs the normal edge-triggered check.
+          # --force checks every rule whatever its day or hour (a "full" rule then posts all its matches,
+          # an incremental one only new ones): only for a run by hand. A Worker dispatch (scheduled=true)
+          # is the 9 PM slot like a schedule was, so only the rules due that day are checked.
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.scheduled }}" != "true" ]; then
             python -u alert_check.py --force 2>&1 | python -u log_redact.py
           else

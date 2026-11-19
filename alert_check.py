@@ -60,7 +60,26 @@ def post_late_stage_notice():
 
 
 def main():
+    """The rule check, then the late-Stage notice -- once per slot.
+
+    The notice used to go out first, before anything could fail. But a run that
+    then fails its data check exits 1 and the Worker dispatches the slot again
+    every hour (up to 8 times): each retry posted the notice again. It now goes
+    out when the rule check has ENDED WITHOUT FAILING, whichever way it ended
+    (no rules, none due, nothing new, alerts sent), so the retry that gets
+    through posts it and the failed attempts post nothing. A night on which
+    every attempt fails posts no notice; the app's red banner still shows."""
+    try:
+        check_rules()
+    except SystemExit as e:
+        if e.code not in (0, None):
+            raise
+        post_late_stage_notice()
+        raise
     post_late_stage_notice()
+
+
+def check_rules():
     all_rules = load_rules()
     if not all_rules:
         print("No alert rules configured yet (alerts_config.json is empty). Nothing to check.")
@@ -167,7 +186,10 @@ def main():
     seeding = not state_trusted
     # Pass the FULL ruleset so any rule-references inside due_rules can resolve
     # against rules that aren't due today; only due_rules actually fires.
-    messages, new_state = evaluate_and_fire(all_rules, combined, state, due_rules=due_rules, metric_labels=metric_labels)
+    # message_rules: the rule each message belongs to, for the partial-failure rollback below.
+    message_rules = []
+    messages, new_state = evaluate_and_fire(all_rules, combined, state, due_rules=due_rules,
+                                            metric_labels=metric_labels, message_rules=message_rules)
     # Drop keys for deleted rules and for tickers in no watchlist (not merely
     # missing from tonight's fetch) -- see alerts.prune_state. Done before the
     # diff below, which only ever looks at keys of live rules and members.
@@ -232,23 +254,33 @@ def main():
     # back-to-back against a webhook that throttles at roughly 5 per 2s, and
     # the bare unpaced loop this replaces relied entirely on _post_discord's 3
     # rate-limit retries -- exhausting them dropped a message mid-digest.
+    failed = []
     ok, detail = send_discord_batch(
         webhook,
         [f"**Stock Alert Check — {as_of}**"] + list(messages),
         stop_on_failure=False,
+        failed=failed,
     )
     if not ok:
         print(f"Discord send failed: {detail}")
-        # At least one message failed to reach Discord. We can't tell from
-        # the batch's aggregate bool which specific rule's message failed,
-        # so conservatively roll back ALL newly-triggered keys -- worst case
-        # a ticker that DID send successfully gets re-notified next run,
-        # which is a minor duplicate rather than a silently dropped alert.
+        # Roll back only the rules whose own message failed, so the next run
+        # announces those again and the ones that DID arrive are not repeated
+        # (every newly-triggered key used to be rolled back, re-sending them
+        # all). Index 0 is the header line, which belongs to no rule. When the
+        # rule of each message is not known, fall back to rolling back them all:
+        # a duplicate is better than a silently dropped alert.
+        if len(message_rules) == len(messages):
+            failed_rules = {message_rules[i - 1] for i in failed if 1 <= i <= len(message_rules)}
+        else:
+            failed_rules = None
         for k in newly_triggered_keys:
+            if failed_rules is not None and k.split(":", 1)[0] not in failed_rules:
+                continue
             new_state[k] = {"was_active": False, "last_triggered_date": state.get(k, {}).get("last_triggered_date")}
 
     save_state(new_state)
-    print("Sent to Discord." if ok else "Failed to send one or more messages to Discord -- will retry next run.")
+    print("Sent to Discord." if ok else "Failed to send one or more messages to Discord -- "
+          "the rules whose message failed are announced again next run.")
 
 
 if __name__ == "__main__":

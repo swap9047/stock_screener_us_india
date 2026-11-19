@@ -492,8 +492,15 @@ def _yahoo_results_yoy(row, report_date):
     label = row.get("reported_qtr")
 
     def _num(key):
+        # The same range as a figure the model extracted (_parse_pct): Yahoo's
+        # growth off a near-zero base is not a reading either. On 2026-11-15
+        # three stored views carried profit growth beyond it (one +12,825%),
+        # and with no forward signal that number decides the label alone.
         x = row.get(key)
-        return float(x) if isinstance(x, (int, float)) and not isinstance(x, bool) else None
+        if not isinstance(x, (int, float)) or isinstance(x, bool):
+            return None
+        lo, hi = _PROFIT_YOY_RANGE
+        return float(x) if math.isfinite(x) and lo <= x <= hi else None
 
     profit = None
     pat, eps = _num("qtr_profit_growth"), _num("qtr_eps_growth")

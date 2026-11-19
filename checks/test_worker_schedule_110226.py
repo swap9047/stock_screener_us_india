@@ -257,7 +257,7 @@ check("SCHEDULED_DISPATCH: ${{ inputs.scheduled }}" in (GATE / "action.yml").rea
 alerts = (WF / "daily-alerts.yml").read_text()
 check('"${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.scheduled }}" != "true" ]' in alerts
       and "alert_check.py --force" in alerts,
-      "W5: --force (every rule posts again) only for a dispatch by hand; a Worker dispatch is the normal edge-triggered check")
+      "W5: --force (every rule checked whatever its day) only for a dispatch by hand; a Worker dispatch is the normal check of the rules due")
 check("github.event.inputs.scheduled != 'true') || needs.gate.outputs.due == 'true'" in alerts,
       "W5: a Worker dispatch only starts the alert check when a rule is due, like a schedule")
 lib = (WF / "market-library.yml").read_text()
