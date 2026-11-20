@@ -99,7 +99,7 @@ _drop_stale_local_modules()
 from streamlit_sortables import sort_items
 
 from stock_data import (
-    load_watchlists, save_watchlist, fetch_all_markets, validate_ticker, tradingview_url,
+    load_watchlists, save_watchlist, save_watchlists, fetch_all_markets, validate_ticker, tradingview_url,
     load_settings, save_settings, DEFAULT_SETTINGS, get_benchmarks, get_filterable_metrics,
     load_markets_registry, load_data_snapshot, snapshot_is_usable, save_data_snapshot, INDEX_DEFINITIONS,
     rebuild_snapshot_for_market, fill_snapshot_gaps, reject_stale_rows,
@@ -136,6 +136,7 @@ from weekly_wrapup import (
 from filters import (load_custom_filters, get_market_filters, save_market_filters, apply_filters, describe_filter,
                      describe_chain, describe_chain_with_values, passes_filter_chain, CATEGORICAL_METRICS,
                      TEXT_METRICS)
+import watchlist_moves
 from github_sync import (get_github_config, get_data_repo_config, bootstrap_data_files, start_refresh_after_stage_upload,
                          push_all_config, trigger_github_workflow, pull_generated_files, SYNCABLE_FILES, WORKFLOW_GENERATED_FILES,
                          push_json_entry_changes, read_remote_json, read_remote_bytes, refresh_snapshot_from_repo,
@@ -1919,6 +1920,205 @@ def render_watchlist_editor(market, watchlists):
                 interested.discard(t)
 
         _apply_watchlist_tickers(market, market_label, tickers, new_tickers, interested)
+
+
+# ---------- Move stocks between watchlists (owner, 2026-11-20) ----------
+#
+# One grid: a row per stock (India first, then US), a tick box per registered watchlist -- the combined tabs are
+# views, not lists, so they are never a column. The plan (what a tick means, what is removed, the order inside
+# a list) is watchlist_moves.plan_changes; this is only the screen and the save.
+#
+# It is a st.dialog, i.e. a FRAGMENT: a tick reruns the dialog alone, not the eleven tabs behind it, and
+# NOTHING is written until "Save all changes" (the edits live in session_state under mv_*). Every tick of the
+# editor is copied into mv_ticks at the end of each fragment run, and the editor's key carries a version and the
+# filter text, so adding a stock or changing the filter rebuilds the grid from mv_ticks instead of losing ticks.
+
+MOVE_STATE_KEYS = ("mv_ticks", "mv_added", "mv_confirm", "mv_ver", "mv_names", "mv_msg", "mv_search")
+
+
+def reset_move_state():
+    """Forgets a previous visit to the grid: it opens from the saved lists every time. The widgets' own keys
+    (the editor, the add box) carry the grid's version, which starts from a number no earlier visit used
+    (mv_open_n), so a new visit never inherits an old visit's ticks or typing."""
+    for k in MOVE_STATE_KEYS:
+        st.session_state.pop(k, None)
+    st.session_state["mv_open_n"] = st.session_state.get("mv_open_n", 0) + 1
+
+
+def _apply_membership_changes(plan, labels):
+    """Writes the lists the grid planned, gives every changed watchlist its snapshot rows (fetching only a stock
+    no list had), and pushes -- the same sequence as _apply_watchlist_tickers, for several lists at once.
+    Returns (ok, message)."""
+    from stock_data import load_settings as _load_settings_now
+
+    save_watchlists(plan["lists"])
+    settings_now = _load_settings_now()
+    sync_token, sync_repo, sync_branch = get_data_repo_config(st.secrets)
+    if sync_token and sync_repo and not os.environ.get("SKIP_GITHUB_PULL"):
+        refresh_snapshot_from_repo(sync_token, sync_repo, sync_branch)
+
+    snapshot = load_data_snapshot() or {}
+    per_market = {m: list(rows) for m, rows in (snapshot.get("per_market") or {}).items()}
+    # Rows are looked up in `pool`, which keeps every row the snapshot had (and every row fetched on the way),
+    # while `per_market` takes each changed list's rebuilt block. Rebuilding in place would lose a stock moved
+    # out of the first changed list before the second one asked for its row -- and fetch it again from Yahoo.
+    pool = {m: list(rows) for m, rows in per_market.items()}
+    as_of_box = [snapshot.get("as_of")]
+    short_history = {}
+    fetched = []
+    for market in plan["changed"]:
+        def _fetch_new(needed, _market=market):
+            with st.spinner(f"Fetching {len(needed)} new ticker(s) from Yahoo Finance..."):
+                _c, fetched_as_of, fresh = fetch_all_markets({_market: needed}, settings=settings_now,
+                                                             short_history=short_history)
+            as_of_box[0] = fetched_as_of
+            fetched.extend(needed)
+            return fresh.get(_market, [])
+
+        rebuilt, _ = rebuild_snapshot_for_market(pool, market, plan["lists"].get(market, []), _fetch_new)
+        per_market[market] = rebuilt[market]
+        known = {r.get("ticker") for rows in pool.values() for r in rows}
+        pool["_fetched"] = pool.get("_fetched", []) + [r for r in rebuilt[market] if r.get("ticker") not in known]
+    as_of = as_of_box[0] or datetime.now().strftime("%Y-%m-%d %H:%M")
+    enrich_rows([r for rows in per_market.values() for r in rows], settings_now)
+    provenance = None
+    if snapshot.get("per_market") and not snapshot_calc_matches(snapshot, settings_now):
+        provenance = {"settings": snapshot.get("settings") or {}, "code_version": snapshot.get("code_version")}
+    _persist_and_serve(per_market, as_of, settings_now, short_history=short_history, provenance=provenance)
+    _bump_refresh()
+
+    text = (f"Saved: {len(plan['moves'])} stock(s) moved across {len(plan['changed'])} watchlist(s)"
+            + (f", {len(plan['added'])} new" if plan["added"] else "")
+            + (f", {len(plan['orphans'])} removed from the app" if plan["orphans"] else "") + ".")
+    if short_history:
+        text += (" Not enough price history to show yet: "
+                 + ", ".join(sorted(short_history)) + f" (needs {MIN_DAILY_BARS} trading days).")
+    gh_token, gh_repo, gh_branch = get_data_repo_config(st.secrets)
+    if gh_token and gh_repo:
+        ok, msg = push_all_config(gh_token, gh_repo, gh_branch,
+                                  filenames=["watchlist.json", "interested.json", "data_snapshot.json",
+                                             "ticker_index.json"],
+                                  message="Move stocks between watchlists")
+        if not ok:
+            return False, f"{text} But the push to GitHub failed: {msg}"
+    return True, text
+
+
+@st.dialog("Move stocks between watchlists", width="large")
+def move_stocks_dialog():
+    import pandas as pd
+
+    wm = watchlist_moves
+    registry = load_markets_registry()
+    watchlists = load_watchlists()
+    markets = [m for m in registry if m in watchlists]
+    labels = {m: (registry[m] or {}).get("label", m) for m in markets}
+    by_label = {labels[m]: m for m in markets}
+    ss = st.session_state
+
+    if "mv_ticks" not in ss:
+        ss["mv_ticks"] = {t: set(ms) for t, ms in wm.current_ticks(watchlists, markets).items()}
+        ss["mv_added"], ss["mv_confirm"], ss["mv_msg"] = [], False, []
+        ss["mv_ver"] = ss.get("mv_open_n", 0) * 1000
+        snap = load_data_snapshot() or {}
+        ss["mv_names"] = {r.get("ticker"): r.get("company_name") or ""
+                          for rows in (snap.get("per_market") or {}).values() for r in rows}
+    ticks, added, names, ver = ss["mv_ticks"], ss["mv_added"], ss["mv_names"], ss["mv_ver"]
+
+    st.caption("Tick a box to put a stock in that watchlist, untick to take it out. Nothing is saved until you "
+               "press **Save all changes**.")
+    for kind, text in ss["mv_msg"]:
+        (st.error if kind == "error" else st.warning if kind == "warning" else st.success)(text)
+    add_box = st.container()
+    search = st.text_input("Filter the list", key="mv_search", placeholder="Ticker or company name").strip().upper()
+
+    shown = [t for t in wm.row_order(list(ticks), added)
+             if not search or search in t or search in (names.get(t) or "").upper()]
+    if shown:
+        cols = ["Ticker", "Company"] + [labels[m] for m in markets]
+        df = pd.DataFrame([{"Ticker": t, "Company": ("🆕 " if t in added else "") + (names.get(t) or ""),
+                            **{labels[m]: m in ticks[t] for m in markets}} for t in shown], columns=cols)
+        edited = st.data_editor(
+            df, hide_index=True, width="stretch", height=min(440, 40 + 35 * len(df)),
+            disabled=["Ticker", "Company"], key=f"mv_editor_{ver}_{search}",
+            # Pixel widths so the eight watchlists fit the dialog without a sideways scroll; a long label is
+            # cut in the header and shown in full on hover (help).
+            column_config={"Ticker": st.column_config.TextColumn("Ticker", pinned=True, width=125),
+                           "Company": st.column_config.TextColumn("Company", width=190),
+                           **{labels[m]: st.column_config.CheckboxColumn(labels[m], help=labels[m], width=104)
+                              for m in markets}},
+        )
+        for _, row in edited.iterrows():
+            ticks[row["Ticker"]] = {by_label[lab] for lab in by_label
+                                    if pd.notna(row[lab]) and bool(row[lab])}
+    else:
+        st.info("No stock matches the filter.")
+
+    # The add box is drawn above the grid but runs after it, so the ticks just made are already in mv_ticks.
+    with add_box:
+        c1, c2 = st.columns([5, 1], vertical_alignment="bottom")
+        typed = c1.text_input("Add stocks (ticker, comma separated; Indian stocks need .NS or .BO)",
+                              key=f"mv_add_text_{ver}")
+        if c2.button("Add", key=f"mv_add_btn_{ver}", width="stretch"):
+            msgs = []
+            wanted = wm.parse_tickers(typed)
+            for t in wanted:
+                if t in ticks:
+                    msgs.append(("warning", f"{t} is already in the list."))
+                    continue
+                with st.spinner(f"Checking {t}..."):
+                    ok = validate_ticker(t)
+                if ok is False:
+                    msgs.append(("error", f"'{t}' doesn't return any price data from Yahoo Finance — not added."))
+                    continue
+                if ok is None:
+                    msgs.append(("warning", f"Couldn't check '{t}' (Yahoo Finance isn't responding). Added anyway; "
+                                            "if it shows no prices after the next refresh, it's a typo."))
+                ticks[t] = set()
+                added.append(t)
+            if added and any(t in added for t in wanted):
+                msgs.append(("success", "Added at the top of the grid: tick the watchlists they belong in. "
+                                        "A new stock ticked nowhere is not added."))
+            ss["mv_msg"], ss["mv_ver"] = msgs, ver + 1
+            st.rerun(scope="fragment")
+
+    plan = wm.plan_changes(watchlists, markets, ticks, added)
+    order = wm.row_order(list(plan["moves"]), added)
+    if plan["skipped_new"]:
+        st.info("Not ticked anywhere, so not added: " + ", ".join(plan["skipped_new"]))
+    with st.expander(f"Review the changes ({len(order)})", expanded=False):
+        if not order:
+            st.caption("Nothing changed yet.")
+        for t in order:
+            st.markdown(f"**{t}** {names.get(t) or ''} — {wm.describe_move(plan['moves'][t], labels)}")
+
+    def _save():
+        with st.spinner("Saving..."):
+            ok, text = _apply_membership_changes(plan, labels)
+        ss_flash = ("ok" if ok else "error", text)
+        reset_move_state()
+        st.session_state["_mv_flash"] = ss_flash
+        st.rerun()
+
+    if plan["orphans"] and ss["mv_confirm"]:
+        st.warning(
+            f"{len(plan['orphans'])} stock(s) are ticked in no watchlist, so they will be REMOVED from the app: "
+            + ", ".join(plan["orphans"]) + ". Their notes and flags stay, but the stock disappears from every tab.")
+        b1, b2 = st.columns(2)
+        if b1.button("Remove them and save all", type="primary", key="mv_confirm_go", width="stretch"):
+            _save()
+        if b2.button("Go back", key="mv_confirm_back", width="stretch"):
+            ss["mv_confirm"] = False
+            st.rerun(scope="fragment")
+    else:
+        ss["mv_confirm"] = False
+        if st.button(f"Save all changes ({len(order)})", type="primary", key="mv_save", width="stretch",
+                     disabled=not order):
+            if plan["orphans"]:
+                ss["mv_confirm"] = True
+                st.rerun(scope="fragment")
+            else:
+                _save()
 
 
 OPERATOR_CHOICES = [">", "<", ">=", "<=", "=="]
@@ -5141,6 +5341,14 @@ if "last_refresh_summary" in st.session_state:
 
 if sb2.button("⚙️ Settings", width="stretch"):
     settings_dialog()
+
+# Move stocks between watchlists (owner, 2026-11-20): the grid is a dialog, see move_stocks_dialog.
+if st.sidebar.button("🔀 Move stocks between watchlists", key="mv_open", width="stretch"):
+    reset_move_state()
+    move_stocks_dialog()
+_mv_flash = st.session_state.pop("_mv_flash", None)
+if _mv_flash:
+    (st.sidebar.success if _mv_flash[0] == "ok" else st.sidebar.error)(_mv_flash[1])
 
 # Send to Claude chat (owner, 2026-11-11): starts the workflow that publishes to the research library's database
 # (github_sync.MCP_PUBLISH_WORKFLOWS), so a stock added here shows up there in minutes instead of at the Worker's
