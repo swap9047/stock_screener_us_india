@@ -26,6 +26,7 @@ from stock_data import (
     load_data_snapshot, fill_snapshot_gaps, reject_stale_rows, MIN_DAILY_BARS,
     enrich_rows,
 )
+import price_gaps
 
 
 def main():
@@ -57,6 +58,14 @@ def main():
     # to compute" instead of looking incomplete -- see merge_short_history.
     short_history = {}
     combined, as_of, per_market = fetch_all_markets(watchlists, settings=settings, short_history=short_history)
+    # One-session moves no rule adjusted (owner, 2026-11-22): a bonus or split Yahoo left on two price scales looks
+    # like this. A count only -- this log is public -- and the stocks are in price_gaps.suspect_tickers().
+    suspects = price_gaps.suspect_tickers()
+    if suspects:
+        print(f"::warning::{len(suspects)} Indian stock(s) have a one-session price move beyond "
+              f"{price_gaps.SUSPECT_LOW - 1:+.0%} / {price_gaps.SUSPECT_HIGH - 1:+.0%} in the last "
+              f"{price_gaps.SUSPECT_SESSIONS} sessions that no rule adjusted: a bonus or split Yahoo left on two "
+              "price scales? Check them and list the break in price_adjustments.json (price_gaps.py).")
     if short_history:
         print("Too little price history to compute yet (no row until "
               f"{MIN_DAILY_BARS} bars): "

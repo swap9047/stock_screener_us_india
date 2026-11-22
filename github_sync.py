@@ -100,6 +100,7 @@ PULLABLE_FILES = [
     "quarterly_results.json",     # the News tab's quarterly results charts (2026-10-28)
     "market_read.json",           # the News tab's (i) market reads, written twice a day (2026-10-31)
     "weekly_wrapup_state.json",   # read by the Alert Rules tab's wrap-up preview
+    "price_adjustments.json",     # hand-listed price-scale breaks Yahoo left in a bonus/split (price_gaps.py, 2026-11-22)
 ]
 
 # User config, edited in the UI. Also pulled at runtime, but only over a local
