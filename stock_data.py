@@ -1544,14 +1544,22 @@ def _download_with_retries(all_tickers, period, attempts=3, timeout=90, wait=30)
 
     call_with_timeout, not a ThreadPoolExecutor: the executor form abandoned a
     NON-daemon worker on timeout, which the interpreter joins at exit -- the
-    exact hang llm_util.generate_with_timeout was fixed for on 2026-09-17."""
+    exact hang llm_util.generate_with_timeout was fixed for on 2026-09-17.
+
+    auto_adjust=False (owner, 2026-11-22): split-adjusted prices with dividends
+    NOT back-adjusted, as TradingView's default chart, the breadth job, the
+    performance job and market_lists download them. auto_adjust=True scaled
+    every bar before each ex-dividend date down, so the table's 52-week high,
+    averages, VStop and RS sat a little below TradingView's and below the
+    breadth panel's own 200-day test for the same stock. The frame then also
+    carries "Adj Close", which nothing here reads: every indicator uses Close."""
     from llm_util import call_with_timeout
     last_exc = None
     for attempt in range(1, attempts + 1):
         try:
             return call_with_timeout(
                 lambda: yf.download(all_tickers, period=period, interval="1d",
-                                    group_by="ticker", auto_adjust=True, progress=False, threads=True),
+                                    group_by="ticker", auto_adjust=False, progress=False, threads=True),
                 timeout, name="yf.download",
             )
         except TimeoutError as e:
@@ -1711,11 +1719,13 @@ UNPUBLISHED_BAR_MAX_DAYS = 5
 
 def _download_intraday(tickers, timeout=60):
     """The last 5 days of 5-minute bars for `tickers`, one bulk call under the
-    same hard timeout as _download_with_retries."""
+    same hard timeout as _download_with_retries, and on the same price basis
+    (auto_adjust=False): a rebuilt bar must not be dividend-scaled when the
+    daily bars around it are not."""
     from llm_util import call_with_timeout
     return call_with_timeout(
         lambda: yf.download(list(tickers), period="5d", interval="5m", group_by="ticker",
-                            auto_adjust=True, progress=False, threads=True),
+                            auto_adjust=False, progress=False, threads=True),
         timeout, name="yf.download intraday",
     )
 

@@ -10,6 +10,10 @@ R: price levels and the below_* / crossed_* flags. The levels (last close, the
    the module), and the stored levels keep enough precision that a rule
    comparing two of them agrees.
 
+D: the indicator download's price basis -- split-adjusted, dividends NOT
+   back-adjusted (auto_adjust=False), as TradingView's default chart and the
+   breadth and performance jobs; every indicator reads Close.
+
 Offline: invented tickers (ACME.NS) and frames, the download and yf.Ticker
 replaced, no network.
 """
@@ -142,6 +146,55 @@ for suffix, win in (("50", d_periods["50"]), ("200", d_periods["200"])):
           f"R2 scenario: close under the {win}-day SMA but over its 1-decimal value")
     check(row2.get(f"crossed_above_{suffix}") is False, f"R2 crossed_above_{suffix} is not set falsely")
     check(row2.get(f"below_{suffix}") is True, f"R2 below_{suffix} is True")
+
+# ---------------------------------------------------------------- D: the price basis
+# Owner, 2026-11-22: the indicator download is split-adjusted only (auto_adjust=False),
+# as TradingView's default chart and the breadth / performance jobs; every indicator
+# reads Close, never the "Adj Close" that download also carries.
+calls = []
+idx_d = pd.bdate_range(end="2026-11-13", periods=400)
+base = 100 + np.arange(len(idx_d)) * 0.1
+frame = pd.concat({t: ohlc(base * k, idx_d) for t, k in (("ACME.NS", 1.0), ("^CRSLDX", 2.0))}, axis=1)
+for t in ("ACME.NS", "^CRSLDX"):
+    frame[(t, "Adj Close")] = frame[(t, "Close")] * 0.5   # a basis nothing may read
+frame = frame.sort_index(axis=1)
+
+
+def fake_download(*args, **kwargs):
+    calls.append(kwargs)
+    return frame.copy()
+
+
+saved_dl, saved_ticker = sd.yf.download, sd.yf.Ticker
+saved_sleep, saved_fill = sd.time.sleep, sd.fill_unpublished_daily_bars
+
+
+class _Offline:
+    def __init__(self, t):
+        raise RuntimeError("offline")
+
+
+sd.yf.download, sd.yf.Ticker, sd.time.sleep = fake_download, _Offline, (lambda s: None)
+sd.fill_unpublished_daily_bars = lambda raw, t, now=None, download=None: (raw, [])
+try:
+    res_d, _ = sd.fetch_snapshot(["ACME.NS"], benchmark="^CRSLDX", settings=dict(sd.DEFAULT_SETTINGS))
+    sd._download_intraday(["ACME.NS"])
+finally:
+    sd.yf.download, sd.yf.Ticker = saved_dl, saved_ticker
+    sd.time.sleep, sd.fill_unpublished_daily_bars = saved_sleep, saved_fill
+
+check(len(calls) == 2 and all(c.get("auto_adjust") is False for c in calls),
+      "D1 the daily and the 5-minute downloads both ask for auto_adjust=False")
+check(calls and calls[0].get("interval") == "1d" and calls[-1].get("interval") == "5m",
+      "D1 (the two calls captured are the daily and the intraday one)")
+row_d = res_d[0] if res_d else {}
+check(row_d.get("last_close") == sd.round_price(base[-1]), "D2 last_close is the Close column, not Adj Close")
+sma200 = float(pd.Series(base).rolling(200).mean().iloc[-1])
+check(row_d.get("ema200") == sd.round_price(sma200), "D2 the 200-day SMA is over Close")
+check(row_d.get("week52_high") == sd.round_price(float((base * 1.001)[-252:].max())),
+      "D2 the 52-week high is over High (not scaled by Adj Close)")
+check(row_d.get("rs_daily") is not None and abs(row_d["rs_daily"]) < 1.0,
+      "D2 RS vs a benchmark moving in step is ~0 (both read Close)")
 
 print("FAILURES:", fails)
 sys.exit(1 if fails else 0)
