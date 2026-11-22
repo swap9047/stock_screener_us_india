@@ -5,6 +5,7 @@ watchlisted tickers. Intended to run via GitHub Actions.
 
 import concurrent.futures
 import os
+import market_scope
 import sys
 import threading
 import time
@@ -125,7 +126,11 @@ def _prune_orphans(store, watchlists, label):
     for t in orphans:
         del store[t]
     if orphans:
-        print(f"[{_ts()}] Pruned {len(orphans)} {label} orphan(s) no longer in any watchlist: {', '.join(sorted(orphans))}")
+        # A count, never the names: an orphan is by definition in no watchlist,
+        # so log_redact.py (whose ticker list starts from the watchlists) could
+        # not mask it, and this line published former holdings in the public
+        # Actions log (until 2026-11-22).
+        print(f"[{_ts()}] Pruned {len(orphans)} {label} orphan(s) no longer in any watchlist")
     return len(orphans)
 
 
@@ -179,8 +184,9 @@ def main():
     # REFRESH_MARKETS scopes the run to specific watchlists -- set by the
     # dashboard's per-tab "Re-analyze All" button (see the workflow's
     # `markets` input). Blank/absent means every watchlist, which is what
-    # the nightly schedule always gets.
-    only_markets = {m.strip() for m in os.environ.get("REFRESH_MARKETS", "").split(",") if m.strip()}
+    # the nightly schedule always gets. The app sends watchlist POSITIONS, not
+    # keys (market_scope.py: step env is printed in the public log).
+    only_markets = market_scope.from_env(list(watchlists))
     limit = llm_util.refresh_limit()
     # The dashboard's "Retry Pending" (owner, 2026-11-08): only the tickers whose
     # stored view is not valid -- the same test as the button's count

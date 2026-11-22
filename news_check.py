@@ -20,7 +20,7 @@ Config/env (same folder):
 Run: python3 news_check.py
 """
 
-import os
+import market_scope
 import sys
 
 from llm_util import refresh_limit
@@ -53,7 +53,7 @@ def main():
     # and their first N tickers, replaces only those watchlists' digests in
     # news_summary.json, and never posts to Discord -- a two-ticker digest is not
     # the day's news. Scheduled runs set neither.
-    only_markets = {m.strip() for m in os.environ.get("REFRESH_MARKETS", "").split(",") if m.strip()}
+    only_markets = market_scope.from_env(list(watchlists))
     limit = refresh_limit()
     partial = bool(only_markets or limit)
     if partial:
