@@ -14,6 +14,13 @@ D: the indicator download's price basis -- split-adjusted, dividends NOT
    back-adjusted (auto_adjust=False), as TradingView's default chart and the
    breadth and performance jobs; every indicator reads Close.
 
+B: a mixed India + US list's breadth. Each day's denominator was the stocks
+   with a close that day, and dashboard_perf carries India's forming bar from
+   ~23:45 ET until the US prints, so the latest reading counted India alone
+   (5 of 10 above -> 5 of 6, 83.3%). A stock whose whole exchange is shut on a
+   row now counts at its own latest session there; one exchange's panel (every
+   index) is unchanged, held here to an independent per-day count.
+
 Offline: invented tickers (ACME.NS) and frames, the download and yf.Ticker
 replaced, no network.
 """
@@ -27,6 +34,7 @@ import pandas as pd
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
+import breadth_math as bm  # noqa: E402
 import filters  # noqa: E402
 import stock_data as sd  # noqa: E402
 
@@ -195,6 +203,93 @@ check(row_d.get("week52_high") == sd.round_price(float((base * 1.001)[-252:].max
       "D2 the 52-week high is over High (not scaled by Adj Close)")
 check(row_d.get("rs_daily") is not None and abs(row_d["rs_daily"]) < 1.0,
       "D2 RS vs a benchmark moving in step is ~0 (both read Close)")
+
+# ---------------------------------------------------------------- B: mixed-list breadth
+
+
+def own_sma_count(panel, day, window=200):
+    """Independent per-day count: (above, total) over the stocks with a close
+    on `day` and `window` closes of their own up to it."""
+    above = total = 0
+    for c in panel:
+        own = panel[c].dropna()
+        own = own[own.index <= day]
+        if day not in own.index or len(own) < window:
+            continue
+        total += 1
+        above += own.iloc[-1] > own.iloc[-window:].mean()
+    return above, total
+
+
+idx_b = pd.bdate_range("2025-01-01", "2026-11-20")
+rng = np.random.default_rng(0)
+cols = {}
+for i in range(6):   # India, rising: above the SMA
+    cols[f"ZIN{i}.NS"] = 100 * np.exp(np.cumsum(rng.normal(0.002, 0.01, len(idx_b))))
+for i in range(4):   # US, falling: below it
+    cols[f"ACM{i}"] = 100 * np.exp(np.cumsum(rng.normal(-0.002, 0.01, len(idx_b))))
+mixed = pd.DataFrame(cols, index=idx_b)
+day_b = bm.compute_breadth(mixed)
+exp_a, exp_t = own_sma_count(mixed, idx_b[-1])
+check((day_b["above"], day_b["total"]) == (exp_a, exp_t) and exp_t == 10,
+      f"B1 a full day counts both markets ({day_b['above']}/{day_b['total']})")
+
+# The next morning (ET): India's bar is in, the US has not traded yet.
+nxt = idx_b[-1] + pd.Timedelta(days=3)
+morning = pd.concat([mixed, pd.DataFrame(
+    {c: [mixed[c].iloc[-1] * 1.001 if c.endswith(".NS") else np.nan] for c in mixed}, index=[nxt])])
+b_m = bm.compute_breadth(morning)
+check(b_m["total"] == 10 and b_m["above"] == day_b["above"],
+      f"B1 an India-only latest row still counts the US stocks at their own last close "
+      f"({b_m['above']}/{b_m['total']}, was India alone)")
+check(b_m["history"][str(nxt.date())] == b_m["pct_above"],
+      "B1 ...and the history's latest point says the same")
+check(b_m["drawdown"] is not None and all(
+      abs(b_m["drawdown"][k] - day_b["drawdown"][k]) <= 10.0 for k in b_m["drawdown"]),
+      "B1 the drawdown shares are over all 10 stocks too (within one stock of the day before)")
+
+# An India-only holiday inside the history: that row counts the India stocks too.
+hol = mixed.copy()
+hday = idx_b[-30]
+hol.loc[hday, [c for c in hol if c.endswith(".NS")]] = np.nan
+b_h = bm.compute_breadth(hol)
+prev = str(idx_b[-31].date())
+check(abs(b_h["history"][str(hday.date())] - b_h["history"][prev]) <= 10.0,
+      f"B1 an India holiday in the history keeps both markets in its denominator "
+      f"({b_h['history'][str(hday.date())]} vs {b_h['history'][prev]} the day before)")
+only_us = own_sma_count(hol, hday)
+check(only_us[1] == 4 and b_h["history"][str(hday.date())] != round(only_us[0] / only_us[1] * 100, 1),
+      "B1 (which used to read the 4 US stocks alone)")
+
+# A stock silent on a day its OWN exchange traded (a suspension) is not carried.
+sus = mixed.copy()
+sus.loc[idx_b[-1], "ZIN0.NS"] = np.nan
+check(bm.compute_breadth(sus)["total"] == 9, "B1 a stock with no close on a day its exchange traded is left out")
+
+# Carried at most CARRY_ROWS rows: an exchange shut longer drops out.
+long = pd.concat([mixed, pd.DataFrame(
+    {c: [np.nan] * (bm.CARRY_ROWS + 1) if c.endswith(".NS") else mixed[c].iloc[-1] * np.ones(bm.CARRY_ROWS + 1)
+     for c in mixed}, index=pd.bdate_range(idx_b[-1] + pd.Timedelta(days=1), periods=bm.CARRY_ROWS + 1))])
+check(bm.compute_breadth(long)["total"] == 4,
+      f"B1 an exchange shut for more than {bm.CARRY_ROWS} rows drops out of the latest count")
+
+# One exchange (every index, a single-market list): identical to the per-day
+# count, gaps and all -- nothing is carried.
+single = mixed[[c for c in mixed if c.endswith(".NS")]].copy()
+single.loc[idx_b[-1], "ZIN1.NS"] = np.nan          # one stock silent on the last day
+single.loc[idx_b[-5:-2], "ZIN2.NS"] = np.nan       # another silent a few days
+single.loc[idx_b[-20], :] = np.nan                 # a row nobody traded
+b_s = bm.compute_breadth(single)
+check((b_s["above"], b_s["total"]) == own_sma_count(single, idx_b[-1]),
+      f"B2 a single-market list's latest reading is the plain per-day count ({b_s['above']}/{b_s['total']})")
+days_ok = all(b_s["history"][str(d.date())] == round(a / t * 100, 1)
+              for d in idx_b[-40:] if str(d.date()) in b_s["history"]
+              for a, t in [own_sma_count(single, d)])
+check(days_ok and str(idx_b[-20].date()) not in b_s["history"],
+      "B2 ...and every day of its history (a row nobody traded is still dropped)")
+check(bm.calendar_group("ZED.NS") == bm.calendar_group("ZED.BO") == "IN"
+      and bm.calendar_group("ACME") == bm.calendar_group("ACME.B") == "US",
+      "B3 calendar groups by Yahoo suffix: .NS/.BO India, anything else the US")
 
 print("FAILURES:", fails)
 sys.exit(1 if fails else 0)
