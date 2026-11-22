@@ -38,11 +38,15 @@ EMA settings (Daily: 10/50/200, Weekly: 10/20/40):
     Chandelier Exit. Reports current value, direction (Up/Down), and the date
     of the most recent trend flip.
 
-All displayed numeric values are rounded to 1 decimal place.
+Ratios and percentages are rounded to 1 decimal place. Price LEVELS (last
+close, the moving averages, VStop, 52-week / 26-week / 5-year highs and lows)
+go through round_price, which keeps at least 4 significant figures; every
+below_* / crossed_* flag is computed from the unrounded series.
 """
 
 import hashlib
 import json
+import math
 import os
 import time
 from datetime import datetime, timedelta
@@ -1095,6 +1099,25 @@ def classify_volume_trend(volume_10d, volume_100d, explode_ratio, decline_ratio)
     return "In-line"
 
 
+def round_price(v):
+    """A price LEVEL as stored on the row: at least 2 decimals, and at least 4
+    significant figures (5.0197 -> 5.02, 0.5123 -> 0.5123, 1234.567 -> 1234.57).
+
+    These were rounded to 1 decimal, which on a low-priced stock hid the very
+    relationships the row is read for: a close of 5.0197 under a true 200-day
+    SMA of 5.0396 stored as 5.0 and 5.0, so the user rule "Last Close < 200
+    DSMA" compared 5.0 < 5.0 and never fired (and below_200 / crossed_below_200,
+    which compared the unrounded close with the rounded SMA, read False too).
+    The flags are now computed from the unrounded series; this keeps the stored
+    levels precise enough that a rule comparing two of them agrees."""
+    if v is None:
+        return None
+    v = float(v)
+    if not math.isfinite(v) or v == 0:
+        return v
+    return round(v, max(2, 3 - math.floor(math.log10(abs(v)))))
+
+
 def compute_tech_uptrend(close, vstop, vstop_direction, weeks_since, ema_slow,
                          vol_10d, vol_100d, min_weeks, vol_ratio):
     """Tech Uptrend: (1 or 0, detail). Yes only if ALL of: the close is above
@@ -1102,9 +1125,9 @@ def compute_tech_uptrend(close, vstop, vstop_direction, weeks_since, ema_slow,
     `min_weeks` weeks, the close is above the slow WEMA, and the 10D median
     volume is MORE than `vol_ratio` times the 100D median.
 
-    Takes UNROUNDED prices. The row's vstop_weekly and ema40 are rounded to 0.1
-    for display, and comparing against those was up to 1% off on a 5-unit
-    stock. The VStop direction is tested in its own right: "close above the
+    Takes UNROUNDED prices. The row's vstop_weekly and ema40 are rounded
+    (round_price; until 2026-11-22 to 0.1, which was up to 1% off on a 5-unit
+    stock), and a test against a rounded level can still flip at the margin. The VStop direction is tested in its own right: "close above the
     stop" implies Up only while the stop includes the forming week
     (vstop_include_incomplete_week) -- with completed weeks only, this week's
     close can sit above last week's DOWN stop."""
@@ -2212,8 +2235,11 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
             if len(adx_m_series) and pd.notna(adx_m_series.iloc[-1]):
                 adx_monthly_12 = round(float(adx_m_series.iloc[-1]), 1)
 
-            # Weekly EMAs (fast/mid/slow, e.g. 10/20/40)
+            # Weekly EMAs (fast/mid/slow, e.g. 10/20/40). `level_raw` keeps each
+            # average UNROUNDED for the below_* flags (the row's own fields are
+            # rounded for storage, see round_price).
             ema10 = ema20 = ema40 = None
+            level_raw = {}
             crossed_below_10 = crossed_below_40 = False
             crossed_above_10 = crossed_above_40 = False
             ema40_series = None
@@ -2222,26 +2248,35 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
                 ema10_series = weekly["Close"].ewm(span=w_fast, adjust=False).mean()
                 ema20_series = weekly["Close"].ewm(span=w_mid, adjust=False).mean()
                 ema40_series = weekly["Close"].ewm(span=w_slow, adjust=False).mean()
+                level_raw["ema40"] = float(ema40_series.iloc[-1])
 
                 last_close_w = weekly["Close"].iloc[-1]
                 prev_close_w = weekly["Close"].iloc[-2]
 
-                ema10 = round(float(ema10_series.iloc[-1]), 1)
-                ema20 = round(float(ema20_series.iloc[-1]), 1)
-                ema40 = round(float(ema40_series.iloc[-1]), 1)
+                ema10 = round_price(ema10_series.iloc[-1])
+                ema20 = round_price(ema20_series.iloc[-1])
+                level_raw["ema10"] = float(ema10_series.iloc[-1])
+                level_raw["ema20"] = float(ema20_series.iloc[-1])
+                ema40 = round_price(ema40_series.iloc[-1])
 
                 prev_ema10 = ema10_series.iloc[-2]
                 prev_ema40 = ema40_series.iloc[-2]
+                # Unrounded on both sides: against the ROUNDED level, a low-priced
+                # close a hair under its EMA read as not crossed.
+                cur_ema10 = float(ema10_series.iloc[-1])
+                cur_ema40 = float(ema40_series.iloc[-1])
 
-                crossed_below_10 = bool(prev_close_w >= prev_ema10 and last_close_w < ema10)
-                crossed_below_40 = bool(prev_close_w >= prev_ema40 and last_close_w < ema40)
-                crossed_above_10 = bool(prev_close_w < prev_ema10 and last_close_w >= ema10)
-                crossed_above_40 = bool(prev_close_w < prev_ema40 and last_close_w >= ema40)
+                crossed_below_10 = bool(prev_close_w >= prev_ema10 and last_close_w < cur_ema10)
+                crossed_below_40 = bool(prev_close_w >= prev_ema40 and last_close_w < cur_ema40)
+                crossed_above_10 = bool(prev_close_w < prev_ema10 and last_close_w >= cur_ema10)
+                crossed_above_40 = bool(prev_close_w < prev_ema40 and last_close_w >= cur_ema40)
             elif len(weekly) >= w_mid + 1:
                 ema10_series = weekly["Close"].ewm(span=w_fast, adjust=False).mean()
                 ema20_series = weekly["Close"].ewm(span=w_mid, adjust=False).mean()
-                ema10 = round(float(ema10_series.iloc[-1]), 1)
-                ema20 = round(float(ema20_series.iloc[-1]), 1)
+                ema10 = round_price(ema10_series.iloc[-1])
+                ema20 = round_price(ema20_series.iloc[-1])
+                level_raw["ema10"] = float(ema10_series.iloc[-1])
+                level_raw["ema20"] = float(ema20_series.iloc[-1])
 
             # TA Rules (TheWrap flowchart, see compute_ta_rules). Judged on the
             # last COMPLETED week only -- the flowchart reads weekly closes, and
@@ -2272,25 +2307,29 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
 
             if len(daily_close) >= d_fast + 1:
                 ema10_daily_series = daily_close.rolling(window=d_fast, min_periods=1).mean()
-                ema10_daily = round(float(ema10_daily_series.iloc[-1]), 1)
+                level_raw["ema10_daily"] = cur = float(ema10_daily_series.iloc[-1])
+                ema10_daily = round_price(cur)
                 prev_close_d0 = daily_close.iloc[-2]
                 prev_ema10_daily = ema10_daily_series.iloc[-2]
-                crossed_below_10_daily = bool(prev_close_d0 >= prev_ema10_daily and daily_close.iloc[-1] < ema10_daily)
-                crossed_above_10_daily = bool(prev_close_d0 < prev_ema10_daily and daily_close.iloc[-1] >= ema10_daily)
+                # Unrounded SMA (see round_price): a close a hair under it is below.
+                crossed_below_10_daily = bool(prev_close_d0 >= prev_ema10_daily and daily_close.iloc[-1] < cur)
+                crossed_above_10_daily = bool(prev_close_d0 < prev_ema10_daily and daily_close.iloc[-1] >= cur)
             if len(daily_close) >= d_mid + 1:
                 ema50_series = daily_close.rolling(window=d_mid, min_periods=1).mean()
-                ema50 = round(float(ema50_series.iloc[-1]), 1)
+                level_raw["ema50"] = cur = float(ema50_series.iloc[-1])
+                ema50 = round_price(cur)
                 prev_close_d = daily_close.iloc[-2]
                 prev_ema50 = ema50_series.iloc[-2]
-                crossed_below_50 = bool(prev_close_d >= prev_ema50 and daily_close.iloc[-1] < ema50)
-                crossed_above_50 = bool(prev_close_d < prev_ema50 and daily_close.iloc[-1] >= ema50)
+                crossed_below_50 = bool(prev_close_d >= prev_ema50 and daily_close.iloc[-1] < cur)
+                crossed_above_50 = bool(prev_close_d < prev_ema50 and daily_close.iloc[-1] >= cur)
             if len(daily_close) >= d_slow + 1:
                 ema200_series = daily_close.rolling(window=d_slow, min_periods=1).mean()
-                ema200 = round(float(ema200_series.iloc[-1]), 1)
+                level_raw["ema200"] = cur = float(ema200_series.iloc[-1])
+                ema200 = round_price(cur)
                 prev_close_d2 = daily_close.iloc[-2]
                 prev_ema200 = ema200_series.iloc[-2]
-                crossed_below_200 = bool(prev_close_d2 >= prev_ema200 and daily_close.iloc[-1] < ema200)
-                crossed_above_200 = bool(prev_close_d2 < prev_ema200 and daily_close.iloc[-1] >= ema200)
+                crossed_below_200 = bool(prev_close_d2 >= prev_ema200 and daily_close.iloc[-1] < cur)
+                crossed_above_200 = bool(prev_close_d2 < prev_ema200 and daily_close.iloc[-1] >= cur)
 
             # Mansfield RS (daily / weekly / monthly)
             monthly_close = monthly["Close"]
@@ -2329,7 +2368,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
                 valid_dir = dir_series.dropna()
                 if not valid_dir.empty:
                     vstop_weekly_raw = float(vstop_series.iloc[-1])
-                    vstop_weekly = round(vstop_weekly_raw, 1)
+                    vstop_weekly = round_price(vstop_weekly_raw)
                     vstop_weekly_direction = "Up" if valid_dir.iloc[-1] == 1 else "Down"
 
                     flips = valid_dir[valid_dir.diff().fillna(0) != 0]
@@ -2365,7 +2404,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
                     vstop14_series, _ = compute_vstop_tv(
                         weekly_complete, length=VSTOP_LENGTH_14W, factor=vstop_factor)
                 if pd.notna(vstop14_series.iloc[-1]):
-                    vstop_weekly_14 = round(float(vstop14_series.iloc[-1]), 1)
+                    vstop_weekly_14 = round_price(vstop14_series.iloc[-1])
 
             last_close = float(daily_close.iloc[-1])
             pct_change_1d = None
@@ -2446,8 +2485,12 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
 
             # 52-week high/low: intraday extremes over the trailing ~252 trading days
             window_252 = df.tail(252)
-            week52_high = round(float(window_252["High"].max()), 1) if window_252["High"].notna().any() else None
-            week52_low = round(float(window_252["Low"].min()), 1) if window_252["Low"].notna().any() else None
+            # Unrounded for every test below (distance, Trend's near-high/low);
+            # the row stores round_price of each.
+            week52_high_raw = float(window_252["High"].max()) if window_252["High"].notna().any() else None
+            week52_low_raw = float(window_252["Low"].min()) if window_252["Low"].notna().any() else None
+            week52_high = round_price(week52_high_raw)
+            week52_low = round_price(week52_low_raw)
 
             # Trading days since the 52-week high was SET. Distinguishes a name
             # breaking out right now (age 0-10) from one retesting a high set
@@ -2477,7 +2520,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
 
             # 26-week high (~126 trading days), same intraday-High basis as the 52w figures.
             window_126 = df.tail(126)
-            week26_high = round(float(window_126["High"].max()), 1) if window_126["High"].notna().any() else None
+            week26_high_raw = float(window_126["High"].max()) if window_126["High"].notna().any() else None
 
             # Distance BELOW the trailing high as a POSITIVE percent: 0 = at the
             # high, 12.5 = 12.5% below. Deliberately the opposite sign to the
@@ -2485,16 +2528,17 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
             # so breakout rules read literally as "52WH Distance < 10". That
             # custom column is intentionally left alone.
             #
-            # Clamped at 0: week26_high/week52_high are rounded to 1dp BEFORE
-            # this subtraction, so a close sitting marginally above the rounded
-            # high produces a tiny negative that rounds to -0.0 and renders as
+            # Clamped at 0: the highs used to be rounded to 1dp BEFORE this
+            # subtraction, so a close sitting marginally above the rounded
+            # high produced a tiny negative that rounded to -0.0 and rendered as
             # "-0.0%" -- a minus sign on a metric defined as always positive
-            # (an India ticker hit exactly this). A close cannot genuinely exceed its
-            # own trailing intraday high, so 0 is the correct floor.
-            if week26_high:
-                week26_distance = round(max(0.0, (week26_high - last_close) / week26_high * 100), 1)
-            if week52_high:
-                week52_distance = round(max(0.0, (week52_high - last_close) / week52_high * 100), 1)
+            # (an India ticker hit exactly this). The unrounded highs are used
+            # now, and the floor stays: a close cannot genuinely exceed its own
+            # trailing intraday high, so 0 is the correct floor.
+            if week26_high_raw:
+                week26_distance = round(max(0.0, (week26_high_raw - last_close) / week26_high_raw * 100), 1)
+            if week52_high_raw:
+                week52_distance = round(max(0.0, (week52_high_raw - last_close) / week52_high_raw * 100), 1)
 
             # 5-year high and the distance below it, same intraday-High basis
             # and same clamped-positive convention as the 26w/52w pair above.
@@ -2507,9 +2551,10 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
             # Breakout Horizon scan screens for.
             high_5y = high_5y_distance = None
             if df["High"].notna().any():
-                high_5y = round(float(df["High"].max()), 1)
-                if high_5y:
-                    high_5y_distance = round(max(0.0, (high_5y - last_close) / high_5y * 100), 1)
+                high_5y_raw = float(df["High"].max())
+                high_5y = round_price(high_5y_raw)
+                if high_5y_raw:
+                    high_5y_distance = round(max(0.0, (high_5y_raw - last_close) / high_5y_raw * 100), 1)
 
             # Age of the overhead resistance: trading days back to the level
             # price is now testing. A reading of 250 means price is back at a
@@ -2596,10 +2641,10 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
             trend = trend_rank = trend_detail = None
             if ema40_series is not None:
                 trend, trend_rank, trend_detail = compute_trend(
-                    last_close, ema40_series, rs_weekly, week52_high, week52_low,
+                    last_close, ema40_series, rs_weekly, week52_high_raw, week52_low_raw,
                     median_volume_10d, median_volume_100d, trend_slope_lookback,
                     near_high_low_pct=trend_near_high_low_pct, volume_ratio=trend_volume_ratio,
-                    # Unrounded: the row's ema10 is rounded to 0.1 for display.
+                    # Unrounded: the row's ema10 is rounded (round_price).
                     ema_fast=float(ema10_series.iloc[-1]),
                     rs_neutral=trend_rs_neutral, ma_neutral_pct=trend_ma_neutral_pct,
                     slope_neutral_pct=trend_slope_neutral_pct,
@@ -2675,7 +2720,7 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
                 "ticker": t,
                 "company_name": company_name,
                 "quote_type": quote_type,
-                "last_close": round(last_close, 1),
+                "last_close": round_price(last_close),
                 "pct_change_1d": pct_change_1d,
                 "perf_1w": perf_1w,
                 "perf_ytd": perf_ytd,
@@ -2737,12 +2782,15 @@ def fetch_snapshot(tickers, benchmark="SPY", period="5y", settings=None, complet
                 "ema10_daily": ema10_daily,
                 "ema50": ema50,
                 "ema200": ema200,
-                "below_10": (last_close < ema10) if ema10 is not None else None,
-                "below_20": (last_close < ema20) if ema20 is not None else None,
-                "below_40": (last_close < ema40) if ema40 is not None else None,
-                "below_10_daily": (last_close < ema10_daily) if ema10_daily is not None else None,
-                "below_50": (last_close < ema50) if ema50 is not None else None,
-                "below_200": (last_close < ema200) if ema200 is not None else None,
+                # Unrounded close vs unrounded average (level_raw): the stored
+                # levels are rounded, and a 5.0197 close under a 5.0396 SMA read
+                # as not below against a 1dp 5.0.
+                "below_10": (last_close < level_raw["ema10"]) if ema10 is not None else None,
+                "below_20": (last_close < level_raw["ema20"]) if ema20 is not None else None,
+                "below_40": (last_close < level_raw["ema40"]) if ema40 is not None else None,
+                "below_10_daily": (last_close < level_raw["ema10_daily"]) if ema10_daily is not None else None,
+                "below_50": (last_close < level_raw["ema50"]) if ema50 is not None else None,
+                "below_200": (last_close < level_raw["ema200"]) if ema200 is not None else None,
                 "crossed_below_10": crossed_below_10,
                 "crossed_below_40": crossed_below_40,
                 "crossed_above_10": crossed_above_10,
