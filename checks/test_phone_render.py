@@ -6,8 +6,9 @@ what is not on screen:
       page), combined tabs included;
   P2  filter / search / AI-review selections on a hidden tab survive the switch;
   P3  the Expert Views cards are built only while their expander is open.
-Desktop must render exactly as before:
-  D1  every tab's table is built, and the Expert Views cards with them.
+Desktop does the same since 2026-11-22 (it re-sent ~5.5 MB of HTML per click):
+  D1  only the tab on screen builds its table, switching builds the new one, and
+      the Expert Views cards are built only while their expander is open.
   B1  (2026-11-16) a stock with no Reported Qtr / VStop Dir shows "—" there, not "nan".
 
 The app is rendered with AppTest from a throwaway copy of the repo, over a
@@ -164,19 +165,38 @@ def cell_texts(at):
             for c in re.findall(r"<td[^>]*>(.*?)</td>", b.value, flags=re.S)]
 
 
-# --- D1 desktop: unchanged ------------------------------------------------------
+# --- D1 desktop: the same trimming since 2026-11-22 ------------------------------
+# Desktop used to build every tab's table and every Expert Views card on every run:
+# ~5.5 MB of HTML per click with 7 lists of 40 stocks. It now takes the phone's path.
 at = render(phone=False)
 if ok_run(at, "D1 desktop render"):
-    check(table_lists(at) == [1, 2, 3, 4, 5, 6, 7] and sum("<table" in b.value for b in at.markdown) == 9,
-          "D1: desktop builds every tab's table (7 watchlists + 2 combined)")
-    check(cards(at) == 7 * N + 5 * N,
-          f"D1: desktop builds the Expert Views cards for every tab as before ({cards(at)})")
+    check(table_lists(at) == [1] and sum("<table" in b.value for b in at.markdown) == 1,
+          f"D1: desktop builds only the tab on screen ({table_lists(at)})")
+    check(cards(at) == 0, f"D1: no Expert Views cards while the expander is closed ({cards(at)})")
     # B1 (2026-11-16): a blank in a text column is "—", never pandas' "nan"/"None".
     texts = cell_texts(at)
     check("Q2 FY27" in texts and "Up" in texts,
           "B1 fixture: the Reported Qtr and VStop Dir columns are on the table")
     bad = [t for t in texts if t.lower() in ("nan", "none")]
     check(not bad, f"B1: no table cell reads nan / None ({len(bad)} do)")
+    at.text_input(key="search_wl1").set_value("T1X02")
+    ok_run(at, "D1 search")
+    at.session_state["main_tabs"] = "List 6"
+    if ok_run(at, "D1 switch to List 6"):
+        check(table_lists(at) == [6], f"D1: switching tabs on desktop builds the new tab ({table_lists(at)})")
+        check(at.session_state["search_wl1"] == "T1X02", "D1: the hidden tab's search survives")
+    at.session_state["main_tabs"] = "All Watchlist"
+    if ok_run(at, "D1 All Watchlist"):
+        check(table_lists(at) == [3, 4, 5], f"D1: a combined tab builds its members' table ({table_lists(at)})")
+    # AppTest does not send the tab strip's selection back on a later run (a plain
+    # at.run() after a switch lands on the first tab again), so the tab is set on
+    # the same run as the expander.
+    at.session_state["main_tabs"] = "List 6"
+    at.session_state["ev_exp_wl6"] = True
+    if ok_run(at, "D1 open expander"):
+        _built = sum(("<b>Headline:</b>" in b.value or "Pending — no AI" in b.value) and "T6X" in b.value
+                     for b in at.markdown)
+        check(_built == N, f"D1: opening the expander builds that tab's cards ({_built})")
 
 # --- P1-P3 phone ------------------------------------------------------------------
 at = render(phone=True)
