@@ -25,6 +25,10 @@ A: alerts.ALLOWED_HOURS (the hours the app's schedule picker offers) is the
    daily-alerts.yml gate's `slots`, parsed the way slot_gate.py parses them: an
    hour the gate never works is a rule that never fires.
 
+P: checks/run_all.py runs the suites in parallel (CHECKS_JOBS, default the CPU
+   count) and still reports them in sorted order with the same summary line
+   and exit code; CHECKS_JOBS=1 is the old serial run.
+
 Offline: invented tickers (ACME.NS) and frames, the download and yf.Ticker
 replaced, no network.
 """
@@ -315,6 +319,64 @@ check(rmb.SETTLE_MINUTES == sd.SESSION_SETTLE_MINUTES,
 src = (REPO / "refresh_market_breadth.py").read_text()
 check("from stock_data import SESSION_SETTLE_MINUTES" in src and "SETTLE_MINUTES = 30" not in src,
       "S1 ...imported, not a second literal")
+
+# ---------------------------------------------------------------- P: the parallel runner
+import contextlib  # noqa: E402
+import importlib.util  # noqa: E402
+import io  # noqa: E402
+import os  # noqa: E402
+import shutil  # noqa: E402
+import tempfile  # noqa: E402
+
+spec = importlib.util.spec_from_file_location("run_all_under_test", REPO / "checks" / "run_all.py")
+ra = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ra)
+
+saved_env = os.environ.get("CHECKS_JOBS")
+os.environ["CHECKS_JOBS"] = "1"
+j1 = ra._jobs()
+os.environ["CHECKS_JOBS"] = "bogus"
+jb = ra._jobs()
+os.environ.pop("CHECKS_JOBS")
+jd = ra._jobs()
+check(j1 == 1 and jb == jd == max(1, os.cpu_count() or 1),
+      f"P1 CHECKS_JOBS=1 is serial; unset or unreadable is the CPU count ({j1}, {jb}, {jd})")
+check(all((REPO / "checks" / n).exists() for n in ra.SERIAL_SUITES), "P1 every SERIAL_SUITES entry is a real suite")
+
+# Three invented suites in a temp folder: the first sorted one is the slowest
+# and one fails, so a parallel run finishes them out of order.
+fake = Path(tempfile.mkdtemp(prefix="run_all_check_")) / "checks"
+fake.mkdir()
+(fake / "test_a.py").write_text('import time; time.sleep(1.0); print("PASS a1"); print("PASS a2"); print("FAILURES: 0")\n')
+(fake / "test_b.py").write_text('print("PASS b1"); print("FAIL b2"); print("FAILURES: 1"); raise SystemExit(1)\n')
+(fake / "test_c.py").write_text('print("PASS c1"); print("FAILURES: 0")\n')
+saved_here, saved_boot = ra.HERE, ra.bootstrap_repo_files
+booted = []
+ra.HERE, ra.bootstrap_repo_files = fake, (lambda: booted.append(1))
+saved_argv = sys.argv
+outs = {}
+try:
+    for jobs in ("3", "1"):
+        os.environ["CHECKS_JOBS"] = jobs
+        sys.argv = ["run_all.py"]
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(io.StringIO()):
+            rc = ra.main()
+        outs[jobs] = (rc, buf.getvalue())
+finally:
+    ra.HERE, ra.bootstrap_repo_files, sys.argv = saved_here, saved_boot, saved_argv
+    if saved_env is None:
+        os.environ.pop("CHECKS_JOBS", None)
+    else:
+        os.environ["CHECKS_JOBS"] = saved_env
+    shutil.rmtree(fake.parent, ignore_errors=True)
+for jobs, (rc, out) in outs.items():
+    names = [ln.split()[0] for ln in out.splitlines() if ln.startswith("test_")]
+    check(rc == 1 and names == ["test_a.py", "test_b.py", "test_c.py"],
+          f"P2 CHECKS_JOBS={jobs}: suites reported in sorted order, exit 1 on a failure ({names}, {rc})")
+    check("3 suite(s), 4 checks, 1 failing" in out and "FAILED: test_b.py" in out,
+          f"P2 CHECKS_JOBS={jobs}: the summary line counts every PASS and names the failure")
+check(booted == [1], "P2 the default data files are made once, before a parallel run only")
 
 print("FAILURES:", fails)
 sys.exit(1 if fails else 0)
