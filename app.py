@@ -136,7 +136,7 @@ from weekly_wrapup import (
 )
 from filters import (load_custom_filters, get_market_filters, save_market_filters, apply_filters, describe_filter,
                      describe_chain, describe_chain_with_values, passes_filter_chain, CATEGORICAL_METRICS,
-                     TEXT_METRICS)
+                     TEXT_METRICS, parse_number_text)
 import watchlist_moves
 from github_sync import (get_github_config, get_data_repo_config, bootstrap_data_files, start_refresh_after_stage_upload,
                          push_all_config, trigger_github_workflow, pull_generated_files, SYNCABLE_FILES, WORKFLOW_GENERATED_FILES,
@@ -289,6 +289,22 @@ def _show_flash(where, box=None):
     msgs = queued.pop(where, None)
     for kind, text in msgs or ():
         getattr(box if box is not None else st, kind)(text)
+
+
+
+# Files read by every tab's table, AI controls and Expert Views cards, parsed
+# once per script run instead of once per tab (11 tabs, each re-reading the same
+# ~100 KB+ JSON several times). A plain module-level dict: Streamlit re-executes
+# this script in a fresh namespace on every run, so the memo never outlives the
+# run. Read-only callers only -- every path that writes these files ends with
+# st.rerun(), which starts a run with an empty memo.
+_RUN_LOADS = {}
+
+
+def _run_load(name, loader):
+    if name not in _RUN_LOADS:
+        _RUN_LOADS[name] = loader()
+    return _RUN_LOADS[name]
 
 
 # ---------- auth gate ----------
@@ -602,12 +618,14 @@ def parse_filter_value_text(text):
     float when it looks numeric, otherwise keeps it as a stripped string
     (e.g. "Yes" for Tech Uptrend). The word->0/1 mapping itself happens at
     compare time in filters._coerce_fixed_value, since that needs the row's
-    live metric_a value to know whether "Yes" should mean 1."""
+    live metric_a value to know whether "Yes" should mean 1.
+
+    Numbers are read by filters.parse_number_text, the same parser the engine
+    applies at compare time, so "1,000,000", "5%", "10L" and "2Cr" are saved as
+    numbers (2026-11-22; they used to be saved as text and compared as text)."""
     text = (text or "").strip()
-    try:
-        return float(text)
-    except ValueError:
-        return text
+    number = parse_number_text(text)
+    return number if number is not None else text
 
 
 def save_discord_webhook_local(url):
@@ -1068,6 +1086,25 @@ def _escape_markdown_dollars(text):
     already-escaped `\\$` alone."""
     return re.sub(r"(?<!\\)\$", r"\\$", str(text))
 
+
+
+def _rule_references(rule_id, rules):
+    """Names of what refers to alert `rule_id` through a {"type": "rule"}
+    condition: other alert rules, and the saved custom filters of a tab
+    ("<tab> custom filter"). Shown before a rule is deleted."""
+    refs = [f"rule \"{r.get('name') or '(unnamed)'}\"" for r in rules
+            if r.get("id") != rule_id
+            and any(c.get("type") == "rule" and c.get("rule_id") == rule_id
+                    for c in (r.get("conditions") or []) if isinstance(c, dict))]
+    try:
+        registry = load_markets_registry()
+        for mkt, conds in load_custom_filters().items():
+            if any(isinstance(c, dict) and c.get("type") == "rule" and c.get("rule_id") == rule_id
+                   for c in conds or []):
+                refs.append(f"the {registry.get(mkt, {}).get('label', mkt)} custom filter")
+    except Exception:   # a filters file that cannot be read only loses this hint
+        pass
+    return refs
 
 def _price_fmt(v):
     """Price-denominated cells: 1 decimal under 1,000, whole numbers above.
@@ -2359,12 +2396,21 @@ def render_condition_builder(key_prefix, metric_names, filterable_metrics, logic
             init_val_text = str(init_val)
         value_text = vc1.text_input(
             "Value", value=init_val_text, key=f"{key_prefix}_val",
-            help="A number (e.g. 45) or a word for boolean-like metrics, e.g. Yes / No for Tech Uptrend.",
+            help="A number (e.g. 45, 1,000,000, 5%, 10L, 2Cr, 3M) or a word for boolean-like metrics, "
+                 "e.g. Yes / No for Tech Uptrend.",
         )
         if vc2.button(submit_label, key=f"{key_prefix}_addbtn"):
+            parsed = parse_filter_value_text(value_text)
+            # A numeric metric against text that is not a number never matches
+            # (filters.passes_filter fails it closed), so say so instead of
+            # saving a condition that silently matches nothing.
+            if (isinstance(parsed, str) and metric_a_key not in TEXT_METRICS
+                    and parsed.lower() not in ("yes", "no", "true", "false")):
+                st.error(f"\"{parsed}\" is not a number. Type e.g. 45, 1,000,000, 5%, 10L or 2Cr.")
+                return None
             return {
                 "metric_a": metric_a_key, "operator": operator_choice, "compare_type": "value",
-                "value": parse_filter_value_text(value_text), "logic": logic_choice,
+                "value": parsed, "logic": logic_choice,
             }
         return None
 
@@ -4157,7 +4203,7 @@ def _render_model_repository(settings):
 
 
 def render_expert_analysis_control_bar(market, results, combined_markets=None):
-    expert_views = load_expert_views()
+    expert_views = _run_load("expert_views", load_expert_views)
     # All configured keys, not just the primary: on Streamlit Cloud the backup
     # lives in st.secrets, which llm_util cannot read on its own, so the UI has
     # to pass them down or these paths would pin every call to one key.
@@ -4165,21 +4211,13 @@ def render_expert_analysis_control_bar(market, results, combined_markets=None):
 
     all_tickers = [r["ticker"] for r in results]
 
-    # --- Auto-cleanup: remove stale tickers no longer in watchlist ---
-    from stock_data import load_watchlists
-    global_watchlists = load_watchlists()
-    global_all_tickers = [tk for mkt_tks in global_watchlists.values() for tk in mkt_tks]
-
-    stale_keys = [tk for tk in expert_views if tk not in global_all_tickers]
-    if stale_keys:
-        for tk in stale_keys:
-            del expert_views[tk]
-        save_expert_views(expert_views)
-        sync_ai_views_to_github(
-            f"Auto-cleanup: removed {len(stale_keys)} deleted ticker(s) from expert_views",
-            filenames=("expert_views.json",),  # cleanup touches only this file
-            deleted=stale_keys,
-        )
+    # No clean-up of views for stocks no longer in a watchlist here any more
+    # (2026-11-22). It ran on every tab of every render, deleted each
+    # expert_views.json key missing from THIS container's watchlist.json and
+    # pushed the deletion -- and a container whose watchlist.json was behind (an
+    # edit from another device not pulled yet) deleted the view of a stock just
+    # added there. refresh_expert_views.py prunes orphans against the data repo's
+    # watchlists every night (_prune_orphans), which is the one place it belongs.
 
     # --- Detect pending tickers per AI column (includes newly added ones with
     # no entry at all) ---
@@ -4189,7 +4227,7 @@ def render_expert_analysis_control_bar(market, results, combined_markets=None):
     # Expert Take is fine but whose Sentiment is pending shows up in exactly
     # one of these -- previously a single merged list forced both columns to
     # be regenerated for it.
-    fundamentals_now = load_fundamentals()
+    fundamentals_now = _run_load("fundamentals", load_fundamentals)
     # A stock with no Stage Analysis is left out of Expert Take's count (owner,
     # 2026-11-08): its verdict is Pending until a Stage upload covers it, the
     # nightly and retry jobs skip it ("no Stage Analysis yet"), and a retry could
@@ -4298,7 +4336,7 @@ def render_expert_analysis_control_bar(market, results, combined_markets=None):
 
 
 def render_expert_view_expander(market, filtered_rows, settings, results=None):
-    expert_views = load_expert_views()
+    expert_views = _run_load("expert_views", load_expert_views)
     tickers = [r["ticker"] for r in filtered_rows]
     if not tickers:
         return
@@ -4313,18 +4351,15 @@ def render_expert_view_expander(market, filtered_rows, settings, results=None):
     # NameError the moment it was clicked.
 
     ev_label = f"🤖 AI Stock Expert Views ({market} — {len(tickers)} tickers)"
-    if IS_MOBILE:
-        # On a phone, build the cards only while the expander is open. A plain
-        # expander runs its body collapsed or not, so every tab sent a card and a
-        # Re-analyze button per ticker on every rerun -- the bulk of a phone's
-        # first load (Brave Android lagged). Opening it costs one rerun. Desktop
-        # keeps the plain expander: there the cost was never felt, and it opens
-        # instantly. The Expert Take column does not come from here.
-        ev_exp = st.expander(ev_label, key=f"ev_exp_{market}", on_change="rerun")
-        if not ev_exp.open:
-            return
-    else:
-        ev_exp = st.expander(ev_label, expanded=False)
+    # Build the cards only while the expander is open. A plain expander runs its
+    # body collapsed or not, so every tab sent a card and a Re-analyze button per
+    # ticker on every rerun -- the bulk of a phone's first load (Brave Android
+    # lagged, 2026-10-19), and on desktop ~380 KB and 480 buttons per click with
+    # 7 lists of 40 stocks (2026-11-22, when desktop took this path too).
+    # Opening it costs one rerun. The Expert Take column does not come from here.
+    ev_exp = st.expander(ev_label, key=f"ev_exp_{market}", on_change="rerun")
+    if not ev_exp.open:
+        return
 
     with ev_exp:
         # Scrollable container for all ticker cards
@@ -4431,7 +4466,7 @@ def render_expert_view_expander(market, filtered_rows, settings, results=None):
 
 def render_market_tab(market, results, settings, visible_keys, label_by_key, sort_levels=None,
                        combined_markets=None, combined_label=None, short_history=None,
-                       hidden_on_phone=False):
+                       hidden=False):
     """Renders one watchlist table tab. `market` is either a real registry
     key (single-market tab) or a synthetic key like "all_invested" used only
     for widget-key namespacing / CSV filenames when `combined_markets` is
@@ -4441,12 +4476,14 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
     watchlist editor (ticker membership is edited from the real per-market
     tabs, unaffected by this), and a friendlier empty-state message.
 
-    `hidden_on_phone`: a phone, and this tab is not the one on screen. The
-    table, the AI-review box and the Expert Views cards are then not built:
-    they were ~90% of what a phone downloaded on first load, for tabs it could
-    not see. The filter, search and editor widgets above still run, so their
-    state survives switching away; switching tabs already reruns
-    (st.tabs on_change="rerun"), which builds the newly shown tab."""
+    `hidden`: this tab is not the one on screen. The table, the AI-review box
+    and the Expert Views cards are then not built: they were ~90% of what a
+    phone downloaded on first load (2026-10-19), for tabs it could not see, and
+    since 2026-11-22 desktop skips them too -- it re-sent ~5.5 MB of HTML per
+    click with 7 lists of 40 stocks, 5.1 MB of it the eight hidden tables. The
+    filter, search and editor widgets above still run, so their state survives
+    switching away; switching tabs already reruns (st.tabs on_change="rerun"),
+    which builds the newly shown tab."""
     benchmarks = get_benchmarks(settings)
     labels = ema_col_labels(settings)
     custom_columns = load_custom_columns()
@@ -4755,7 +4792,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             + ", ".join(f"{t} ({short_history[t]['bars']})" for t in _too_new)
         )
 
-    if filtered and hidden_on_phone:
+    if filtered and hidden:
         # A widget not rendered on a run loses its session_state; re-assigning
         # keeps the AI-review selection for when this tab is shown again.
         _k = f"ai_review_tickers_{market}"
@@ -4849,7 +4886,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         STAR_HTML = '<span title="Interested" style="font-size:15px;">★</span>'
         # Loaded here, before the ticker cell: its dot explains the Expert Take
         # verdict, and the Expert Take column below reuses the same dict.
-        expert_views = load_expert_views()
+        expert_views = _run_load("expert_views", load_expert_views)
 
         def _ticker_cell(r):
             link = (f'<a href="{tradingview_url(r["ticker"])}" '
@@ -4976,7 +5013,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
 
         raw_df["expert_take"] = [_expert_take_cell(r["ticker"]) for r in filtered]
 
-        fundamentals = load_fundamentals()
+        fundamentals = _run_load("fundamentals", load_fundamentals)
         def _fundamentals_cell(ticker):
             v = fundamentals.get(ticker, {})
             sentiment = v.get("sentiment", "Unknown")
@@ -5288,7 +5325,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
     # `results` (not just the filtered rows) so the alert rules behind the
     # per-ticker re-analyze button resolve over the whole market, exactly as
     # they do in the nightly job.
-    if hidden_on_phone:
+    if hidden:
         _k = f"ev_exp_{market}"   # keep the expander's open state (see above)
         if _k in st.session_state:
             st.session_state[_k] = st.session_state[_k]
@@ -5761,13 +5798,9 @@ combined_markets_by_key = {k: watchlist_groups_now.get(k, []) for k in combined_
 _dash_slot = st.container()
 all_tabs = st.tabs(market_tab_labels + combined_tab_labels + ["News", "Alert Rules"],
                    key="main_tabs", on_change="rerun")
-# A phone or tablet browser. Read by the watchlist tabs, which on a phone skip the
-# work for what is not on screen (see render_expert_view_expander and the
-# `hidden_on_phone` argument of render_market_tab); desktop renders as it always did.
-try:
-    IS_MOBILE = breadth_charts.is_mobile(st.context.headers.get("User-Agent", ""))
-except Exception:   # no request headers (a headless run) -> desktop, as the News tab does
-    IS_MOBILE = False
+# The watchlist tabs skip the work for a tab that is not on screen, on a phone
+# and on desktop alike (the `hidden` argument of render_market_tab, and
+# render_expert_view_expander). The News tab reads the User-Agent itself.
 n_markets = len(market_keys_now)
 market_tabs = dict(zip(market_keys_now, all_tabs[:n_markets]))
 combined_tabs = dict(zip(combined_keys, all_tabs[n_markets:-2]))
@@ -5865,7 +5898,7 @@ for ck in combined_keys:
             ck, combined_results, settings_now, shared_visible_keys, shared_label_by_key,
             saved_sort_levels(ck, shared_key_by_label), combined_markets=combined_markets_here,
             combined_label=combined_display_label_by_key[ck], short_history=short_history_now,
-            hidden_on_phone=IS_MOBILE and not combined_tabs[ck].open,
+            hidden=not combined_tabs[ck].open,
         )
 
 for mkt in market_keys_now:
@@ -5873,7 +5906,7 @@ for mkt in market_keys_now:
         render_market_tab(
             mkt, per_market.get(mkt, []), settings_now, shared_visible_keys, shared_label_by_key,
             saved_sort_levels(mkt, shared_key_by_label), short_history=short_history_now,
-            hidden_on_phone=IS_MOBILE and not market_tabs[mkt].open,
+            hidden=not market_tabs[mkt].open,
         )
 
 with tab_news, _Contained("The News tab"):
@@ -6084,9 +6117,23 @@ with tab_news, _Contained("The News tab"):
         # Load Data
         breadth_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "market_breadth.json")
         breadth_data = {}
+        # Guarded like the two loads below (2026-11-22): a torn or truncated file
+        # (a crash mid-write, a bad pull) raised here and took down the whole News
+        # tab. Regenerable data, so an unreadable file reads as empty and every
+        # breadth panel says why (_stale_suffix) until the next breadth run.
+        _breadth_unreadable = False
         if os.path.exists(breadth_file):
-            with open(breadth_file) as f:
-                breadth_data = json.load(f)
+            try:
+                with open(breadth_file) as f:
+                    breadth_data = json.load(f)
+                if not isinstance(breadth_data, dict):
+                    raise ValueError("not a JSON object")
+            except (OSError, ValueError) as _be:
+                print(f"[news] market_breadth.json unreadable: {_be}")
+                breadth_data = {}
+                _breadth_unreadable = True
+                st.warning("The market breadth file (market_breadth.json) could not be read, so the breadth "
+                           "charts are empty. The next market-breadth run rewrites it.")
 
         # Dashboard portfolio-vs-benchmark curves come from dashboard_perf.json,
         # built by the same GitHub Actions market-breadth workflow -- NO live
@@ -6333,6 +6380,8 @@ with tab_news, _Contained("The News tab"):
             _breadth_as_of = breadth_data.get("as_of")
 
             def _stale_suffix(market_key):
+                if _breadth_unreadable:
+                    return " [breadth file unreadable]"
                 block_as_of = _breadth_block(market_key).get("as_of")
                 if block_as_of and _breadth_as_of and block_as_of != _breadth_as_of:
                     return f" [stale: {block_as_of}]"
@@ -7115,10 +7164,33 @@ with tab_alerts, _Contained("The Alert Rules tab"):
                     save_rules(rules)
                     st.session_state[f"rule_exp_{clone['id']}"] = True
                     st.rerun()
+                # Two steps (2026-11-22): one click used to delete the rule at once
+                # and the end-of-run push sent the deletion to the data repo, with
+                # nothing to undo it from. The first click only asks; the confirm
+                # names the rules and saved filters that refer to this one (a
+                # {"type": "rule"} condition), which match nothing once it is gone.
+                _del_flag = f"_confirm_del_{rule['id']}"
                 if del_col.button("🗑 Delete rule", key=f"del_{rule['id']}"):
-                    rules = [r for r in rules if r["id"] != rule["id"]]
-                    save_rules(rules)
+                    st.session_state[_del_flag] = True
+                    keep_open()
                     st.rerun()
+                if st.session_state.get(_del_flag):
+                    _refs = _rule_references(rule["id"], rules)
+                    _msg = f"Delete **{_escape_markdown_dollars(rule.get('name') or '(unnamed)')}**? This cannot be undone."
+                    if _refs:
+                        _msg += (" It is used by " + ", ".join(_escape_markdown_dollars(x) for x in _refs)
+                                 + ", which will no longer match anything through it.")
+                    st.warning(_msg)
+                    cd1, cd2 = st.columns(2)
+                    if cd1.button("Confirm delete", key=f"del_yes_{rule['id']}", type="primary"):
+                        st.session_state.pop(_del_flag, None)
+                        rules = [r for r in rules if r["id"] != rule["id"]]
+                        save_rules(rules)
+                        st.rerun()
+                    if cd2.button("Cancel", key=f"del_no_{rule['id']}"):
+                        st.session_state.pop(_del_flag, None)
+                        keep_open()
+                        st.rerun()
 
                 st.markdown("**Name & scope**")
                 nm_col, sc_col, cl_col = st.columns([2, 2, 1.3])
