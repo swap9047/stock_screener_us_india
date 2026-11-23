@@ -14,7 +14,6 @@ from datetime import date, datetime, timedelta, timezone
 import llm_util
 import model_settings
 from news_summary import market_window_date
-from google.genai import types
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 EXPERT_VIEWS_FILE = os.path.join(SCRIPT_DIR, "expert_views.json")
@@ -98,9 +97,6 @@ def fetch_gemma_expert_news(client, ticker, market, company_name, is_retry=False
         "a training cutoff. If there is no material news, output nothing."
     )
     
-    grounding_tool = types.Tool(google_search=types.GoogleSearch())
-    config = types.GenerateContentConfig(tools=[grounding_tool])
-
     check = llm_util.SearchReplyCheck()
 
     def _searched(resp):
@@ -112,16 +108,19 @@ def fetch_gemma_expert_news(client, ticker, market, company_name, is_retry=False
         return check(resp)
 
     from stock_data import load_settings
+    settings = load_settings()
+    # Per model (2026-11-22): a Gemini backup in E1's chain gets a small thinking budget, Gemma none.
+    search_budget = model_settings.search_budget("E1", settings)
     resp, used = llm_util.run_model_ladder(
-        client, prompt, model_settings.tiers("E1", load_settings()),
-        lambda m: config, label="expert-search", subject=ticker, timeout=llm_util.SEARCH_TIMEOUT_SECONDS,
-        on_success=_searched,
+        client, prompt, model_settings.tiers("E1", settings),
+        lambda m: model_settings.search_config(m, search_budget), label="expert-search", subject=ticker,
+        timeout=llm_util.SEARCH_TIMEOUT_SECONDS, on_success=_searched,
     )
     if used is not None:
         text = (resp.text or "").strip()
         if search_found_nothing(text):
             text = ""
-        return (text or "No recent news found."), SEARCH_SOURCE_LABELS.get(used, f"🔍 {used} (Google Search)")
+        return (text or "No recent news found."), SEARCH_SOURCE_LABELS.get(used) or model_settings.search_source_label(used)
     if not is_retry:
         raise TimeoutError("Search timed out. Add to retry queue.")
     print(f"  [expert search final fallback] {ticker} -> No source available")

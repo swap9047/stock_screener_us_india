@@ -109,6 +109,50 @@ DEFAULT_REPOSITORY = [
 ]
 
 
+# A Gemini model in a SEARCH chain (owner, 2026-11-22: a backup such as gemini-3.5-flash-lite between Gemma's tries,
+# for the days Google's Gemma search returns 500 for most calls) runs at a small explicit thinking budget. Without
+# one it thinks at the model's own default, which on a grounded search is slow and spends output tokens on a reply
+# that is only a few dated lines. Gemma takes no thinking config at all, as before.
+SEARCH_THINKING_BUDGET = 512
+
+
+def search_budget(step, settings=None):
+    """The thinking budget a Gemini model in search step `step` gets: a whole number of 0 or more saved by hand as
+    the step's "budget" in settings.json (the panel saves none for a search step, and resolve() reports none), else
+    SEARCH_THINKING_BUDGET."""
+    settings = settings if settings is not None else _current_settings()
+    saved = ((settings.get("ai_models") or {}).get(step) or {})
+    value = saved.get("budget") if isinstance(saved, dict) else None
+    if isinstance(value, bool):
+        return SEARCH_THINKING_BUDGET
+    if isinstance(value, str) and value.isdigit():
+        value = int(value)
+    return value if isinstance(value, int) and value >= 0 else SEARCH_THINKING_BUDGET
+
+
+def search_config(model, budget=None):
+    """The GenerateContentConfig of one grounded-search call on `model`: the google_search tool, and for a Gemini
+    (not Gemma) model a thinking budget (`budget`, None = SEARCH_THINKING_BUDGET; 0 is sent as 0, no thinking).
+    The SDK is imported here, when a search runs, so this module stays importable without it."""
+    from google.genai import types
+    kwargs = {"tools": [types.Tool(google_search=types.GoogleSearch())]}
+    if "gemma" not in (model or ""):
+        b = SEARCH_THINKING_BUDGET if budget is None else budget
+        if isinstance(b, str) and not b.isdigit():
+            kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=b)
+        else:
+            kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=int(b))
+    return types.GenerateContentConfig(**kwargs)
+
+
+def search_source_label(model):
+    """The view's news_source for a search `model` answered: Gemma's long-standing label, else the model's short
+    name (a backup in the chain, 2026-11-22) -- not the full "models/..." id."""
+    if full_id(model) == GEMMA_26B:
+        return "🔍 Gemma-4-26B (Google Search)"
+    return f"🔍 {short(model)} (Google Search)"
+
+
 def full_id(model):
     """'gemini-3.5-flash' and 'models/gemini-3.5-flash' are the same model; the chains use the second."""
     model = (model or "").strip()
@@ -240,11 +284,6 @@ def skipped_models(settings=None):
     return out
 
 
-def skipping_38(settings=None):
-    """True while the skip list leaves Gemini 3.8 Flash out."""
-    return FLASH_38 in skipped_models(settings)
-
-
 def with_skipped(settings, models_to_skip):
     """The `ai_models` value with the skip list set to `models_to_skip`, every saved chain kept as it is (the old
     3.8-only switch is folded into the list)."""
@@ -256,12 +295,6 @@ def with_skipped(settings, models_to_skip):
     else:
         models.pop(SKIP_MODELS_KEY, None)
     return models
-
-
-def with_skip_38(settings, on):
-    """The `ai_models` value with Gemini 3.8 Flash added to or taken off the skip list."""
-    current = skipped_models(settings)
-    return with_skipped(settings, (current | {FLASH_38}) if on else (current - {FLASH_38}))
 
 
 def effective_chain(chain, settings=None):
@@ -282,11 +315,6 @@ def skipped_in(chain, settings=None):
         return []
     skip = skipped_models(settings)
     return list(dict.fromkeys(e["model"] for e in chain if e["model"] in skip))
-
-
-def skipped_38_in(chain, settings=None):
-    """True when 3.8 Flash is on the skip list and `chain` has a 3.8 rung it takes out."""
-    return FLASH_38 in skipped_in(chain, settings)
 
 
 def tiers(step, settings=None):
@@ -314,10 +342,6 @@ def describe(chain):
     return " → ".join(short(e["model"]) + (f" ×{e['attempts']}" if e["attempts"] > 1 else "")
                       + (f" @{e['timeout']}s" if e.get("timeout", DEFAULT_TIMEOUT_S) != DEFAULT_TIMEOUT_S else "")
                       for e in chain)
-
-
-def is_custom(step, settings=None):
-    return resolve(step, settings)["source"] != "default"
 
 
 # --- saving ----------------------------------------------------------------------------------------
@@ -395,11 +419,16 @@ def test_call(client, step, model, budget=None, timeout=TEST_TIMEOUT_S):
     try:
         if kind == "search":
             prompt = "Search the web: what is the capital of France? Answer in one short sentence."
-            config = types.GenerateContentConfig(tools=[types.Tool(google_search=types.GoogleSearch())])
+            # Shaped like the step's own call (search_config): a Gemini model gets the search budget.
+            if budget is None and "gemma" not in model:
+                budget = search_budget(step)
+            config = search_config(model, budget)
         else:
             prompt = 'Reply with exactly this JSON and nothing else: {"ok": true}'
             kwargs = {"response_mime_type": "application/json"}
-            if "gemma" not in model and budget not in (None, 0):
+            # `is not None`, not truthiness: 0 is the panel's "Off" and is sent as thinking_budget=0. Left out, the
+            # model thought at its own default, so a test of "Off" measured a thinking call (2026-11-22).
+            if "gemma" not in model and budget is not None:
                 if isinstance(budget, str):
                     kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=budget)
                 else:

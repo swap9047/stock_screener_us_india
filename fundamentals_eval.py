@@ -178,19 +178,20 @@ def fetch_fundamental_news(client, ticker, market, company_name, is_retry=False,
         "Be extremely concise. If there is no material news, output nothing."
     )
     
-    grounding_tool = types.Tool(google_search=types.GoogleSearch())
-    config = types.GenerateContentConfig(tools=[grounding_tool])
-
     from stock_data import load_settings
+    settings = load_settings()
+    # Per model (2026-11-22): a Gemini backup in F1's chain gets a small thinking budget, Gemma none.
+    search_budget = model_settings.search_budget("F1", settings)
     resp, used = llm_util.run_model_ladder(
-        client, prompt, model_settings.tiers("F1", load_settings()),
-        lambda m: config, label="fundamental-search", subject=ticker, timeout=llm_util.SEARCH_TIMEOUT_SECONDS,
+        client, prompt, model_settings.tiers("F1", settings),
+        lambda m: model_settings.search_config(m, search_budget), label="fundamental-search", subject=ticker,
+        timeout=llm_util.SEARCH_TIMEOUT_SECONDS,
         # Tool-call text is a failed try; "nothing" without a search gets one more try (owner, 2026-11-15).
         on_success=llm_util.SearchReplyCheck(),
     )
     if used is not None:
         text = "" if llm_util.unsearched_nothing(resp) else (resp.text or "").strip()
-        return (text or "No recent fundamental news found."), SEARCH_SOURCE_LABELS.get(used, f"🔍 {used} (Google Search)")
+        return (text or "No recent fundamental news found."), SEARCH_SOURCE_LABELS.get(used) or model_settings.search_source_label(used)
     if not is_retry:
         raise TimeoutError("Search timed out. Add to retry queue.")
     return "No recent fundamental news found.", "⚪ No Source"
@@ -933,13 +934,13 @@ def fetch_targeted_earnings_numbers(client, ticker, company_name, market, announ
         f"specific announcement, output nothing at all -- do not substitute another "
         f"quarter's numbers and do not estimate."
     )
-    grounding_tool = types.Tool(google_search=types.GoogleSearch())
-    config = types.GenerateContentConfig(tools=[grounding_tool])
     from stock_data import load_settings
+    settings = load_settings()
+    search_budget = model_settings.search_budget("F2", settings)
     resp, used = llm_util.run_model_ladder(
         client, prompt,
-        model_settings.tiers("F2", load_settings()),
-        lambda m: config, label="targeted-earnings", subject=ticker,
+        model_settings.tiers("F2", settings),
+        lambda m: model_settings.search_config(m, search_budget), label="targeted-earnings", subject=ticker,
         on_success=llm_util.SearchReplyCheck(),
     )
     if used is None or llm_util.unsearched_nothing(resp):
@@ -1142,16 +1143,22 @@ def generate_fundamental_view(client, row_data, news_text=None, news_source=None
 
 
 def _search_failed_unknown(view):
-    """True if this view is Unknown ONLY because the news search stage failed.
+    """True if this view was written without news because the news search stage failed.
 
-    "No Source" is written exactly where fetch_fundamental_news exhausted both
-    of its search models -- distinct from a successful search that legitimately
-    found nothing, which still carries a Gemma source label.
+    "No Source" is written exactly where fetch_fundamental_news exhausted its
+    search ladder -- distinct from a successful search that legitimately found
+    nothing, which still carries the search model's source label.
+
+    Keyed on the source alone, whatever the label (2026-11-22). It also required
+    sentiment == "Unknown", and the reasoning model, given "No recent fundamental
+    news found.", sometimes answers "Neutral" -- which then replaced a fresh
+    Positive/Negative for the day (refresh_fundamentals._apply_result and
+    analyze_single_ticker_sentiment keep the prior only while this is True). A
+    targeted follow-up search that found the quarter's numbers
+    ("... No Source + 🎯 targeted") is real news, so that view stands.
     """
-    return (
-        (view or {}).get("sentiment") == "Unknown"
-        and "No Source" in str((view or {}).get("news_source", ""))
-    )
+    source = str((view or {}).get("news_source", ""))
+    return "No Source" in source and "targeted" not in source
 
 
 def _prior_worth_keeping(old_view):

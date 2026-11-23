@@ -214,16 +214,14 @@ check(both["ai_models"][ms.SKIP_MODELS_KEY] == sorted([F38, H]) and both["ai_mod
 check([m for m, *_ in ms.tiers("R1", both)] == [F36, F36], "R6: both skipped models are left out of the run")
 check(ms.skipped_in(ms.resolve("R1", both)["chain"], both) == [F38, H], "R6: the note names each skipped model once, in chain order")
 legacy = {"ai_models": {**saved, ms.SKIP_38_KEY: True}}
-check(ms.skipped_models(legacy) == {F38} and ms.skipping_38(legacy), "R6: a setting saved with the old 3.8 switch still skips 3.8")
+check(ms.skipped_models(legacy) == {F38} and [m for m, *_ in ms.tiers("R1", legacy)] == [H, H, F36, F36],
+      "R6: a setting saved with the old 3.8 switch still skips 3.8")
 moved = ms.with_skipped(legacy, [H])
 check(ms.SKIP_38_KEY not in moved and moved[ms.SKIP_MODELS_KEY] == [H], "R6: saving the list folds the old switch in (it goes)")
 check(ms.SKIP_MODELS_KEY not in ms.with_skipped(both, []), "R6: an empty list removes the key")
 allskip = {"ai_models": {**saved, ms.SKIP_MODELS_KEY: [F38, H, F36]}}
 check([m for m, *_ in ms.tiers("R1", allskip)] == [F38, F38, H, H, F36, F36, F38] and ms.skipped_in(chain, allskip) == [],
       "R6: a chain made only of skipped models runs as saved (never an empty step), and is not noted as skipped")
-check(ms.with_skip_38({"ai_models": {ms.SKIP_MODELS_KEY: [H]}}, True)[ms.SKIP_MODELS_KEY] == sorted([F38, H])
-      and ms.with_skip_38({"ai_models": {ms.SKIP_MODELS_KEY: [F38, H]}}, False)[ms.SKIP_MODELS_KEY] == [H],
-      "R6: with_skip_38 adds or takes off 3.8 only, the rest of the list kept")
 check(ms.SKIP_MODELS_KEY not in ms.STEPS, "R6: the list's key is not a step id")
 
 # --- R7 Hydrogen ----------------------------------------------------------------------------------------

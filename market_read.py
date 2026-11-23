@@ -417,40 +417,126 @@ def build_prompt(label, facts, prior):
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
 _PERIOD = re.compile(r"\b\d+(?:\.\d+)?[- ]?(?:months?|years?|weeks?)\b", re.I)
 
+# Dates (2026-11-22). The facts carry ISO dates ("2026-10-17"), and their digit parts used to join the known
+# numbers, so "17% of stocks" passed whenever any date fell on a 17th, and "26%" on any day of 2026. Now a date's
+# parts are known only AS a date: a day next to a month name ("Oct 17", "17 October") must be a day the facts
+# date in that month, a "Month YYYY" a month they date, a year one they date -- and no date part counts as a
+# plain number. Dates written in prose (the index read an invested list's facts quote) are read the same way.
+_MONTHS = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6, "jul": 7, "aug": 8, "sep": 9, "oct": 10,
+           "nov": 11, "dec": 12}
+_MONTH = (r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?"
+          r"|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?")
+_ISO_DATE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
+_MONTH_DAY = re.compile(rf"\b{_MONTH}\s+(\d{{1,2}})(?:st|nd|rd|th)?\b(?:,?\s+(\d{{4}})\b)?", re.I)
+_DAY_MONTH = re.compile(rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s+{_MONTH}(?:\s+(\d{{4}})\b)?", re.I)
+_MONTH_YEAR = re.compile(rf"\b{_MONTH}\s+(\d{{4}})\b", re.I)
+_YEAR = re.compile(r"^(19|20)\d\d$")
 
-def _numbers_in(value, found):
-    """Every number held in the facts: JSON numbers, and the digits of date strings."""
+
+def _month(word):
+    return _MONTHS.get(word.lower()[:3])
+
+
+def _dates_in(text):
+    """(text with its dates blanked out, [(year or None, month, day or None, the date's own text)])."""
+    found = []
+
+    def take(year, month, day, m):
+        found.append((year, month, day, m.group(0)))
+        return " "
+
+    def is_may_verb(m, group=1):
+        # "may" is a month only when written "May": "breadth may 15" is not a date.
+        return m.group(group) == "may"
+
+    text = _ISO_DATE.sub(lambda m: take(int(m.group(1)), int(m.group(2)), int(m.group(3)), m), text)
+    text = _MONTH_DAY.sub(lambda m: m.group(0) if is_may_verb(m) or not 1 <= int(m.group(2)) <= 31 else
+                          take(int(m.group(3)) if m.group(3) else None, _month(m.group(1)), int(m.group(2)), m), text)
+    text = _DAY_MONTH.sub(lambda m: m.group(0) if is_may_verb(m, 2) or not 1 <= int(m.group(1)) <= 31 else
+                          take(int(m.group(3)) if m.group(3) else None, _month(m.group(2)), int(m.group(1)), m), text)
+    text = _MONTH_YEAR.sub(lambda m: m.group(0) if is_may_verb(m) else take(int(m.group(2)), _month(m.group(1)), None, m),
+                           text)
+    return text, found
+
+
+def _numbers_in(value, found, dates=None):
+    """Every number held in the facts (JSON numbers, with their sign, and the numbers in text); the dates in
+    the facts' text go into `dates` as (year, month, day), never into `found`."""
     if isinstance(value, bool) or value is None:
         return
     if isinstance(value, (int, float)):
-        found.add(abs(float(value)))
+        found.add(float(value))
     elif isinstance(value, str):
-        for m in _NUMBER.findall(value):
+        rest, ds = _dates_in(value)
+        if dates is not None:
+            dates.update((y, mo, d) for y, mo, d, _ in ds)
+        for m in _NUMBER.findall(rest):
             found.add(float(m))
     elif isinstance(value, dict):
         for v in value.values():
-            _numbers_in(v, found)
+            _numbers_in(v, found, dates)
     elif isinstance(value, (list, tuple)):
         for v in value:
-            _numbers_in(v, found)
+            _numbers_in(v, found, dates)
+
+
+def _date_known(date, dates):
+    """Whether a date the text writes -- (year or None, month, day or None) -- is one the facts hold."""
+    y, mo, d = date
+    return any(km == mo and (d is None or kd == d) and (y is None or ky is None or ky == y)
+               for ky, km, kd in dates)
+
+
+# Signs (2026-11-22). abs() used to drop a fact's sign, so "rose 3.4%" passed when the fact was -3.4. Now a
+# number the text marks as a RISE ("+3.4", "up 3.4%", "rose 3.4%", "gained 3.4") is refused when every fact it
+# matches is negative, and one written with a minus ("-3.4") when every fact it matches is positive. Kept
+# narrow on purpose: "fell to 15%" is a level, not a change, and a fall is often quoted as a positive size
+# ("down 20% from its high"), so a falling WORD is never held against a positive fact.
+_RISE_BEFORE = re.compile(r"(?:\b(?:up|rose|risen|rising|gained|gaining|climbed|climbing|jumped|added|adding"
+                          r"|increased|advanced|higher)\s+(?:by\s+)?(?:about\s+|around\s+|nearly\s+|almost\s+"
+                          r"|roughly\s+|some\s+|over\s+)?)$", re.I)
+
+
+def _written_sign(text, start):
+    """+1 for a number the text marks as a rise, -1 for one written with a minus sign, else 0."""
+    before = text[max(0, start - 40):start]
+    if before.endswith("+"):
+        return 1
+    if before.endswith(("-", "−")) and not (len(before) > 1 and before[-2].isalnum()):
+        return -1
+    return 1 if _RISE_BEFORE.search(before) else 0
 
 
 def unknown_numbers(text, facts):
     """Numbers `text` writes that the facts do not hold: one written with d decimals
-    matches a fact that rounds to it at that precision."""
-    known = set()
-    _numbers_in(facts, known)
+    matches a fact that rounds to it at that precision; a date must be a date the facts
+    hold, and a rise or a minus must not contradict the sign of every fact it matches."""
+    known, dates = set(), set()
+    _numbers_in(facts, known, dates)
     bad = []
+    text, written_dates = _dates_in(text)
+    for y, mo, d, raw in written_dates:
+        if not _date_known((y, mo, d), dates):
+            bad.append(raw)
+    years = {ky for ky, _m, _d in dates if ky}
     # A period's length is not a data point: "12-month peak", "6 months", "1-year": the first live run refused
     # a good Nifty read for writing "12-month" on a day the facts held no 12.
     text = _PERIOD.sub(" ", text)
-    for m in _NUMBER.findall(text):
+    for match in _NUMBER.finditer(text):
+        m = match.group(0)
         n = float(m)
         if n in FIXED_NUMBERS:
             continue
+        if _YEAR.match(m) and int(m) in years:
+            continue
         d = len(m.split(".")[1]) if "." in m else 0
-        if not any(abs(k - n) <= 0.5 * 10 ** -d + 1e-9 for k in known):
+        matches = [k for k in known if abs(abs(k) - n) <= 0.5 * 10 ** -d + 1e-9]
+        if not matches:
             bad.append(m)
+            continue
+        sign = _written_sign(text, match.start())
+        if (sign > 0 and all(k < 0 for k in matches)) or (sign < 0 and all(k > 0 for k in matches)):
+            bad.append(("+" if sign > 0 else "-") + m)
     return bad
 
 
@@ -495,7 +581,9 @@ def generate_read(client, label, facts, prior, tiers=None, budget=None, prompt=N
 
     def config_for(model):
         kwargs = {"response_mime_type": "application/json"}
-        if "gemma" not in model and thinking:
+        # `is not None`, not truthiness (2026-11-22): 0 is the panel's "Off" and goes out as thinking_budget=0.
+        # Dropped, the model thought at its own default whatever the panel said.
+        if "gemma" not in model and thinking is not None:
             if isinstance(thinking, str):
                 kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=thinking)
             else:

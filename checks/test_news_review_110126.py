@@ -9,7 +9,7 @@ N3 Big moves come from stored closes, one "Big moves (5%+)" line per watchlist,
    On Oct 31, 5 of 16 bullets were a bare "stock fell 5%".
 N4 Items about a different company are dropped (one India bullet carried another
    company's stake purchase).
-N5 The Discord digest says how many stocks could not be searched (it was silent
+N5 The Discord digest says how many stocks could not be checked (it was silent
    under news_check's 50% rule).
 N6 The News tab shows each bullet's sources (not Discord).
 
@@ -148,12 +148,13 @@ msgs = ns.build_discord_messages({"as_of": "2026-11-01", "markets": {
     "other": {"summary": "* y", "counts": {"failed": 0}}}})
 text = "\n".join(msgs)
 # Since 2026-11-15 the slot's next hourly retry searches them again (news_check retry_pending).
-check("3 stocks could not be searched yet (search errors), so they are not in this digest; the next hourly "
-      "retry searches them again and posts any news." in text
-      and "1 stock could not be searched yet (search errors), so it is not in this digest; the next hourly "
-      "retry searches it again and posts any news." in text,
+# "checked", not "searched", since 2026-11-22: a stock whose filter failed is counted too.
+check("3 stocks could not be checked yet (search or filter errors), so they are not in this digest; the next hourly "
+      "retry checks them again and posts any news." in text
+      and "1 stock could not be checked yet (search or filter errors), so it is not in this digest; the next hourly "
+      "retry checks it again and posts any news." in text,
       f"N5: the count of stocks not searched is in the digest ({text!r})")
-check(text.count("could not be searched") == 2, "N5: ...and only where some failed")
+check(text.count("could not be checked") == 2, "N5: ...and only where some failed")
 
 # --- N1 + N2 + N3 end to end: the retry of a failed run ------------------------------------------
 check(ns.reusable_outcomes({"as_of": "2026-11-03", "markets": {"m": {"tickers": {"A": {"status": "quiet"}}}}},

@@ -78,12 +78,21 @@ TERMINAL_ERROR_MARKERS = (
 TERMINAL_STATUS_CODES = {400, 401, 403}
 RETRYABLE_STATUS_CODES = {408, 409, 425, 429}   # plus every 5xx
 
-# Errors that belong to ONE API key rather than the request: a revoked/invalid
-# key, or a project without access. RotatingGeminiClient retires that key for
-# the rest of the run and retries the call on another one, instead of letting
-# the ladder give up on a ticker the other key could have served.
-AUTH_ERROR_MARKERS = ("api key not valid", "api_key_invalid", "permission denied",
-                      "permission_denied", "unauthorized", "unauthenticated")
+# Errors that belong to ONE API key on EVERY model: a revoked/invalid/expired
+# key, or a project with the Gemini API switched off. RotatingGeminiClient
+# retires that key for the rest of the run and retries the call on another one,
+# instead of letting the ladder give up on a ticker the other key could have
+# served.
+#
+# A 403 PERMISSION_DENIED is NOT one of them any more (2026-11-22). It used to be
+# (any 401/403 killed the key for every model, and 403 is terminal, so the ladder
+# broke): a preview model that refuses some keys with 403 then took those keys
+# out of the Gemma search too, for the whole run. A 403 is about the (key,
+# model) pair -- see is_permission_denied and RotatingGeminiClient._forbidden.
+KEY_INVALID_MARKERS = ("api key not valid", "api_key_invalid", "api key expired", "api_key_expired",
+                       "unauthenticated", "unauthorized", "service_disabled",
+                       "has not been used in project")
+PERMISSION_DENIED_MARKERS = ("permission denied", "permission_denied")
 _LEADING_STATUS = re.compile(r"^\s*(\d{3})\b")
 
 
@@ -97,13 +106,37 @@ def status_code(exc):
     return int(m.group(1)) if m else None
 
 
-def is_auth_error(exc):
-    """True for a failure that is about the API KEY, not the request."""
-    code = status_code(exc)
-    text = f"{type(exc).__name__}: {exc}".lower()
-    if code in (401, 403):
+def is_key_invalid(exc):
+    """True for a failure that is about the API KEY itself, whatever the model: a 401, or an invalid,
+    expired or API-disabled key (Google sends those as 400 / 403 with the reason in the text)."""
+    if status_code(exc) == 401:
         return True
-    return any(marker in text for marker in AUTH_ERROR_MARKERS)
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(marker in text for marker in KEY_INVALID_MARKERS)
+
+
+def is_permission_denied(exc):
+    """True for a 403 / PERMISSION_DENIED that is not a dead key: this key may not call this MODEL."""
+    if is_key_invalid(exc):
+        return False
+    if status_code(exc) == 403:
+        return True
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(marker in text for marker in PERMISSION_DENIED_MARKERS)
+
+
+class ModelExhausted(RuntimeError):
+    """Every usable key is retired for this MODEL for the rest of the run: its daily quota is spent
+    (a PerDay 429) or Google refuses the key the model (403). Raised by RotatingGeminiClient without
+    another API call; the ladders skip every remaining rung of the model, with no wait, and go on to
+    the next model (is_dead_model). `code` is 429 for a quota, 403 for a refusal, so is_retryable reads
+    it as it read the error it stands for."""
+
+    def __init__(self, model, code, reason):
+        super().__init__(f"{code} {'RESOURCE_EXHAUSTED' if code == 429 else 'PERMISSION_DENIED'}: "
+                         f"every usable key {reason} for {model} this run")
+        self.code = code
+        self.model = model
 
 
 def call_with_timeout(fn, timeout, name="call"):
@@ -228,6 +261,39 @@ def is_model_unavailable(exc):
     return any(marker in text for marker in MODEL_UNAVAILABLE_MARKERS)
 
 
+def is_dead_model(exc):
+    """True when this MODEL cannot answer for the rest of the ladder, whichever key a retry would take: a
+    wrong or retired id (404), every key retired for it (ModelExhausted: daily quota or 403 everywhere),
+    or a 403 on a plain client. The ladders then skip the model's remaining rungs WITHOUT a wait and go
+    on to the next model (2026-11-22): a retired id in an x6 chain used to cost 6 calls and ~60 s of
+    waits per stock, and a model whose daily quota every key had spent still slept before each of its
+    remaining rungs, only to fail at once."""
+    return isinstance(exc, ModelExhausted) or is_model_unavailable(exc) or is_permission_denied(exc)
+
+
+# A 500 INTERNAL that came back this fast is not the backend being slow to recover: Gemma's grounded
+# search returns its 500s in ~2 s (2026-11-10/13), and the next try goes to another key anyway, so the
+# exponential wait (2, 4, 8, 16, 30 s) bought nothing but minutes per stock. After one, the next rung waits
+# only the base (RETRY_BACKOFF_SECONDS); a 429, a 503 or a timeout keeps the exponential wait.
+FAST_500_SECONDS = 10
+
+
+def next_wait(backoff, last_exc=None, last_elapsed=None):
+    """Seconds to wait before a rung whose precomputed wait is `backoff`, given how the previous try
+    failed (`last_exc`, None for no failure, and how long it took): none after a dead model (is_dead_model:
+    there is nothing to wait out), at most the base after a fast 500, else `backoff`."""
+    if not backoff:
+        return 0
+    if last_exc is None:
+        return backoff
+    if is_dead_model(last_exc):
+        return 0
+    if (status_code(last_exc) == 500 and last_elapsed is not None
+            and last_elapsed < FAST_500_SECONDS):
+        return min(backoff, RETRY_BACKOFF_SECONDS)
+    return backoff
+
+
 def is_retryable(exc):
     """Whether re-running the SAME call could plausibly succeed."""
     if isinstance(exc, TimeoutError):
@@ -283,12 +349,21 @@ def run_model_ladder(client, prompt, tiers, config_for, label="llm", subject="",
     avoid_key = None
     # A reply on_success held back for one recheck (RecheckReply): used when no later rung answers.
     held = None
+    # Models that cannot answer for the rest of this ladder (is_dead_model): their rungs are skipped.
+    dead = set()
+    # How the previous try failed, for the wait before the next (next_wait).
+    last_exc, last_elapsed = None, None
     for tier in tiers:
         model, backoff = tier[0], tier[1]
         tier_timeout = tier[2] if len(tier) > 2 and tier[2] else timeout
-        if backoff:
-            time.sleep(backoff)
+        if model in dead:
+            continue
+        wait = next_wait(backoff, last_exc, last_elapsed)
+        if wait:
+            time.sleep(wait)
+        last_exc, last_elapsed = None, None
         served = {}
+        started = time.monotonic()
         try:
             resp = generate_with_timeout(client, model, prompt, config_for(model), timeout=tier_timeout,
                                          avoid_key=avoid_key, key_sink=served)
@@ -309,11 +384,14 @@ def run_model_ladder(client, prompt, tiers, config_for, label="llm", subject="",
             # on_success rejected carries no key: the call's own key (`served`) then.
             key = getattr(e, "_gemini_key", None) or served.get("key")
             avoid_key = key
+            last_exc, last_elapsed = e, time.monotonic() - started
             via = f" via {key}" if key else ""
             print(f"  [{label} {model} failed{via}] {subject}: {e}")
-            if is_model_unavailable(e):
-                # This model is wrong/retired/not enabled -- the next tier may
-                # still be fine, so step past instead of abandoning the ladder.
+            if is_dead_model(e):
+                # This model is wrong/retired/refused, or out of quota on every key --
+                # the next MODEL may still be fine, so skip this one's remaining rungs
+                # (no wait) instead of abandoning the ladder or re-trying a dead model.
+                dead.add(model)
                 continue
             if not is_retryable(e):
                 # Bad request or every key failing auth: no model will work. Stop.
@@ -592,13 +670,16 @@ class RotatingGeminiClient:
         self._keys = list(keys)
         self._clients = {}
         self._cooldown_until = {}
-        # Keys that returned an auth error this run -- see AUTH_ERROR_MARKERS.
+        # Keys that are dead on every model this run -- see KEY_INVALID_MARKERS.
         self._dead = set()
         # (key name, model) pairs that spent their DAILY quota this run -- see
         # _is_daily_quota_error. Per model, not per key: Google counts the daily
         # quota per project and model, so the key still serves the ladder's
         # other models.
         self._exhausted = set()
+        # (key name, model) pairs Google refused with a 403 this run (is_permission_denied): the key still
+        # serves every other model -- a preview model that refuses a key must not take it out of the search.
+        self._forbidden = set()
         self._lock = threading.Lock()
         # Diagnostic only. NOT safe for per-call attribution: it is shared by
         # every thread, and generate_with_timeout's `_key_out` is what callers
@@ -640,8 +721,7 @@ class RotatingGeminiClient:
         that model again this run (None when every key has)."""
         now = time.time()
         with self._lock:
-            usable = [(n, k) for n, k in self._keys
-                      if n not in self._dead and (n, model) not in self._exhausted]
+            usable = [(n, k) for n, k in self._keys if self._usable(n, model)]
             if not usable:
                 return None, None
             live = [(n, k) for n, k in usable if self._cooldown_until.get(n, 0) <= now]
@@ -655,6 +735,25 @@ class RotatingGeminiClient:
             self.call_counts[name] = self.call_counts.get(name, 0) + 1
             self.last_key_name = name
         return name, self._client_for(key)
+
+    def _usable(self, name, model):
+        """Whether key `name` may still be picked for `model` this run (call under the lock)."""
+        return (name not in self._dead and (name, model) not in self._exhausted
+                and (name, model) not in self._forbidden)
+
+    def usable_count(self, model):
+        with self._lock:
+            return len([n for n, _ in self._keys if self._usable(n, model)])
+
+    def _mark_forbidden(self, name, exc, model):
+        with self._lock:
+            first = (name, model) not in self._forbidden
+            self._forbidden.add((name, model))
+            left = len([n for n, _ in self._keys if self._usable(n, model)])
+        if first:
+            print(f"  [key rotation] {name} is refused {model} ({str(exc)[:80]}) -- retired for that model "
+                  f"for the rest of this run; {left} key(s) left for it")
+        return left
 
     def _mark_dead(self, name, exc):
         with self._lock:
@@ -688,7 +787,7 @@ class RotatingGeminiClient:
         if exc is not None and _is_daily_quota_error(exc):
             with self._lock:
                 self._exhausted.add((name, model))
-                left = len([n for n, _ in self._keys if n not in self._dead and (n, model) not in self._exhausted])
+                left = len([n for n, _ in self._keys if self._usable(n, model)])
             print(f"  [key rotation] {name} spent its daily quota for {model} -- retired for that model "
                   f"for the rest of this run; {left} key(s) left for it")
             return
@@ -734,10 +833,16 @@ class _RotatingModels:
             except Exception as e:
                 last_exc = e
                 self._parent._mark_failure(name)
-                if is_auth_error(e):
+                if is_key_invalid(e):
                     if self._parent._mark_dead(name, e):
                         continue
                     raise
+                if is_permission_denied(e):
+                    # This key may not call this model (a 403): retire the PAIR and try another key.
+                    # The key keeps serving every other model; when no key is left for this one,
+                    # ModelExhausted below steps the ladder to its next model.
+                    self._parent._mark_forbidden(name, e, model)
+                    continue
                 if _is_quota_error(e):
                     # Retry on ANOTHER key, exactly as an auth failure does.
                     # This used to fall through to the raise below, so a 429
@@ -752,13 +857,20 @@ class _RotatingModels:
                     self._parent._mark_quota_error(name, e, model)
                     continue
                 raise
+        parent = self._parent
+        live = [n for n, _ in parent._keys if n not in parent._dead]
+        if live and parent.usable_count(model) == 0:
+            # Every live key is retired for THIS model (its daily quota spent, or refused with a 403).
+            # ModelExhausted, not the last key's own error: the ladder then skips the model's remaining
+            # rungs without waiting (is_dead_model). The daily-quota form used to be a plain 429 here,
+            # so each remaining rung of the model still slept its backoff and then failed at once.
+            quota = any((n, model) in parent._exhausted for n in live)
+            refused = any((n, model) in parent._forbidden for n in live)
+            reason = ("has spent its daily quota or is refused" if quota and refused
+                      else "has spent its daily quota" if quota else "is refused")
+            raise ModelExhausted(model, 429 if quota else 403, reason) from last_exc
         if last_exc is not None:
             raise last_exc
-        if any(m == model for _, m in self._parent._exhausted):
-            # Every live key has spent today's quota for this model. Shaped as a
-            # 429 so the ladder treats it as retryable and steps to its fallback
-            # model at once, instead of stopping as it would on an auth failure.
-            raise RuntimeError(f"429 RESOURCE_EXHAUSTED: every usable key has spent its daily quota for {model} this run")
         raise RuntimeError("No usable Gemini API key left (every configured key failed authentication)")
 
 
