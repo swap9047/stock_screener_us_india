@@ -282,6 +282,9 @@ check("1 removed from the app" in res["text"] and "1 new" in res["text"], f"S9: 
 # the saved world renders: every tab, no error
 at = AppTest.from_file(os.path.join(APP, "app.py"), default_timeout=600)
 at.session_state["authenticated"] = True
+# Only the tab on screen builds its table (desktop as well as phone since 2026-11-22), so open a list
+# that holds the new stock and not the removed one.
+at.session_state["main_tabs"] = "India Watch"
 at.run()
 tables = " ".join(b.value for b in at.markdown if "<table" in b.value)
 check(not at.exception and "ZNEW1.NS" in tables and "ZIN4.NS" not in tables,

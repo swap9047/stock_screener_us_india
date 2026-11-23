@@ -1107,20 +1107,24 @@ def _rule_references(rule_id, rules):
     return refs
 
 def _price_fmt(v):
-    """Price-denominated cells: 1 decimal under 1,000, whole numbers above.
+    """Price-denominated cells: 2 decimals under 100, 1 under 1,000, whole numbers above.
 
     These were all whole numbers ("{:,.0f}"), which hid the relationships the
     row colouring depicts on low-priced tickers -- a last of 8.9 vs a 10 WEMA of
-    8.7 both read "9", a last of 10.7 vs a VStop of 10.6 both "11". Stored values are
-    already rounded to 1 decimal, so more than 1 would only show padding."""
+    8.7 both read "9", a last of 10.7 vs a VStop of 10.6 both "11". Since 2026-11-22
+    price levels are stored to at least 2 decimals (`stock_data.round_price`) and the
+    below/cross flags use unrounded values, so under 100 a close of 5.02 under a 200-day
+    SMA of 5.04 must not read "5.0" against "5.0" while the cell is coloured red."""
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return "—"
+    if abs(v) < 100:
+        return f"{v:,.2f}"
     return f"{v:,.1f}" if abs(v) < 1000 else f"{v:,.0f}"
 
 
 def price_cols(ema_labels):
-    """Price-denominated columns -- formatted by _price_fmt (1 decimal under
-    1,000, whole numbers above)."""
+    """Price-denominated columns -- formatted by _price_fmt (2 decimals under 100,
+    1 under 1,000, whole numbers above)."""
     return ["Last", ema_labels["w_fast"], ema_labels["w_mid"], ema_labels["w_slow"],
             ema_labels["d_fast"], ema_labels["d_mid"], ema_labels["d_slow"],
             "VStop-W", "VStop-W (14)", "52W High", "52W Low", "5Y High"]
@@ -6831,7 +6835,11 @@ with tab_news, _Contained("The News tab"):
                     if counts.get("degraded"):
                         bits.append(f"⚠️ {counts['degraded']} unfiltered (AI filter failed)")
                     if counts.get("failed"):
-                        bits.append(f"⚠️ {counts['failed']} search failed")
+                        # Since 2026-11-22 a stock whose news filter failed on every model is counted as failed
+                        # too (its raw search text is never shown or posted); `filter_failed` says how many.
+                        _ff = counts.get("filter_failed", 0)
+                        bits.append(f"⚠️ {counts['failed']} could not be checked"
+                                    + (f" ({_ff} filter error{'s' if _ff != 1 else ''})" if _ff else ""))
                     if counts.get("fund_skipped"):
                         bits.append(f"{counts['fund_skipped']} fund(s) skipped")
                     # The editor (Stage 3) failing was invisible here. "fallback":

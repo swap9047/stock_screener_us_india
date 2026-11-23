@@ -67,7 +67,10 @@ OPERATORS = {
 # categorical condition (flag in [Green], trend in [Uptrend, ...]).
 VALID_OPERATORS = set(OPERATORS) | {"in"}
 
-EQ_TOLERANCE = 0.05  # values are rounded to 1 decimal, so treat "==" as approx-equal
+# "==" is approx-equal: most metrics (RSI, RS, returns, ratios) are stored to 1 decimal. Price levels are stored
+# to 2+ decimals since 2026-11-22 (stock_data.round_price), so on a low-priced stock this tolerance is coarse --
+# "==" on a price level is rarely what a rule means; prefer < / > or the below/crossed flags.
+EQ_TOLERANCE = 0.05
 
 # Metric field -> its full set of valid values, for any metric that's really
 # a category/label rather than a continuous number (Trend, Vol Trend, VStop

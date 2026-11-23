@@ -203,8 +203,10 @@ def main():
         # Red on purpose: the slot gate counts only a successful run as the slot's work, so the Worker's next
         # hourly dispatch (8 of them after 6 AM ET) runs again and searches just these.
         if failed:
-            print(f"::warning::{failed}/{searched} ticker(s) could not be searched -- the slot's next hourly retry "
-                  "searches only those and posts any news as a follow-up.")
+            # "checked", not "searched": a stock whose news filter failed on every model counts as failed too
+            # (its search text is kept, and the retry runs only the filter on it).
+            print(f"::warning::{failed}/{searched} ticker(s) could not be checked (search or filter errors) -- the "
+                  "slot's next hourly retry checks only those and posts any news as a follow-up.")
         sys.exit(1)
 
 if __name__ == "__main__":

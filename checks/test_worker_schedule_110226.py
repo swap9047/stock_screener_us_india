@@ -115,7 +115,9 @@ def model(start, end):
 node = shutil.which("node")
 if not node:
     print("SKIP node is not installed: the Worker's schedule was not run")
-    check(True, "W1: (skipped) no node")
+    # On CI a missing node is a broken runner (checks.yml installs it), not a pass: the SKIP used to
+    # count as one, so the Worker could stop being checked on every push without anyone seeing it.
+    check(not os.environ.get("GITHUB_ACTIONS"), "W1: node is installed (required on CI; skipped locally)")
     ticks_by_window = None
 else:
     tmp = Path(tempfile.mkdtemp(prefix="worker_"))
