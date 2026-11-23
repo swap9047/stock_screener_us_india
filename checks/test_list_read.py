@@ -153,8 +153,11 @@ check(early["market_read"] is None, "L3: before any index read there is no marke
 check(lr.build_list_facts("india_invested", "x", {"markets": {}, "benchmarks": {}}, STOCKS, [], None, INDEX_BLOCK, READS, D[-1]) is None,
       "L3: no stored closes for the list -> no facts")
 nofacts = lr.build_list_facts("india_invested", "x", PERF, STOCKS, [], None, INDEX_BLOCK, {}, D[-1])
-check(nofacts["market_read"] is None and nofacts["results"] is not None or nofacts["market_read"] is None,
-      "L3: no index read yet -> no market context")
+# Every part counts: this was `(A and B) or A`, which passed on A alone.
+check(nofacts is not None and nofacts["market_read"] is None and nofacts["breadth"] is not None
+      and nofacts["results"] is None,
+      "L3: no index read yet -> no market context; the list's own facts are still built "
+      "(and no results without quarterly data)")
 
 # --- L4 the prompt ------------------------------------------------------------------------------
 prior = [{"session": f"2026-10-{20 + i}", "headline": f"headline {i}", "takeaways": [f"take {i}"], "breadth": f"b{i}"} for i in range(5)]

@@ -57,7 +57,10 @@ t["ZIN2.NS"] = {"in_hold", "in_watch", "sold"}  # also ticked into sold
 p = wm.plan_changes(WL, M, t)
 check(p["lists"]["in_hold"] == ["ZIN2.NS", "ZBO3.BO"] and p["lists"]["sold"] == ["ZIN5.NS", "ZIN1.NS", "ZIN2.NS"],
       f"P4: a list keeps its order; stocks newly ticked go to the end in grid order ({p['lists']['in_hold']}, {p['lists']['sold']})")
-check(p["changed"] == ["in_hold", "sold"] and p["lists"]["in_watch"] is WL["in_watch"] or p["lists"]["in_watch"] == WL["in_watch"],
+# Parenthesised: `A and B is C or B == C` passed on the last test alone, so
+# `changed` was never really checked.
+check(p["changed"] == ["in_hold", "sold"]
+      and (p["lists"]["in_watch"] is WL["in_watch"] or p["lists"]["in_watch"] == WL["in_watch"]),
       f"P5: only the lists that changed are named ({p['changed']}); the others are as they were")
 check(p["moves"] == {"ZIN1.NS": {"add": ["sold"], "remove": ["in_hold"]}, "ZIN2.NS": {"add": ["sold"], "remove": []}},
       f"P6: each stock's move ({p['moves']})")
