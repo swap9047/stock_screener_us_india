@@ -130,7 +130,6 @@ check(not re.fullmatch(r"[a-z0-9_]+", ms.NO_MATCH), "M1: NO_MATCH can never be a
 check(ms.from_env(KEYS, environ={"REFRESH_MARKETS": "3"}, log=lambda m: None) == {"wl_c"}, "M1: from_env reads REFRESH_MARKETS")
 
 # --- M2 ---------------------------------------------------------------------------------------------
-import time as _time
 WL = {"wl_a": ["A0", "A1"], "wl_b": ["B0", "B1"], "wl_c": ["C0"]}
 SNAP = {"per_market": {m: [{"ticker": t, "company_name": t, "stage": "S2 Advancing"} for t in tks] for m, tks in WL.items()}}
 ENV_KEYS = ("REFRESH_MARKETS", "REFRESH_LIMIT", "REFRESH_PENDING_ONLY", "GITHUB_EVENT_NAME", "SCHEDULED_DISPATCH",
