@@ -128,6 +128,9 @@ jobs:
           REFRESH_MARKETS: ${{ github.event.inputs.markets }}
           REFRESH_LIMIT: ${{ github.event.inputs.limit }}
           REFRESH_PENDING_ONLY: ${{ github.event.inputs.pending_only }}
+          # A Worker dispatch (scheduled=true) resumes like a scheduled run: refresh_fundamentals.py
+          # reads this next to GITHUB_EVENT_NAME.
+          SCHEDULED_DISPATCH: ${{ github.event.inputs.scheduled }}
 
       - name: Commit updated fundamentals.json
         # always(): commit whatever the run produced even when it failed, so
