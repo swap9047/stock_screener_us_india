@@ -285,8 +285,9 @@ check("trigger_ai_refresh_workflow(" in retry and "pending_only=True" in retry a
       "B7: Retry Pending dispatches the workflow instead of running in the browser")
 check("disabled=pending_count == 0 or not scope_markets" in retry, "B7: it needs no Gemini key in the app, only a scope")
 trig = src[src.index("def trigger_ai_refresh_workflow"):src.index("def _reanalyze_tickers_in_dashboard")]
-check('inputs["pending_only"] = "true"' in trig and '"markets": ",".join(markets)' in trig,
-      "B7: the dispatch carries the switch and the watchlist keys -- never a ticker")
+check('inputs["pending_only"] = "true"' in trig and '{"markets": positions}' in trig
+      and "market_scope.encode(markets" in trig,
+      "B7: the dispatch carries the switch and the watchlist positions (owner's review, 2026-11-22) -- never a ticker or a key")
 check(re.search(r'expert_pending = \[r\["ticker"\] for r in results\s+if r.get\("stage"\) in STAGES', src) is not None,
       "B7: Expert Take's pending count leaves out a stock with no Stage")
 dash = src[src.index("def _reanalyze_tickers_in_dashboard"):src.index("def _model_settings_budget_text")]

@@ -3680,8 +3680,9 @@ def trigger_ai_refresh_workflow(workflow_file, name, label, markets, pending_onl
     the tab to sleep -- the finished stocks were never pushed.
 
     `markets` is the list of REAL registry keys behind the tab the button was
-    clicked from (a combined tab passes its member list). It's forwarded as the
-    workflow's `markets` input, which refresh_expert_views.py /
+    clicked from (a combined tab passes its member list). It's forwarded, as
+    1-based positions in markets.json key order, as the workflow's `markets`
+    input, which refresh_expert_views.py /
     refresh_fundamentals.py read back as REFRESH_MARKETS to filter their
     per-watchlist loop -- without it, a "Re-analyze All" clicked from one tab
     re-ran every watchlist in the repo.
@@ -3698,7 +3699,16 @@ def trigger_ai_refresh_workflow(workflow_file, name, label, markets, pending_onl
         if not token or not repo:
             st.error("GitHub credentials not found.")
             return
-        inputs = {"markets": ",".join(markets)}
+        # Positions in markets.json key order ("2,5"), never the keys: GitHub
+        # prints the step env holding this input in the public Actions log
+        # before log_redact.py sees anything (owner's review, 2026-11-22). The
+        # scripts map them back (market_scope.py) and still accept key names.
+        import market_scope
+        positions = market_scope.encode(markets, list(load_markets_registry()))
+        if not positions:
+            st.error("This view's watchlists are not in the registry -- nothing to refresh.")
+            return
+        inputs = {"markets": positions}
         if pending_only:
             inputs["pending_only"] = "true"
         ok, msg = trigger_github_workflow(token, repo, workflow_file, inputs=inputs)

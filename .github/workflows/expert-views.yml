@@ -29,7 +29,7 @@ on:
         required: false
         default: false
       markets:
-        description: "Comma-separated market keys to process (blank = all watchlists)"
+        description: "Comma-separated watchlist POSITIONS, 1-based in markets.json order, e.g. 2,5 (blank = all watchlists). Positions, never names: step env is printed in this public repo's logs"
         required: false
         default: ""
       limit:

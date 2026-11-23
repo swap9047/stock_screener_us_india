@@ -41,10 +41,40 @@ def _tickers(folder):
     interested = _load(folder, "interested.json")
     if isinstance(interested, list):
         found.update(t for t in interested if isinstance(t, str))
-    for name in ("ticker_notes.json", "ticker_index.json"):
+    # Files keyed by ticker. The AI stores (expert_views.json, fundamentals.json)
+    # matter most: an entry outlives the stock's removal from every watchlist
+    # until a refresh prunes it, and the prune itself used to print the names of
+    # exactly those former holdings -- which nothing above masked, since they are
+    # no longer in watchlist.json (2026-11-22).
+    for name in ("ticker_notes.json", "ticker_index.json", "expert_views.json", "fundamentals.json"):
         data = _load(folder, name)
         if isinstance(data, dict):
-            found.update(k for k in data if isinstance(k, str))
+            found.update(k for k in data if isinstance(k, str) and not k.startswith("_"))
+    # stage_analysis.json: {"meta": {...}, "tickers": {ticker: fields}}. An upload
+    # merges, so a stock dropped from the watchlists keeps its entry.
+    stage = _load(folder, "stage_analysis.json")
+    stage_tickers = stage.get("tickers") if isinstance(stage, dict) else None
+    if isinstance(stage_tickers, dict):
+        found.update(k for k in stage_tickers if isinstance(k, str))
+    # The alert state files key entries "<rule_id>:<ticker>" (alerts.prune_state,
+    # weekly_wrapup.advance_state); a removed stock's key stays until a run prunes it.
+    alert_state = _load(folder, "alert_state.json")
+    wrapup = _load(folder, "weekly_wrapup_state.json")
+    wrapup_entries = wrapup.get("entries") if isinstance(wrapup, dict) else None
+    for state in (alert_state, wrapup_entries):
+        if isinstance(state, dict):
+            for key in state:
+                if isinstance(key, str) and ":" in key:
+                    found.add(key.rpartition(":")[2])
+    # Every snapshot row's own ticker: the snapshot can still hold a row for a
+    # stock removed since it was written.
+    snapshot = _load(folder, "data_snapshot.json")
+    per_market = snapshot.get("per_market") if isinstance(snapshot, dict) else None
+    for rows in (per_market.values() if isinstance(per_market, dict) else []):
+        for row in rows if isinstance(rows, list) else []:
+            ticker = row.get("ticker") if isinstance(row, dict) else None
+            if isinstance(ticker, str):
+                found.add(ticker)
     return {t.strip() for t in found if t and t.strip()}
 
 
@@ -52,7 +82,7 @@ def _companies(folder):
     snapshot = _load(folder, "data_snapshot.json")
     names = set()
     per_market = (snapshot or {}).get("per_market") if isinstance(snapshot, dict) else None
-    for rows in (per_market or {}).values():
+    for rows in (per_market.values() if isinstance(per_market, dict) else []):
         for row in rows if isinstance(rows, list) else []:
             name = row.get("company_name") if isinstance(row, dict) else None
             if isinstance(name, str) and len(name.strip()) >= 4:

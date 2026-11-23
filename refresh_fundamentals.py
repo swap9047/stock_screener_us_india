@@ -5,10 +5,12 @@ watchlisted tickers. Intended to run via GitHub Actions.
 
 import concurrent.futures
 import os
+import market_scope
 import sys
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 import llm_util
 from json_store import DataFileError
 from stock_data import load_data_snapshot, load_watchlists
@@ -21,6 +23,41 @@ from news_summary import get_gemini_api_key
 
 def _ts():
     return datetime.now(timezone.utc).strftime("%H:%M:%S")
+
+
+# The gate's slot for this workflow (fundamentals.yml: slots "21"), in ET.
+# checks/test_team_privacy_112226.py pins the two together.
+SLOT_HOUR_ET = 21
+ET = ZoneInfo("America/New_York")
+
+
+def slot_start_utc(now=None):
+    """The start of the slot this run works: the latest SLOT_HOUR_ET:00 ET at or
+    before now, in UTC. The same rule as the slot gate's latest_slot, and as
+    refresh_expert_views.slot_start_utc (copied, not imported: that module imports
+    this one). A retry at 02:00 ET still belongs to last night's 21:00 slot."""
+    now_et = (now or datetime.now(timezone.utc)).astimezone(ET)
+    start = now_et.replace(hour=SLOT_HOUR_ET, minute=0, second=0, microsecond=0)
+    if start > now_et:
+        start = (now_et - timedelta(days=1)).replace(hour=SLOT_HOUR_ET, minute=0, second=0, microsecond=0)
+    return start.astimezone(timezone.utc)
+
+
+def written_since(view, since_utc):
+    """True for a VALID view whose as_of (UTC, "YYYY-MM-DD HH:MM") is at or after
+    `since_utc`. A failure stub (_unknown_fallback, model_used "Error") is never
+    "done", and neither is an Unknown that exists only because the news search
+    failed (_search_failed_unknown): the FailureFuse counts that as a failed
+    call, so the retry after a spent quota must try the stock again."""
+    if not _is_valid_view(view) or _search_failed_unknown(view):
+        return False
+    try:
+        ts = datetime.fromisoformat(str(view.get("as_of", "")).replace(" ", "T", 1))
+    except ValueError:
+        return False
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts >= since_utc
 
 def _unknown_fallback(reason):
     """Full-schema Unknown view for failures/stale keep-prior cases.
@@ -125,7 +162,11 @@ def _prune_orphans(store, watchlists, label):
     for t in orphans:
         del store[t]
     if orphans:
-        print(f"[{_ts()}] Pruned {len(orphans)} {label} orphan(s) no longer in any watchlist: {', '.join(sorted(orphans))}")
+        # A count, never the names: an orphan is by definition in no watchlist,
+        # so log_redact.py (whose ticker list starts from the watchlists) could
+        # not mask it, and this line published former holdings in the public
+        # Actions log (until 2026-11-22).
+        print(f"[{_ts()}] Pruned {len(orphans)} {label} orphan(s) no longer in any watchlist")
     return len(orphans)
 
 
@@ -179,8 +220,9 @@ def main():
     # REFRESH_MARKETS scopes the run to specific watchlists -- set by the
     # dashboard's per-tab "Re-analyze All" button (see the workflow's
     # `markets` input). Blank/absent means every watchlist, which is what
-    # the nightly schedule always gets.
-    only_markets = {m.strip() for m in os.environ.get("REFRESH_MARKETS", "").split(",") if m.strip()}
+    # the nightly schedule always gets. The app sends watchlist POSITIONS, not
+    # keys (market_scope.py: step env is printed in the public log).
+    only_markets = market_scope.from_env(list(watchlists))
     limit = llm_util.refresh_limit()
     # The dashboard's "Retry Pending" (owner, 2026-11-08): only the tickers whose
     # stored view is not valid -- the same test as the button's count
@@ -189,6 +231,19 @@ def main():
     print(f"[{_ts()}] Scope: {', '.join(sorted(only_markets)) if only_markets else 'all watchlists'}"
           + (f", first {limit} ticker(s) only" if limit else "")
           + (", pending tickers only" if pending_only else ""))
+    # Resume (owner's review, 2026-11-22; Expert Take has done this since
+    # 2026-10-23): a SCHEDULED run of the full scope skips tickers whose view was
+    # already written after tonight's 9 PM ET slot. The Worker re-dispatches the
+    # slot hourly while its work job has not succeeded, and a run the FailureFuse
+    # stopped (spent quota) exits 1 -- so every retry redid all ~136 stocks from
+    # the first, spending the quota that tripped the fuse again. A manual,
+    # scoped, limited or pending-only run still does what it was asked.
+    resume_since = None
+    scheduled_run = (os.environ.get("GITHUB_EVENT_NAME") == "schedule"
+                     or os.environ.get("SCHEDULED_DISPATCH", "").strip().lower() == "true")
+    if scheduled_run and not only_markets and not limit and not pending_only:
+        resume_since = slot_start_utc()
+        print(f"[{_ts()}] Resume: skipping views already written since {resume_since:%Y-%m-%d %H:%M} UTC (this slot)")
 
     # A ticker in several watchlists is one analysis, not several. The store is
     # keyed by bare ticker, so the extra runs were pure waste that overwrote
@@ -201,6 +256,7 @@ def main():
     # already-analysed/no-row skips stay deterministic. Only the analysis itself
     # is concurrent.
     plan = []
+    resumed = 0
     for market, mkt_tickers in watchlists.items():
         if limit and len(plan) >= limit:
             break
@@ -230,7 +286,14 @@ def main():
             if pending_only and _is_valid_view(fundamentals.get(tk)):
                 print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - SKIP (not pending)")
                 continue
+            if resume_since is not None and written_since(fundamentals.get(tk), resume_since):
+                print(f"[{_ts()}] [{market}] [{idx+1}/{len(mkt_tickers)}] {tk} - SKIP (already analysed this slot)")
+                resumed += 1
+                continue
             plan.append((market, idx, len(mkt_tickers), tk, row))
+
+    if resumed:
+        print(f"[{_ts()}] Resume: {resumed} ticker(s) already done this slot; {len(plan)} to analyse")
 
     store_lock = threading.Lock()
     counters = {"processed": 0, "failed": 0}

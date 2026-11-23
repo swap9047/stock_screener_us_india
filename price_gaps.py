@@ -17,17 +17,23 @@ A gap that reverses within REVERSAL_BARS sessions to within the band (a bad Yaho
 back) is not adjusted. An adjusted series has no gap left, so a second pass changes nothing.
 
 CORRECTIONS (owner, 2026-11-22). A bonus issue is a smaller step than a demerger (2:5 is x5/7, a 30% fall), so the rule
-above never sees it, and Yahoo does not always adjust the history behind it: Anlon's 2:5 bonus (record date 2026-11-02)
+above never sees it, and Yahoo does not always adjust the history behind it: a watchlist stock's 2:5 bonus (record date 2026-11-02)
 left every bar before 2026-10-21 on the old price scale and the later ones on the new, so its 52-week high read -38%
 (really about -13%), its weekly averages sat above the price and the screener said Downtrend / Exit / Caution.
 `price_adjustments.json` (the private data repo: it names held stocks) lists such breaks by hand:
 
     {"ACME.NS": [{"before": "2026-10-20", "factor": 0.7142857142857143, "note": "2:5 bonus"}]}
 
-Every bar dated before `before` is multiplied by `factor`. A correction applies only while the break is still in
-the data: the first bar on or after `before` over the last one before it must be within CORRECTION_TOLERANCE of
-`factor`, so a series Yahoo has since repaired (no break left), or one the correction already fixed, is left alone --
-it can never be applied twice. Volume is not scaled. A malformed file or entry is ignored, never raised.
+Every bar dated before `before` is multiplied by `factor`, and its Volume divided by it: a bonus or split changes the
+share count, so the old sessions' volumes are in old shares (x7/5 for 5/7). An automatic gap above keeps Volume, as a
+demerger does not change the share count. A correction applies only while the break is still in the data: the step
+across the date (the first bar on or after `before` over the last one before it) must be within CORRECTION_TOLERANCE of
+`factor` AND at least twice as far from 1 as from `factor` (in log terms), so a series Yahoo has since repaired (no
+break left), or one the correction already fixed, is left alone -- it can never be applied twice. The second test
+matters for a factor near 1: 10/11 is within 15% of 1.0, so on a repaired series (a flat day across the date) the
+tolerance alone applied it again and faked a 9% step (owner's review, 2026-11-22). Such a factor is only told from a
+day's trading move on a quiet day, so load_corrections prints how many listed factors sit that close to 1 (a count:
+public log). A malformed file or entry is ignored, never raised.
 
 SUSPECTS. A one-session move beyond SUSPECT_LOW / SUSPECT_HIGH in the last SUSPECT_SESSIONS sessions that no rule
 adjusted is remembered (`suspect_tickers`) and refresh_data.py prints how many there are, so the next bonus or split
@@ -85,6 +91,13 @@ def load_corrections(path=None):
     except (OSError, ValueError, AttributeError):
         out = {}
     _CORRECTIONS_CACHE[path] = (stamp, out)
+    close_to_one = sum(1 for entries in out.values() for _b, f in entries
+                       if abs(math.log(f)) <= math.log(1 + CORRECTION_TOLERANCE))
+    if close_to_one:
+        # Once per file version (the cache above). A count, never the tickers: the log is public.
+        print(f"::warning::price_adjustments.json: {close_to_one} listed factor(s) within "
+              f"{CORRECTION_TOLERANCE:.0%} of 1 -- applied only when the step across the date is clearly the "
+              "factor's, so a day's trading move can hide it")
     return out
 
 
@@ -107,18 +120,34 @@ def manual_gaps(closes, ticker):
         if prior.empty or after.empty:
             continue
         observed = float(after.iloc[0] / prior.iloc[-1])
-        if abs(math.log(observed / factor)) <= math.log(1 + CORRECTION_TOLERANCE):
+        if _break_matches(observed, factor):
             out.append((before, factor))
     return out
+
+
+def _break_matches(observed, factor):
+    """True when a step `observed` across a listed date is the listed break `factor`, not an ordinary session: within
+    CORRECTION_TOLERANCE of it, and at least twice as far from 1 (no break) as from it, in log terms. The tolerance
+    alone accepted a flat day for any factor within 15% of 1 (see CORRECTIONS)."""
+    if not (observed > 0 and math.isfinite(observed)):
+        return False
+    to_factor = abs(math.log(observed / factor))
+    return to_factor <= math.log(1 + CORRECTION_TOLERANCE) and 2 * to_factor <= abs(math.log(observed))
+
+
+def _manual_and_auto(closes, ticker):
+    """(listed corrections whose break is still there, corporate-action gaps found in what is left -- Indian only)."""
+    manual = manual_gaps(closes, ticker)
+    base = closes if not manual else closes * factors(closes.index, manual)
+    auto = gaps(base) if is_indian(ticker) else []
+    return manual, auto
 
 
 def all_gaps(closes, ticker):
     """Every adjustment for a close series, oldest first: the listed corrections whose break is still there, then the
     corporate-action gaps found in what is left (an Indian ticker only). Applying them all is the product of their
     ratios, which is what `factors` does."""
-    manual = manual_gaps(closes, ticker)
-    base = closes if not manual else closes * factors(closes.index, manual)
-    auto = gaps(base) if is_indian(ticker) else []
+    manual, auto = _manual_and_auto(closes, ticker)
     return sorted(manual + auto, key=lambda g: g[0])
 
 
@@ -158,12 +187,24 @@ def gaps(closes):
     pos = [(i + 1, float(r)) for i, r in enumerate(ratio.values) if r < GAP_LOW or r > GAP_HIGH]
     skip = set()
     for n, (i, r) in enumerate(pos):
+        # A bar already paired as the "back" half of a bad tick is not the start of another pair. Without this, a bad
+        # tick down-and-back followed within REVERSAL_BARS by a real demerger paired the "back" bar with the demerger
+        # (their product is inside the band), and the demerger was never adjusted (owner's review, 2026-11-22).
+        if i in skip:
+            continue
         for j, r2 in pos[n + 1:]:
             if j - i > REVERSAL_BARS:
                 break
             if j not in skip and GAP_LOW <= r * r2 <= GAP_HIGH:
                 skip.update((i, j))
                 break
+    # A gap on the LAST bar is adjusted at once, though nothing can confirm yet that it holds. Waiting for a later bar
+    # was considered (owner's review, 2026-11-22) and rejected as the more harmful choice: on a demerger's record date
+    # the 9 PM ET alert run's last bar IS that session, so an unadjusted -90% day would read Downtrend / Exit /
+    # Caution and fire those alerts, then flip back the next day and fire again. A bad last tick adjusted instead
+    # scales the history to it: every ratio-based reading (returns, RSI, averages vs price) stays right and only the
+    # price level is off, for the one run until the next download drops the tick -- where left alone it would show a
+    # crash on every indicator.
     return [(s.index[i], r) for i, r in pos if i not in skip]
 
 
@@ -187,11 +228,13 @@ def adjust_series(closes, ticker):
 
 
 def adjust_frame(df, ticker):
-    """The same for one ticker's OHLC frame (Open/High/Low/Close/Adj Close scaled, Volume kept: a demerger does
-    not change the share count). The gaps are found on Close."""
+    """The same for one ticker's OHLC frame (Open/High/Low/Close/Adj Close scaled). Volume is kept across an automatic
+    gap (a demerger does not change the share count) and divided by a LISTED correction's factor (a bonus or split
+    does: the old sessions' volumes are in old shares). The gaps are found on Close."""
     if (not is_indian(ticker) and not has_correction(ticker)) or df is None or df.empty or "Close" not in df.columns:
         return df, []
-    found = all_gaps(df["Close"], ticker)
+    manual, auto = _manual_and_auto(df["Close"], ticker)
+    found = sorted(manual + auto, key=lambda g: g[0])
     if not found:
         note_suspects(df["Close"], ticker)
         return df, []
@@ -200,6 +243,13 @@ def adjust_frame(df, ticker):
     for col in PRICE_COLUMNS:
         if col in df.columns:
             df[col] = df[col] * f
+    if manual and "Volume" in df.columns:
+        # Volume used to be left alone here too, so a listed bonus put the averages of volume across the date on two
+        # share scales (owner's review, 2026-11-22).
+        volume = df["Volume"] / factors(df.index, manual)
+        if pd.api.types.is_integer_dtype(df["Volume"].dtype):
+            volume = volume.round().astype(df["Volume"].dtype)
+        df["Volume"] = volume
     note_suspects(df["Close"], ticker)
     return df, found
 
