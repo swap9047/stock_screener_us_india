@@ -346,10 +346,13 @@ section = APP[i:APP.find("def render_expert_view_expander(")]
 check("reasoning_model_select" not in section and "reasoning_budget_select" not in section
       and "Settings · Models" in section,
       "B2: the tabs draw no model / budget picker (one panel in the sidebar), so there are no copies to undo each other")
-i = APP.find("def _save_setting_reset_widgets(")
-body = APP[i:i + 1200]
-check(i > 0 and "startswith(" in body and "st.session_state.pop" in body and "st.rerun()" in body,
-      "B2: the helper drops every tab's copy of the widget before rerunning")
+# The helper that used to drop every tab's copy before rerunning
+# (_save_setting_reset_widgets) lost its last caller with the per-tab pickers and was
+# deleted on 2026-11-22. What does its job now is that there is only ONE copy: the
+# Settings · Models panel is drawn once per run, in the sidebar.
+import re as _re
+check(len(_re.findall(r"^\s*render_model_settings\(\)", APP, flags=_re.M)) == 1,
+      "B2: the Settings · Models panel is drawn exactly once per run (no copies to write a stale value back)")
 
 # --- I3 the disclaimer fits by Discord's own count -----------------------------
 import alerts
