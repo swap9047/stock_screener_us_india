@@ -21,6 +21,10 @@ B: a mixed India + US list's breadth. Each day's denominator was the stocks
    row now counts at its own latest session there; one exchange's panel (every
    index) is unchanged, held here to an independent per-day count.
 
+A: alerts.ALLOWED_HOURS (the hours the app's schedule picker offers) is the
+   daily-alerts.yml gate's `slots`, parsed the way slot_gate.py parses them: an
+   hour the gate never works is a rule that never fires.
+
 Offline: invented tickers (ACME.NS) and frames, the download and yf.Ticker
 replaced, no network.
 """
@@ -34,6 +38,9 @@ import pandas as pd
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
+import yaml  # noqa: E402
+
+import alerts  # noqa: E402
 import breadth_math as bm  # noqa: E402
 import filters  # noqa: E402
 import stock_data as sd  # noqa: E402
@@ -290,6 +297,15 @@ check(days_ok and str(idx_b[-20].date()) not in b_s["history"],
 check(bm.calendar_group("ZED.NS") == bm.calendar_group("ZED.BO") == "IN"
       and bm.calendar_group("ACME") == bm.calendar_group("ACME.B") == "US",
       "B3 calendar groups by Yahoo suffix: .NS/.BO India, anything else the US")
+
+# ---------------------------------------------------------------- A: alert hours vs the gate
+wf = yaml.safe_load(open(REPO / ".github/workflows/daily-alerts.yml"))
+gates = [st for job in wf["jobs"].values() for st in job.get("steps", [])
+         if st.get("uses") == "./.github/actions/slot-gate"]
+check(len(gates) == 1, f"A1 daily-alerts.yml has one slot-gate step ({len(gates)})")
+slots = sorted(int(h) for h in str(gates[0]["with"]["slots"]).replace(" ", "").split(",") if h) if gates else None
+check(slots == sorted(alerts.ALLOWED_HOURS),
+      f"A1 alerts.ALLOWED_HOURS {sorted(alerts.ALLOWED_HOURS)} is the gate's slots {slots}")
 
 print("FAILURES:", fails)
 sys.exit(1 if fails else 0)
