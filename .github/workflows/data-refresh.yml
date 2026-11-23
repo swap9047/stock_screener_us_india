@@ -39,6 +39,11 @@ permissions:
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    # Dispatched every 30 minutes, one run at a time (the concurrency group): a run hung on Yahoo or the
+    # database used to hold the group for GitHub's 6-hour default while every later dispatch queued
+    # behind it (and replaced the one waiting). 50, not less: the hourly library step does the same work
+    # market-library.yml allows 60 minutes for, after the snapshot is committed.
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v5
 

@@ -79,7 +79,7 @@ code, msgs = run({"ACME": "material", "ZED": "quiet", "QUX": "quiet", "ZORP": "f
 f = state["file"]
 check(code == 1 and any("digest" in m for m in msgs) and f["retry_pending"] and f["posted"] and not f["run_failed"],
       f"L1: 1 of 4 failed -> digest posted, saved retry_pending + posted, exit 1 ({code}, {f.get('retry_pending')}, {f.get('posted')})")
-check(any("1 stock could not be searched yet" in m for m in msgs), "L1: ...and the digest says one is still to be searched")
+check(any("1 stock could not be checked yet" in m for m in msgs), "L1: ...and the digest says one is still to be checked")
 
 # --- L2 ---------------------------------------------------------------------------------------------
 code, msgs = run({"ACME": "material", "ZED": "quiet", "QUX": "quiet", "ZORP": "material"})

@@ -9,7 +9,7 @@ C1  load_corrections: parsed; a bad entry, a bad file or no file is skipped and 
 C2  a correction scales every bar before its date and no later one; it is reported like a gap
 C3  it applies only while the break is there: a repaired series, a corrected one and a mismatching step are left alone
 C4  it combines with the 40% gap rule (the ratios multiply); a US ticker listed in the file is corrected too
-C5  the frame helpers (OHLC scaled and Volume kept; the download frame; the breadth close frame)
+C5  the frame helpers (OHLC scaled, Volume before the date divided by the factor; the download frame; the breadth close frame)
 C6  the wiring: fetch_snapshot's 52-week distance and trend, the perf job (and its carried-close rescale), refresh_data
 S1  the suspect list: a step beyond SUSPECT_LOW / SUSPECT_HIGH inside the last 60 sessions, never a corrected one
 
@@ -143,8 +143,8 @@ def ohlc(p, vol=1000.0):
 frame = ohlc(s)
 out, found = pg.adjust_frame(frame, "ACME.NS")
 check(np.allclose(out["High"][before].values, frame["High"][before].values * F) and out["High"][~before].equals(frame["High"][~before])
-      and (out["Volume"] == 1000).all() and len(found) == 1,
-      "C5: OHLC is scaled before the date, later bars and Volume are kept")
+      and np.allclose(out["Volume"][before].values, 1000 / F) and (out["Volume"][~before] == 1000).all() and len(found) == 1,
+      "C5: OHLC is scaled before the date, Volume before it is in new shares (/factor, owner's review 2026-11-22), later bars kept")
 raw = pd.concat({"ACME.NS": frame, "^CRSLDX": ohlc(pd.Series(np.linspace(100, 110, 14), index=days[:14]))}, axis=1)
 d_out, d_which = pg.adjust_download(raw, ["ACME.NS", "^CRSLDX"])
 check(d_which == ["ACME.NS"] and np.allclose(d_out["ACME.NS"]["Close"][before].values, s[before].values * F)

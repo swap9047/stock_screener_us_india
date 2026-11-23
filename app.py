@@ -38,6 +38,7 @@ import hmac
 import html
 import re
 import time
+import traceback
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -135,7 +136,7 @@ from weekly_wrapup import (
 )
 from filters import (load_custom_filters, get_market_filters, save_market_filters, apply_filters, describe_filter,
                      describe_chain, describe_chain_with_values, passes_filter_chain, CATEGORICAL_METRICS,
-                     TEXT_METRICS)
+                     TEXT_METRICS, parse_number_text)
 import watchlist_moves
 from github_sync import (get_github_config, get_data_repo_config, bootstrap_data_files, start_refresh_after_stage_upload,
                          push_all_config, trigger_github_workflow, pull_generated_files, SYNCABLE_FILES, WORKFLOW_GENERATED_FILES,
@@ -228,23 +229,83 @@ def _set_show_fundamentals(value):
     st.rerun()
 
 
-def _save_setting_reset_widgets(changes, widget_prefixes):
-    """Save `changes` ({setting: value}) and rerun, after dropping the state of
-    every widget whose key starts with one of `widget_prefixes`.
 
-    For a setting with one picker PER TAB -- the Expert Take and Sentiment model
-    and thinking-budget pickers are rendered on every market tab, all bound to
-    one setting. A change on one tab used to save and rerun, and the next tab's
-    copy, still holding the old value in session_state, saved it straight back
-    (reproduced 2026-10-03: saves went new -> old), so the pickers never stuck.
-    Same failure as _set_show_fundamentals; dropping every copy makes them all
-    re-seed from settings.json on the next run."""
-    settings = load_settings()
-    settings.update(changes)
-    save_settings(settings)
-    for key in [k for k in st.session_state if k.startswith(tuple(widget_prefixes))]:
-        st.session_state.pop(key, None)
-    st.rerun()
+class _Contained:
+    """`with tab, _Contained("The News tab"):` -- one part of the page that fails
+    shows an error in its own place instead of ending the run.
+
+    Every tab body, the dashboard controls and each sidebar panel run in one long
+    script. Before 2026-11-22 a single bad row (a snapshot row without
+    rsi14_daily raised KeyError in the filter loop) stopped the script at that
+    tab: every later tab, Alert Rules AND the end-of-run push of edited config
+    never ran, so an edit made on that run stayed on the container. Only
+    Exception is caught: st.rerun() and st.stop() raise RerunException /
+    StopException, which are BaseException subclasses in Streamlit (checked on
+    1.63), and they must pass through. The traceback goes into a collapsed
+    expander, and to the server log, rather than st.exception, so the page keeps
+    one short line per failed part."""
+
+    def __init__(self, what, where=None):
+        self.what = what
+        self.where = where
+        self.failed = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is None or not issubclass(exc_type, Exception):
+            return False
+        self.failed = True
+        detail = "".join(traceback.format_exception(exc_type, exc, tb))
+        print(f"[contained] {self.what} failed:\n{detail}")
+        box = self.where if self.where is not None else st
+        try:
+            box.error(f"{self.what} could not be shown ({exc_type.__name__}: {str(exc)[:200]}). "
+                      "The rest of the app is unaffected.")
+            with box.expander("Error details", expanded=False):
+                st.code(detail, language=None)
+        except Exception:
+            pass
+        return True
+
+
+
+def _queue_flash(where, kind, text):
+    """Keep a message for the run AFTER the coming st.rerun(), shown by
+    _show_flash(where). A message drawn and then followed by st.rerun() is gone
+    before it can be read -- the rerun clears the page -- and a time.sleep(1) in
+    between only made the save slower: a dropped ticker ("doesn't return any
+    price data -- dropping it"), a failed push or a short history flashed for a
+    second, or not at all (found 2026-11-22). `kind` is "success", "info",
+    "warning" or "error"; `where` names the place that shows it ("sidebar", a
+    market key, "dashboard")."""
+    st.session_state.setdefault("_flash_msgs", {}).setdefault(where, []).append((kind, text))
+
+
+def _show_flash(where, box=None):
+    """Draw and forget the messages _queue_flash kept for `where`."""
+    queued = st.session_state.get("_flash_msgs") or {}
+    msgs = queued.pop(where, None)
+    for kind, text in msgs or ():
+        getattr(box if box is not None else st, kind)(text)
+
+
+
+# Files read by every tab's table, AI controls and Expert Views cards, parsed
+# once per script run instead of once per tab (11 tabs, each re-reading the same
+# ~100 KB+ JSON several times). A plain module-level dict: Streamlit re-executes
+# this script in a fresh namespace on every run, so the memo never outlives the
+# run. Read-only callers only -- every path that writes these files ends with
+# st.rerun(), which starts a run with an empty memo.
+_RUN_LOADS = {}
+
+
+def _run_load(name, loader):
+    if name not in _RUN_LOADS:
+        _RUN_LOADS[name] = loader()
+    return _RUN_LOADS[name]
+
 
 # ---------- auth gate ----------
 
@@ -557,12 +618,14 @@ def parse_filter_value_text(text):
     float when it looks numeric, otherwise keeps it as a stripped string
     (e.g. "Yes" for Tech Uptrend). The word->0/1 mapping itself happens at
     compare time in filters._coerce_fixed_value, since that needs the row's
-    live metric_a value to know whether "Yes" should mean 1."""
+    live metric_a value to know whether "Yes" should mean 1.
+
+    Numbers are read by filters.parse_number_text, the same parser the engine
+    applies at compare time, so "1,000,000", "5%", "10L" and "2Cr" are saved as
+    numbers (2026-11-22; they used to be saved as text and compared as text)."""
     text = (text or "").strip()
-    try:
-        return float(text)
-    except ValueError:
-        return text
+    number = parse_number_text(text)
+    return number if number is not None else text
 
 
 def save_discord_webhook_local(url):
@@ -1024,21 +1087,44 @@ def _escape_markdown_dollars(text):
     return re.sub(r"(?<!\\)\$", r"\\$", str(text))
 
 
+
+def _rule_references(rule_id, rules):
+    """Names of what refers to alert `rule_id` through a {"type": "rule"}
+    condition: other alert rules, and the saved custom filters of a tab
+    ("<tab> custom filter"). Shown before a rule is deleted."""
+    refs = [f"rule \"{r.get('name') or '(unnamed)'}\"" for r in rules
+            if r.get("id") != rule_id
+            and any(c.get("type") == "rule" and c.get("rule_id") == rule_id
+                    for c in (r.get("conditions") or []) if isinstance(c, dict))]
+    try:
+        registry = load_markets_registry()
+        for mkt, conds in load_custom_filters().items():
+            if any(isinstance(c, dict) and c.get("type") == "rule" and c.get("rule_id") == rule_id
+                   for c in conds or []):
+                refs.append(f"the {registry.get(mkt, {}).get('label', mkt)} custom filter")
+    except Exception:   # a filters file that cannot be read only loses this hint
+        pass
+    return refs
+
 def _price_fmt(v):
-    """Price-denominated cells: 1 decimal under 1,000, whole numbers above.
+    """Price-denominated cells: 2 decimals under 100, 1 under 1,000, whole numbers above.
 
     These were all whole numbers ("{:,.0f}"), which hid the relationships the
     row colouring depicts on low-priced tickers -- a last of 8.9 vs a 10 WEMA of
-    8.7 both read "9", a last of 10.7 vs a VStop of 10.6 both "11". Stored values are
-    already rounded to 1 decimal, so more than 1 would only show padding."""
+    8.7 both read "9", a last of 10.7 vs a VStop of 10.6 both "11". Since 2026-11-22
+    price levels are stored to at least 2 decimals (`stock_data.round_price`) and the
+    below/cross flags use unrounded values, so under 100 a close of 5.02 under a 200-day
+    SMA of 5.04 must not read "5.0" against "5.0" while the cell is coloured red."""
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return "—"
+    if abs(v) < 100:
+        return f"{v:,.2f}"
     return f"{v:,.1f}" if abs(v) < 1000 else f"{v:,.0f}"
 
 
 def price_cols(ema_labels):
-    """Price-denominated columns -- formatted by _price_fmt (1 decimal under
-    1,000, whole numbers above)."""
+    """Price-denominated columns -- formatted by _price_fmt (2 decimals under 100,
+    1 under 1,000, whole numbers above)."""
     return ["Last", ema_labels["w_fast"], ema_labels["w_mid"], ema_labels["w_slow"],
             ema_labels["d_fast"], ema_labels["d_mid"], ema_labels["d_slow"],
             "VStop-W", "VStop-W (14)", "52W High", "52W Low", "5Y High"]
@@ -1339,13 +1425,13 @@ def settings_dialog():
             if changed:
                 save_markets_registry(markets_registry)
                 gh_token, gh_repo, gh_branch = get_data_repo_config(getattr(st, "secrets", None))
+                # Queued, not drawn: the rerun closes this dialog (see _queue_flash).
+                _queue_flash("sidebar", "success", f"Saved changes to {mkey}.")
                 if gh_token and gh_repo:
                     with st.spinner("Pushing rename to GitHub..."):
                         ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=["markets.json"], message=f"Rename watchlist {mkey}")
                         if not ok:
-                            st.error(f"Failed to push to GitHub: {msg}")
-                st.success(f"Saved changes to {mkey}.")
-                time.sleep(1)
+                            _queue_flash("sidebar", "error", f"Failed to push to GitHub: {msg}")
                 st.rerun()
             elif not label_err:
                 st.info("No changes detected.")
@@ -1363,14 +1449,13 @@ def settings_dialog():
             st.error(watchlist_label_error(new_wl_label, markets_registry))
         else:
             add_watchlist(new_wl_label.strip(), new_wl_bench.strip())
+            _queue_flash("sidebar", "success", f"Added \"{new_wl_label.strip()}\".")
             gh_token, gh_repo, gh_branch = get_data_repo_config(getattr(st, "secrets", None))
             if gh_token and gh_repo:
                 with st.spinner("Pushing new watchlist to GitHub..."):
                     ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=["markets.json", "watchlist.json", "custom_filters.json"], message=f"Add watchlist {new_wl_label.strip()}")
                     if not ok:
-                        st.error(f"Failed to push to GitHub: {msg}")
-            st.success(f"Added \"{new_wl_label.strip()}\".")
-            time.sleep(1)
+                        _queue_flash("sidebar", "error", f"Failed to push to GitHub: {msg}")
             st.rerun()
 
     st.markdown("**Trend column** (Strong Uptrend / Uptrend / Mixed / Downtrend / Strong Downtrend)")
@@ -1689,10 +1774,10 @@ def _apply_watchlist_tickers(market, market_label, existing_tickers, candidate_t
                 # (throttling), so this says nothing about the ticker. Keep it;
                 # a real typo shows up as an empty row after the next refresh.
                 valid_tickers.append(t)
-                st.warning(f"Couldn't check '{t}' — Yahoo Finance isn't responding right now. "
-                           "Added anyway; if it shows no prices after the next refresh, it's a typo.")
+                _queue_flash(market, "warning", f"Couldn't check '{t}' — Yahoo Finance isn't responding right now. "
+                             "Added anyway; if it shows no prices after the next refresh, it's a typo.")
             else:
-                st.error(f"'{t}' doesn't return any price data from Yahoo Finance — dropping it.")
+                _queue_flash(market, "error", f"'{t}' doesn't return any price data from Yahoo Finance — dropping it.")
                 interested.discard(t)
 
     save_watchlist(market, valid_tickers)
@@ -1762,13 +1847,15 @@ def _apply_watchlist_tickers(market, market_label, existing_tickers, candidate_t
                        provenance=_provenance)
     _bump_refresh()
     _reused = len(valid_tickers) - len(_to_fetch)
+    # Every message below is queued for the tab, shown after the rerun this
+    # function ends with (see _queue_flash).
     if _to_fetch:
-        st.success(
+        _queue_flash(market, "success",
             f"Saved {market_label} with {len(valid_tickers)} tickers — "
             f"fetched {len(_to_fetch)} new, reused {_reused} from the last snapshot."
         )
     else:
-        st.success(
+        _queue_flash(market, "success",
             f"Saved {market_label} with {len(valid_tickers)} tickers — "
             "no Yahoo fetch needed, every ticker was already in the snapshot."
         )
@@ -1777,7 +1864,7 @@ def _apply_watchlist_tickers(market, market_label, existing_tickers, candidate_t
     # MIN_DAILY_BARS of history -- say so now rather than letting a new listing
     # simply never appear in the table.
     if _short_history:
-        st.warning(
+        _queue_flash(market, "warning",
             "Saved, but not enough price history to show yet: "
             + ", ".join(f"{t} ({v['bars']} trading day{'s' if v['bars'] != 1 else ''})"
                         for t, v in sorted(_short_history.items()))
@@ -1789,11 +1876,10 @@ def _apply_watchlist_tickers(market, market_label, existing_tickers, candidate_t
         with st.spinner("Pushing watchlist to GitHub..."):
             ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=["watchlist.json", "interested.json", "data_snapshot.json", "ticker_index.json"], message=f"Update {market_label}")
             if ok:
-                st.success("Successfully pushed to GitHub!")
+                _queue_flash(market, "success", "Successfully pushed to GitHub!")
             else:
-                st.error(f"Failed to push to GitHub: {msg}")
+                _queue_flash(market, "error", f"Failed to push to GitHub: {msg}")
 
-    time.sleep(1)
     st.rerun()
 
 
@@ -2314,12 +2400,21 @@ def render_condition_builder(key_prefix, metric_names, filterable_metrics, logic
             init_val_text = str(init_val)
         value_text = vc1.text_input(
             "Value", value=init_val_text, key=f"{key_prefix}_val",
-            help="A number (e.g. 45) or a word for boolean-like metrics, e.g. Yes / No for Tech Uptrend.",
+            help="A number (e.g. 45, 1,000,000, 5%, 10L, 2Cr, 3M) or a word for boolean-like metrics, "
+                 "e.g. Yes / No for Tech Uptrend.",
         )
         if vc2.button(submit_label, key=f"{key_prefix}_addbtn"):
+            parsed = parse_filter_value_text(value_text)
+            # A numeric metric against text that is not a number never matches
+            # (filters.passes_filter fails it closed), so say so instead of
+            # saving a condition that silently matches nothing.
+            if (isinstance(parsed, str) and metric_a_key not in TEXT_METRICS
+                    and parsed.lower() not in ("yes", "no", "true", "false")):
+                st.error(f"\"{parsed}\" is not a number. Type e.g. 45, 1,000,000, 5%, 10L or 2Cr.")
+                return None
             return {
                 "metric_a": metric_a_key, "operator": operator_choice, "compare_type": "value",
-                "value": parse_filter_value_text(value_text), "logic": logic_choice,
+                "value": parsed, "logic": logic_choice,
             }
         return None
 
@@ -2918,11 +3013,33 @@ def render_sort_control(market, market_label, label_by_key, key_by_label, sample
         default_label, default_dir = (
             DEFAULT_SORT[i - 1] if i <= len(DEFAULT_SORT) else (empty_option, "↑")
         )
-        if field_key not in st.session_state:
-            saved = prefs.get(field_pref, default_label) or empty_option
-            st.session_state[field_key] = saved if saved in options else empty_option
-        if dir_key not in st.session_state:
-            st.session_state[dir_key] = prefs.get(dir_pref, default_dir) or "↑"
+        # What the saved prefs say the widgets should show. A saved label that is
+        # not an option right now (fundamental columns hidden, an EMA period
+        # changed, a custom column renamed) shows as the empty option, but the
+        # saved pref is left alone. The widget used to be seeded with the empty
+        # option and that was written straight back below, so hiding the
+        # fundamental columns erased a saved "Sentiment" sort for good (found
+        # 2026-11-22). Now prefs are written only when the user CHANGED a widget,
+        # judged against the value it was seeded with (`_seed_*`), which also
+        # stops a first visit writing the defaults to column_prefs.json -- a
+        # commit nobody asked for.
+        saved = prefs.get(field_pref, default_label) or empty_option
+        pref_label = saved if saved in options else empty_option
+        pref_dir = prefs.get(dir_pref, default_dir) or "↑"
+        field_seed, dir_seed = f"_seed_{field_key}", f"_seed_{dir_key}"
+        # Re-seed when the widget is new, or still shows what it was seeded with
+        # while the prefs now say something else (the saved label became an
+        # option again, or another device's sort was pulled in).
+        if (field_key not in st.session_state
+                or (st.session_state[field_key] == st.session_state.get(field_seed)
+                    and pref_label != st.session_state.get(field_seed))):
+            st.session_state[field_key] = pref_label
+            st.session_state[field_seed] = pref_label
+        if (dir_key not in st.session_state
+                or (st.session_state[dir_key] == st.session_state.get(dir_seed)
+                    and pref_dir != st.session_state.get(dir_seed))):
+            st.session_state[dir_key] = pref_dir
+            st.session_state[dir_seed] = pref_dir
 
         # A tie-breaker level only makes sense once the level above it is
         # actually sorting on something -- otherwise it's a lower-priority
@@ -2947,9 +3064,12 @@ def render_sort_control(market, market_label, label_by_key, key_by_label, sample
         )
         ascending = sort_dir == "↑"
 
-        if sort_label != prefs.get(field_pref) or sort_dir != prefs.get(dir_pref):
+        if (sort_label != st.session_state.get(field_seed)
+                or sort_dir != st.session_state.get(dir_seed)):
             update_column_prefs(field_pref, sort_label)
             update_column_prefs(dir_pref, sort_dir)
+            st.session_state[field_seed] = sort_label
+            st.session_state[dir_seed] = sort_dir
 
         if sort_label == empty_option:
             break
@@ -3019,176 +3139,192 @@ def render_shared_column_picker(labels, active_market=None, active_market_label=
     optional_defs, label_by_key, key_by_label, all_labels, default_visible = build_column_defs(labels, custom_columns)
 
     if active_market:
-        render_sort_control(active_market, active_market_label or active_market,
-                            label_by_key, key_by_label, sample_rows, other_tabs)
+        # Each sidebar panel is contained on its own (see _Contained): one that
+        # raises shows an error in the sidebar, and the tabs still render.
+        with _Contained("The sort control", st.sidebar):
+            render_sort_control(active_market, active_market_label or active_market,
+                                label_by_key, key_by_label, sample_rows, other_tabs)
 
     SHARED_ORDER_KEY = "shared_col_order"
-    if SHARED_ORDER_KEY not in st.session_state:
-        # Saved preference (column_prefs.json) wins if present -- this is
-        # what makes a layout chosen once, then pushed to GitHub, show up
-        # identically for anyone who opens the app (including a fresh
-        # session on the deployed instance), instead of only ever living in
-        # that one browser session's memory.
-        saved_order = load_column_prefs()
-        if saved_order:
-            st.session_state[SHARED_ORDER_KEY] = saved_order
-        else:
-            st.session_state[SHARED_ORDER_KEY] = [key_by_label[lbl] for lbl in default_visible]
-            # Write the file immediately so it always exists after the app's
-            # very first render -- push_all_config (the GitHub push button)
-            # fails the WHOLE atomic push if any targeted file is missing,
-            # so column_prefs.json can't be allowed to only appear lazily
-            # after the user first touches the picker.
-            save_column_prefs(st.session_state[SHARED_ORDER_KEY])
-    # Drop any keys that no longer exist (e.g. a future app update renames
-    # or removes a column) so stale saved state can't crash the lookup below.
-    st.session_state[SHARED_ORDER_KEY] = [k for k in st.session_state[SHARED_ORDER_KEY] if k in label_by_key]
-
-    # Ensure every fundamental column (Sentiment, Qtr Profit/Revenue Growth %)
-    # is present in the active order if missing -- e.g. a saved
-    # column_prefs.json from before these columns existed, or before the
-    # "Show fundamental columns" toggle was last turned on, would otherwise
-    # never surface them even though they're now available in label_by_key.
-    # Skipped for any key currently toggled off (it won't be in label_by_key
-    # in that case -- nothing to force back in).
-    # Iterate in optional_defs order (not the set) so multiple new fundamental
-    # columns are inserted in the correct sequence (sets have no guaranteed order).
-    #
-    # Restricted to columns that are VISIBLE by default. A saved order is the
-    # visible-column list, so force-inserting here turns a column on in every
-    # existing layout -- which is right for a genuinely new everyday column,
-    # but wrong for a fundamental that ships hidden on purpose (PAT/Revenue
-    # Growth TTM are scan inputs, and blank on any ticker whose data source
-    # doesn't reach back eight quarters). Without this filter, declaring such
-    # a column in FUNDAMENTAL_COLUMN_KEYS silently overrides default_hidden.
-    fund_keys_in_order = [k for k, lbl in optional_defs
-                          if k in FUNDAMENTAL_COLUMN_KEYS and lbl in default_visible]
-    inserted = False
-    for fund_key in fund_keys_in_order:
-        if fund_key in label_by_key and fund_key not in st.session_state[SHARED_ORDER_KEY]:
-            order = st.session_state[SHARED_ORDER_KEY]
-            # Land the new column in its declared optional_defs position rather
-            # than at the end of the fundamental group: sit it right after the
-            # nearest fundamental column that already precedes it in
-            # optional_defs. That keeps siblings together (Qtr EPS Growth %
-            # belongs beside Qtr Profit Growth %, not eight slots away after
-            # ROE %). Falls back to the end of the group when no such
-            # predecessor is on screen.
-            preceding = [k for k in fund_keys_in_order[:fund_keys_in_order.index(fund_key)]
-                         if k in order]
-            fund_positions = [order.index(k) for k in FUNDAMENTAL_COLUMN_KEYS if k in order]
-            if preceding:
-                idx = order.index(preceding[-1])
-            elif fund_positions:
-                idx = max(fund_positions)
-            elif "tech_uptrend_label" in order:
-                idx = order.index("tech_uptrend_label")
+    # Contained like the panels below; a failure here falls back to the default
+    # column set (see the return).
+    with _Contained("Columns to show / reorder", st.sidebar):
+        if SHARED_ORDER_KEY not in st.session_state:
+            # Saved preference (column_prefs.json) wins if present -- this is
+            # what makes a layout chosen once, then pushed to GitHub, show up
+            # identically for anyone who opens the app (including a fresh
+            # session on the deployed instance), instead of only ever living in
+            # that one browser session's memory.
+            saved_order = load_column_prefs()
+            if saved_order:
+                st.session_state[SHARED_ORDER_KEY] = saved_order
             else:
-                order.append(fund_key)
+                st.session_state[SHARED_ORDER_KEY] = [key_by_label[lbl] for lbl in default_visible]
+                # Write the file immediately so it always exists after the app's
+                # very first render -- push_all_config (the GitHub push button)
+                # fails the WHOLE atomic push if any targeted file is missing,
+                # so column_prefs.json can't be allowed to only appear lazily
+                # after the user first touches the picker.
+                save_column_prefs(st.session_state[SHARED_ORDER_KEY])
+        # Drop any keys that no longer exist (e.g. a future app update renames
+        # or removes a column) so stale saved state can't crash the lookup below.
+        st.session_state[SHARED_ORDER_KEY] = [k for k in st.session_state[SHARED_ORDER_KEY] if k in label_by_key]
+
+        # Ensure every fundamental column (Sentiment, Qtr Profit/Revenue Growth %)
+        # is present in the active order if missing -- e.g. a saved
+        # column_prefs.json from before these columns existed, or before the
+        # "Show fundamental columns" toggle was last turned on, would otherwise
+        # never surface them even though they're now available in label_by_key.
+        # Skipped for any key currently toggled off (it won't be in label_by_key
+        # in that case -- nothing to force back in).
+        # Iterate in optional_defs order (not the set) so multiple new fundamental
+        # columns are inserted in the correct sequence (sets have no guaranteed order).
+        #
+        # Restricted to columns that are VISIBLE by default. A saved order is the
+        # visible-column list, so force-inserting here turns a column on in every
+        # existing layout -- which is right for a genuinely new everyday column,
+        # but wrong for a fundamental that ships hidden on purpose (PAT/Revenue
+        # Growth TTM are scan inputs, and blank on any ticker whose data source
+        # doesn't reach back eight quarters). Without this filter, declaring such
+        # a column in FUNDAMENTAL_COLUMN_KEYS silently overrides default_hidden.
+        fund_keys_in_order = [k for k, lbl in optional_defs
+                              if k in FUNDAMENTAL_COLUMN_KEYS and lbl in default_visible]
+        inserted = False
+        for fund_key in fund_keys_in_order:
+            if fund_key in label_by_key and fund_key not in st.session_state[SHARED_ORDER_KEY]:
+                order = st.session_state[SHARED_ORDER_KEY]
+                # Land the new column in its declared optional_defs position rather
+                # than at the end of the fundamental group: sit it right after the
+                # nearest fundamental column that already precedes it in
+                # optional_defs. That keeps siblings together (Qtr EPS Growth %
+                # belongs beside Qtr Profit Growth %, not eight slots away after
+                # ROE %). Falls back to the end of the group when no such
+                # predecessor is on screen.
+                preceding = [k for k in fund_keys_in_order[:fund_keys_in_order.index(fund_key)]
+                             if k in order]
+                fund_positions = [order.index(k) for k in FUNDAMENTAL_COLUMN_KEYS if k in order]
+                if preceding:
+                    idx = order.index(preceding[-1])
+                elif fund_positions:
+                    idx = max(fund_positions)
+                elif "tech_uptrend_label" in order:
+                    idx = order.index("tech_uptrend_label")
+                else:
+                    order.append(fund_key)
+                    inserted = True
+                    continue
+                order.insert(idx + 1, fund_key)
                 inserted = True
-                continue
-            order.insert(idx + 1, fund_key)
-            inserted = True
 
-    if inserted:
-        save_column_prefs(st.session_state[SHARED_ORDER_KEY])
+        if inserted:
+            save_column_prefs(st.session_state[SHARED_ORDER_KEY])
 
-    # The Stage Analysis columns: a saved order is the list of VISIBLE columns, so a
-    # layout saved before they existed would never show them. Placed once, right
-    # after Sentiment, and recorded in column_prefs.json -- unlike the fundamentals
-    # loop above, which re-adds a column on every run, this one must not bring back
-    # a column that was hidden on purpose afterwards.
-    _prefs_now = load_column_prefs_full()
-    if not _prefs_now.get("stage_columns_added"):
-        order = st.session_state[SHARED_ORDER_KEY]
-        at = order.index("fundamentals") + 1 if "fundamentals" in order else len(order)
-        for key in STAGE_VISIBLE_KEYS:
-            if key in label_by_key and key not in order:
-                order.insert(at, key)
-                at += 1
-        _prefs_now["order"] = order
-        _prefs_now["stage_columns_added"] = True
-        atomic_write_json(COLUMN_PREFS_FILE, _prefs_now)
-    # Stage Vol (2026-11-05) came after the four above, so a layout saved with them lacks
-    # it. Same rule: placed once, right after PEAD (or the last Stage column shown), and
-    # recorded, so hiding it afterwards sticks.
-    if not _prefs_now.get("stage_vol_added"):
-        order = st.session_state[SHARED_ORDER_KEY]
-        if "stage_vol" in label_by_key and "stage_vol" not in order:
-            anchors = [order.index(k) for k in ("pead", "cheat_entry", "stage_mom", "stage") if k in order]
-            order.insert((anchors[0] + 1) if anchors else len(order), "stage_vol")
-        _prefs_now["order"] = order
-        _prefs_now["stage_vol_added"] = True
-        atomic_write_json(COLUMN_PREFS_FILE, _prefs_now)
+        # The Stage Analysis columns: a saved order is the list of VISIBLE columns, so a
+        # layout saved before they existed would never show them. Placed once, right
+        # after Sentiment, and recorded in column_prefs.json -- unlike the fundamentals
+        # loop above, which re-adds a column on every run, this one must not bring back
+        # a column that was hidden on purpose afterwards.
+        _prefs_now = load_column_prefs_full()
+        if not _prefs_now.get("stage_columns_added"):
+            order = st.session_state[SHARED_ORDER_KEY]
+            at = order.index("fundamentals") + 1 if "fundamentals" in order else len(order)
+            for key in STAGE_VISIBLE_KEYS:
+                if key in label_by_key and key not in order:
+                    order.insert(at, key)
+                    at += 1
+            _prefs_now["order"] = order
+            _prefs_now["stage_columns_added"] = True
+            atomic_write_json(COLUMN_PREFS_FILE, _prefs_now)
+        # Stage Vol (2026-11-05) came after the four above, so a layout saved with them lacks
+        # it. Same rule: placed once, right after PEAD (or the last Stage column shown), and
+        # recorded, so hiding it afterwards sticks.
+        if not _prefs_now.get("stage_vol_added"):
+            order = st.session_state[SHARED_ORDER_KEY]
+            if "stage_vol" in label_by_key and "stage_vol" not in order:
+                anchors = [order.index(k) for k in ("pead", "cheat_entry", "stage_mom", "stage") if k in order]
+                order.insert((anchors[0] + 1) if anchors else len(order), "stage_vol")
+            _prefs_now["order"] = order
+            _prefs_now["stage_vol_added"] = True
+            atomic_write_json(COLUMN_PREFS_FILE, _prefs_now)
 
-    with st.sidebar.expander("Columns to show / reorder", expanded=False):
-        st.caption(
-            "Applies to both the US and India tables. Ticker and Last always show first. "
-            "Saved to column_prefs.json and pushed to the data repo automatically."
-        )
-        from stock_data import load_settings
-        fund_settings = load_settings()
-        show_fundamentals = st.checkbox(
-            "Show fundamental columns (Sentiment, Qtr Profit/Revenue Growth %)",
-            value=fund_settings.get("show_fundamental_columns", True),
-            key="show_fundamental_columns_toggle",
-            help="Turn off to hide all fundamental-data columns at once, instead of unchecking them individually below.",
-        )
-        if show_fundamentals != fund_settings.get("show_fundamental_columns", True):
-            _set_show_fundamentals(show_fundamentals)
-
-        current_labels = [label_by_key[k] for k in st.session_state[SHARED_ORDER_KEY] if k in label_by_key]
-        # sha1, not the builtin hash(): that is salted per process, so the key
-        # changed on every container restart. The key still changes whenever
-        # the ORDER does, which is what re-seeds the widget from the new order.
-        _order_digest = hashlib.sha1("\x1f".join(st.session_state[SHARED_ORDER_KEY]).encode()).hexdigest()[:12]
-        multiselect_key = f"shared_col_multiselect_{_order_digest}"
-        visible_labels = st.multiselect(
-            "Columns to show", options=all_labels, default=current_labels, key=multiselect_key
-        )
-        selected_keys = [key_by_label[lbl] for lbl in visible_labels if lbl in key_by_label]
-
-        # Keep the existing order for columns that are still selected,
-        # append any newly-selected ones at the end, drop deselected ones.
-        order = [k for k in st.session_state[SHARED_ORDER_KEY] if k in selected_keys]
-        for k in selected_keys:
-            if k not in order:
-                order.append(k)
-        if order != st.session_state[SHARED_ORDER_KEY]:
-            st.session_state[SHARED_ORDER_KEY] = order
-            save_column_prefs(order)
-
-        if order:
-            st.caption("Drag to reorder (top = leftmost column in the table):")
-            # Key intentionally depends on the SET of selected columns, not
-            # their order -- streamlit_sortables keeps its own internal drag
-            # state pinned to a fixed key, so pure reordering (same set,
-            # different order) needs a stable key to feel like a normal
-            # controlled widget. But if the set changes (a column added or
-            # removed via the multiselect above), we WANT a clean remount
-            # with the fresh item list rather than stale internal state, so
-            # the key is derived from the sorted set of item labels.
-            sortable_key = "shared_col_sortable_" + "|".join(sorted(order))
-            sorted_labels = sort_items(
-                [label_by_key[k] for k in order],
-                direction="vertical",
-                key=sortable_key,
+        with st.sidebar.expander("Columns to show / reorder", expanded=False):
+            st.caption(
+                "Applies to both the US and India tables. Ticker and Last always show first. "
+                "Saved to column_prefs.json and pushed to the data repo automatically."
             )
-            new_order = [key_by_label[lbl] for lbl in sorted_labels if lbl in key_by_label]
-            if new_order and new_order != order:
-                st.session_state[SHARED_ORDER_KEY] = new_order
-                save_column_prefs(new_order)
-                st.rerun()
+            from stock_data import load_settings
+            fund_settings = load_settings()
+            show_fundamentals = st.checkbox(
+                "Show fundamental columns (Sentiment, Qtr Profit/Revenue Growth %)",
+                value=fund_settings.get("show_fundamental_columns", True),
+                key="show_fundamental_columns_toggle",
+                help="Turn off to hide all fundamental-data columns at once, instead of unchecking them individually below.",
+            )
+            if show_fundamentals != fund_settings.get("show_fundamental_columns", True):
+                _set_show_fundamentals(show_fundamentals)
 
-    render_category_order_manager(label_by_key)
-    render_metric_glossary(labels, custom_columns, key_by_label)
-    render_ta_rules_flowchart()
-    render_custom_columns_manager()
-    render_stage_analysis_upload()
-    render_ticker_notes_manager()
-    render_model_settings()
+            current_labels = [label_by_key[k] for k in st.session_state[SHARED_ORDER_KEY] if k in label_by_key]
+            # sha1, not the builtin hash(): that is salted per process, so the key
+            # changed on every container restart. The key still changes whenever
+            # the ORDER does, which is what re-seeds the widget from the new order.
+            _order_digest = hashlib.sha1("\x1f".join(st.session_state[SHARED_ORDER_KEY]).encode()).hexdigest()[:12]
+            multiselect_key = f"shared_col_multiselect_{_order_digest}"
+            visible_labels = st.multiselect(
+                "Columns to show", options=all_labels, default=current_labels, key=multiselect_key
+            )
+            selected_keys = [key_by_label[lbl] for lbl in visible_labels if lbl in key_by_label]
 
-    return st.session_state[SHARED_ORDER_KEY], label_by_key, key_by_label
+            # Keep the existing order for columns that are still selected,
+            # append any newly-selected ones at the end, drop deselected ones.
+            order = [k for k in st.session_state[SHARED_ORDER_KEY] if k in selected_keys]
+            for k in selected_keys:
+                if k not in order:
+                    order.append(k)
+            if order != st.session_state[SHARED_ORDER_KEY]:
+                st.session_state[SHARED_ORDER_KEY] = order
+                save_column_prefs(order)
+
+            if order:
+                st.caption("Drag to reorder (top = leftmost column in the table):")
+                # Key intentionally depends on the SET of selected columns, not
+                # their order -- streamlit_sortables keeps its own internal drag
+                # state pinned to a fixed key, so pure reordering (same set,
+                # different order) needs a stable key to feel like a normal
+                # controlled widget. But if the set changes (a column added or
+                # removed via the multiselect above), we WANT a clean remount
+                # with the fresh item list rather than stale internal state, so
+                # the key is derived from the sorted set of item labels.
+                sortable_key = "shared_col_sortable_" + "|".join(sorted(order))
+                sorted_labels = sort_items(
+                    [label_by_key[k] for k in order],
+                    direction="vertical",
+                    key=sortable_key,
+                )
+                new_order = [key_by_label[lbl] for lbl in sorted_labels if lbl in key_by_label]
+                if new_order and new_order != order:
+                    st.session_state[SHARED_ORDER_KEY] = new_order
+                    save_column_prefs(new_order)
+                    st.rerun()
+
+    with _Contained("Category sort order", st.sidebar):
+        render_category_order_manager(label_by_key)
+    with _Contained("The metric glossary", st.sidebar):
+        render_metric_glossary(labels, custom_columns, key_by_label)
+    with _Contained("The TA Rules flowchart", st.sidebar):
+        render_ta_rules_flowchart()
+    with _Contained("Custom Columns", st.sidebar):
+        render_custom_columns_manager()
+    with _Contained("Stage Analysis upload", st.sidebar):
+        render_stage_analysis_upload()
+    with _Contained("Ticker Notes", st.sidebar):
+        render_ticker_notes_manager()
+    with _Contained("Settings · Models", st.sidebar):
+        render_model_settings()
+
+    order = st.session_state.get(SHARED_ORDER_KEY)
+    if order is None:   # the column panel itself failed before seeding it
+        order = [key_by_label[lbl] for lbl in default_visible if lbl in key_by_label]
+    return order, label_by_key, key_by_label
 
 
 # The flowchart the TA Rules column follows. The image lives in the PRIVATE
@@ -3599,14 +3735,24 @@ def render_ticker_notes_manager():
         else:
             new_note = st.text_area("Note", value=current_note, key=f"tn_note_{picked}", height=80)
 
+        # Both buttons drop the three widgets' state before rerunning, so they
+        # re-seed from ticker_notes.json. A keyed widget keeps its session_state
+        # value over a changed `value=`/`index=`: after Clear the note box and the
+        # flag still showed the cleared values, and the next Save wrote them
+        # straight back (found 2026-11-22).
+        _tn_widget_keys = (f"tn_note_{picked}", f"tn_flag_{picked}", f"tn_note_sel_{picked}")
         scol1, scol2 = st.columns(2)
         if scol1.button("Save", key=f"tn_save_{picked}", width="stretch"):
             set_ticker_note(notes, picked, new_note, new_flag)
             save_ticker_notes(notes)
+            for _k in _tn_widget_keys:
+                st.session_state.pop(_k, None)
             st.rerun()
         if scol2.button("Clear", key=f"tn_clear_{picked}", width="stretch"):
             set_ticker_note(notes, picked, "", "")
             save_ticker_notes(notes)
+            for _k in _tn_widget_keys:
+                st.session_state.pop(_k, None)
             st.rerun()
 
         if notes:
@@ -3680,8 +3826,9 @@ def trigger_ai_refresh_workflow(workflow_file, name, label, markets, pending_onl
     the tab to sleep -- the finished stocks were never pushed.
 
     `markets` is the list of REAL registry keys behind the tab the button was
-    clicked from (a combined tab passes its member list). It's forwarded as the
-    workflow's `markets` input, which refresh_expert_views.py /
+    clicked from (a combined tab passes its member list). It's forwarded, as
+    1-based positions in markets.json key order, as the workflow's `markets`
+    input, which refresh_expert_views.py /
     refresh_fundamentals.py read back as REFRESH_MARKETS to filter their
     per-watchlist loop -- without it, a "Re-analyze All" clicked from one tab
     re-ran every watchlist in the repo.
@@ -3698,7 +3845,16 @@ def trigger_ai_refresh_workflow(workflow_file, name, label, markets, pending_onl
         if not token or not repo:
             st.error("GitHub credentials not found.")
             return
-        inputs = {"markets": ",".join(markets)}
+        # Positions in markets.json key order ("2,5"), never the keys: GitHub
+        # prints the step env holding this input in the public Actions log
+        # before log_redact.py sees anything (owner's review, 2026-11-22). The
+        # scripts map them back (market_scope.py) and still accept key names.
+        import market_scope
+        positions = market_scope.encode(markets, list(load_markets_registry()))
+        if not positions:
+            st.error("This view's watchlists are not in the registry -- nothing to refresh.")
+            return
+        inputs = {"markets": positions}
         if pending_only:
             inputs["pending_only"] = "true"
         ok, msg = trigger_github_workflow(token, repo, workflow_file, inputs=inputs)
@@ -4061,7 +4217,7 @@ def _render_model_repository(settings):
 
 
 def render_expert_analysis_control_bar(market, results, combined_markets=None):
-    expert_views = load_expert_views()
+    expert_views = _run_load("expert_views", load_expert_views)
     # All configured keys, not just the primary: on Streamlit Cloud the backup
     # lives in st.secrets, which llm_util cannot read on its own, so the UI has
     # to pass them down or these paths would pin every call to one key.
@@ -4069,21 +4225,13 @@ def render_expert_analysis_control_bar(market, results, combined_markets=None):
 
     all_tickers = [r["ticker"] for r in results]
 
-    # --- Auto-cleanup: remove stale tickers no longer in watchlist ---
-    from stock_data import load_watchlists
-    global_watchlists = load_watchlists()
-    global_all_tickers = [tk for mkt_tks in global_watchlists.values() for tk in mkt_tks]
-
-    stale_keys = [tk for tk in expert_views if tk not in global_all_tickers]
-    if stale_keys:
-        for tk in stale_keys:
-            del expert_views[tk]
-        save_expert_views(expert_views)
-        sync_ai_views_to_github(
-            f"Auto-cleanup: removed {len(stale_keys)} deleted ticker(s) from expert_views",
-            filenames=("expert_views.json",),  # cleanup touches only this file
-            deleted=stale_keys,
-        )
+    # No clean-up of views for stocks no longer in a watchlist here any more
+    # (2026-11-22). It ran on every tab of every render, deleted each
+    # expert_views.json key missing from THIS container's watchlist.json and
+    # pushed the deletion -- and a container whose watchlist.json was behind (an
+    # edit from another device not pulled yet) deleted the view of a stock just
+    # added there. refresh_expert_views.py prunes orphans against the data repo's
+    # watchlists every night (_prune_orphans), which is the one place it belongs.
 
     # --- Detect pending tickers per AI column (includes newly added ones with
     # no entry at all) ---
@@ -4093,7 +4241,7 @@ def render_expert_analysis_control_bar(market, results, combined_markets=None):
     # Expert Take is fine but whose Sentiment is pending shows up in exactly
     # one of these -- previously a single merged list forced both columns to
     # be regenerated for it.
-    fundamentals_now = load_fundamentals()
+    fundamentals_now = _run_load("fundamentals", load_fundamentals)
     # A stock with no Stage Analysis is left out of Expert Take's count (owner,
     # 2026-11-08): its verdict is Pending until a Stage upload covers it, the
     # nightly and retry jobs skip it ("no Stage Analysis yet"), and a retry could
@@ -4202,7 +4350,7 @@ def render_expert_analysis_control_bar(market, results, combined_markets=None):
 
 
 def render_expert_view_expander(market, filtered_rows, settings, results=None):
-    expert_views = load_expert_views()
+    expert_views = _run_load("expert_views", load_expert_views)
     tickers = [r["ticker"] for r in filtered_rows]
     if not tickers:
         return
@@ -4217,18 +4365,15 @@ def render_expert_view_expander(market, filtered_rows, settings, results=None):
     # NameError the moment it was clicked.
 
     ev_label = f"🤖 AI Stock Expert Views ({market} — {len(tickers)} tickers)"
-    if IS_MOBILE:
-        # On a phone, build the cards only while the expander is open. A plain
-        # expander runs its body collapsed or not, so every tab sent a card and a
-        # Re-analyze button per ticker on every rerun -- the bulk of a phone's
-        # first load (Brave Android lagged). Opening it costs one rerun. Desktop
-        # keeps the plain expander: there the cost was never felt, and it opens
-        # instantly. The Expert Take column does not come from here.
-        ev_exp = st.expander(ev_label, key=f"ev_exp_{market}", on_change="rerun")
-        if not ev_exp.open:
-            return
-    else:
-        ev_exp = st.expander(ev_label, expanded=False)
+    # Build the cards only while the expander is open. A plain expander runs its
+    # body collapsed or not, so every tab sent a card and a Re-analyze button per
+    # ticker on every rerun -- the bulk of a phone's first load (Brave Android
+    # lagged, 2026-10-19), and on desktop ~380 KB and 480 buttons per click with
+    # 7 lists of 40 stocks (2026-11-22, when desktop took this path too).
+    # Opening it costs one rerun. The Expert Take column does not come from here.
+    ev_exp = st.expander(ev_label, key=f"ev_exp_{market}", on_change="rerun")
+    if not ev_exp.open:
+        return
 
     with ev_exp:
         # Scrollable container for all ticker cards
@@ -4335,7 +4480,7 @@ def render_expert_view_expander(market, filtered_rows, settings, results=None):
 
 def render_market_tab(market, results, settings, visible_keys, label_by_key, sort_levels=None,
                        combined_markets=None, combined_label=None, short_history=None,
-                       hidden_on_phone=False):
+                       hidden=False):
     """Renders one watchlist table tab. `market` is either a real registry
     key (single-market tab) or a synthetic key like "all_invested" used only
     for widget-key namespacing / CSV filenames when `combined_markets` is
@@ -4345,12 +4490,14 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
     watchlist editor (ticker membership is edited from the real per-market
     tabs, unaffected by this), and a friendlier empty-state message.
 
-    `hidden_on_phone`: a phone, and this tab is not the one on screen. The
-    table, the AI-review box and the Expert Views cards are then not built:
-    they were ~90% of what a phone downloaded on first load, for tabs it could
-    not see. The filter, search and editor widgets above still run, so their
-    state survives switching away; switching tabs already reruns
-    (st.tabs on_change="rerun"), which builds the newly shown tab."""
+    `hidden`: this tab is not the one on screen. The table, the AI-review box
+    and the Expert Views cards are then not built: they were ~90% of what a
+    phone downloaded on first load (2026-10-19), for tabs it could not see, and
+    since 2026-11-22 desktop skips them too -- it re-sent ~5.5 MB of HTML per
+    click with 7 lists of 40 stocks, 5.1 MB of it the eight hidden tables. The
+    filter, search and editor widgets above still run, so their state survives
+    switching away; switching tabs already reruns (st.tabs on_change="rerun"),
+    which builds the newly shown tab."""
     benchmarks = get_benchmarks(settings)
     labels = ema_col_labels(settings)
     custom_columns = load_custom_columns()
@@ -4408,6 +4555,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         member_label_to_key = {info["label"]: k for k, info in registry_all.items()}
         member_key_to_label = {k: lbl for lbl, k in member_label_to_key.items()}
         current_labels = [member_key_to_label[k] for k in combined_markets if k in member_key_to_label]
+        _show_flash(market)
         with st.expander(f"⚙️ Configure {market_display_label}", expanded=False):
             st.caption(
                 "This view is a read-only, derived merge of the watchlists selected below -- "
@@ -4429,12 +4577,13 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
                         message=f"Update {market_display_label} membership",
                     )
                     if not ok:
-                        st.error(f"Failed to push to GitHub: {msg}")
+                        _queue_flash(market, "error", f"Failed to push to GitHub: {msg}")
                 st.rerun()
     else:
         watchlists = load_watchlists()
         market_display_label = load_markets_registry().get(market, {}).get("label", market)
         _wl_empty = not watchlists.get(market)
+        _show_flash(market)
         with st.expander(f"Edit {market_display_label}", expanded=_wl_empty):
             render_watchlist_editor(market, watchlists)
 
@@ -4551,10 +4700,13 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
     def passes_ema(row, key, mode):
         if mode == "Any":
             return True
-        val = row[key]
-        if val is None:
+        # .get, not row[key]: a row missing a field (a snapshot written before the
+        # field existed, a partial fetch) raised KeyError here and took down the tab.
+        val = row.get(key)
+        close = row.get("last_close")
+        if val is None or close is None:
             return False
-        below = row["last_close"] < val
+        below = close < val
         return below if mode == "Below" else not below
 
     def in_range(val, lo, hi, full):
@@ -4586,19 +4738,19 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             continue
         if not passes_ema(row, "ema200", f_ema200):
             continue
-        if not in_range(row["rsi14_daily"], *f_rsi_d, (0, 100)):
+        if not in_range(row.get("rsi14_daily"), *f_rsi_d, (0, 100)):
             continue
-        if not in_range(row["rsi14_weekly"], *f_rsi_w, (0, 100)):
+        if not in_range(row.get("rsi14_weekly"), *f_rsi_w, (0, 100)):
             continue
-        if not in_range(row["rsi14_monthly"], *f_rsi_m, (0, 100)):
+        if not in_range(row.get("rsi14_monthly"), *f_rsi_m, (0, 100)):
             continue
-        if not in_range(row["rs_daily"], *f_rs_d, (-150, 150)):
+        if not in_range(row.get("rs_daily"), *f_rs_d, (-150, 150)):
             continue
-        if not in_range(row["rs_weekly"], *f_rs_w, (-150, 150)):
+        if not in_range(row.get("rs_weekly"), *f_rs_w, (-150, 150)):
             continue
-        if not in_range(row["rs_monthly"], *f_rs_m, (-150, 150)):
+        if not in_range(row.get("rs_monthly"), *f_rs_m, (-150, 150)):
             continue
-        if search and search not in row["ticker"]:
+        if search and search not in row.get("ticker", ""):
             continue
         if f_trend != "Any" and row.get("trend") != f_trend:
             continue
@@ -4654,7 +4806,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
             + ", ".join(f"{t} ({short_history[t]['bars']})" for t in _too_new)
         )
 
-    if filtered and hidden_on_phone:
+    if filtered and hidden:
         # A widget not rendered on a run loses its session_state; re-assigning
         # keeps the AI-review selection for when this tab is shown again.
         _k = f"ai_review_tickers_{market}"
@@ -4748,7 +4900,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
         STAR_HTML = '<span title="Interested" style="font-size:15px;">★</span>'
         # Loaded here, before the ticker cell: its dot explains the Expert Take
         # verdict, and the Expert Take column below reuses the same dict.
-        expert_views = load_expert_views()
+        expert_views = _run_load("expert_views", load_expert_views)
 
         def _ticker_cell(r):
             link = (f'<a href="{tradingview_url(r["ticker"])}" '
@@ -4875,7 +5027,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
 
         raw_df["expert_take"] = [_expert_take_cell(r["ticker"]) for r in filtered]
 
-        fundamentals = load_fundamentals()
+        fundamentals = _run_load("fundamentals", load_fundamentals)
         def _fundamentals_cell(ticker):
             v = fundamentals.get(ticker, {})
             sentiment = v.get("sentiment", "Unknown")
@@ -5187,7 +5339,7 @@ def render_market_tab(market, results, settings, visible_keys, label_by_key, sor
     # `results` (not just the filtered rows) so the alert rules behind the
     # per-ticker re-analyze button resolve over the whole market, exactly as
     # they do in the nightly job.
-    if hidden_on_phone:
+    if hidden:
         _k = f"ev_exp_{market}"   # keep the expander's open state (see above)
         if _k in st.session_state:
             st.session_state[_k] = st.session_state[_k]
@@ -5349,6 +5501,7 @@ if st.sidebar.button("🔀 Move stocks between watchlists", key="mv_open", width
 _mv_flash = st.session_state.pop("_mv_flash", None)
 if _mv_flash:
     (st.sidebar.success if _mv_flash[0] == "ok" else st.sidebar.error)(_mv_flash[1])
+_show_flash("sidebar", st.sidebar)   # the Settings dialog's watchlist rename / add
 
 # Send to Claude chat (owner, 2026-11-11): starts the workflow that publishes to the research library's database
 # (github_sync.MCP_PUBLISH_WORKFLOWS), so a stock added here shows up there in minutes instead of at the Worker's
@@ -5651,15 +5804,17 @@ combined_markets_by_key = {k: watchlist_groups_now.get(k, []) for k in combined_
 # tabs. Reorder watchlists by reordering markets.json, not by hardcoding a
 # list here: a watchlist added later appends to the registry and picks up its
 # tab automatically.
+# The dashboard controls ("Show fundamental columns", "Add Watchlist") are drawn
+# ABOVE the tab strip, but their widgets must still be created AFTER it (they
+# rerun on change, see above). A container made here holds their place; they are
+# filled in further down. Until 2026-11-22 they were created after st.tabs in the
+# main area, so they landed below every tab's content, at the bottom of the page.
+_dash_slot = st.container()
 all_tabs = st.tabs(market_tab_labels + combined_tab_labels + ["News", "Alert Rules"],
                    key="main_tabs", on_change="rerun")
-# A phone or tablet browser. Read by the watchlist tabs, which on a phone skip the
-# work for what is not on screen (see render_expert_view_expander and the
-# `hidden_on_phone` argument of render_market_tab); desktop renders as it always did.
-try:
-    IS_MOBILE = breadth_charts.is_mobile(st.context.headers.get("User-Agent", ""))
-except Exception:   # no request headers (a headless run) -> desktop, as the News tab does
-    IS_MOBILE = False
+# The watchlist tabs skip the work for a tab that is not on screen, on a phone
+# and on desktop alike (the `hidden` argument of render_market_tab, and
+# render_expert_view_expander). The News tab reads the User-Agent itself.
 n_markets = len(market_keys_now)
 market_tabs = dict(zip(market_keys_now, all_tabs[:n_markets]))
 combined_tabs = dict(zip(combined_keys, all_tabs[n_markets:-2]))
@@ -5696,41 +5851,44 @@ st.sidebar.caption(DISCLAIMER)
 # otherwise require opening a sidebar expander or the Settings dialog.
 # These read/write the exact same settings.json / markets.json as those
 # other locations, so all access points always stay in sync.
-dash1, dash2 = st.columns([1, 3])
-with dash1:
-    dash_show_fundamentals = st.checkbox(
-        "Show fundamental columns",
-        value=settings_now.get("show_fundamental_columns", True),
-        key="dash_show_fundamental_columns_toggle",
-        help="Sentiment, Qtr Profit/Revenue Growth %. Same setting as the toggle in the column picker.",
-    )
-    if dash_show_fundamentals != settings_now.get("show_fundamental_columns", True):
-        _set_show_fundamentals(dash_show_fundamentals)
-with dash2:
-    with st.popover("➕ Add Watchlist"):
-        dash_wl_label = st.text_input("Label", key="dash_new_watchlist_label", placeholder="e.g. UK Watchlist")
-        dash_wl_bench = st.text_input("Fallback benchmark", key="dash_new_watchlist_bench", placeholder="e.g. ^FTSE",
-                                      help="Used only for a ticker whose index can't be detected. Every US or India ticker is measured against its own index (S&P 500 → SPY, Nifty 500 → ^CRSLDX), whatever this says.")
-        if st.button("Add", key="dash_add_watchlist_btn"):
-            if not dash_wl_label.strip() or not dash_wl_bench.strip():
-                st.error("Both a label and a fallback benchmark are required.")
-            elif watchlist_label_error(dash_wl_label, load_markets_registry()):
-                st.error(watchlist_label_error(dash_wl_label, load_markets_registry()))
-            else:
-                from stock_data import add_watchlist as _dash_add_watchlist
-                _dash_add_watchlist(dash_wl_label.strip(), dash_wl_bench.strip())
-                gh_token, gh_repo, gh_branch = get_data_repo_config(getattr(st, "secrets", None))
-                if gh_token and gh_repo:
-                    with st.spinner("Pushing new watchlist to GitHub..."):
-                        ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=["markets.json", "watchlist.json", "custom_filters.json"], message=f"Add watchlist {dash_wl_label.strip()}")
-                        if not ok:
-                            st.error(f"Failed to push to GitHub: {msg}")
-                st.success(f"Added \"{dash_wl_label.strip()}\".")
-                time.sleep(1)
-                st.rerun()
+with _dash_slot, _Contained("The dashboard controls"):
+    _show_flash("dashboard")
+    dash1, dash2 = st.columns([1, 3])
+    with dash1:
+        dash_show_fundamentals = st.checkbox(
+            "Show fundamental columns",
+            value=settings_now.get("show_fundamental_columns", True),
+            key="dash_show_fundamental_columns_toggle",
+            help="Sentiment, Qtr Profit/Revenue Growth %. Same setting as the toggle in the column picker.",
+        )
+        if dash_show_fundamentals != settings_now.get("show_fundamental_columns", True):
+            _set_show_fundamentals(dash_show_fundamentals)
+    with dash2:
+        with st.popover("➕ Add Watchlist"):
+            dash_wl_label = st.text_input("Label", key="dash_new_watchlist_label", placeholder="e.g. UK Watchlist")
+            dash_wl_bench = st.text_input("Fallback benchmark", key="dash_new_watchlist_bench", placeholder="e.g. ^FTSE",
+                                          help="Used only for a ticker whose index can't be detected. Every US or India ticker is measured against its own index (S&P 500 → SPY, Nifty 500 → ^CRSLDX), whatever this says.")
+            if st.button("Add", key="dash_add_watchlist_btn"):
+                if not dash_wl_label.strip() or not dash_wl_bench.strip():
+                    st.error("Both a label and a fallback benchmark are required.")
+                elif watchlist_label_error(dash_wl_label, load_markets_registry()):
+                    st.error(watchlist_label_error(dash_wl_label, load_markets_registry()))
+                else:
+                    from stock_data import add_watchlist as _dash_add_watchlist
+                    _dash_add_watchlist(dash_wl_label.strip(), dash_wl_bench.strip())
+                    gh_token, gh_repo, gh_branch = get_data_repo_config(getattr(st, "secrets", None))
+                    if gh_token and gh_repo:
+                        with st.spinner("Pushing new watchlist to GitHub..."):
+                            ok, msg = push_all_config(gh_token, gh_repo, gh_branch, filenames=["markets.json", "watchlist.json", "custom_filters.json"], message=f"Add watchlist {dash_wl_label.strip()}")
+                            if not ok:
+                                _queue_flash("dashboard", "error", f"Failed to push to GitHub: {msg}")
+                    _queue_flash("dashboard", "success", f"Added \"{dash_wl_label.strip()}\".")
+                    st.rerun()
 
 for ck in combined_keys:
-    with combined_tabs[ck]:
+    # Contained (see _Contained): one tab that raises shows an error in that tab,
+    # and every other tab, Alert Rules and the end-of-run config push still run.
+    with combined_tabs[ck], _Contained(f"The {combined_display_label_by_key[ck]} tab"):
         combined_markets_here = combined_markets_by_key[ck]
         # De-duplicated by ticker, first member wins. A ticker can sit in more
         # than one member watchlist (one was in both US Watchlist and another
@@ -5754,18 +5912,18 @@ for ck in combined_keys:
             ck, combined_results, settings_now, shared_visible_keys, shared_label_by_key,
             saved_sort_levels(ck, shared_key_by_label), combined_markets=combined_markets_here,
             combined_label=combined_display_label_by_key[ck], short_history=short_history_now,
-            hidden_on_phone=IS_MOBILE and not combined_tabs[ck].open,
+            hidden=not combined_tabs[ck].open,
         )
 
 for mkt in market_keys_now:
-    with market_tabs[mkt]:
+    with market_tabs[mkt], _Contained(f"The {markets_registry_now[mkt]['label']} tab"):
         render_market_tab(
             mkt, per_market.get(mkt, []), settings_now, shared_visible_keys, shared_label_by_key,
             saved_sort_levels(mkt, shared_key_by_label), short_history=short_history_now,
-            hidden_on_phone=IS_MOBILE and not market_tabs[mkt].open,
+            hidden=not market_tabs[mkt].open,
         )
 
-with tab_news:
+with tab_news, _Contained("The News tab"):
     # Only on the run where the News tab is on screen. Every tab body runs on
     # every rerun, and this one is the heaviest that nothing else reads: breadth
     # and performance charts plus the news digest, ~540 lines of plotly work
@@ -5973,9 +6131,23 @@ with tab_news:
         # Load Data
         breadth_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "market_breadth.json")
         breadth_data = {}
+        # Guarded like the two loads below (2026-11-22): a torn or truncated file
+        # (a crash mid-write, a bad pull) raised here and took down the whole News
+        # tab. Regenerable data, so an unreadable file reads as empty and every
+        # breadth panel says why (_stale_suffix) until the next breadth run.
+        _breadth_unreadable = False
         if os.path.exists(breadth_file):
-            with open(breadth_file) as f:
-                breadth_data = json.load(f)
+            try:
+                with open(breadth_file) as f:
+                    breadth_data = json.load(f)
+                if not isinstance(breadth_data, dict):
+                    raise ValueError("not a JSON object")
+            except (OSError, ValueError) as _be:
+                print(f"[news] market_breadth.json unreadable: {_be}")
+                breadth_data = {}
+                _breadth_unreadable = True
+                st.warning("The market breadth file (market_breadth.json) could not be read, so the breadth "
+                           "charts are empty. The next market-breadth run rewrites it.")
 
         # Dashboard portfolio-vs-benchmark curves come from dashboard_perf.json,
         # built by the same GitHub Actions market-breadth workflow -- NO live
@@ -6222,6 +6394,8 @@ with tab_news:
             _breadth_as_of = breadth_data.get("as_of")
 
             def _stale_suffix(market_key):
+                if _breadth_unreadable:
+                    return " [breadth file unreadable]"
                 block_as_of = _breadth_block(market_key).get("as_of")
                 if block_as_of and _breadth_as_of and block_as_of != _breadth_as_of:
                     return f" [stale: {block_as_of}]"
@@ -6569,13 +6743,10 @@ with tab_news:
 
         _saved_scope_keys = settings_now.get("news_watchlist_scope", [])
         # An empty setting MEANS the default group, so show it selected rather than
-        # showing an empty box that silently behaves like something. The comparison
-        # below is against the raw saved value, so the first render after this
-        # change writes the default out explicitly and the two stop disagreeing.
+        # showing an empty box that silently behaves like something.
         _effective_scope_keys = _saved_scope_keys or [DEFAULT_NEWS_SCOPE_GROUP]
-        _saved_scope_labels = [
-            _label_by_scope_key[k] for k in _effective_scope_keys if k in _label_by_scope_key
-        ]
+        _shown_scope_keys = [k for k in _effective_scope_keys if k in _label_by_scope_key]
+        _saved_scope_labels = [_label_by_scope_key[k] for k in _shown_scope_keys]
         _selected_scope_labels = st.multiselect(
             "📋 News scope — watchlists included in the digest",
             options=list(_all_news_market_opts.keys()),
@@ -6589,7 +6760,12 @@ with tab_news:
             ),
         )
         _new_scope_keys = [_all_news_market_opts[lbl] for lbl in _selected_scope_labels]
-        if _new_scope_keys != _saved_scope_keys:
+        # Saved only when the box differs from BOTH what is saved and what it was
+        # shown with. Comparing with the raw saved value alone wrote the default out
+        # on the first News visit of every fresh setup (a settings.json commit
+        # nobody asked for); comparing with what is shown alone would loop after
+        # the box is cleared (saved [] is shown as the default group).
+        if _new_scope_keys != _saved_scope_keys and _new_scope_keys != _shown_scope_keys:
             settings_now["news_watchlist_scope"] = _new_scope_keys
             save_settings(settings_now)
             st.rerun()
@@ -6659,7 +6835,11 @@ with tab_news:
                     if counts.get("degraded"):
                         bits.append(f"⚠️ {counts['degraded']} unfiltered (AI filter failed)")
                     if counts.get("failed"):
-                        bits.append(f"⚠️ {counts['failed']} search failed")
+                        # Since 2026-11-22 a stock whose news filter failed on every model is counted as failed
+                        # too (its raw search text is never shown or posted); `filter_failed` says how many.
+                        _ff = counts.get("filter_failed", 0)
+                        bits.append(f"⚠️ {counts['failed']} could not be checked"
+                                    + (f" ({_ff} filter error{'s' if _ff != 1 else ''})" if _ff else ""))
                     if counts.get("fund_skipped"):
                         bits.append(f"{counts['fund_skipped']} fund(s) skipped")
                     # The editor (Stage 3) failing was invisible here. "fallback":
@@ -6691,7 +6871,7 @@ with tab_news:
                             st.markdown(f"- [{_escape_markdown_dollars(title)}]({s.get('url')})")
                 st.divider()
 
-with tab_alerts:
+with tab_alerts, _Contained("The Alert Rules tab"):
     st.subheader("Alert rules")
     st.caption(
         "Each rule has a name, a scope, and one or more conditions. Conditions compare any "
@@ -7002,10 +7182,33 @@ with tab_alerts:
                     save_rules(rules)
                     st.session_state[f"rule_exp_{clone['id']}"] = True
                     st.rerun()
+                # Two steps (2026-11-22): one click used to delete the rule at once
+                # and the end-of-run push sent the deletion to the data repo, with
+                # nothing to undo it from. The first click only asks; the confirm
+                # names the rules and saved filters that refer to this one (a
+                # {"type": "rule"} condition), which match nothing once it is gone.
+                _del_flag = f"_confirm_del_{rule['id']}"
                 if del_col.button("🗑 Delete rule", key=f"del_{rule['id']}"):
-                    rules = [r for r in rules if r["id"] != rule["id"]]
-                    save_rules(rules)
+                    st.session_state[_del_flag] = True
+                    keep_open()
                     st.rerun()
+                if st.session_state.get(_del_flag):
+                    _refs = _rule_references(rule["id"], rules)
+                    _msg = f"Delete **{_escape_markdown_dollars(rule.get('name') or '(unnamed)')}**? This cannot be undone."
+                    if _refs:
+                        _msg += (" It is used by " + ", ".join(_escape_markdown_dollars(x) for x in _refs)
+                                 + ", which will no longer match anything through it.")
+                    st.warning(_msg)
+                    cd1, cd2 = st.columns(2)
+                    if cd1.button("Confirm delete", key=f"del_yes_{rule['id']}", type="primary"):
+                        st.session_state.pop(_del_flag, None)
+                        rules = [r for r in rules if r["id"] != rule["id"]]
+                        save_rules(rules)
+                        st.rerun()
+                    if cd2.button("Cancel", key=f"del_no_{rule['id']}"):
+                        st.session_state.pop(_del_flag, None)
+                        keep_open()
+                        st.rerun()
 
                 st.markdown("**Name & scope**")
                 nm_col, sc_col, cl_col = st.columns([2, 2, 1.3])

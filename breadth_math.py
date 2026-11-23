@@ -22,6 +22,50 @@ import pandas as pd
 DRAWDOWN_LEVELS = (10, 20, 30, 40)
 
 
+# How many panel rows a stock's reading is carried over a day its whole
+# exchange has no close while another exchange in the panel does (see
+# _carry_over_closed_exchange). 3 rows covers a long holiday weekend on one
+# side; a stock silent for longer drops out of the count as before.
+CARRY_ROWS = 3
+
+
+def calendar_group(ticker):
+    """Which exchange calendar a ticker trades on, by its Yahoo suffix: NSE
+    (.NS) and BSE (.BO) share India's, anything else is the US. Only those two:
+    a US class share written with a dot (BRK.B style) must not read as a third
+    exchange and start carrying readings inside a US-only panel."""
+    return "IN" if str(ticker).upper().endswith((".NS", ".BO")) else "US"
+
+
+def _carry_over_closed_exchange(closes, frames):
+    """`frames` (each aligned with `closes`) with every stock's value carried
+    forward, for at most CARRY_ROWS rows, into the rows where NONE of its own
+    exchange's stocks has a close but another exchange's do.
+
+    WHY: each day's denominator is the stocks with a close that day, and a mixed
+    India + US list's panel has rows only one exchange traded. dashboard_perf
+    carries India's forming bar from ~23:45 ET until the US prints, so for ~10
+    hours a day All Invested's LATEST reading counted the India stocks alone
+    (5 of 10 above read 50%, then 5 of 6 the next morning, 83.3%), and every
+    exchange-only holiday in its history did the same. Carried, a closed
+    exchange's stocks count at their own latest session. A row with no close
+    from any exchange is left alone (it is dropped later), and a panel with one
+    exchange -- every index, a single-market watchlist -- has no such row, so
+    its numbers are exactly what they were."""
+    groups = pd.Series({c: calendar_group(c) for c in closes.columns})
+    if groups.nunique() < 2:
+        return frames
+    present = closes.notna()
+    any_close = present.any(axis=1)
+    carry = pd.DataFrame(False, index=closes.index, columns=closes.columns)
+    for g, cols in groups.groupby(groups).groups.items():
+        group_shut = ~present[list(cols)].any(axis=1) & any_close
+        carry.loc[group_shut, list(cols)] = True
+    if not carry.values.any():
+        return frames
+    return [f.where(~carry, f.ffill(limit=CARRY_ROWS)) for f in frames]
+
+
 def _own_sessions(closes, fn):
     """`fn` applied to each ticker's own closes (its NaN rows dropped), then
     lined back up with the panel's dates -- NaN on the days it has no close."""
@@ -33,7 +77,9 @@ def compute_breadth(closes, since=None):
     it is empty. `since` (a Timestamp) drops earlier days from the history.
 
     Returns {"above", "below", "total", "pct_above"} for the latest day --
-    counting only stocks that have both a close that day and a 200-day SMA --
+    counting only stocks that have both a close that day and a 200-day SMA; in
+    a mixed India + US panel, a stock whose whole exchange has no close that
+    day counts at its own latest session (_carry_over_closed_exchange) --
     plus "history", "highs_history" and "lows_history": {"YYYY-MM-DD": %}.
     "pct_above_50" / "history_50" are the same over the 50-day SMA (2026-10-15,
     the charts' 50-day overlay), on the same days as "history".
@@ -60,11 +106,9 @@ def compute_breadth(closes, since=None):
     # with under 200 sessions has no SMA, so it is out of numerator and
     # denominator alike.
     sma200 = _own_sessions(closes, lambda s: s.rolling(window=200).mean())
-    is_above = closes > sma200
     # The 50-day the same way, so a new listing is not "above" an average of its
     # first few days.
     sma50 = _own_sessions(closes, lambda s: s.rolling(window=50).mean())
-    is_above_50 = closes > sma50
 
     # Calculate 52w High/Low (252 trading days), over each stock's own 252
     # closes like the SMAs. The full window matters: a stock with 126 sessions
@@ -75,6 +119,14 @@ def compute_breadth(closes, since=None):
     # IPO wave or an index reconstitution.
     high52 = _own_sessions(closes, lambda s: s.rolling(window=252).max())
     low52 = _own_sessions(closes, lambda s: s.rolling(window=252).min())
+
+    # A mixed India + US panel: a stock whose exchange is shut on a row (or has
+    # not printed yet) counts at its own latest session there, so that row's
+    # denominator is not one exchange alone. No-op with one exchange.
+    closes, sma200, sma50, high52, low52 = _carry_over_closed_exchange(
+        closes, [closes, sma200, sma50, high52, low52])
+    is_above = closes > sma200
+    is_above_50 = closes > sma50
 
     is_new_high = closes >= high52
     is_new_low = closes <= low52
@@ -88,8 +140,10 @@ def compute_breadth(closes, since=None):
     # Each series needs its OWN denominator: only stocks that actually have the
     # measure in question. ma_counts for the 200d SMA, hl_counts for the 52-week
     # window -- counting a stock that cannot yet qualify understates the rate.
-    # Per day, too: a mixed India + US list has days one exchange is shut, and
-    # those stocks simply have no close that day rather than counting as below.
+    # Per day, too: a stock with no close that day is out of that day's count,
+    # never counted as below -- except where its whole exchange is shut and
+    # another's is not, where the carry above has already given it its own
+    # latest session's reading.
     ma_counts = (closes.notna() & sma200.notna()).sum(axis=1)
     ma50_counts = (closes.notna() & sma50.notna()).sum(axis=1)
     hl_counts = (closes.notna() & high52.notna()).sum(axis=1)

@@ -66,8 +66,12 @@ mixed = panel.copy()
 mixed["ZED.NS"] = up * 3
 mixed.loc[idx[-1], "ZED.NS"] = np.nan          # its exchange shut on the last day
 b2 = bm.compute_breadth(mixed)
-check(b2["total"] == 4 and b2["history"][last] == 75.0,
-      f"W1: a stock with no close that day (its exchange shut) is left out of that day, not counted below "
+# Since 2026-11-22 a stock whose WHOLE exchange is shut that day (or has not
+# printed yet) counts at its own latest session (breadth_math.CARRY_ROWS), not
+# left out: a mixed list's latest reading used to be one exchange alone for
+# ~10 hours a day. Still never counted below just for having no close.
+check(b2["total"] == 5 and b2["history"][last] == 80.0,
+      f"W1: a stock whose exchange is shut that day counts at its own latest close (above), not below "
       f"({b2['total']}, {b2['history'][last]})")
 check(b2["history"][str(idx[-2].date())] == 80.0, "W1: ...and counted the day before (4 of 5 above)")
 
@@ -92,8 +96,9 @@ check(len(b4["history"]) == int((idx >= start).sum()) and set(b4["history"].valu
       and set(b4["history_50"].values()) == {100.0},
       f"W1: ...on every day after the warmup, not only some -- a row window loses one stock or "
       f"both as holidays pass ({len(b4['history'])} days)")
-check(b4["total"] == 1 and b4["pct_above"] == 100.0 and both != idx[-1],
-      f"W1: the last day only one exchange traded counts that one stock ({b4['total']})")
+check(b4["total"] == 2 and b4["pct_above"] == 100.0 and both != idx[-1],
+      f"W1: the last day only one exchange traded still counts both stocks, the shut one at its "
+      f"own latest close ({b4['total']})")
 
 since = idx[-10]
 b3 = bm.compute_breadth(panel, since=since)

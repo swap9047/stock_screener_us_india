@@ -35,14 +35,17 @@ Custom filters are stored per market in custom_filters.json:
 Fixed ("value") comparisons accept text as well as numbers -- e.g.
 {"metric_a": "tech_uptrend", "operator": "==", "compare_type": "value",
  "value": "Yes"} matches the same rows as {"value": 1}. Numeric-looking text
-("45", "1.4") is parsed to a number; "yes"/"true"/"no"/"false" (any case) map
-to 1/0 when the metric itself is numeric (so it lines up with 0/1 fields
-like Tech Uptrend); anything else is compared as a case-insensitive string.
+("45", "1.4", "1,000,000", "5%", "10L", "2Cr") is parsed to a number;
+"yes"/"true"/"no"/"false" (any case) map to 1/0 when the metric itself is
+numeric (so it lines up with 0/1 fields like Tech Uptrend); a numeric metric
+against any other text fails the condition; a text metric compares as a
+case-insensitive string.
 See _coerce_fixed_value below.
 """
 
 import operator as op
 import os
+import re
 
 from stage_analysis import CATEGORICAL_FIELDS as STAGE_CATEGORICAL_METRICS
 from ticker_notes import FLAG_CHOICES
@@ -64,7 +67,10 @@ OPERATORS = {
 # categorical condition (flag in [Green], trend in [Uptrend, ...]).
 VALID_OPERATORS = set(OPERATORS) | {"in"}
 
-EQ_TOLERANCE = 0.05  # values are rounded to 1 decimal, so treat "==" as approx-equal
+# "==" is approx-equal: most metrics (RSI, RS, returns, ratios) are stored to 1 decimal. Price levels are stored
+# to 2+ decimals since 2026-11-22 (stock_data.round_price), so on a low-priced stock this tolerance is coarse --
+# "==" on a price level is rarely what a rule means; prefer < / > or the below/crossed flags.
+EQ_TOLERANCE = 0.05
 
 # Metric field -> its full set of valid values, for any metric that's really
 # a category/label rather than a continuous number (Trend, Vol Trend, VStop
@@ -207,12 +213,70 @@ def save_market_filters(market, filter_list):
 _BOOL_TRUE_WORDS = {"yes", "true", "1"}
 _BOOL_FALSE_WORDS = {"no", "false", "0"}
 
+# Units a typed threshold may carry (2026-11-22). Indian lakh / crore as well as
+# K / M / B, since both kinds of watchlist are screened here.
+_NUMBER_UNITS = {
+    "k": 1e3, "m": 1e6, "mn": 1e6, "b": 1e9, "bn": 1e9,
+    "l": 1e5, "lac": 1e5, "lacs": 1e5, "lakh": 1e5, "lakhs": 1e5,
+    "cr": 1e7, "crore": 1e7, "crores": 1e7,
+}
+_NUMBER_TEXT_RE = re.compile(
+    r"^([+-]?)\s*[$₹]?\s*(\d[\d,]*(?:\.\d+)?|\.\d+)\s*(%|[a-z]+)?$", re.IGNORECASE)
+# Thousands separators: Western 1,000,000 or Indian 10,00,000 grouping. Anything
+# else ("1,2", "12,34") is not read as a number -- it may be a decimal comma.
+_GROUPED_RE = re.compile(r"^(\d{1,3}(,\d{3})+|\d{1,2}(,\d{2})*,\d{3})$")
+
+
+def parse_number_text(text):
+    """A typed threshold as a float, or None when it is not a number.
+
+    Plain numbers ("45", "-1.5", "1e6"), and also what people actually type:
+    thousands separators ("1,000,000", "10,00,000"), a trailing % ("5%" -> 5.0:
+    every % metric -- Perf 1M %, ROE %, % Chg -- is stored as the percent
+    figure, 5.0 for 5%, not 0.05), and units K / M / B (1e3 / 1e6 / 1e9) and
+    L / lakh (1e5) and Cr / crore (1e7), with or without a space ("10L",
+    "1.5 Cr"). Until 2026-11-22 all of those stayed strings, and a numeric
+    metric was then compared with them as TEXT, lexicographically: "Avg Vol >
+    10L" matched by the first character, in the filters and in the Discord
+    alerts alike."""
+    if isinstance(text, bool):
+        return None
+    if isinstance(text, (int, float)):
+        return float(text)
+    if not isinstance(text, str):
+        return None
+    stripped = text.strip()
+    if not stripped:
+        return None
+    try:
+        return float(stripped)
+    except ValueError:
+        pass
+    m = _NUMBER_TEXT_RE.match(stripped)
+    if not m:
+        return None
+    sign, digits, unit = m.group(1), m.group(2), (m.group(3) or "").lower()
+    if "," in digits:
+        whole = digits.split(".")[0]
+        if not _GROUPED_RE.match(whole):
+            return None
+        digits = digits.replace(",", "")
+    if unit == "%" or not unit:
+        factor = 1.0
+    elif unit in _NUMBER_UNITS:
+        factor = _NUMBER_UNITS[unit]
+    else:
+        return None
+    value = float(digits) * factor
+    return -value if sign == "-" else value
+
 
 def _coerce_fixed_value(a, value):
     """Coerces a fixed ("value") comparison target to line up with `a`
     (the current metric_a value) at compare time:
       - non-string values (old saved filters, already numeric) pass through
-      - numeric-looking text ("45", "1.4") -> float
+      - numeric-looking text ("45", "1.4", "1,000,000", "5%", "10L", "2Cr")
+        -> float (see parse_number_text)
       - "yes"/"true"/"no"/"false" (any case) -> 1/0, but only when `a` is
         itself numeric, so it matches 0/1 fields like Tech Uptrend
       - anything else is left as a stripped string for case-insensitive
@@ -221,10 +285,9 @@ def _coerce_fixed_value(a, value):
     if not isinstance(value, str):
         return value
     stripped = value.strip()
-    try:
-        return float(stripped)
-    except ValueError:
-        pass
+    number = parse_number_text(stripped)
+    if number is not None:
+        return number
     lowered = stripped.lower()
     if isinstance(a, (int, float, bool)):
         if lowered in _BOOL_TRUE_WORDS:
@@ -343,9 +406,17 @@ def passes_filter(row, filt):
             for v in coerced
         )
 
+    if isinstance(b, str) and isinstance(a, (int, float)) and not isinstance(a, bool):
+        # A number against text that is not a number (yes/no words were already
+        # mapped onto 0/1 by _coerce_fixed_value): no meaningful answer, so the
+        # condition fails closed. This used to compare str(a) with the text
+        # lexicographically, so "Avg Vol > abc" or a mistyped threshold matched
+        # an arbitrary set of rows, in the filters and in the Discord alerts.
+        return False
     if isinstance(a, str) or isinstance(b, str):
         # Only equality is really meaningful for strings; other operators
-        # fall back to lexicographic comparison rather than erroring.
+        # fall back to lexicographic comparison rather than erroring (ISO dates
+        # such as Data Thru compare correctly this way).
         a_cmp, b_cmp = str(a).strip().lower(), str(b).strip().lower()
         if operator_symbol == "==":
             return a_cmp == b_cmp

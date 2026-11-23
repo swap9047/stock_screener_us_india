@@ -162,9 +162,12 @@ check(mr.breadth_vs_index({"change_5d_pct": -2.0}, {"pct_above_200d": {"change_5
 
 # --- M2 the number check -------------------------------------------------------------------
 facts = f
-ok_read = {"headline": "Breadth fell to 15.0%, washed out; lows at 12% since Oct 16.",
+# "since Oct 19": the date the facts give for the lows' 12-month most (it read "Oct 16", a date the facts do not
+# hold, and passed only because a date's digits used to count as known numbers -- fixed 2026-11-22). The return
+# part read "-0.4 points", matching only an unrelated +0.4 once abs() dropped the sign; -3.2 is the 3m gap.
+ok_read = {"headline": "Breadth fell to 15.0%, washed out; lows at 12% since Oct 19.",
            "breadth": "Only 15% of stocks are above the 200-day average, down 7.5 points in 5 sessions.",
-           "highs_lows": None, "drawdown": None, "return": "The list trails by about -0.4 points over 3 months."}
+           "highs_lows": None, "drawdown": None, "return": "The list trails by -3.2 points over 3 months."}
 try:
     out = mr.validate_read(ok_read, facts)
     check(out["headline"] and out["highs_lows"] is None, "M2: a read quoting the facts passes")

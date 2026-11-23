@@ -9,9 +9,11 @@ env:
 # files, so they run on every push -- including from a fork, where secrets are
 # not available.
 #
-# What they do NOT cover, by design: anything needing real prices, the private
-# data repo or a live GitHub API (the AppTest renders, the end-to-end edit test,
-# the job simulation). Those are run by hand -- see checks/README.md.
+# They include headless renders of the app (streamlit's AppTest, over invented
+# fixtures) and run cloudflare/worker.js under node. What they do NOT cover, by
+# design: anything needing real prices, the private data repo or a live GitHub
+# API (renders over the real snapshot, the end-to-end edit test, the job
+# simulation). Those are run by hand -- see checks/README.md.
 on:
   push:
   pull_request:
@@ -35,6 +37,13 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+
+      # Two suites run the real cloudflare/worker.js under node and SKIP without
+      # it; on CI test_refresh_schedule.py fails instead, so the Worker checks
+      # cannot quietly stop running. Node 22: 20 reached end of life in 2026-04.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
 
       # The pinned set from requirements.txt, so a check runs against what the
       # scheduled workflows and Streamlit Cloud actually install.

@@ -45,7 +45,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 
-from filters import passes_filter_chain, describe_chain, describe_chain_with_values, migrate_condition_keys
+from filters import passes_filter_chain, describe_chain_with_values, migrate_condition_keys
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 RULES_FILE = os.path.join(SCRIPT_DIR, "alerts_config.json")
@@ -785,14 +785,6 @@ def evaluate_and_fire(all_rules, snapshot_results, state, metric_labels=None, du
     return messages, new_state
 
 
-def _format_rule_message(ticker, rule, metric_labels):
-    name = rule.get("name") or ""
-    desc = describe_chain(rule["conditions"], metric_labels)
-    if name:
-        return f"**{ticker}** — {name}: {desc}"
-    return f"**{ticker}** — {desc}"
-
-
 def _metrics_used_in_conditions(conditions):
     """Every metric referenced by a rule's condition chain, in first-seen
     order (metric_a always; metric_b too when compare_type is "metric"),
@@ -1036,21 +1028,50 @@ def build_discord_messages_for_rule(rule, tickers, snapshot_by_ticker, metric_la
 DISCORD_MAX_RATE_LIMIT_RETRIES = 3
 DISCORD_DEFAULT_RETRY_WAIT = 1.0
 
+# A 5xx from Discord or a connection that never opened is retried too
+# (2026-11-22): one 502 used to drop that message, and for the weekly wrap-up
+# (fail-fast) the whole week's post. Both mean Discord did not take the message,
+# so a repost almost never duplicates it (a connection Discord drops after
+# reading the request is the one rare exception). A READ timeout is NOT retried: the request
+# reached Discord and the message may well have been posted, so a retry could
+# post it twice -- it fails the message as before.
+DISCORD_SERVER_ERROR_STATUSES = (500, 502, 503, 504)
+DISCORD_SERVER_ERROR_RETRIES = 2
+DISCORD_SERVER_ERROR_WAITS = (2.0, 5.0)
+
+
+def _server_error_wait(attempt):
+    return DISCORD_SERVER_ERROR_WAITS[min(attempt, len(DISCORD_SERVER_ERROR_WAITS) - 1)]
+
 
 def _post_discord(webhook_url, content):
     """Posts one message to `webhook_url`, retrying on a 429 rate-limit
-    response (see module note above). Returns (ok, detail) -- detail is ''
-    on success, otherwise a short human-readable reason (the HTTP status +
-    response body, or the network exception text) once retries (if any) are
-    exhausted."""
+    response (see module note above), and on a 5xx or a connection error
+    (DISCORD_SERVER_ERROR_RETRIES times, with a growing wait; never on a read
+    timeout). Returns (ok, detail) -- detail is '' on success, otherwise a
+    short human-readable reason (the HTTP status + response body, or the
+    network exception text) once retries (if any) are exhausted."""
     attempt = 0
+    server_attempt = 0
     while True:
         try:
             resp = requests.post(webhook_url, json={"content": content}, timeout=10)
+        except requests.ConnectionError as e:
+            # ConnectTimeout is a ConnectionError too (never sent); ReadTimeout is
+            # not one, and falls to the next clause.
+            if server_attempt < DISCORD_SERVER_ERROR_RETRIES:
+                time.sleep(_server_error_wait(server_attempt))
+                server_attempt += 1
+                continue
+            return False, str(e)
         except requests.RequestException as e:
             return False, str(e)
         if resp.status_code in (200, 204):
             return True, ""
+        if resp.status_code in DISCORD_SERVER_ERROR_STATUSES and server_attempt < DISCORD_SERVER_ERROR_RETRIES:
+            time.sleep(_server_error_wait(server_attempt))
+            server_attempt += 1
+            continue
         if resp.status_code == 429 and attempt < DISCORD_MAX_RATE_LIMIT_RETRIES:
             wait = DISCORD_DEFAULT_RETRY_WAIT
             try:

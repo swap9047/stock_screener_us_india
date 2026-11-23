@@ -19,7 +19,7 @@ Config (same folder):
 Run: python3 refresh_data.py
 """
 
-import os
+import market_scope
 
 from stock_data import (
     load_watchlists, load_settings, fetch_all_markets, save_data_snapshot,
@@ -36,8 +36,9 @@ def main():
     # REFRESH_MARKETS scopes the run to specific watchlists -- set by the
     # dashboard's per-tab "Re-analyze All" button (see the workflow's
     # `markets` input). Blank/absent means every watchlist, which is what
-    # the nightly schedule always gets.
-    only_markets = {m.strip() for m in os.environ.get("REFRESH_MARKETS", "").split(",") if m.strip()}
+    # the nightly schedule always gets. The app sends watchlist POSITIONS, not
+    # keys (market_scope.py: step env is printed in the public log).
+    only_markets = market_scope.from_env(list(watchlists))
     if only_markets:
         watchlists = {m: t for m, t in watchlists.items() if m in only_markets}
         print(f"Scope: {', '.join(sorted(only_markets))}")

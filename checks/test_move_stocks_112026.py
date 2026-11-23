@@ -57,7 +57,10 @@ t["ZIN2.NS"] = {"in_hold", "in_watch", "sold"}  # also ticked into sold
 p = wm.plan_changes(WL, M, t)
 check(p["lists"]["in_hold"] == ["ZIN2.NS", "ZBO3.BO"] and p["lists"]["sold"] == ["ZIN5.NS", "ZIN1.NS", "ZIN2.NS"],
       f"P4: a list keeps its order; stocks newly ticked go to the end in grid order ({p['lists']['in_hold']}, {p['lists']['sold']})")
-check(p["changed"] == ["in_hold", "sold"] and p["lists"]["in_watch"] is WL["in_watch"] or p["lists"]["in_watch"] == WL["in_watch"],
+# Parenthesised: `A and B is C or B == C` passed on the last test alone, so
+# `changed` was never really checked.
+check(p["changed"] == ["in_hold", "sold"]
+      and (p["lists"]["in_watch"] is WL["in_watch"] or p["lists"]["in_watch"] == WL["in_watch"]),
       f"P5: only the lists that changed are named ({p['changed']}); the others are as they were")
 check(p["moves"] == {"ZIN1.NS": {"add": ["sold"], "remove": ["in_hold"]}, "ZIN2.NS": {"add": ["sold"], "remove": []}},
       f"P6: each stock's move ({p['moves']})")
@@ -279,6 +282,9 @@ check("1 removed from the app" in res["text"] and "1 new" in res["text"], f"S9: 
 # the saved world renders: every tab, no error
 at = AppTest.from_file(os.path.join(APP, "app.py"), default_timeout=600)
 at.session_state["authenticated"] = True
+# Only the tab on screen builds its table (desktop as well as phone since 2026-11-22), so open a list
+# that holds the new stock and not the removed one.
+at.session_state["main_tabs"] = "India Watch"
 at.run()
 tables = " ".join(b.value for b in at.markdown if "<table" in b.value)
 check(not at.exception and "ZNEW1.NS" in tables and "ZIN4.NS" not in tables,

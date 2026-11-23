@@ -29,7 +29,7 @@ on:
         required: false
         default: false
       markets:
-        description: "Comma-separated market keys to process (blank = all watchlists)"
+        description: "Comma-separated watchlist POSITIONS, 1-based in markets.json order, e.g. 2,5 (blank = all watchlists). Positions, never names: step env is printed in this public repo's logs"
         required: false
         default: ""
       limit:
@@ -157,4 +157,7 @@ jobs:
         with:
           files: data_snapshot.json expert_views.json fundamentals.json
           entries-only: fundamentals.json
+          # Per entry against the copy this job loaded (2026-11-22): the whole file,
+          # loaded hours ago, reverted every take the app re-analyzed meanwhile.
+          entries-merge: expert_views.json
           message: "Update data_snapshot.json + expert_views.json [automated]"
