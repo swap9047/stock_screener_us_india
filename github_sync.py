@@ -48,6 +48,7 @@ import hashlib
 import json
 import os
 import tempfile
+import threading
 import time
 
 import requests
@@ -151,14 +152,36 @@ def _read_sync_state():
         return {}
 
 
+# Every read-modify-write of the sync state holds this (2026-11-22). Two browser sessions are two
+# threads of one Streamlit process: one session's pull and another's push each read the state, changed
+# their part and wrote it back, so the later write dropped the earlier one's blobs -- a pushed file then
+# read as an unpushed local edit, or a pulled one as edited here. Re-entrant, so a helper that updates
+# the state can be called with it held.
+_SYNC_STATE_LOCK = threading.RLock()
+
+
 def _write_sync_state(state):
+    # A unique temp file (mkstemp), not a fixed ".data_sync_state.json.tmp": two writers sharing one
+    # temp path interleaved their bytes before either rename.
+    tmp = None
     try:
-        tmp = f"{SYNC_STATE_FILE}.tmp"
-        with open(tmp, "w") as f:
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(SYNC_STATE_FILE) or ".", suffix=".tmp")
+        with os.fdopen(fd, "w") as f:
             json.dump(state, f)
         os.replace(tmp, SYNC_STATE_FILE)
     except Exception:
-        pass  # a lost marker only costs one redundant check
+        # a lost marker only costs one redundant check
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+def _update_sync_state(change):
+    """Apply `change(state) -> new state` to the sync state as one locked read-modify-write."""
+    with _SYNC_STATE_LOCK:
+        _write_sync_state(change(_read_sync_state()))
 
 
 def _local_freshness(path):
@@ -235,6 +258,7 @@ def pull_generated_files(token, repo, branch="main", files=None,
         return [], err
 
     known = dict(state.get("blobs") or {})
+    read_blobs = dict(known)   # as this pull found them: what a concurrent push may have moved since
     updated, skipped, kept_edits = [], [], []
     for name in files:
         remote_sha = entries.get(name)
@@ -276,19 +300,39 @@ def pull_generated_files(token, repo, branch="main", files=None,
             known[name] = remote_sha   # seen and judged; don't re-download it
             continue
 
+        # A unique temp file: a fixed "<file>.tmp" was shared by every session pulling the same file.
+        tmp = None
         try:
-            tmp = f"{path}.tmp"
-            with open(tmp, "wb") as f:
+            fd, tmp = tempfile.mkstemp(dir=root, suffix=".tmp")
+            with os.fdopen(fd, "wb") as f:
                 f.write(body)
+            os.chmod(tmp, 0o644)
             os.replace(tmp, path)
         except Exception:
+            if tmp:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
             continue
         known[name] = remote_sha
         updated.append(name)
 
-    checked_at = now if stamp_checked else (state.get("checked_at") or 0)
-    # {**state}: keeps the other keys (merge_note) the push side writes.
-    _write_sync_state({**state, "checked_at": checked_at, "blobs": known})
+    # Only this pull's own changes, onto the state as it is NOW: the downloads above take seconds, and
+    # a push from another session may have recorded blobs meanwhile. A file whose blob that push moved
+    # keeps the push's record (it is the newer baseline).
+    changed = {n: sha for n, sha in known.items() if read_blobs.get(n) != sha}
+
+    def apply(current):
+        blobs = dict(current.get("blobs") or {})
+        for n, sha in changed.items():
+            if blobs.get(n) == read_blobs.get(n):
+                blobs[n] = sha
+        # {**current}: keeps the other keys (merge_note) the push side writes.
+        return {**current, "checked_at": now if stamp_checked else (current.get("checked_at") or 0),
+                "blobs": blobs}
+
+    _update_sync_state(apply)
     note = f"updated {len(updated)}" if updated else "up to date"
     if skipped:
         note += f"; kept newer local copy of {', '.join(skipped)}"
@@ -344,8 +388,7 @@ MERGE_NOTE_SECONDS = 600
 
 def _note_merge(text):
     """Remember, in this container's sync state, that the last push merged -- for the sidebar note."""
-    state = _read_sync_state()
-    _write_sync_state({**state, "merge_note": {"at": time.time(), "text": text}})
+    _update_sync_state(lambda state: {**state, "merge_note": {"at": time.time(), "text": text}})
 
 
 def recent_merge_note(now=None):
@@ -366,8 +409,7 @@ def _record_pushed(shas):
     next pull doesn't mistake them for local edits and unpushed_config_files
     stops reporting them. `shas` is {filename: blob sha of the bytes PUSHED} --
     not of the file as it is now, which may have been edited since."""
-    state = _read_sync_state()
-    _write_sync_state({**state, "blobs": {**(state.get("blobs") or {}), **shas}})
+    _update_sync_state(lambda state: {**state, "blobs": {**(state.get("blobs") or {}), **shas}})
 
 
 def _config_value(st_secrets, key, default=None):

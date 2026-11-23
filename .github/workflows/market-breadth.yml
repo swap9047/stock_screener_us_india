@@ -20,6 +20,12 @@ permissions:
 jobs:
   update_breadth:
     runs-on: ubuntu-latest
+    # Hourly. A full run downloads six years of daily bars for every index's members in 50-ticker
+    # batches (refresh_market_breadth.py; a market with no new session is skipped), then the
+    # dashboard series, the snapshot and the research library's copy. 60 leaves room for a run that
+    # redoes every block (a new drawdown level) without letting a hung download hold the group for
+    # GitHub's 6-hour default.
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository

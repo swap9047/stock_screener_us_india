@@ -30,4 +30,8 @@ runs:
           exit 1
         fi
         cp "${files[@]}" .
+        # The commit these copies came from, for commit-data's `entries-merge`
+        # (merge_keyed.py): the base of its three-way, per-entry merge. A local
+        # tag only -- commit-data pushes HEAD:main and never a tag.
+        git -C data tag -f data-loaded HEAD >/dev/null
         echo "Loaded ${#files[@]} data file(s)"

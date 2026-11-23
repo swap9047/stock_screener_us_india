@@ -14,6 +14,10 @@ W3  the workflows: each gated one takes the `scheduled` input, passes it to its 
 W4  the gate: a dispatch with scheduled=true reads the history and decides (a done slot is skipped, an
     unreadable history is red); a dispatch by hand still bypasses it
 W5  the behaviours a dispatch used to change: no --force on the alerts, the library's min-gap
+W6  the Worker is the only clock
+W7  a tick's requests: a gated job with a run in progress or queued is not dispatched (it would cancel a
+    queued run by hand), a failed listing dispatches anyway, and the optional Discord notices (a failed
+    dispatch; the token's expiry, once a day)
 
 Offline: no network. Needs node (skipped when it is missing).
 """
@@ -285,6 +289,96 @@ check(sorted(every) == sorted(["daily-alerts.yml", "data-refresh.yml", "expert-v
                                "market-breadth.yml", "market-library.yml", "market-read.yml", "news-summary.yml",
                                "quarterly-results.yml", "weekly-wrapup.yml"]),
       f"W6: the eleven scheduled workflows are exactly the Worker's ({every})")
+
+# --- W7 what a tick sends (2026-11-22): a busy gated job is not dispatched, Discord notices -----------
+# The real scheduled() handler under node with fetch replaced: each scenario lists canned replies by URL
+# (first match wins; anything else is a 204 dispatch, an empty runs listing or a 204 Discord post), and the
+# harness prints every request it made and whether the handler threw.
+HARNESS = r"""
+import worker from "./w.mjs";
+const sc = JSON.parse(process.argv[2]);
+const calls = [];
+globalThis.fetch = async (url, init = {}) => {
+  const method = init.method || "GET";
+  calls.push({ url, method, body: init.body || null });
+  for (const r of sc.replies || []) {
+    if (url.includes(r.match) && (!r.method || r.method === method)) {
+      if (r.throw) throw new Error("network down");
+      return new Response(r.body === undefined ? null : JSON.stringify(r.body), { status: r.status || 200, headers: r.headers || {} });
+    }
+  }
+  if (url.includes("/runs?")) return new Response(JSON.stringify({ total_count: 0, workflow_runs: [] }), { status: 200, headers: sc.headers || {} });
+  return new Response(null, { status: 204, headers: sc.headers || {} });
+};
+console.log = () => {}; console.warn = () => {}; console.error = () => {};
+let threw = false;
+try { await worker.scheduled({ scheduledTime: sc.time }, sc.env || { GH_DISPATCH_TOKEN: "t" }, {}); } catch (e) { threw = true; }
+process.stdout.write(JSON.stringify({ calls, threw }));
+"""
+
+if node:
+    tmp7 = Path(tempfile.mkdtemp(prefix="worker7_"))
+    (tmp7 / "w.mjs").write_text(WORKER)
+    (tmp7 / "h.mjs").write_text(HARNESS)
+
+    def tick(when_utc, replies=(), env=None, headers=None):
+        sc = {"time": int(when_utc.timestamp() * 1000), "replies": list(replies),
+              "env": env or {"GH_DISPATCH_TOKEN": "t"}, "headers": headers or {}}
+        r = subprocess.run([node, "h.mjs", json.dumps(sc)], cwd=tmp7, capture_output=True, text=True, timeout=60)
+        if r.returncode:
+            print(r.stderr[:500])
+        out = json.loads(r.stdout)
+        posts = {c["url"].split("/workflows/")[1].split("/")[0] for c in out["calls"]
+                 if c["method"] == "POST" and c["url"].endswith("/dispatches")}
+        lists = [c["url"] for c in out["calls"] if "/runs?" in c["url"]]
+        discord = [json.loads(c["body"])["content"] for c in out["calls"] if c["url"].startswith("https://discord.example")]
+        return posts, lists, discord, out["threw"]
+
+    read_tick = datetime(2026, 11, 2, 6, 30, tzinfo=ET).astimezone(UTC)   # data-refresh + market-read (gated)
+    posts, lists, discord, threw = tick(read_tick)
+    check(posts == {"data-refresh.yml", "market-read.yml"} and not threw,
+          f"W7: nothing running -> the gated job is dispatched as before ({sorted(posts)})")
+    check(len(lists) == 2 and all("market-read.yml/runs?status=" in u for u in lists)
+          and {u.split("status=")[1].split("&")[0] for u in lists} == {"in_progress", "queued"},
+          "W7: ...after asking for its in-progress and queued runs; the ungated data-refresh is never asked about")
+    busy = {"match": "market-read.yml/runs?status=in_progress", "body": {"total_count": 1, "workflow_runs": [{"id": 1}]}}
+    posts, lists, discord, threw = tick(read_tick, [busy])
+    check(posts == {"data-refresh.yml"} and not threw,
+          "W7: a run in progress -> the gated job is NOT dispatched (it would cancel a queued run by hand); data-refresh still is")
+    queued = {"match": "market-read.yml/runs?status=queued", "body": {"total_count": 1, "workflow_runs": [{"id": 2}]}}
+    posts, lists, discord, threw = tick(read_tick, [queued])
+    check(posts == {"data-refresh.yml"}, "W7: a queued run -> not dispatched either")
+    posts, lists, discord, threw = tick(read_tick, [{"match": "/runs?", "status": 500, "body": {"message": "x"}}])
+    check(posts == {"data-refresh.yml", "market-read.yml"} and not threw,
+          "W7: a listing that fails (HTTP 500) -> dispatched anyway (fail open)")
+    posts, lists, discord, threw = tick(read_tick, [{"match": "/runs?", "throw": True}])
+    check(posts == {"data-refresh.yml", "market-read.yml"} and not threw,
+          "W7: a listing that throws -> dispatched anyway")
+
+    hook = {"GH_DISPATCH_TOKEN": "t", "DISCORD_WEBHOOK_URL": "https://discord.example/hook"}
+    bad = {"match": "market-read.yml/dispatches", "method": "POST", "status": 422, "body": {"message": "bad input"}}
+    posts, lists, discord, threw = tick(read_tick, [bad], env=hook)
+    check(threw and len(discord) == 1 and "market-read.yml (HTTP 422)" in discord[0],
+          f"W7: a failed dispatch -> one Discord notice naming the workflow, and the tick still throws ({discord})")
+    posts, lists, discord, threw = tick(read_tick, [bad])
+    check(threw and not discord, "W7: ...no Discord binding -> no notice, nothing else changes")
+
+    midnight = datetime(2026, 11, 3, 0, 0, tzinfo=UTC)          # keep-alive is dispatched on every 00:00 UTC tick
+    soon = {"github-authentication-token-expiration": "2026-11-08 12:00:00 UTC"}
+    posts, lists, discord, threw = tick(midnight, env=hook, headers=soon)
+    check("keep-alive.yml" in posts and len(discord) == 1 and "2026-11-08" in discord[0] and "5 day" in discord[0],
+          f"W7: a token with 5 days left -> one expiry warning on the 00:00 UTC tick ({discord})")
+    posts, lists, discord, threw = tick(midnight, env=hook, headers={"github-authentication-token-expiration": "2026-11-10 09:00:00 -0800"})
+    check(len(discord) == 1 and "2026-11-10" in discord[0], "W7: ...an offset expiry ('-0800') parses too")
+    posts, lists, discord, threw = tick(midnight, env=hook, headers={"github-authentication-token-expiration": "2027-01-30 00:00:00 UTC"})
+    check(not discord, "W7: 88 days left -> no warning")
+    posts, lists, discord, threw = tick(read_tick, env=hook, headers=soon)
+    check(not discord, "W7: a short expiry on any other tick -> no warning (once a day)")
+    posts, lists, discord, threw = tick(midnight, headers=soon)
+    check(not discord and not threw, "W7: no Discord binding -> the expiry is a console line only")
+    shutil.rmtree(tmp7, ignore_errors=True)
+else:
+    check(True, "W7: (skipped) no node")
 
 print(f"FAILURES: {fails}")
 sys.exit(1 if fails else 0)

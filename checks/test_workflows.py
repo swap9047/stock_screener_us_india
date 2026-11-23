@@ -87,4 +87,39 @@ for a in ("load-data", "commit-data"):
         if "run" in s:
             r = subprocess.run(["bash", "-n"], input=s["run"], text=True, capture_output=True)
             check(r.returncode == 0, f"{a}: bash -n {r.stderr.strip()}")
+# Every job has its own timeout (2026-11-22): without one a hung Yahoo download or database call held the job,
+# and with it the workflow's concurrency group, for GitHub's 6-hour default while later dispatches queued behind
+# it. A gate job is a few API calls; data-refresh runs every 30 minutes and breadth hourly.
+for path in sorted(glob.glob(f"{R}/workflows/*.yml")):
+    name = path.rsplit("/", 1)[1]
+    for jn, job in yaml.safe_load(open(path))["jobs"].items():
+        t = job.get("timeout-minutes")
+        check(isinstance(t, int) and 1 <= t <= 360, f"{name}/{jn}: declares timeout-minutes ({t})")
+        if jn == "gate":
+            check(isinstance(t, int) and t <= 10, f"{name}/gate: a small timeout ({t})")
+for name, jn, most in (("data-refresh.yml", "refresh", 60), ("market-breadth.yml", "update_breadth", 90)):
+    t = yaml.safe_load(open(f"{R}/workflows/{name}"))["jobs"][jn].get("timeout-minutes")
+    check(isinstance(t, int) and 20 <= t <= most, f"{name}/{jn}: timeout {t} fits its schedule (20-{most})")
+# The two nightly AI stores are committed per entry against the copy the job loaded (merge_keyed.py), never
+# whole: a whole-file commit reverted every entry the app or another workflow wrote while the job ran.
+EM = {"expert-views.yml": ("build", "expert_views.json"), "fundamentals.yml": ("build", "fundamentals.json")}
+for name, (jn, f) in EM.items():
+    steps = yaml.safe_load(open(f"{R}/workflows/{name}"))["jobs"][jn]["steps"]
+    cd = [s for s in steps if s.get("uses") == "./.github/actions/commit-data"]
+    w = (cd[0].get("with") or {}) if cd else {}
+    check(f in w.get("files", "").split() and w.get("entries-merge", "").split() == [f],
+          f"{name}: commits {f} with entries-merge ({w.get('entries-merge')!r})")
+check(yaml.safe_load(open(f"{R}/workflows/expert-views.yml"))["jobs"]["build"]["steps"][-1]["with"].get("entries-only") == "fundamentals.json",
+      "expert-views.yml: fundamentals.json, which it does not own, stays entries-only")
+for path in sorted(glob.glob(f"{R}/workflows/*.yml")):
+    name = path.rsplit("/", 1)[1]
+    if name in EM:
+        continue
+    check("entries-merge" not in open(path).read(), f"{name}: no entries-merge (a file only one writer edits)")
+cd_act = yaml.safe_load(open(f"{R}/actions/commit-data/action.yml"))
+check("entries-merge" in cd_act["inputs"] and "ENTRIES_MERGE: ${{ inputs.entries-merge }}" in open(f"{R}/actions/commit-data/action.yml").read()
+      and "merge_keyed.py" in open(f"{R}/actions/commit-data/action.yml").read(),
+      "commit-data: the entries-merge input reaches merge_keyed.py")
+check("tag -f data-loaded HEAD" in open(f"{R}/actions/load-data/action.yml").read(),
+      "load-data: tags the commit it copied from (merge_keyed.py's base)")
 print("FAILURES:", fails); sys.exit(fails)
