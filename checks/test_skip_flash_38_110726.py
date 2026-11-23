@@ -1,5 +1,9 @@
 """Skip Gemini 3.8 Flash (owner, 2026-11-07): one switch at the top of Settings · Models.
 
+Since 2026-11-15 the switch is a list of any models (skipped_models / with_skipped), and the 3.8-only helpers
+(skipping_38, with_skip_38, skipped_38_in) were removed on 2026-11-22: nothing but these checks called them. The
+checks below run on the list; what stays covered is that the OLD key, skip_flash_38: true, still skips 3.8.
+
 K1 Off (the default): every step's rungs are exactly what they were.
 K2 On: no rung calls 3.8 Flash; the chain starts at the next model with no wait, and the waits
    restart from the first try (2, 4, 8 ...), so nothing is spent waiting on a model that is skipped.
@@ -51,7 +55,7 @@ for step in ms.STEPS:
           f"K1: {step} unchanged with no switch (defaults)")
 check(ms.tiers("R1", OFF) == [(F38, 0, 200), (F38, 2, 200), (F36, 4, 200), (F36, 8, 200), (L, 16, 150), (L, 30, 150)],
       f"K1: a saved R1 chain runs 3.8 x2, 3.6 x2, lite x2 while the switch is off ({ms.tiers('R1', OFF)})")
-check(not ms.skipping_38(OFF) and not ms.skipping_38(CLEAN), "K1: the switch reads off when absent")
+check(F38 not in ms.skipped_models(OFF) and F38 not in ms.skipped_models(CLEAN), "K1: the switch reads off when absent")
 
 # --- K2 on ---------------------------------------------------------------------------------------
 for step in ("R1", "R2", "N3"):
@@ -61,23 +65,23 @@ check(ms.tiers("R1", ON) == [(F36, 0, 200), (F36, 2, 200), (L, 4, 150), (L, 8, 1
       f"K2: R1 starts at 3.6 with no wait, waits restart, each model keeps its timeout ({ms.tiers('R1', ON)})")
 check(ms.tiers("R1", CLEAN | {"ai_models": {ms.SKIP_38_KEY: True}}) == [(ms.HYDROGEN, 0, 200), (ms.HYDROGEN, 2, 200), (F36, 4, 200), (F36, 8, 200)],
       "K2: the DEFAULT R1 chain (3.8 x2, Hydrogen x2, 3.6 x2) runs Hydrogen x2 then 3.6 x2 while skipped (the legacy switch still reads)")
-check(ms.skipped_38_in(ms.resolve("R1", ON)["chain"], ON) and not ms.skipped_38_in(ms.resolve("R1", OFF)["chain"], OFF),
+check(F38 in ms.skipped_in(ms.resolve("R1", ON)["chain"], ON) and F38 not in ms.skipped_in(ms.resolve("R1", OFF)["chain"], OFF),
       "K2: the steps list notes the skip only while it is on")
 
 # --- K3 the saved chain is untouched ---------------------------------------------------------------
 check(ms.resolve("R1", ON)["chain"] == CHAIN and ms.resolve("R1", ON)["source"] == "saved",
       "K3: resolve() still returns the whole saved chain (what the editor shows and saves)")
-back = {"ai_models": ms.with_skip_38(ON, False)}
+back = {"ai_models": ms.with_skipped(ON, ms.skipped_models(ON) - {F38})}
 check(ms.tiers("R1", back) == ms.tiers("R1", OFF) and ms.SKIP_38_KEY not in back["ai_models"],
       "K3: switching off brings 3.8 back exactly, and removes the key")
-_on = ms.with_skip_38(OFF, True)
+_on = ms.with_skipped(OFF, ms.skipped_models(OFF) | {F38})
 check(_on == {**OFF["ai_models"], ms.SKIP_MODELS_KEY: [F38]} and ms.tiers("R1", {"ai_models": _on}) == ms.tiers("R1", ON),
       "K3: switching on adds only the skip list (3.8 Flash on it), every chain kept, the same rungs as the legacy switch")
 
 # --- K4 never empty --------------------------------------------------------------------------------
 only38 = {"ai_models": {"R1": {"chain": [{"model": F38, "attempts": 2, "timeout": 200}], "budget": 4096},
                         ms.SKIP_38_KEY: True}}
-check([m for m, *_ in ms.tiers("R1", only38)] == [F38, F38] and not ms.skipped_38_in(ms.resolve("R1", only38)["chain"], only38),
+check([m for m, *_ in ms.tiers("R1", only38)] == [F38, F38] and F38 not in ms.skipped_in(ms.resolve("R1", only38)["chain"], only38),
       "K4: a chain of only 3.8 is kept as it is (and not shown as skipped)")
 
 # --- K5 steps without 3.8 ------------------------------------------------------------------------------
@@ -88,9 +92,9 @@ for step in ("N1", "N2", "E1", "E2", "F1", "F2", "F3"):
 # --- K6 stored inside ai_models, survives saves and resets ------------------------------------------------
 check(ms.SKIP_38_KEY not in ms.STEPS, "K6: the switch's key is not a step id")
 saved = {"ai_models": ms.with_step(ON, "E2", [{"model": L, "attempts": 2}], 8192)}
-check(ms.skipping_38(saved) and saved["ai_models"]["R1"]["chain"] == CHAIN, "K6: saving another step keeps the switch")
+check(F38 in ms.skipped_models(saved) and saved["ai_models"]["R1"]["chain"] == CHAIN, "K6: saving another step keeps the switch")
 reset = ms.reset_changes(ON, "R1")
-check(ms.skipping_38(reset) and "R1" not in reset["ai_models"], "K6: resetting a step keeps the switch")
+check(F38 in ms.skipped_models(reset) and "R1" not in reset["ai_models"], "K6: resetting a step keeps the switch")
 src_sd = (REPO / "stock_data.py").read_text()
 check("skip_flash_38" not in src_sd, "K6: stock_data.py (and its snapshot fingerprint) is untouched")
 
@@ -102,9 +106,9 @@ sd.SETTINGS_FILE = os.path.join(tmp, "settings.json")
 try:
     sd.save_settings({"ai_models": ON["ai_models"]})
     again = sd.load_settings()
-    check(ms.skipping_38(again) and again["ai_models"]["R1"]["chain"] == CHAIN, "K7: save_settings keeps the switch and the chains")
-    sd.save_settings({"ai_models": ms.with_skip_38(again, False)})
-    check(not ms.skipping_38(sd.load_settings()), "K7: ...and switching it off saves off")
+    check(F38 in ms.skipped_models(again) and again["ai_models"]["R1"]["chain"] == CHAIN, "K7: save_settings keeps the switch and the chains")
+    sd.save_settings({"ai_models": ms.with_skipped(again, ms.skipped_models(again) - {F38})})
+    check(F38 not in ms.skipped_models(sd.load_settings()), "K7: ...and switching it off saves off")
 finally:
     sd.SETTINGS_FILE = _orig
 

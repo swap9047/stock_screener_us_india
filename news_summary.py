@@ -2,7 +2,8 @@
 LLM-generated news/announcements summary for the watchlists -- a
 Perplexity-Finance-style digest built with a 3-stage per-ticker architecture:
 
-  Stage 1 (Web Search): a Gemma model with Google Search Grounding.
+  Stage 1 (Web Search): a Gemma model with Google Search Grounding (a Gemini
+     backup in the N1 chain gets a small thinking budget, 2026-11-22).
      ONE grounded search per unique ticker. Ladder: three attempts on the
      configured search model (default gemma-4-26b-a4b-it), each on a different
      API key -> the default model, if a different one is configured -> retry
@@ -11,7 +12,9 @@ Perplexity-Finance-style digest built with a 3-stage per-ticker architecture:
   Stage 2 (Significance filter): gemini-3.5-flash-lite, no search.
      Filters one ticker's raw notes against strict recency (24h, plus scheduled
      events 3-4 days out) and material-catalyst rules. Ladder:
-     gemini-3.5-flash-lite -> retry it once -> gemma-4-26b-a4b-it -> degraded.
+     gemini-3.5-flash-lite -> retry it once -> gemma-4-26b-a4b-it -> failed
+     (failed_stage "filter": nothing posted for the stock, its search text kept
+     so the slot's retry only filters it again).
 
   Stage 3 (Collation): gemini-3.7-flash x2, then gemini-3.6-flash x2, then
      gemini-3.5-flash-lite x2 (the Settings · Models chain), one call after
@@ -111,8 +114,14 @@ CALL_TIMEOUT_SECONDS = 200      # one call's cut-off (owner, 2026-11-01); the ch
 # output -- ticker_count was just len(tickers) no matter what happened.
 STATUS_MATERIAL = "material"   # Stage 2 kept something
 STATUS_QUIET = "quiet"         # searched cleanly, nothing cleared the bar
-STATUS_DEGRADED = "degraded"   # Stage 2 ladder exhausted; raw text forwarded
-STATUS_FAILED = "failed"       # Stage 1 ladder exhausted; no data at all
+STATUS_DEGRADED = "degraded"   # Stage 2 ladder exhausted (digests before 2026-11-22: raw text forwarded)
+STATUS_FAILED = "failed"       # Stage 1 ladder exhausted, or (failed_stage "filter") Stage 2's: not posted
+# Since 2026-11-22 a stock whose filter (Stage 2) failed on every model is recorded as FAILED with
+# failed_stage "filter" and its raw search text kept (search_text), never posted: it used to be "degraded",
+# its UNFILTERED search text went into the editor's notes (which are told not to re-judge) and into the
+# follow-up verbatim. As FAILED it counts toward news_check's leftovers, so the slot's next hourly retry
+# runs it again -- the filter only, on the kept search text (reusable_searches).
+FAILED_STAGE_FILTER = "filter"
 
 STATUS_FUND = "fund_skipped"  # an ETF/fund: not searched (D5)
 
@@ -234,24 +243,6 @@ def _display_name(ticker, ticker_names):
     bare = _bare_ticker(ticker)
     company = (ticker_names or {}).get(ticker)
     return f"{company} ({bare})" if company and company != ticker else bare
-
-
-def ticker_window_date(ticker):
-    """The exchange-local calendar date anchoring ONE ticker's search window.
-
-    market_window_date below resolves this per MARKET, from whether ANY ticker
-    in the list is Indian -- which is right for today's watchlists (each is
-    single-region) and wrong the moment one mixes them: at an 8 PM ET run,
-    Kolkata is already on the next calendar day, so every US ticker in a mixed
-    list would be asked for a New York date that has not happened yet. That is
-    the same bug the market_window_date docstring describes fixing for UTC.
-
-    Resolved off the TICKER SUFFIX, matching what fundamentals_eval's
-    search_window_days had to be changed to for exactly this reason: watchlists
-    are user-creatable from the dashboard, so nothing stops a mixed one.
-    """
-    tz = ZoneInfo("Asia/Kolkata") if ticker.endswith(_INDIA_SUFFIXES) else ZoneInfo("America/New_York")
-    return datetime.now(tz).strftime("%Y-%m-%d")
 
 
 def news_slot_date(now=None):
@@ -488,6 +479,28 @@ def reusable_outcomes(prev_digest, slot_date):
     return done
 
 
+def reusable_searches(prev_digest, slot_date):
+    """{ticker: record} of the stocks whose SEARCH the retry of this slot can reuse: those the earlier run
+    searched but could not filter (failed_stage "filter", with their search_text kept), so the retry runs
+    only the filter for them. Under the same gate as reusable_outcomes."""
+    prev = prev_digest or {}
+    if not (prev.get("run_failed") or prev.get("retry_pending")):
+        return {}
+    try:
+        if date.fromisoformat(str(prev.get("as_of"))[:10]) != slot_date:
+            return {}
+    except ValueError:
+        return {}
+    done = {}
+    for entry in (prev.get("markets") or {}).values():
+        for ticker, rec in ((entry or {}).get("tickers") or {}).items():
+            rec = rec or {}
+            if (rec.get("status") == STATUS_FAILED and rec.get("failed_stage") == FAILED_STAGE_FILTER
+                    and (rec.get("search_text") or "").strip()):
+                done.setdefault(ticker, rec)
+    return done
+
+
 def _short_name(ticker, ticker_names):
     """"Acme (ACME)": the company name without Limited / Inc. and the like, for the
     one-line lists."""
@@ -654,7 +667,8 @@ def _extract_sources(resp):
     return sources
 
 
-def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None, model=SEARCH_MODEL, tiers=None):
+def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None, model=SEARCH_MODEL, tiers=None,
+                          search_budget=None):
     """Stage 1: grounded search for ONE ticker.
 
     Returns (text, sources) where `text` is the model's BARE output -- callers
@@ -679,8 +693,9 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None,
         "companies (a peer, a customer, or another company's deal). Be extremely concise. If there is no news, output nothing."
     )
 
-    grounding_tool = types.Tool(google_search=types.GoogleSearch())
-    config = types.GenerateContentConfig(tools=[grounding_tool])
+    # The config is per MODEL (2026-11-22): a Gemini backup in N1's chain (the owner's Gemma x3 -> 3.5-flash-lite
+    # -> Gemma x2) gets the google_search tool and a small thinking budget (`search_budget`, None =
+    # model_settings.SEARCH_THINKING_BUDGET); Gemma gets the tool alone, as it always did.
 
     # Three attempts on the configured model, each on a freshly rotated key,
     # the same ladder the Expert Take and Sentiment searches use
@@ -692,8 +707,11 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None,
     # One extra rung on SEARCH_MODEL when news_search_model names something
     # else. That setting is editable from the dashboard, and a typo'd or retired
     # id must still fall to a model that works rather than fail every ticker.
-    # A model that reports itself unavailable is skipped for its remaining
-    # rungs: retrying a 404 just burns the attempts the default rung needs.
+    # A model that cannot answer (llm_util.is_dead_model: a 404, a 403, or every
+    # key out of its daily quota) is skipped for its remaining rungs, with no wait
+    # before the next model: retrying it just burns the attempts the next model
+    # needs. The waits come from llm_util.next_wait, as in run_model_ladder (a fast
+    # 500 waits only the base).
     #
     # This stage keeps its own loop rather than calling run_model_ladder
     # because the caller inspects the RAISED exception to choose between the
@@ -706,7 +724,9 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None,
             tiers.append((SEARCH_MODEL, 0))
     last_exc = None
     avoid_key = None
-    unavailable = set()
+    dead = set()
+    # How the previous try failed (None after an answer or a recheck), for llm_util.next_wait.
+    prev_exc, prev_elapsed = None, None
     # An empty or "no news" reply that recorded no search gets one more try on another key, and tool-call
     # text is a failed try (llm_util.SearchReplyCheck, owner 2026-11-15); `held` is that first reply, used
     # when no later rung answers.
@@ -716,13 +736,17 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None,
         attempt_model, backoff = tier[0], tier[1]
         # A rung from the sidebar's chain carries its own timeout (model_settings); the old ones don't.
         attempt_timeout = tier[2] if len(tier) > 2 and tier[2] else CALL_TIMEOUT_SECONDS
-        if attempt_model in unavailable:
+        if attempt_model in dead:
             continue
-        if backoff:
-            time.sleep(backoff)
+        wait = llm_util.next_wait(backoff, prev_exc, prev_elapsed)
+        if wait:
+            time.sleep(wait)
+        prev_exc, prev_elapsed = None, None
         served = {}
+        started = time.monotonic()
         try:
-            resp = _generate_with_timeout(client, attempt_model, prompt, config,
+            resp = _generate_with_timeout(client, attempt_model, prompt,
+                                          model_settings.search_config(attempt_model, search_budget),
                                           timeout=attempt_timeout, avoid_key=avoid_key, key_sink=served)
             check(resp)
             return _search_reply(resp)
@@ -733,13 +757,14 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None,
             continue
         except Exception as e:
             last_exc = e
+            prev_exc, prev_elapsed = e, time.monotonic() - started
             # Tagged by generate_with_timeout with the key that made THIS call (or, for a reply the
             # check rejected, the key that served it).
             avoid_key = getattr(e, "_gemini_key", None) or served.get("key")
             via = f" via {avoid_key}" if avoid_key else ""
             print(f"  [stage1 {attempt_model} failed{via}] {ticker}: {e}")
-            if llm_util.is_model_unavailable(e):
-                unavailable.add(attempt_model)
+            if llm_util.is_dead_model(e):
+                dead.add(attempt_model)
                 continue
             if not _is_retryable(e):
                 break
@@ -795,8 +820,9 @@ def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date,
 
     Returns (text, status): status is "ok" when a model answered (an empty
     `text` then means "nothing material here", the common case), or "degraded"
-    when the whole ladder failed and the caller should forward the unfiltered
-    Stage 1 text instead.
+    when the whole ladder failed. The caller then keeps the unfiltered Stage 1
+    text for the slot's retry and posts nothing for the stock (2026-11-22: it used
+    to forward that text to the editor and the follow-up as if it were filtered).
 
     This used to `return resp.text or raw_text`, which made the correct empty
     answer indistinguishable from a crash and substituted the UNFILTERED web
@@ -1031,6 +1057,7 @@ def build_news_summary(watchlists, api_key, now=None, reuse_failed_run=True):
     # The chains and budgets saved in the sidebar's Settings · Models (model_settings), else the old
     # settings above, else today's defaults: each model's attempts and the step's thinking budget.
     search_tiers = model_settings.tiers("N1", settings)
+    search_budget = model_settings.search_budget("N1", settings)
     filter_tiers = model_settings.tiers("N2", settings)
     thinking_budget = model_settings.budget("N2", settings)
     collation_tiers = model_settings.tiers("N3", settings)
@@ -1063,6 +1090,8 @@ def build_news_summary(watchlists, api_key, now=None, reuse_failed_run=True):
     # 2026-10-26 Gemma's search returned 500 for 29 of 50 stocks, and the slot's
     # retry searched all 50 again.
     reused = reusable_outcomes(previous_digest, slot_date) if reuse_failed_run else {}
+    # ...and a stock whose filter failed is filtered again from its kept search text, not searched again.
+    reused_search = reusable_searches(previous_digest, slot_date) if reuse_failed_run else {}
     result["prior_slot"] = prior
     perf = _load_dashboard_perf()
     now_utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -1100,21 +1129,31 @@ def build_news_summary(watchlists, api_key, now=None, reuse_failed_run=True):
         plan = [entry for entry in plan if entry[0] not in outcomes]
         print(f"[news] retrying a failed run for this slot: {len(outcomes)} stocks reused, "
               f"{len(plan)} to search")
+    if reused_search:
+        print(f"[news] {sum(1 for key, _m in plan if key[0] in reused_search)} stocks reuse their search "
+              "and are only filtered again")
 
     def _ts():
         return datetime.now(timezone.utc).strftime("%H:%M:%S")
 
     def process(entry, is_retry=False):
         """Stages 1-2 for one stock -> (key, outcome): ("ok", sources, note,
-        status, results_date) | ("retry", exc) | ("failed", exc). A worker; the
-        pause after each stock is per worker, as in the Sentiment job."""
+        status, results_date) | ("filter_failed", sources, search text) | ("retry", exc)
+        | ("failed", exc). A worker; the pause after each stock is per worker, as in
+        the Sentiment job."""
         (ticker, window), market = entry
         tag = f"[{'RETRY ' if is_retry else ''}{ticker}]"
         t0 = time.time()
+        kept = reused_search.get(ticker)
         try:
-            raw_text, sources = fetch_single_raw_news(
-                client, ticker, market, window, ticker_names=ticker_names, model=search_model, tiers=search_tiers,
-            )
+            if kept:
+                # The earlier run's search, whose filter failed: only the filter runs again.
+                raw_text, sources = kept["search_text"].strip(), kept.get("sources") or []
+            else:
+                raw_text, sources = fetch_single_raw_news(
+                    client, ticker, market, window, ticker_names=ticker_names, model=search_model,
+                    tiers=search_tiers, search_budget=search_budget,
+                )
         except Exception as e:
             if not is_retry and _is_retryable(e):
                 print(f"[{_ts()}] {tag} Stage1 exhausted ({e}). Queued for retry.")
@@ -1136,14 +1175,19 @@ def build_news_summary(watchlists, api_key, now=None, reuse_failed_run=True):
                 ticker_names=ticker_names, model=reasoning_model, budget=thinking_budget,
                 previous=prior_note(ticker), tiers=filter_tiers,
             )
-            if status != STATUS_DEGRADED:
-                # Bullets only from here: the RESULTS line out (it goes into the
-                # watchlist's "Results due" line), filler lines out, then the code's
-                # "**Company (TICKER)**" header on top (note_with_header).
-                results_date, body = split_results_tag(_strip_header(clean), window)
-                body = drop_filler_lines(body)
-                clean = note_with_header(ticker, body, ticker_names) if body else ""
-        label = STATUS_DEGRADED if status == STATUS_DEGRADED else (STATUS_MATERIAL if clean else STATUS_QUIET)
+            if status == STATUS_DEGRADED:
+                # Every filter model failed: the raw search text is kept for the retry, never posted.
+                print(f"[{_ts()}] {tag} filter failed ({time.time() - t0:.1f}s); kept for the slot's retry")
+                if not is_retry:
+                    time.sleep(SECONDS_BETWEEN_CALLS)
+                return (ticker, window), ("filter_failed", sources, raw_text)
+            # Bullets only from here: the RESULTS line out (it goes into the
+            # watchlist's "Results due" line), filler lines out, then the code's
+            # "**Company (TICKER)**" header on top (note_with_header).
+            results_date, body = split_results_tag(_strip_header(clean), window)
+            body = drop_filler_lines(body)
+            clean = note_with_header(ticker, body, ticker_names) if body else ""
+        label = STATUS_MATERIAL if clean else STATUS_QUIET
         print(f"[{_ts()}] {tag} {label} ({time.time() - t0:.1f}s)")
         if not is_retry:
             time.sleep(SECONDS_BETWEEN_CALLS)
@@ -1190,8 +1234,8 @@ def build_news_summary(watchlists, api_key, now=None, reuse_failed_run=True):
         results_due = {}
         moves = {}
 
-        def record(ticker, status, sources=None, note=None, results_date=None):
-            ticker_records[ticker] = {"status": status, "sources": sources or []}
+        def record(ticker, status, sources=None, note=None, results_date=None, extra=None):
+            ticker_records[ticker] = {"status": status, "sources": sources or [], **(extra or {})}
             if note:
                 # Stored for the next digest's repeat check (previous_note).
                 ticker_records[ticker]["note"] = note
@@ -1221,16 +1265,18 @@ def build_news_summary(watchlists, api_key, now=None, reuse_failed_run=True):
                 counters["cache_hits"] += 1
             used.add(key)
             outcome = outcomes.get(key, ("failed", None))
+            if outcome[0] == "filter_failed":
+                # Not posted, not given to the editor: counted as failed (a leftover the slot's retry
+                # runs again), with the search kept so that retry only filters it (reusable_searches).
+                record(ticker, STATUS_FAILED, outcome[1],
+                       extra={"failed_stage": FAILED_STAGE_FILTER, "search_text": outcome[2]})
+                continue
             if outcome[0] != "ok":
                 record(ticker, STATUS_FAILED)
                 continue
             _, sources, clean, status, results_date = outcome
             all_sources.extend(sources)
-            if status == STATUS_DEGRADED:
-                filtered_texts.append(clean)
-                note_by_ticker[ticker] = clean
-                record(ticker, STATUS_DEGRADED, sources, note=clean)
-            elif clean:
+            if clean:
                 filtered_texts.append(clean)
                 note_by_ticker[ticker] = clean
                 record(ticker, STATUS_MATERIAL, sources, note=clean, results_date=results_date)
@@ -1246,6 +1292,9 @@ def build_news_summary(watchlists, api_key, now=None, reuse_failed_run=True):
         # Funds are not searched, so they stay out of the four counts above (and
         # out of "searched", which news_check's failure rule divides by).
         counts[STATUS_FUND] = sum(1 for r in ticker_records.values() if r["status"] == STATUS_FUND)
+        # Of the failed, those searched whose filter failed (the News tab can say "could not be checked").
+        counts["filter_failed"] = sum(1 for r in ticker_records.values()
+                                      if r["status"] == STATUS_FAILED and r.get("failed_stage") == FAILED_STAGE_FILTER)
         print(f"\n[{market}] searched={len(ticker_records) - counts[STATUS_FUND]} " +
               " ".join(f"{k}={v}" for k, v in counts.items()))
 
@@ -1347,10 +1396,12 @@ def build_discord_messages(news_data, limit=1900):
         # The News tab shows the same count in its caption, so this is Discord only.
         failed = ((entry.get("counts") or {}).get(STATUS_FAILED) or 0)
         if failed:
-            # They are searched again by the slot's next hourly retry, which posts what it finds as a
-            # follow-up (news_check, build_followup_messages; owner, 2026-11-15).
-            summary += (f"\n_{failed} stock{'s' if failed != 1 else ''} could not be searched yet "
-                        "(search errors), so {} not in this digest; the next hourly retry searches "
+            # They are checked again by the slot's next hourly retry, which posts what it finds as a
+            # follow-up (news_check, build_followup_messages; owner, 2026-11-15). "Checked", not "searched"
+            # (2026-11-22): a stock whose news filter failed is counted here too -- its search worked, but
+            # its unfiltered text is no longer posted.
+            summary += (f"\n_{failed} stock{'s' if failed != 1 else ''} could not be checked yet "
+                        "(search or filter errors), so {} not in this digest; the next hourly retry checks "
                         "{} again and posts any news._").format("they are" if failed != 1 else "it is",
                                                                 "them" if failed != 1 else "it")
         label = escape_markdown(_market_label(market))
@@ -1380,7 +1431,8 @@ def build_followup_messages(news_data, tickers, limit=1900):
     for market, entry in (news_data.get("markets") or {}).items():
         notes = []
         for t, rec in ((entry or {}).get("tickers") or {}).items():
-            if t in tickers and t not in shown and (rec or {}).get("status") in (STATUS_MATERIAL, STATUS_DEGRADED) \
+            # Material only: a "degraded" note (an older digest's) is unfiltered search text, never posted.
+            if t in tickers and t not in shown and (rec or {}).get("status") == STATUS_MATERIAL \
                     and (rec.get("note") or "").strip():
                 notes.append(rec["note"].strip())
                 shown.add(t)
