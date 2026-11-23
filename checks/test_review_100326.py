@@ -148,7 +148,9 @@ finally:
     gs.SCRIPT_DIR, gs.SYNC_STATE_FILE = saved_attrs
 
 i_push = APP.rfind("unpushed_config_files(")   # the end-of-run block is the LAST caller (the Send-to-Claude-chat button also calls it)
-check(i_push > APP.find("with tab_alerts:") > 0, "F1: the app pushes pending config at the END of the run, after every tab")
+# "with tab_alerts" without the colon: since 2026-11-22 the line reads
+# `with tab_alerts, _Contained(...):` (a failing tab no longer ends the run).
+check(i_push > APP.find("\nwith tab_alerts") > 0, "F1: the app pushes pending config at the END of the run, after every tab")
 check("SKIP_GITHUB_PULL" in APP[i_push - 600:i_push + 600], "F1: ...and not under SKIP_GITHUB_PULL (local and AppTest runs)")
 
 # --- F2 a mostly-failed news run does not post, then fail, then post again ---

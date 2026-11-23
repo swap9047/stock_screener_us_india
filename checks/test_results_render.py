@@ -335,7 +335,10 @@ at = AppTest.from_file(os.path.join(APP, "app.py"), default_timeout=600)
 at.session_state["authenticated"] = True
 at.session_state["main_tabs"] = "News"
 at.run()
-check(any("style_results" in str(e.value) for e in at.exception),
+# Since 2026-11-22 a failing tab is contained (app._Contained): the AttributeError
+# is shown as an error in the News tab instead of ending the run.
+check(any("style_results" in str(e.value) for e in at.exception)
+      or any("News tab could not be shown" in e.value and "style_results" in e.value for e in at.error),
       "R9: reproduced -- the old module in memory makes the News tab raise AttributeError")
 path = os.path.join(APP, "breadth_charts.py")
 st_ = os.stat(path)
