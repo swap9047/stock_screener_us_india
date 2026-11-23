@@ -55,10 +55,24 @@ from stage_analysis import apply_stage_to_rows, load_stage_analysis
 MIN_SNAPSHOT_ROWS = 10
 
 
+# A statement that runs longer than this is cancelled (2026-11-22): a lock wait or a stuck query used
+# to hang the step until the job's timeout, and every later hourly run queued behind it. Every statement
+# here is one upsert or one batch of rows, seconds at most.
+STATEMENT_TIMEOUT_MS = 120000
+
+
 def connect(url):
     import psycopg
     # prepare_threshold=None: Supabase's poolers can't hold prepared statements.
-    return psycopg.connect(url, autocommit=True, prepare_threshold=None, connect_timeout=20)
+    conn = psycopg.connect(url, autocommit=True, prepare_threshold=None, connect_timeout=20)
+    # SET after connecting, not `options=-c statement_timeout=...` in the connect call: a pooler may
+    # refuse startup options, and the connection would fail outright. MARKET_DB_URL is the SESSION
+    # pooler, so the setting holds for this connection's whole session. A refusal costs only the limit.
+    try:
+        conn.execute(f"SET statement_timeout = {int(STATEMENT_TIMEOUT_MS)}")
+    except Exception as e:  # noqa: BLE001 -- the limit is a guard, never a reason to skip publishing
+        print(f"::warning::Could not set statement_timeout ({type(e).__name__}); publishing without it.")
+    return conn
 
 
 UPSERT_SQL = (
