@@ -5,7 +5,9 @@
 //
 // Cron trigger (set in the dashboard): 0,30 * * * *   (UTC; ticks at :00 and :30)
 // Secret (set in the dashboard):       GH_DISPATCH_TOKEN  (fine-grained PAT, Actions: write,
-//                                      this code repo ONLY -- never the data repo)
+//                                      this code repo ONLY -- never the data repo; Actions: read
+//                                      comes with write, and lists a job's running runs)
+// Optional secret:                     DISCORD_WEBHOOK_URL (failed dispatches, token expiry)
 //
 // Deployed by hand: paste this file into the Worker's editor in the Cloudflare dashboard
 // (Workers & Pages -> the worker -> Edit code). It lives in the repo so the schedule is
@@ -121,37 +123,145 @@ function dispatchesFor(date) {
   return out;
 }
 
-async function dispatch(env, { workflow, inputs }) {
-  const res = await fetch(
-    `https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/${workflow}/dispatches`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${env.GH_DISPATCH_TOKEN}`,
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "stock-screener-cron", // GitHub rejects requests without one
-        "Content-Type": "application/json",
+const GH_HEADERS = (env) => ({
+  Authorization: `Bearer ${env.GH_DISPATCH_TOKEN}`,
+  Accept: "application/vnd.github+json",
+  "X-GitHub-Api-Version": "2022-11-28",
+  "User-Agent": "stock-screener-cron", // GitHub rejects requests without one
+});
+
+// ---- the token's expiry ---------------------------------------------------------------------
+// Every GitHub reply to a fine-grained token carries GitHub-Authentication-Token-Expiration
+// ("2026-12-01 10:00:00 UTC" or "... -0800"). The token expiring stops EVERY job with no alert,
+// so a token with under TOKEN_WARN_DAYS left is posted to Discord -- on the 00:00 UTC tick only,
+// so once a day (keep-alive.yml is dispatched on that tick every day, so a reply is always read).
+const TOKEN_WARN_DAYS = 14;
+
+function parseExpiry(text) {
+  const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2})?)\s*(UTC|Z|[+-]\d{2}:?\d{2})?$/.exec((text || "").trim());
+  if (!m) return null;
+  let zone = m[3] || "Z";
+  if (zone === "UTC") zone = "Z";
+  else if (zone !== "Z" && !zone.includes(":")) zone = `${zone.slice(0, 3)}:${zone.slice(3)}`;
+  const t = Date.parse(`${m[1]}T${m[2]}${zone}`);
+  return Number.isNaN(t) ? null : t;
+}
+
+function noteExpiry(tick, res) {
+  const header = res && res.headers && res.headers.get("github-authentication-token-expiration");
+  if (header && tick.expiry === undefined) tick.expiry = parseExpiry(header);
+}
+
+// ---- a gated job already running or queued --------------------------------------------------
+// GitHub keeps ONE pending run per concurrency group and cancels the older pending one when a
+// new run joins (2026-11-22): every hourly retry dispatched while a run was in progress
+// cancelled whatever was waiting behind it -- a Re-analyze All or Retry Pending the owner had
+// just clicked. So a gated job with a run in progress or queued is not dispatched on this tick:
+// that run either does the slot's work or fails, and the next hourly retry (RETRY_HOURS of them)
+// asks again. A listing that fails says nothing either way: dispatch as before (fail open), so
+// an API blip never costs a slot.
+async function hasActiveRun(env, tick, workflow) {
+  for (const status of ["in_progress", "queued"]) {
+    let res;
+    try {
+      res = await fetch(
+        `https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/${workflow}/runs?status=${status}&per_page=1`,
+        { method: "GET", headers: GH_HEADERS(env) },
+      );
+    } catch (e) {
+      console.warn(`${workflow}: could not list ${status} runs (${e}) -- dispatching anyway`);
+      return false;
+    }
+    noteExpiry(tick, res);
+    if (!res.ok) {
+      console.warn(`${workflow}: could not list ${status} runs (HTTP ${res.status}) -- dispatching anyway`);
+      return false;
+    }
+    let body;
+    try {
+      body = await res.json();
+    } catch (e) {
+      console.warn(`${workflow}: unreadable ${status} runs listing -- dispatching anyway`);
+      return false;
+    }
+    if ((body.total_count || 0) > 0 || (body.workflow_runs || []).length > 0) {
+      console.log(`${workflow}: a run is ${status} -- not dispatched on this tick (the next hourly retry covers the slot)`);
+      return true;
+    }
+  }
+  return false;
+}
+
+async function dispatch(env, tick, { workflow, inputs }) {
+  if (inputs && inputs.scheduled === "true" && (await hasActiveRun(env, tick, workflow))) return;
+  let res;
+  try {
+    res = await fetch(
+      `https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/${workflow}/dispatches`,
+      {
+        method: "POST",
+        headers: { ...GH_HEADERS(env), "Content-Type": "application/json" },
+        body: JSON.stringify(inputs ? { ref: REF, inputs } : { ref: REF }),
       },
-      body: JSON.stringify(inputs ? { ref: REF, inputs } : { ref: REF }),
-    },
-  );
+    );
+  } catch (e) {
+    tick.failures.push(`${workflow} (network error)`);
+    throw new Error(`${workflow}: ${e}`);
+  }
+  noteExpiry(tick, res);
   // 204 on older API docs, 200 on newer: both are res.ok.
   if (!res.ok) {
+    tick.failures.push(`${workflow} (HTTP ${res.status})`);
     throw new Error(`${workflow}: HTTP ${res.status} ${await res.text()}`);
   }
   console.log(`${workflow}: dispatched (HTTP ${res.status})`);
 }
 
+// ---- Discord (optional) -----------------------------------------------------------------------
+// Set DISCORD_WEBHOOK_URL as a Worker secret to be told when a dispatch fails or the token is near
+// its expiry; without it these are console lines only. Workflow names and dates only -- never a
+// ticker, a token or a URL.
+async function notify(env, content) {
+  if (!env.DISCORD_WEBHOOK_URL) return;
+  try {
+    const res = await fetch(env.DISCORD_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content, allowed_mentions: { parse: [] } }),
+    });
+    if (!res.ok) console.error(`Discord notice failed: HTTP ${res.status}`);
+  } catch (e) {
+    console.error(`Discord notice failed: ${e}`);
+  }
+}
+
+async function runTick(date, env) {
+  const jobs = dispatchesFor(date);
+  if (!jobs.length) return; // nothing due on this tick
+  const tick = { failures: [], expiry: undefined };
+  // allSettled: one failing dispatch must not stop the others.
+  const results = await Promise.allSettled(jobs.map((j) => dispatch(env, tick, j)));
+  const failed = results.filter((r) => r.status === "rejected");
+  failed.forEach((r) => console.error(String(r.reason)));
+  if (tick.failures.length) {
+    await notify(env, `⚠️ Scheduler: ${tick.failures.length} workflow dispatch(es) failed: ${tick.failures.join(", ")}. `
+      + "The next tick tries again; a 401 means the GitHub token needs renewing.");
+  }
+  if (date.getUTCHours() === 0 && date.getUTCMinutes() === 0 && tick.expiry) {
+    const days = (tick.expiry - date.getTime()) / 86400000;
+    if (days < TOKEN_WARN_DAYS) {
+      const when = new Date(tick.expiry).toISOString().slice(0, 10);
+      console.warn(`GitHub dispatch token expires ${when}`);
+      await notify(env, `⚠️ Scheduler: the GitHub dispatch token expires on ${when} `
+        + `(${Math.max(0, Math.floor(days))} day(s) left). Renew it and update GH_DISPATCH_TOKEN, or every scheduled job stops.`);
+    }
+  }
+  if (failed.length) throw new Error(`${failed.length} dispatch(es) failed`);
+}
+
 export default {
   async scheduled(event, env, ctx) {
-    const jobs = dispatchesFor(new Date(event.scheduledTime));
-    if (!jobs.length) return; // nothing due on this tick
-    // allSettled: one failing dispatch must not stop the others.
-    const results = await Promise.allSettled(jobs.map((j) => dispatch(env, j)));
-    const failed = results.filter((r) => r.status === "rejected");
-    failed.forEach((r) => console.error(String(r.reason)));
-    if (failed.length) throw new Error(`${failed.length} dispatch(es) failed`);
+    await runTick(new Date(event.scheduledTime), env);
   },
 
   // No public trigger: anyone who found the URL could otherwise spam dispatches.
