@@ -17,6 +17,14 @@ inputs:
       file is left out (merge_entries.py). For a keyed file another workflow owns.
     required: false
     default: ""
+  entries-merge:
+    description: >
+      Files among `files` that this job owns but other writers edit per entry
+      (the app's per-ticker re-analyze, an expert-views run's Sentiment): merged
+      three ways per top-level key against the copy load-data loaded, so an
+      entry this run did not change keeps the branch's value (merge_keyed.py).
+    required: false
+    default: ""
 runs:
   using: composite
   steps:
@@ -24,6 +32,7 @@ runs:
       env:
         FILES: ${{ inputs.files }}
         ENTRIES_ONLY: ${{ inputs.entries-only }}
+        ENTRIES_MERGE: ${{ inputs.entries-merge }}
         MESSAGE: ${{ inputs.message }}
         ACTION_PATH: ${{ github.action_path }}
       run: |
@@ -74,6 +83,23 @@ runs:
                 staged+=("$f")
               else
                 echo "$f: no entries written by this run -- leaving it out"
+              fi
+              continue
+            fi
+            if [[ " $ENTRIES_MERGE " == *" $f "* ]]; then
+              # Per entry, three ways: the run's changes and prunes land, an entry
+              # it did not touch keeps the branch's (written meanwhile by the app or
+              # another workflow). `data-loaded` is the commit load-data copied from.
+              base_ref=""
+              if git rev-parse -q --verify refs/tags/data-loaded >/dev/null; then
+                base_ref="data-loaded"
+              else
+                echo "$f: no data-loaded tag -- merging without a base (newer stamp wins)"
+              fi
+              if python3 "$ACTION_PATH/merge_keyed.py" "$f" "$SRC/$f" "$base_ref"; then
+                staged+=("$f")
+              else
+                echo "$f: this run's copy is unreadable -- leaving it out"
               fi
               continue
             fi

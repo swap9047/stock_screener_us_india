@@ -136,4 +136,8 @@ jobs:
         uses: ./.github/actions/commit-data
         with:
           files: fundamentals.json
+          # Per entry against the copy this job loaded (2026-11-22): the whole file,
+          # loaded hours ago, reverted every Sentiment the app or an expert-views run
+          # wrote meanwhile.
+          entries-merge: fundamentals.json
           message: "Update fundamentals.json [automated]"
