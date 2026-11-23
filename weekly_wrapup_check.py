@@ -151,14 +151,25 @@ def main():
               "anywhere, and tenure counters were left unchanged.")
         return
 
-    ok, detail = send_discord_batch(webhook, messages)
+    undelivered = []
+    ok, detail = send_discord_batch(webhook, messages, failed=undelivered)
     if not ok:
         # Advancing on a run that didn't fully land would silently rebase
         # every Wk value with no way to recover the old entered dates, so a
         # partial send is treated as no send. Worst case next week's numbers
         # are one run stale, which is visible and self-correcting.
         print(f"Failed to send one or more messages to Discord ({detail}) — tenure "
-              "counters left unchanged; will retry next run.")
+              "counters left unchanged.")
+        if len(undelivered) >= len(messages):
+            # NOTHING arrived (2026-11-22): this used to return 0 as well, so the
+            # slot gate counted the slot done and the week's wrap-up was lost.
+            # Red instead, and the Worker's next hourly dispatch of the Sunday slot
+            # (it runs into Monday) sends it again -- the state was not advanced,
+            # so the retry builds the same wrap-up. A PARTLY delivered wrap-up
+            # stays green: a retry would repost the parts that arrived.
+            print("::error::The weekly wrap-up reached Discord not at all -- failing the run so the "
+                  "slot's next hourly retry sends it.")
+            sys.exit(1)
         return
 
     # A watchlist stock with no row this run could not be judged: its counters

@@ -281,6 +281,17 @@ def check_rules():
     save_state(new_state)
     print("Sent to Discord." if ok else "Failed to send one or more messages to Discord -- "
           "the rules whose message failed are announced again next run.")
+    if not ok and len(failed) >= len(messages) + 1:
+        # EVERY message failed, header included (2026-11-22): the run used to end
+        # green, so the slot gate counted the night done and the night's alerts
+        # (rolled back above) waited a whole day for the rule's next due run.
+        # Red instead: the Worker's next hourly dispatch of the 9 PM slot checks
+        # again and sends them. Nothing arrived, so the retry repeats nothing --
+        # a PARTLY delivered run stays green, because a retry would repost the
+        # "full"-mode rules whose tables did arrive.
+        print("::error::No alert message reached Discord -- failing the run so the slot's next "
+              "hourly retry sends them.")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
