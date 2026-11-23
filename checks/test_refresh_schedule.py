@@ -4,7 +4,7 @@ The window lives in two places that cannot share code: the Cloudflare Worker (cl
 clock since 2026-11-02) and refresh_schedule.py, which the app's stale-data warning reads. This holds the
 app's copy to the slot gate's decisions with the window as parameters (the breadth gate's until 2026-11-02),
 hour by hour over 14 months across both daylight-saving changes, and then to the Worker's own `isActive`,
-run under node (skipped without it) on every :00 tick.
+run under node (skipped without it locally; a failure on CI, where checks.yml installs node) on every :00 tick.
 """
 
 import sys
@@ -41,7 +41,7 @@ check(not mismatch, f"refresh_schedule agrees with the gate's decisions for that
 
 # And with the Worker itself: its isActive, run under node, on every :00 tick (the :30 ticks of the 17:00 hour
 # are the one place a minute-level rule and an hour-level one differ, so only :00 is compared).
-import json, shutil, subprocess, tempfile
+import json, os, shutil, subprocess, tempfile
 node = shutil.which("node")
 if node:
     tmp = Path(tempfile.mkdtemp(prefix="worker_rs_"))
@@ -59,6 +59,11 @@ if node:
     diff = sorted(worker_on ^ app_on)
     check(not diff, f"refresh_schedule agrees with the Worker's own window on every :00 tick for 14 months ({[d.astimezone(ET).strftime('%a %m-%d %H:%M') for d in diff[:3]]})")
     shutil.rmtree(tmp, ignore_errors=True)
+elif os.environ.get("GITHUB_ACTIONS"):
+    # On CI a missing node is a broken runner setup (checks.yml installs it), not
+    # a reason to pass: the SKIP used to count as a pass, so the Worker-vs-app
+    # comparison could stop running on every push without anyone seeing it.
+    check(False, "node is installed on CI (actions/setup-node in checks.yml): the Worker's window was not compared")
 else:
     print("SKIP node is not installed: the Worker's window was not compared")
 

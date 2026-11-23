@@ -59,7 +59,11 @@ def redirect(pairs):
 # clicked a re-analyze button, because that calls Gemini. pyflakes finds the
 # whole class offline. Only "undefined name" fails: the codebase has unused
 # imports that are not bugs.
+# The Vercel functions (api/) and the checks themselves too (2026-11-22): a check
+# that names something it never imported raises only on the line that runs it,
+# and a raise after the summary line, or in a branch it rarely takes, passes.
 targets = sorted(str(p) for p in REPO.glob("*.py")) + sorted(str(p) for p in REPO.glob(".github/actions/*/*.py"))
+targets += sorted(str(p) for p in REPO.glob("api/*.py")) + sorted(str(p) for p in REPO.glob("checks/*.py"))
 try:
     proc = subprocess.run([sys.executable, "-m", "pyflakes", *targets], capture_output=True, text=True)
     if "No module named pyflakes" in proc.stderr:

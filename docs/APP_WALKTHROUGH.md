@@ -115,7 +115,9 @@ never pushes them over a newer job commit (§9).
    relative returns are always measured against the ticker's own index, whichever
    watchlist it sits in.
 3. **One bulk download per benchmark group.** It fetches 5 years of daily OHLCV with
-   auto-adjusted prices: a 90 s timeout per attempt, 3 attempts, 30 s apart.
+   split-adjusted prices, dividends not back-adjusted (`auto_adjust=False`, as
+   TradingView's default chart and the breadth job): a 90 s timeout per attempt, 3
+   attempts, 30 s apart.
 4. **Per-ticker extras.** For each ticker it reads Yahoo's `.info` (name, P/E, P/B,
    EV/EBITDA, market cap, operating cash flow, ROE, quarterly growth, most recent
    quarter) and four financial statements (annual cash flow, income and balance sheet,
