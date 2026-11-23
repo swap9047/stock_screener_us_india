@@ -307,5 +307,14 @@ slots = sorted(int(h) for h in str(gates[0]["with"]["slots"]).replace(" ", "").s
 check(slots == sorted(alerts.ALLOWED_HOURS),
       f"A1 alerts.ALLOWED_HOURS {sorted(alerts.ALLOWED_HOURS)} is the gate's slots {slots}")
 
+# ---------------------------------------------------------------- S: one settle margin
+import refresh_market_breadth as rmb  # noqa: E402
+
+check(rmb.SETTLE_MINUTES == sd.SESSION_SETTLE_MINUTES,
+      "S1 the breadth job's settle margin is stock_data's")
+src = (REPO / "refresh_market_breadth.py").read_text()
+check("from stock_data import SESSION_SETTLE_MINUTES" in src and "SETTLE_MINUTES = 30" not in src,
+      "S1 ...imported, not a second literal")
+
 print("FAILURES:", fails)
 sys.exit(1 if fails else 0)

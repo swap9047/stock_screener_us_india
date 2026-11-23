@@ -8,6 +8,7 @@ import pandas as pd
 import yfinance as yf
 
 from breadth_math import compute_breadth
+from stock_data import SESSION_SETTLE_MINUTES
 import index_registry
 import price_gaps
 
@@ -33,8 +34,10 @@ RETRY_PAUSE_SECONDS = 5
 MAX_RETRY_PASSES = 3
 
 # Minutes after the close before a day's reading counts as final rather than
-# live (is_live): Yahoo needs a while to settle the closing print.
-SETTLE_MINUTES = 30
+# live (is_live): Yahoo needs a while to settle the closing print. The SAME
+# margin fetch_snapshot uses to call a daily bar settled -- imported, not a
+# second 30 that could drift from it.
+SETTLE_MINUTES = SESSION_SETTLE_MINUTES
 
 # Yahoo publishes a day's daily bars with a lag and not all at once. Before it
 # does, it serves the day as a row of NaN -- on 2026-10-09 at 9:15 PM ET every US
