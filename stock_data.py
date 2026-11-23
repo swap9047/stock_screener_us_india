@@ -405,18 +405,6 @@ def add_watchlist(label, benchmark):
     return key
 
 
-def rename_watchlist(key, new_label):
-    """Renames a watchlist's DISPLAY LABEL only -- the internal key (and
-    everything keyed by it: watchlist.json, custom_filters.json, alert rule
-    scopes, cached AI views' "market" field) never changes, so this is a
-    single-field update with no data migration."""
-    registry = load_markets_registry()
-    if key not in registry:
-        raise KeyError(f"Unknown market key: {key}")
-    registry[key]["label"] = new_label.strip()
-    save_markets_registry(registry)
-
-
 def get_benchmarks(settings=None):
     """Returns {market_key: benchmark_ticker} for every registered market."""
     registry = load_markets_registry()
@@ -623,10 +611,6 @@ def load_watchlists():
 
 def save_watchlists(watchlists):
     atomic_write_json(WATCHLIST_FILE, watchlists)
-
-
-def load_watchlist(market):
-    return load_watchlists().get(market, [])
 
 
 def save_watchlist(market, tickers):
