@@ -546,7 +546,11 @@ BACKUP_KEY_NAME = "GEMINI_API_KEY_BACKUP"
 
 # How long a key that returned a quota/rate-limit error is skipped for. Without
 # this, a key whose daily quota is exhausted keeps getting picked for half the
-# remaining calls and fails every one of them.
+# remaining calls and fails every one of them. The pause is per (key, model), not
+# per key (2026-11-23): Google counts per-minute limits per project AND model, and
+# a key-wide pause let one model's 429s take the key out of every other model --
+# on 2026-11-23 a search backup that answered 429 on all 123 calls also benched
+# each key for 120 s for Gemma's own searches.
 KEY_COOLDOWN_SECONDS = 120
 
 # Local runs only: app.py loads .env for the dashboard, but the headless
@@ -669,6 +673,7 @@ class RotatingGeminiClient:
             raise ValueError("RotatingGeminiClient needs at least one API key")
         self._keys = list(keys)
         self._clients = {}
+        # (key name, model) -> time the pair may be picked again (KEY_COOLDOWN_SECONDS).
         self._cooldown_until = {}
         # Keys that are dead on every model this run -- see KEY_INVALID_MARKERS.
         self._dead = set()
@@ -724,7 +729,7 @@ class RotatingGeminiClient:
             usable = [(n, k) for n, k in self._keys if self._usable(n, model)]
             if not usable:
                 return None, None
-            live = [(n, k) for n, k in usable if self._cooldown_until.get(n, 0) <= now]
+            live = [(n, k) for n, k in usable if self._cooldown_until.get((n, model), 0) <= now]
             # Every key cooling down: use them all rather than hard-failing --
             # a stale cooldown must never be the reason a run does nothing.
             choices = live or usable
@@ -792,8 +797,9 @@ class RotatingGeminiClient:
                   f"for the rest of this run; {left} key(s) left for it")
             return
         with self._lock:
-            self._cooldown_until[name] = time.time() + KEY_COOLDOWN_SECONDS
-        print(f"  [key rotation] {name} hit a quota/rate limit -- skipping it for {KEY_COOLDOWN_SECONDS}s")
+            self._cooldown_until[(name, model)] = time.time() + KEY_COOLDOWN_SECONDS
+        print(f"  [key rotation] {name} hit a quota/rate limit for {model} -- skipping that pair for "
+              f"{KEY_COOLDOWN_SECONDS}s (the key still serves other models)")
 
     @property
     def models(self):
