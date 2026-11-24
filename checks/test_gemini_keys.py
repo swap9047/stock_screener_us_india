@@ -88,7 +88,7 @@ for _ in range(40):
 # abort the call and cost a rung of the model ladder while a key with quota sat
 # unused, which is the opposite of what rotating is for. The cooldown is still
 # what this check is really about; `raised == 0` is the new half.
-check(client2._cooldown_until.get(hot, 0) > 0, f"quota error puts {hot} on cooldown")
+check(client2._cooldown_until.get((hot, "m"), 0) > 0, f"quota error puts {hot} on cooldown for that model")
 check(raised == 0, f"...and the call falls through to a key with quota ({raised} raised of 40)")
 after = dict(client2.call_counts)
 for _ in range(40):
@@ -139,7 +139,7 @@ check(all(fc.get(n, 0) == 0 for n in client3.key_names if n != bad),
       f"...and no failure is attributed to a healthy key: {fc}")
 # A 500 is not a key problem, so it must NOT disable or cool down the key --
 # only auth and quota do that. Counting must stay separate from acting.
-check(bad not in client3._dead and client3._cooldown_until.get(bad, 0) == 0,
+check(bad not in client3._dead and not any(n == bad for n, _ in client3._cooldown_until),
       "a 500 is counted against the key but does not disable or cool it down")
 
 summary = client3.usage_summary() if hasattr(client3, "usage_summary") else ""
@@ -358,7 +358,7 @@ for _ in range(30):
     c9.models.generate_content(model="flash", contents="x")
 check(("A", "flash") in c9._exhausted, "the key that spent its flash quota is retired for flash")
 check(c9.call_counts["A"] <= 1, f"...and is not tried for flash again this run ({c9.call_counts['A']} call(s) on A)")
-check(c9._cooldown_until.get("A", 0) == 0, "a daily quota retires the pair instead of a 120 s cooldown")
+check(c9._cooldown_until.get(("A", "flash"), 0) == 0, "a daily quota retires the pair instead of a 120 s cooldown")
 for _ in range(10):
     c9.models.generate_content(model="pro", contents="x")
 check(any(k == "dead-for-flash" and m == "pro" for k, m in served), "the same key still serves the ladder's other models")
@@ -392,5 +392,30 @@ c11._client_for = lambda key: LadderStub(key)
 res, used = llm_util.run_model_ladder(c11, "p", [("primary", 0), ("primary", 0), ("fallback", 0)],
                                       config_for=lambda m: None, label="t", subject="ACME")
 check(res == "fallback answer" and used == "fallback", f"the ladder falls through to the fallback model ({used})")
+
+# A per-minute 429 pauses the (key, model) PAIR, not the key (2026-11-23). A search backup answered 429 on
+# all 123 calls one night, and each one benched its key for 120 s for every model -- Gemma's own searches
+# included. Here the backup 429s on key "a" only; with a key-wide pause "a" sat out for Gemma too (the other
+# keys were live, so the picker skipped it), and Gemma's load fell on two keys.
+class RateStub:
+    def __init__(self, key): self.key = key; self.models = self
+    def generate_content(self, **kw):
+        if kw.get("model") == "backup" and self.key == "a":
+            raise RuntimeError("429 RESOURCE_EXHAUSTED. You exceeded your current quota (per minute)")
+        served.append((self.key, kw.get("model"))); return "ok"
+served = []
+c12 = llm_util.RotatingGeminiClient([("A", "a"), ("B", "b"), ("C", "c")])
+c12._client_for = lambda key: RateStub(key)
+for _ in range(20):
+    c12.models.generate_content(model="backup", contents="x")
+paused = sorted(c12._cooldown_until)
+check(paused == [("A", "backup")],
+      f"a rate-limit 429 pauses only the (key, model) pairs that hit it ({paused})")
+for _ in range(60):
+    c12.models.generate_content(model="gemma", contents="x")
+gemma_keys = {k for k, m in served if m == "gemma"}
+check(gemma_keys == {"a", "b", "c"},
+      f"...and every key still serves the other model at once ({sorted(gemma_keys)})")
+check(not c12._exhausted, "...and a per-minute 429 retires nothing for the run")
 
 print("FAILURES:", fails); sys.exit(fails)
