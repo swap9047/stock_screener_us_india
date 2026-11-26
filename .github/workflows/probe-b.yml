@@ -1,0 +1,12 @@
+name: Probe B (plain)
+on:
+  push:
+    branches: [tmp/secrets-probe]
+permissions:
+  contents: read
+jobs:
+  b:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - run: echo plain

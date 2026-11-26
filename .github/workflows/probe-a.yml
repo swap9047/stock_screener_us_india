@@ -1,0 +1,15 @@
+name: Probe A (secrets context)
+on:
+  push:
+    branches: [tmp/secrets-probe]
+permissions:
+  contents: read
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Size of the secrets context
+        env:
+          ALL: ${{ toJSON(secrets) }}
+        run: echo "chars=${#ALL}"
