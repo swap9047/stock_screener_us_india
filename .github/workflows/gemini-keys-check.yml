@@ -1,9 +1,8 @@
 name: Check Gemini keys
 
-# By hand only (owner, 2026-11-26): "are all my Gemini keys loaded, and does each one answer?". The
-# gemini-keys action finds every GEMINI_API_KEY* secret by name, then each key makes one tiny
-# gemini-3.5-flash-lite call (a few dozen tokens). Run it after adding a key. Loads no data, commits
-# nothing, and prints key NAMES only, never a value.
+# By hand only (owner, 2026-11-26): "are all my Gemini keys loaded, and does each one answer?". Each key
+# named below makes one tiny gemini-3.5-flash-lite call (a few dozen tokens). Run it after adding a key.
+# Loads no data, commits nothing, and prints key NAMES only, never a value.
 on:
   workflow_dispatch:
 
@@ -27,11 +26,22 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Export the Gemini keys
-        uses: ./.github/actions/gemini-keys
-        with:
-          secrets: ${{ toJSON(secrets) }}
-
       - name: Try each key
         shell: bash
-        run: python -u .github/actions/gemini-keys/check_keys.py 2>&1 | python -u log_redact.py
+        run: python -u scripts/check_gemini_keys.py 2>&1 | python -u log_redact.py
+        env:
+          # The Gemini keys, one line each. GitHub holds back a workflow that serialises the whole secrets
+          # context, so they cannot be found by name here. llm_util finds them by prefix; a secret that is
+          # not set comes through blank and is ignored, so a new key needs only its secret while it is named
+          # here (spare slots through _B9). checks/test_gemini_keys_workflows.py keeps every list identical.
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_API_KEY_BACKUP: ${{ secrets.GEMINI_API_KEY_BACKUP }}
+          GEMINI_API_KEY_BACKUP_B: ${{ secrets.GEMINI_API_KEY_BACKUP_B }}
+          GEMINI_API_KEY_BACKUP_B2: ${{ secrets.GEMINI_API_KEY_BACKUP_B2 }}
+          GEMINI_API_KEY_BACKUP_B3: ${{ secrets.GEMINI_API_KEY_BACKUP_B3 }}
+          GEMINI_API_KEY_BACKUP_B4: ${{ secrets.GEMINI_API_KEY_BACKUP_B4 }}
+          GEMINI_API_KEY_BACKUP_B5: ${{ secrets.GEMINI_API_KEY_BACKUP_B5 }}
+          GEMINI_API_KEY_BACKUP_B6: ${{ secrets.GEMINI_API_KEY_BACKUP_B6 }}
+          GEMINI_API_KEY_BACKUP_B7: ${{ secrets.GEMINI_API_KEY_BACKUP_B7 }}
+          GEMINI_API_KEY_BACKUP_B8: ${{ secrets.GEMINI_API_KEY_BACKUP_B8 }}
+          GEMINI_API_KEY_BACKUP_B9: ${{ secrets.GEMINI_API_KEY_BACKUP_B9 }}

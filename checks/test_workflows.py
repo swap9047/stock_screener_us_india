@@ -37,15 +37,15 @@ check(re.findall(r"secrets\.(\w+)", ka_text) == ["APP_URL"], "keep-alive.yml use
 check((ka.get("permissions") or {}).get("contents") == "read" and "git push" not in ka_text,
       "keep-alive.yml is read-only on this repo")
 
-# gemini-keys-check.yml (by hand) tries each Gemini key once: no data, no commits, and the only secret
-# it touches is the secrets context handed to the gemini-keys action, which exports the GEMINI_API_KEY*
-# entries and nothing else (checks/test_gemini_keys_export.py).
+# gemini-keys-check.yml (by hand) tries each Gemini key once: no data, no commits, and the only secrets it names
+# are the Gemini keys (checks/test_gemini_keys_workflows.py holds the list identical to the AI workflows').
 gk_text = open(f"{R}/workflows/gemini-keys-check.yml").read()
 gk = yaml.safe_load(gk_text)
 check("load-data" not in gk_text and "commit-data" not in gk_text and "DATA_REPO_TOKEN" not in gk_text,
       "gemini-keys-check.yml never touches the data repo")
-check(re.findall(r"secrets\.(\w+)", gk_text) == [] and gk_text.count("toJSON(secrets)") == 1,
-      "gemini-keys-check.yml names no secret; the keys come in through the gemini-keys action")
+check(set(re.findall(r"secrets\.(\w+)", gk_text)) and all(n.startswith("GEMINI_API_KEY") for n in re.findall(r"secrets\.(\w+)", gk_text))
+      and "toJSON(secrets)" not in gk_text,
+      "gemini-keys-check.yml names only Gemini key secrets and never serialises the secrets context")
 check((gk.get("permissions") or {}).get("contents") == "read" and "git push" not in gk_text
       and list((gk.get("on") or gk.get(True)).keys()) == ["workflow_dispatch"],
       "gemini-keys-check.yml is by hand only and read-only on this repo")
