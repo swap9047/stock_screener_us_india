@@ -369,7 +369,7 @@ sd.load_data_snapshot = lambda: {"per_market": {"us_invested": [
     {"ticker": t, "company_name": NAMES[t], "quote_type": "EQUITY"} for t in NAMES]}}
 ns.load_news_summary = lambda: None
 ns._load_dashboard_perf = lambda: None
-NOW = datetime(2026, 11, 3, 11, 0, tzinfo=ET)
+NOW = datetime(2026, 11, 3, 17, 0, tzinfo=ET)   # after the 4 PM slot (6 AM until 2026-11-26)
 patch_sleep()
 try:
     first = ns.build_news_summary({"us_invested": ["ACME", "ZORP"]}, "k", now=NOW)

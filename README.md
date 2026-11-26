@@ -83,11 +83,12 @@ evidence, forward signals first (e.g. "Upgrade · Outlook ↑ · Profit +22%"), 
 what decided it.
 
 ### Market News (`news_summary.py`)
-A daily 6 AM ET summary of material catalysts (FDA approvals, earnings, M&A, contracts, named-
-brokerage rating changes) from the last 24 hours, plus events due in the next few days, for
-the invested watchlists by default. It is dated by its 6 AM ET slot and skips ETFs. Filler is
-dropped: rating-site notes, law-firm class-action ads, conference attendance, and small
-unexplained price moves. So is anything the previous day's digest already reported. Each
+A twice-a-week summary (Sunday and Wednesday, 4 PM ET) of material catalysts (FDA approvals,
+earnings, M&A, contracts, named-brokerage rating changes) from the last 7 days, plus events due
+in the next few days, for the invested watchlists by default. It is dated by its 4 PM ET slot
+and skips ETFs. Filler is dropped: rating-site notes, law-firm class-action ads, conference
+attendance, and small unexplained price moves. So is anything the previous digest already
+reported (the two windows overlap by 3-4 days). Each
 bullet names the company, and if the editing model fails, the code formats the bullets
 itself.
 

@@ -31,7 +31,7 @@ run once per unique (ticker, window date), NEWS_CONCURRENT_TICKERS at a time,
 so a ticker in three watchlists costs one search, not three, while still
 appearing in all three digests -- only Stage 3 is genuinely per-market.
 
-News is generated once/day at 6:00 AM ET via GitHub Actions (news-summary.yml).
+News is generated twice a week (Sunday and Wednesday, 4:00 PM ET) via GitHub Actions (news-summary.yml).
 The watchlist scope (which markets to include) is controlled by the
 ``news_watchlist_scope`` key in settings.json (empty list = all markets).
 
@@ -130,16 +130,27 @@ STATUS_FUND = "fund_skipped"  # an ETF/fund: not searched (D5)
 # for digests written before that existed.
 COLLATE_FALLBACK = "fallback"
 
-NO_NEWS_SENTENCE = "No major news for this watchlist's tickers in the last 24 hours."
+NO_NEWS_SENTENCE = "No major news for this watchlist's tickers in the last 7 days."
 
-# The digest's slot: 6 AM ET (8 PM until 2026-10-08), the news-summary.yml gate's
+# The digest's slot: 4 PM ET (6 AM until 2026-11-26, 8 PM until 2026-10-08), the news-summary.yml gate's
 # `slots`. A digest is dated and windowed by this slot, not by when GitHub started
 # the run -- it started the 8 PM job anywhere from 8:17 PM to 2:53 AM ET
 # (2026-09-27..10-04), so dating
 # by the run's own clock gave two digests dated 2026-09-29 and none for 09-28,
 # and moved the search window with it. checks/test_news_digest_100426.py ties
 # this to the workflow.
-NEWS_SLOT_HOUR_ET = 6
+# 4 PM ET on Sunday and Wednesday (owner, 2026-11-26: "twice a week, before Sunday evening and Wednesday
+# evening"; it was 6 AM ET every day). The gate (news-summary.yml: slots "16", days SUN,WED) and the Worker
+# (GATED_JOBS) keep the weekdays; this hour dates the slot and anchors each ticker's window. The US session is
+# still closing at 16:00, so its last session's big move reaches the NEXT digest (session_moves only counts a
+# settled session, each once); NSE closed ten hours earlier.
+NEWS_SLOT_HOUR_ET = 16
+
+# How far back a digest looks (owner, 2026-11-26: "always the last 7 days"). It was one day while the digest
+# ran every morning. Consecutive digests now overlap by 3-4 days; the previous digest's note per ticker
+# (previous_note -> Stage 2's "ALREADY REPORTED"), the results dates and the checked sessions keep a story from
+# being posted twice.
+NEWS_WINDOW_DAYS = 7
 _ET = ZoneInfo("America/New_York")
 
 # Stage 3 used to alternate its first two models and wait a fixed 30 s before a second pass
@@ -246,7 +257,7 @@ def _display_name(ticker, ticker_names):
 
 
 def news_slot_date(now=None):
-    """The date of the 6 AM ET slot a run belongs to: today's if it is past 6 AM
+    """The date of the NEWS_SLOT_HOUR_ET slot a run belongs to: today's if it is past that hour
     ET, else yesterday's (a late run that GitHub started after midnight)."""
     now_et = (now or datetime.now(_ET)).astimezone(_ET)
     slot_today = now_et.replace(hour=NEWS_SLOT_HOUR_ET, minute=0, second=0, microsecond=0)
@@ -255,9 +266,10 @@ def news_slot_date(now=None):
 
 def slot_window_date(ticker, slot_date):
     """The exchange-local date ending a ticker's search window, taken AT the
-    6 AM ET slot -- so a late start no longer moves it. For a US ticker that is
-    the slot date; for an Indian one, the IST date at 6 AM ET, which is the same
-    date (3:30-4:30 PM IST, as that day's NSE session closes)."""
+    slot (NEWS_SLOT_HOUR_ET) -- so a late start no longer moves it. For a US ticker that is
+    the slot date; for an Indian one, the IST date at that moment: 4 PM ET is 1:30-2:30 AM IST
+    the NEXT calendar day, which is what the clock there says (it was the same date at the old
+    6 AM ET slot, 3:30-4:30 PM IST)."""
     slot_dt = datetime(slot_date.year, slot_date.month, slot_date.day, NEWS_SLOT_HOUR_ET, tzinfo=_ET)
     tz = ZoneInfo("Asia/Kolkata") if ticker.endswith(_INDIA_SUFFIXES) else _ET
     return slot_dt.astimezone(tz).strftime("%Y-%m-%d")
@@ -281,7 +293,7 @@ def market_window_date(market, tickers):
 
 
 def _cutoff_date(as_of_date):
-    return (datetime.strptime(as_of_date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+    return (datetime.strptime(as_of_date, "%Y-%m-%d") - timedelta(days=NEWS_WINDOW_DAYS)).strftime("%Y-%m-%d")
 
 
 # --- funds, filler and headers (2026-10-04 review) ------------------------------
@@ -534,7 +546,7 @@ def _perf_as_of(perf):
 def session_moves(ticker, perf, window_date, now, already_checked=()):
     """({session: % move}, [sessions checked]) for one ticker, from dashboard_perf.json.
 
-    A session counts when it is in the ticker's 24-hour window (the day before
+    A session counts when it is in the ticker's window (NEWS_WINDOW_DAYS before
     `window_date` to `window_date`, in its exchange's dates), had settled both by
     `now` and by the time the closes were stored (perf "as_of": a run during the
     session stores a live close), and no earlier digest checked it. Its move is the
@@ -550,7 +562,7 @@ def session_moves(ticker, perf, window_date, now, already_checked=()):
         end = date.fromisoformat(str(window_date)[:10])
     except ValueError:
         return {}, []
-    start = end - timedelta(days=1)
+    start = end - timedelta(days=NEWS_WINDOW_DAYS)
     days = sorted(series)
     moves, checked = {}, []
     for i, iso in enumerate(days):
@@ -688,7 +700,7 @@ def fetch_single_raw_news(client, ticker, market, as_of_date, ticker_names=None,
     prompt = (
         f"You are a financial news researcher. For the {exchange} stock {name} -- "
         f"search for news, announcements, press releases, analyst notes, and stock moves between "
-        f"{cutoff_date} and {as_of_date} (the last 24 hours), AND any major upcoming scheduled events in the next 3-4 days (e.g. earnings (latest quarter only), launches). Report any news items you find, "
+        f"{cutoff_date} and {as_of_date} (the last {NEWS_WINDOW_DAYS} days), AND any major upcoming scheduled events in the next 3-4 days (e.g. earnings (latest quarter only), launches). Report any news items you find, "
         f"specifying the exact date of each item. Report only news about {name} itself, not about other "
         "companies (a peer, a customer, or another company's deal). Be extremely concise. If there is no news, output nothing."
     )
@@ -844,7 +856,7 @@ def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date,
     # output is bullets only: the code adds the "Company (TICKER)" header
     # (note_with_header), because a model-written "bold ticker header" dropped the
     # company name. `previous` is what the last digest said about this ticker, so
-    # the overlapping search windows of consecutive nights stop re-posting it.
+    # the overlapping search windows of consecutive digests stop re-posting it.
     already = ""
     if previous and previous.strip():
         already = ("ALREADY REPORTED in the previous digest -- do NOT repeat these. Keep an item that "
@@ -853,10 +865,10 @@ def filter_batch_with_reasoning(client, raw_text, tickers, market, as_of_date,
     prompt = (
         f"You are a senior financial analyst. Below is raw news text gathered for: {subject}.\n\n"
         f"Today is {as_of_date}. STRICT RECENCY RULE: Evaluate each news item. Keep ONLY items dated "
-        f"{cutoff_date} or {as_of_date} (the last 24 hours), OR major upcoming scheduled events in the "
+        f"between {cutoff_date} and {as_of_date} (the last {NEWS_WINDOW_DAYS} days), OR major upcoming scheduled events in the "
         f"next 3-4 days. Drop anything older or undated.\n\n"
         "STRICT MATERIALITY RULE:\n"
-        "- KEEP ONLY: earnings released in the last 2 days (latest quarter only), other major upcoming events "
+        f"- KEEP ONLY: earnings released in the last {NEWS_WINDOW_DAYS} days (latest quarter only), other major upcoming events "
         "in the next 3-4 days, M&A/acquisitions, FDA/regulatory approvals, important board "
         "announcements (EXCLUDING dividend and generic day-to-day announcements), rating changes and price targets "
         "from named brokerages, major contract wins/losses, big institutional and promoter activity, and a "
@@ -1010,7 +1022,7 @@ def build_news_summary(watchlists, api_key, now=None, reuse_failed_run=True):
     """Runs the 3-stage pipeline for every market in `watchlists`, respecting
     the ``news_watchlist_scope`` setting (empty = the all_invested group).
 
-    `now` (tests) fixes the clock that picks the 6 AM ET slot. With
+    `now` (tests) fixes the clock that picks the slot (NEWS_SLOT_HOUR_ET). With
     `reuse_failed_run` (every run but a partial smoke test), the retry of a failed
     run for this same slot searches only the stocks that failed and reuses the rest
     (reusable_outcomes).
@@ -1065,7 +1077,7 @@ def build_news_summary(watchlists, api_key, now=None, reuse_failed_run=True):
 
     client = llm_util.make_client(api_key)
     result = {
-        # Dated by the 6 AM ET slot this run belongs to, not by when GitHub
+        # Dated by the slot this run belongs to, not by when GitHub
         # started it (news_slot_date).
         "as_of": slot_date.isoformat(),
         "generated_at": datetime.now(timezone.utc).isoformat(),

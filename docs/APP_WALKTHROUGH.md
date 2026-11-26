@@ -52,11 +52,11 @@ commit their output.
 | When (slot) | Job | What it produces |
 |---|---|---|
 | Every 30 minutes, Sunday 10 PM to Friday 5 PM ET (none 5:30-9:30 PM ET on weekdays); GitHub's hourly fallback covers a Worker outage | Data refresh | `data_snapshot.json`: prices plus every indicator, for every ticker |
-| 6:00 AM | News digest | `news_summary.json` + one Discord digest per watchlist in scope |
+| Sunday + Wednesday 4:00 PM | News digest (the last 7 days) | `news_summary.json` + one Discord digest per watchlist in scope |
 | 1:00 AM, 7:00 AM, 1:00 PM and 7:00 PM, Mon-Fri | Market breadth + performance (1 AM: India intraday; 1 PM: US intraday) | `market_breadth.json`, `dashboard_perf.json` |
-| 9:00 PM | Sentiment (fundamentals) | `fundamentals.json`: the AI earnings and guidance read per ticker |
+| 9:00 PM | Sentiment (fundamentals; full run Tue + Fri, other nights a top-up) | `fundamentals.json`: the AI earnings and guidance read per ticker |
 | 9:00 PM | Alert check | Discord alerts for rules due that day; `alert_state.json` |
-| 1:00 AM | Expert Take | A fresh snapshot, then `expert_views.json`: the AI verdict per ticker |
+| 2:00 AM | Expert Take (full run Wed + Sat, other nights a top-up) | A fresh snapshot, then `expert_views.json`: the AI verdict per ticker |
 | Sunday 9:00 PM | Weekly wrap-up | A Discord digest of every enabled rule; `weekly_wrapup_state.json` |
 
 A Cloudflare Worker (`cloudflare/worker.js`) starts every job at the time above, New
@@ -458,7 +458,7 @@ The cell adds a tag with the evidence, forward signals first, e.g. **Upgrade · 
 "Decided by: …". If the model's own call differed, the hover text says so too. A failed generation never overwrites a fresh earlier view; once the
 earlier view is more than 4 days old it is replaced by an honest Unknown.
 
-### 6.2 Expert Take (`expert_views.py`, nightly 1 AM, serial)
+### 6.2 Expert Take (`expert_views.py`, 2 AM ET: full run Wednesday + Saturday, top-up the other nights)
 
 **The verdict is decided in code**, from the other columns, and recomputed live
 (`expert_views.decide_expert_verdict`, used by the table, its filter and the alerts), so
@@ -511,24 +511,25 @@ the future"). A "nothing found" sentence is stored as no news. On 2026-10-04, 21
 - **Expert News?** is "Yes" when the write-up had material news or this quarter's facts
   behind it.
 
-### 6.3 News digest (`news_summary.py`, daily 6 AM)
+### 6.3 News digest (`news_summary.py`, Sunday + Wednesday 4 PM ET)
 
 **Scope.** The digest covers the watchlists in **News scope** (on the News tab).
 Groups expand to their members; an empty scope means **All Invested**.
 
-**Dated by the slot.** A digest is dated, and its search windows set, by the 6 AM ET slot
+**Dated by the slot.** A digest is dated, and its search windows set, by the 4 PM ET slot
 it belongs to, not by when GitHub started it, which is often hours later. A US stock's
-window ends on the slot date; so does an Indian stock's, since 6 AM ET is 3:30-4:30 PM IST,
-as that day's NSE session closes.
+window ends on the slot date; an Indian stock's ends on the IST date at that moment (4 PM ET
+is 1:30-2:30 AM IST, already the next day). The window looks back 7 days (`NEWS_WINDOW_DAYS`):
+consecutive digests overlap by 3-4 days, and the previous digest's notes keep repeats out.
 
 **Funds are skipped.** ETFs and other funds are not searched, because their "news" was
 gold prices and macro commentary. The test is Yahoo's `quoteType`; for older rows, a
 fund-like name on a ticker that reports no quarters.
 
 **For each stock**, 3 at a time (one per Gemini key, as in the Sentiment job), and once only even if it sits in two watchlists; each digest is then assembled in its watchlist's order:
-1. **Stage 1, search.** A grounded search for news in the last 24 hours plus events in
+1. **Stage 1, search.** A grounded search for news in the last 7 days plus events in
    the next 3-4 days.
-2. **Stage 2, filter.** A strict recency rule (dated today or yesterday, or an upcoming
+2. **Stage 2, filter.** A strict recency rule (dated within the 7-day window, or an upcoming
    event) and a materiality list:
    - **Keep:** earnings, M&A, regulatory approvals, major contracts, rating changes and
      targets from **named brokerages**, big institutional or promoter activity, and price

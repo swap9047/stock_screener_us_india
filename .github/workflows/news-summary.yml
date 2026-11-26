@@ -10,12 +10,12 @@ run-name: ${{ (github.event.inputs.markets || github.event.inputs.limit) && 'par
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
-# Does its work once per 6:00 AM ET slot, building a Gemini grounded-search news
-# digest (major announcements/developments/stock moves in the last 24h) for each
-# watchlist and sending it to Discord. The slot gate keeps that to one run a day.
-# 6 AM ET: the previous US session and the night's news are in, and NSE is at or
-# just past its close (owner, 2026-10-08; it was 8 PM ET). 23 h grace: a late
-# start still does the slot, up to 5 AM the next day.
+# Does its work once per slot, building a Gemini grounded-search news digest (major
+# announcements/developments/stock moves in the last 7 days) for each watchlist and
+# sending it to Discord. Sunday and Wednesday at 4 PM ET only (owner, 2026-11-26: before
+# Sunday evening and Wednesday evening; it was 6 AM ET every day, and 8 PM ET before
+# 2026-10-08): the gate's `days` is the SLOT's weekday, the Worker dispatches only those
+# slots and their hourly retries. 23 h grace: a late start still does the slot.
 on:
   # No GitHub schedule (owner, 2026-11-02): the Cloudflare Worker (cloudflare/worker.js) dispatches this
   # workflow with scheduled=true at its slot and hourly for 8 hours after it as a retry; the slot gate
@@ -60,7 +60,8 @@ jobs:
       - id: slot
         uses: ./.github/actions/slot-gate
         with:
-          slots: "6"
+          slots: "16"
+          days: "SUN,WED"
           grace-hours: "23"
           work-job: build
           workflow-file: news-summary.yml

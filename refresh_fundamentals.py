@@ -43,6 +43,30 @@ def slot_start_utc(now=None):
     return start.astimezone(timezone.utc)
 
 
+# Full runs happen on these slot weekdays only (the ET date of the 21:00 slot, Mon=0): Tuesday and
+# Friday (owner, 2026-11-26: "twice a week"). The Worker still dispatches the slot every night; on any
+# other night the run is a TOP-UP -- it skips every stock written since the last full slot and analyses
+# only the ones that run missed (a failed search, a spent quota), so a stock Google's search model failed
+# on is retried the next night as before, at a small fraction of the cost. Views are 3 days old at the
+# longest before a full run and 4 before the other (Fri 21:00 -> Tue 21:00), hence SENTIMENT_STALE_DAYS 5.
+FULL_RUN_WEEKDAYS = (1, 4)
+
+
+def last_full_slot_start_utc(slot_start, weekdays=FULL_RUN_WEEKDAYS, hour=SLOT_HOUR_ET):
+    """The start (UTC) of the latest FULL slot at or before `slot_start` (a slot_start_utc): the slot
+    itself on a full weekday, else the most recent full weekday's slot at `hour` ET. A run resumes by
+    skipping what was written since that moment, so on a full night it works the whole list (minus what
+    an earlier try of the same slot finished) and on any other night only what the last full run missed.
+    Built from the ET calendar date, so the clock changes cannot move it. Shared with
+    refresh_expert_views (weekdays and hour passed in)."""
+    day = slot_start.astimezone(ET).date()
+    for back in range(7):
+        d = day - timedelta(days=back)
+        if d.weekday() in weekdays:
+            return datetime(d.year, d.month, d.day, hour, tzinfo=ET).astimezone(timezone.utc)
+    return slot_start
+
+
 def written_since(view, since_utc):
     """True for a VALID view whose as_of (UTC, "YYYY-MM-DD HH:MM") is at or after
     `since_utc`. A failure stub (_unknown_fallback, model_used "Error") is never
@@ -241,9 +265,16 @@ def main():
     resume_since = None
     scheduled_run = (os.environ.get("GITHUB_EVENT_NAME") == "schedule"
                      or os.environ.get("SCHEDULED_DISPATCH", "").strip().lower() == "true")
+    full_run = True
     if scheduled_run and not only_markets and not limit and not pending_only:
-        resume_since = slot_start_utc()
-        print(f"[{_ts()}] Resume: skipping views already written since {resume_since:%Y-%m-%d %H:%M} UTC (this slot)")
+        slot = slot_start_utc()
+        resume_since = last_full_slot_start_utc(slot)
+        full_run = resume_since == slot
+        if full_run:
+            print(f"[{_ts()}] Resume: skipping views already written since {resume_since:%Y-%m-%d %H:%M} UTC (this slot)")
+        else:
+            print(f"[{_ts()}] Top-up night (full runs are Tuesday and Friday): skipping views written since the last full "
+                  f"run, {resume_since:%Y-%m-%d %H:%M} UTC")
 
     # A ticker in several watchlists is one analysis, not several. The store is
     # keyed by bare ticker, so the extra runs were pure waste that overwrote
@@ -293,7 +324,8 @@ def main():
             plan.append((market, idx, len(mkt_tickers), tk, row))
 
     if resumed:
-        print(f"[{_ts()}] Resume: {resumed} ticker(s) already done this slot; {len(plan)} to analyse")
+        print(f"[{_ts()}] Resume: {resumed} ticker(s) already done "
+              f"{'this slot' if full_run else 'since the last full run'}; {len(plan)} to analyse")
 
     store_lock = threading.Lock()
     counters = {"processed": 0, "failed": 0}

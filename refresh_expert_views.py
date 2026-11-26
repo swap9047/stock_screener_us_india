@@ -1,7 +1,7 @@
 """
 Background script to automatically generate AI Expert Takes for all
-watchlisted tickers. Run by expert-views.yml at 1:00 AM ET daily (05:00 UTC
-EDT / 06:00 UTC EST), as the step AFTER that workflow's own refresh_data.py --
+watchlisted tickers. Run by expert-views.yml at 2:00 AM ET (06:00 UTC
+EDT / 07:00 UTC EST; 1:00 AM until 2026-11-26), as the step AFTER that workflow's own refresh_data.py --
 so data_snapshot.json is same-day by construction, not by timing luck.
 
 News is fetched per ticker by expert_views.fetch_gemma_expert_news (a grounded
@@ -32,7 +32,7 @@ from fundamentals_eval import (
     load_fundamentals, save_fundamentals, generate_fundamental_view, FUNDAMENTALS_FILE,
     _is_valid_view as _is_valid_sentiment,
 )
-from refresh_fundamentals import _apply_result as _apply_sentiment_result
+from refresh_fundamentals import _apply_result as _apply_sentiment_result, last_full_slot_start_utc
 from news_summary import get_gemini_api_key
 
 
@@ -47,10 +47,18 @@ MAX_CONCURRENT_TICKERS = 3
 TICKER_PAUSE_SECONDS = 5
 RETRY_PAUSE_SECONDS = 30
 
-# The gate's slot for this workflow (expert-views.yml: slots "1"), in ET.
+# The gate's slot for this workflow (expert-views.yml: slots "2"), in ET.
 # checks/test_expert_views_resume.py pins the two together.
-SLOT_HOUR_ET = 1
+SLOT_HOUR_ET = 2
 ET = ZoneInfo("America/New_York")
+
+# Full runs on these slot weekdays only (the ET date of the 02:00 slot, Mon=0): Wednesday and Saturday
+# (owner, 2026-11-26: "make it 2 am"), each five hours after Sentiment's Tuesday / Friday 21:00 full run, so the write-up
+# gets fresh quarter facts. Any other night is a TOP-UP: it skips what was written since the last full slot
+# and analyses only the stocks that run missed. Write-ups are 3 days old at the longest before a full run and
+# 4 before the other (Sat 02:00 -> Wed 02:00), hence EXPERT_STALE_DAYS 5. The VERDICT is decided live from
+# the columns and does not wait for this job; only the write-up text and the news-risk badge do.
+FULL_RUN_WEEKDAYS = (2, 5)
 
 
 def _ts():
@@ -194,11 +202,18 @@ def main():
     # Worker sends for the slot (SCHEDULED_DISPATCH=true, owner 2026-11-02) is the
     # scheduled run, so it resumes too.
     resume_since = None
+    full_run = True
     scheduled_run = (os.environ.get("GITHUB_EVENT_NAME") == "schedule"
                      or os.environ.get("SCHEDULED_DISPATCH", "").strip().lower() == "true")
     if scheduled_run and not only_markets and not limit:
-        resume_since = slot_start_utc()
-        print(f"[{_ts()}] Resume: skipping views already written since {resume_since:%Y-%m-%d %H:%M} UTC (this slot)")
+        slot = slot_start_utc()
+        resume_since = last_full_slot_start_utc(slot, FULL_RUN_WEEKDAYS, SLOT_HOUR_ET)
+        full_run = resume_since == slot
+        if full_run:
+            print(f"[{_ts()}] Resume: skipping views already written since {resume_since:%Y-%m-%d %H:%M} UTC (this slot)")
+        else:
+            print(f"[{_ts()}] Top-up night (full runs are Wednesday and Saturday): skipping views written since the last "
+                  f"full run, {resume_since:%Y-%m-%d %H:%M} UTC")
 
     # Sentiment first (owner, 2026-11-08): a run someone asked for -- the app's
     # Retry Pending or Re-analyze All -- generates a stock's missing Sentiment
@@ -289,7 +304,8 @@ def main():
             plan.append((market, idx, len(mkt_tickers), tk, row, alerts_text_for(alerts_by_ticker, tk)))
 
     if resumed:
-        print(f"[{_ts()}] Resume: {resumed} ticker(s) already done this slot; {len(plan)} to analyse")
+        print(f"[{_ts()}] Resume: {resumed} ticker(s) already done "
+              f"{'this slot' if full_run else 'since the last full run'}; {len(plan)} to analyse")
     # The no-row age-outs above edited the store; save them before any worker starts.
     save_expert_views(expert_views)
 

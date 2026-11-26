@@ -13,7 +13,7 @@ env:
 # AI Fundamental Views for all tickers, once per 9:00 PM ET slot. It reads
 # data_snapshot.json rather than refreshing it, and at 9 PM ET the freshest copy
 # is the hourly data-refresh's (US close is 4 PM ET, India's session has not
-# opened), not expert-views.yml's -- that one now runs later, at 1:00 AM ET.
+# opened), not expert-views.yml's -- that one now runs later, at 2:00 AM ET.
 on:
   # No GitHub schedule (owner, 2026-11-02): the Cloudflare Worker (cloudflare/worker.js) dispatches this
   # workflow with scheduled=true at its slot and hourly for 8 hours after it as a retry; the slot gate

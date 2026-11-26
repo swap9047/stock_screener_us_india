@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Scheduled news digest checker. Meant to run once daily (GitHub Actions,
-6:00 AM ET, after the previous US session and NSE's close) -- independent of the
+Scheduled news digest checker. Meant to run twice a week (GitHub Actions,
+Sunday and Wednesday 4:00 PM ET; 6:00 AM ET every day until 2026-11-26) -- independent of the
 alert checker.
 
 Uses Gemini (Google Search grounding) to build a single collated summary
-of important news/announcements/major stock moves in the last 24 hours for
+of important news/announcements/major stock moves in the last 7 days for
 each watchlist in scope (controlled by news_watchlist_scope in settings.json;
 empty = the all_invested group, see news_summary.resolve_news_scope), then sends to Discord and saves to news_summary.json
 (which the Streamlit app's News tab reads).
@@ -201,7 +201,7 @@ def main():
         save_news_summary(to_save)
     if retry_pending:
         # Red on purpose: the slot gate counts only a successful run as the slot's work, so the Worker's next
-        # hourly dispatch (8 of them after 6 AM ET) runs again and searches just these.
+        # hourly dispatch (8 of them after the slot) runs again and searches just these.
         if failed:
             # "checked", not "searched": a stock whose news filter failed on every model counts as failed too
             # (its search text is kept, and the retry runs only the filter on it).

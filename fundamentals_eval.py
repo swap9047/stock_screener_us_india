@@ -221,7 +221,10 @@ def load_fundamentals():
 def save_fundamentals(data):
     _atomic_write_json(FUNDAMENTALS_FILE, data)
 
-SENTIMENT_STALE_DAYS = 4
+# A view older than this shows as Unknown (STALE). 5, not 4, since 2026-11-26: Sentiment's full runs are
+# Tuesday and Friday 21:00 ET (refresh_fundamentals.FULL_RUN_WEEKDAYS), so a view is up to ~4 days old when the
+# next full run replaces it, and a top-up night retries the stocks a full run missed.
+SENTIMENT_STALE_DAYS = 5
 
 def normalize_view(data):
     """Tidy the model's sentiment before it is validated: "POSITIVE " is the
