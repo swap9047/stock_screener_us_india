@@ -601,8 +601,8 @@ def split_key_list(value):
     One secret named GEMINI_API_KEYS may hold every key joined by commas (owner, 2026-11-26): GitHub secrets cannot
     be read back, so one value to paste again beats eight secrets to keep apart, and the same text works in
     Streamlit's secrets. ANY GEMINI_API_KEY* name is split the same way, so a joined value under another name works too.
-    .github/actions/gemini-keys/export_keys.py has a copy of this rule (it is stdlib only and cannot import this
-    module); checks/test_gemini_keys_export.py holds the two to the same answers."""
+    log_redact.key_patterns splits the same way (it is stdlib only and cannot import this module), and
+    scripts/check_gemini_keys.py imports this function, so the key check reads a list exactly as the jobs do."""
     if not isinstance(value, str):
         return []
     return [part.strip() for part in re.split(r"[,\n]", value) if part.strip()]
