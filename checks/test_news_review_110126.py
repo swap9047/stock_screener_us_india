@@ -71,32 +71,50 @@ PERF = {"as_of": "2026-11-03 15:05 UTC", "markets": {"us_invested": {
                        "ACME": {"2026-11-02": 1.0}}}}
 now = datetime(2026, 11, 3, 16, 0, tzinfo=UTC)            # Tue 11 AM ET, mid US session
 mv, checked = ns.session_moves("ACME", PERF, "2026-11-03", now)
-check(mv == {"2026-11-02": 7.2} and checked == ["2026-11-02"],
+# The window is NEWS_WINDOW_DAYS (7, since 2026-11-26): the older sessions in the fixture are looked at too (and
+# checked, so no later digest looks again); only a 5%+ move is listed.
+check(mv == {"2026-11-02": 7.2} and checked == ["2026-10-29", "2026-10-30", "2026-11-02"],
       f"N3: a run during the US session lists Monday's move, not today's live close ({mv}, {checked})")
 check(ns.session_moves("ZORP", PERF, "2026-11-03", now)[0] == {"2026-11-02": -5.2},
       "N3: falls count too, from the previous stored close (Friday, over a weekend)")
-check(ns.session_moves("CORE", PERF, "2026-11-03", now) == ({}, ["2026-11-02"]),
+check(ns.session_moves("CORE", PERF, "2026-11-03", now) == ({}, ["2026-10-30", "2026-11-02"]),
       "N3: a 3% move is not listed, but its session is checked (so it is not looked at again)")
-check(ns.session_moves("ACME", PERF, "2026-11-03", now, already_checked=["2026-11-02"]) == ({}, []),
+check(ns.session_moves("ACME", PERF, "2026-11-03", now, already_checked=["2026-11-02"]) == ({}, ["2026-10-29", "2026-10-30"]),
       "N3: a session an earlier digest checked is not listed again")
 # India, the same day: Tue 11-03 closed 15:30 IST, settled 16:00 IST = 10:30Z; stored 15:05Z.
 mv, checked = ns.session_moves("ZED.NS", PERF, "2026-11-03", now)
-check(mv == {"2026-11-02": -6.0, "2026-11-03": 12.8} and checked == ["2026-11-02", "2026-11-03"],
+check(mv == {"2026-11-02": -6.0, "2026-11-03": 12.8} and checked == ["2026-10-30", "2026-11-02", "2026-11-03"],
       f"N3: India's settled session today is in the window too ({mv})")
 early = datetime(2026, 11, 3, 10, 10, tzinfo=UTC)           # 15:40 IST: before NSE settles
-check(ns.session_moves("ZED.NS", PERF, "2026-11-03", early)[1] == ["2026-11-02"],
+check(ns.session_moves("ZED.NS", PERF, "2026-11-03", early)[1] == ["2026-10-30", "2026-11-02"],
       "N3: a session not settled at run time is not checked (the next digest lists it)")
 stale = {**PERF, "as_of": "2026-11-03 09:00 UTC"}           # stored mid NSE session
-check(ns.session_moves("ZED.NS", stale, "2026-11-03", now)[1] == ["2026-11-02"],
+check(ns.session_moves("ZED.NS", stale, "2026-11-03", now)[1] == ["2026-10-30", "2026-11-02"],
       "N3: nor one whose close was stored before it settled (a live close)")
 sunday = ns.session_moves("ACME", PERF, "2026-11-01", datetime(2026, 11, 1, 16, 0, tzinfo=UTC))
-check(sunday == ({}, []), "N3: a weekend window holds no session -> nothing (Friday was Saturday's)")
+check(sunday == ({}, ["2026-10-29", "2026-10-30"]),
+      "N3: a Sunday digest looks at the week's sessions up to Friday's (a 7-day window), none moved 5%")
+check(ns.session_moves("ACME", PERF, "2026-10-12", datetime(2026, 10, 12, 16, 0, tzinfo=UTC)) == ({}, []),
+      "N3: a window before the first stored close holds no session -> nothing")
+week = {"as_of": "2026-11-03 15:05 UTC", "markets": {"x": {"ACME": {"2026-10-28": 100.0, "2026-10-29": 110.0, "2026-10-30": 110.0}}}}
+check(ns.session_moves("ACME", week, "2026-11-03", now)[0] == {"2026-10-29": 10.0},
+      "N3: a 5%+ move five days back is inside the 7-day window and listed (a twice-a-week digest must not miss it)")
+check(ns.session_moves("ACME", {**week, "markets": {"x": {"ACME": {"2026-10-20": 100.0, "2026-10-21": 110.0}}}}, "2026-11-03", now)[0] == {},
+      "N3: ...and one from before the window (13 days back) is not")
 check(ns.session_moves("ACME", {"markets": PERF["markets"]}, "2026-11-03", now) == ({}, []),
       "N3: no stored-at time -> nothing (cannot tell a live close from a final one)")
 gap = {"as_of": "2026-11-03 15:05 UTC", "markets": {"x": {"ACME": {"2026-10-20": 50.0, "2026-11-02": 100.0}}}}
 check(ns.session_moves("ACME", gap, "2026-11-03", now)[0] == {},
       "N3: a previous close more than MOVE_MAX_GAP_DAYS back is a data hole, not a move")
 check(ns.session_moves("NOPE", PERF, "2026-11-03", now) == ({}, []), "N3: no stored closes -> nothing")
+# The digest slot is 18:00 ET (4 PM until the owner's second change on 2026-11-26): Wednesday's US session closed at 16:00,
+# settled at 16:30 ET (21:30Z) and the hourly perf run at 17:00 ET stored its close (22:05Z), so a run at 18:00 ET
+# (23:00Z) lists that day's move; at 16:00 ET (21:00Z) the session had not settled and its move would wait for the next digest.
+WED = {"as_of": "2026-11-04 22:05 UTC", "markets": {"us_invested": {"ACME": {"2026-11-03": 100.0, "2026-11-04": 108.0}}}}
+check(ns.session_moves("ACME", WED, "2026-11-04", datetime(2026, 11, 4, 23, 0, tzinfo=UTC))[0] == {"2026-11-04": 8.0},
+      "N3: a 6 PM ET digest lists the same day's US session (settled 16:30, close stored 17:05)")
+check(ns.session_moves("ACME", WED, "2026-11-04", datetime(2026, 11, 4, 21, 0, tzinfo=UTC)) == ({}, ["2026-11-03"]),
+      "N3: ...which a 4 PM ET run could not (the session had not settled: its move would wait for the next digest)")
 line = ns.moves_line({"ACME": {"2026-11-02": 7.2}, "ZORP": {"2026-11-02": -5.2},
                       "ZED.NS": {"2026-11-02": -6.0, "2026-11-03": 12.8}}, NAMES)
 check(line == "**Big moves (5%+)** · 2 Nov: ▲ Acme (ACME) +7.2% · ▼ Zed Industries (ZED) -6.0% · "
@@ -209,9 +227,9 @@ ns.load_news_summary = lambda: PREV
 ns._load_dashboard_perf = lambda: PERF
 try:
     res = ns.build_news_summary({"us_invested": ["ACME", "ZORP", "CORE", "ZED.NS"]}, "k",
-                                now=datetime(2026, 11, 3, 11, 0, tzinfo=ET))
+                                now=datetime(2026, 11, 3, 19, 0, tzinfo=ET))
     full = ns.build_news_summary({"us_invested": ["ACME", "ZORP", "CORE", "ZED.NS"]}, "k",
-                                 now=datetime(2026, 11, 3, 11, 0, tzinfo=ET), reuse_failed_run=False)
+                                 now=datetime(2026, 11, 3, 19, 0, tzinfo=ET), reuse_failed_run=False)
 finally:
     (ns.fetch_single_raw_news, llm_util.run_model_ladder, llm_util.make_client, ns.time.sleep,
      sd.load_settings, sd.load_data_snapshot, ns.load_news_summary, ns._load_dashboard_perf) = _saved
@@ -233,7 +251,7 @@ check(us["tickers"]["CORE"].get("results_date") == "2026-11-05" and "RESULTS" no
 check("**Big moves (5%+)** · 2 Nov: ▲ Acme (ACME) +7.2% · ▼ Zed Industries (ZED) -6.0% · ▼ Zorp (ZORP) -5.2%"
       " | 3 Nov: ▲ Zed Industries (ZED) +12.8%" in summary,
       f"N3: the Big moves line is in the digest ({summary!r})")
-check(us["tickers"]["CORE"].get("moves_checked") == ["2026-11-02"] and us["tickers"]["ACME"].get("moves") == {"2026-11-02": 7.2},
+check(us["tickers"]["CORE"].get("moves_checked") == ["2026-10-30", "2026-11-02"] and us["tickers"]["ACME"].get("moves") == {"2026-11-02": 7.2},
       "N3: each stock's checked sessions (and listed moves) are stored for the next digest")
 check(res["prior_slot"] == PRIOR, "N1: the retry carries the earlier slot's info forward again")
 check(any("ALREADY REPORTED" not in p for p in s2_prompts),

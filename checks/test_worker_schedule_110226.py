@@ -54,11 +54,11 @@ check("GH_DISPATCH_TOKEN" in WORKER and "never the data repo" in WORKER, "W0: it
 # --- the independent model ------------------------------------------------------------------
 RETRIES = 8
 GATED = {                                   # slot (hour, minute) ET, and the slot's weekdays (Monday = 0)
-    "news-summary.yml": ([(6, 0)], None),
+    "news-summary.yml": ([(18, 0)], {6, 2}),
     "market-read.yml": ([(6, 30), (17, 30)], {0, 1, 2, 3, 4}),
     "market-library.yml": ([(7, 0), (17, 0)], None),
     "quarterly-results.yml": ([(4, 0)], None),
-    "expert-views.yml": ([(1, 0)], None),
+    "expert-views.yml": ([(21, 0)], None),
     "fundamentals.yml": ([(21, 0)], None),
     "daily-alerts.yml": ([(21, 0)], None),
     "weekly-wrapup.yml": ([(21, 0)], {6}),
@@ -102,6 +102,11 @@ def model(start, end):
                 for fold in (0, 1):          # a slot inside the autumn repeated hour happens twice
                     slot = datetime(d.year, d.month, d.day, h, m, tzinfo=ET, fold=fold)
                     if days is not None and slot.weekday() not in days:
+                        continue
+                    if slot.astimezone(UTC).astimezone(ET).hour != h:
+                        # A wall-clock time that does not exist (02:00-02:59 on the spring-forward Sunday): the Worker looks
+                        # for the wall-clock hour and sends nothing, so the model has no such slot either. No slot sits in
+                        # that hour today (Expert Take's 2 AM slot, 2026-11-26, was the one that did, for a few hours).
                         continue
                     for k in range(RETRIES + 1):
                         tick = slot.astimezone(UTC) + timedelta(hours=k)
@@ -170,28 +175,43 @@ else:
     # Winter (EST) and summer (EDT) wall times
     check(due(at(2026, 11, 2, 6, 30, ET)) == {"data-refresh.yml", "market-read.yml+scheduled"},
           "W2: Monday 6:30 ET (winter): data-refresh and the morning market read")
-    check(due(at(2026, 11, 2, 6, 0, ET)) == {"data-refresh.yml", "market-breadth.yml", "news-summary.yml+scheduled",
-                                             "quarterly-results.yml+scheduled", "expert-views.yml+scheduled"},
-          "W2: Monday 6:00 ET: data-refresh, breadth, the news digest's slot, and the retries of the 4:00 results job (2nd) and 1:00 Expert Take (5th)")
-    check(due(at(2026, 11, 2, 21, 0, ET)) == {"market-library.yml+scheduled", "fundamentals.yml+scheduled", "daily-alerts.yml+scheduled"},
-          "W2: Monday 9 PM ET (inside the quiet gap): the two 9 PM jobs, and the 4th retry of the 5 PM library")
+    check(due(at(2026, 11, 2, 6, 0, ET)) == {"data-refresh.yml", "market-breadth.yml", "quarterly-results.yml+scheduled"},
+          "W2: Monday 6:00 ET: data-refresh, breadth, and the 2nd retry of the 4:00 results job; no news digest, and Sunday's 9 PM jobs are past their 8 retries")
+    check(due(at(2026, 11, 2, 21, 0, ET)) == {"market-library.yml+scheduled", "fundamentals.yml+scheduled", "daily-alerts.yml+scheduled",
+                                              "expert-views.yml+scheduled"},
+          "W2: Monday 9 PM ET (inside the quiet gap): the three 9 PM jobs, and the 4th retry of the 5 PM library")
     check(due(at(2026, 11, 1, 21, 0, ET)) == {"market-library.yml+scheduled", "fundamentals.yml+scheduled", "daily-alerts.yml+scheduled",
-                                              "weekly-wrapup.yml+scheduled"},
-          "W2: Sunday 9 PM ET: the wrap-up joins them")
-    check(due(at(2026, 11, 2, 1, 0, ET)) == {"data-refresh.yml", "market-breadth.yml", "expert-views.yml+scheduled", "market-library.yml+scheduled",
-                                             "fundamentals.yml+scheduled", "daily-alerts.yml+scheduled", "weekly-wrapup.yml+scheduled"},
-          "W2: Monday 1 AM ET: Expert Take's slot, plus Sunday's 9 PM jobs (4th retry) and 5 PM library (8th, the last)")
+                                              "expert-views.yml+scheduled", "weekly-wrapup.yml+scheduled", "news-summary.yml+scheduled"},
+          "W2: Sunday 9 PM ET: the wrap-up joins them, and the news digest's 3rd retry (its slot is Sunday 6 PM)")
+    check(due(at(2026, 11, 1, 18, 0, ET)) == {"news-summary.yml+scheduled", "market-library.yml+scheduled"},
+          "W2: Sunday 6 PM ET: the news digest's slot (Sunday + Wednesday only), and the 1st retry of the 5 PM library")
+    check(due(at(2026, 11, 4, 18, 0, ET)) == {"news-summary.yml+scheduled", "market-library.yml+scheduled"},
+          "W2: Wednesday 6 PM ET: the news digest's slot (no data-refresh: the evening gap starts at 17:30)")
+    check("news-summary.yml+scheduled" not in due(at(2026, 11, 5, 18, 0, ET)) and "news-summary.yml+scheduled" not in due(at(2026, 11, 3, 18, 0, ET)),
+          "W2: Tuesday and Thursday 6 PM ET: no news digest")
+    check("news-summary.yml+scheduled" in due(at(2026, 11, 5, 2, 0, ET)) and "news-summary.yml+scheduled" not in due(at(2026, 11, 5, 3, 0, ET)),
+          "W2: Wednesday's news retries run to 2 AM Thursday (the 8th) and no further")
+    check(due(at(2026, 11, 2, 2, 0, ET)) == {"data-refresh.yml", "market-breadth.yml", "expert-views.yml+scheduled",
+                                             "fundamentals.yml+scheduled", "daily-alerts.yml+scheduled", "weekly-wrapup.yml+scheduled",
+                                             "news-summary.yml+scheduled"},
+          "W2: Monday 2 AM ET: Sunday's 9 PM jobs (5th retry) and the news digest's last (8th) retry; the 5 PM library's last was at 1 AM")
+    check(due(at(2026, 11, 2, 1, 0, ET)) == {"data-refresh.yml", "market-breadth.yml", "market-library.yml+scheduled",
+                                             "fundamentals.yml+scheduled", "daily-alerts.yml+scheduled", "weekly-wrapup.yml+scheduled",
+                                             "expert-views.yml+scheduled", "news-summary.yml+scheduled"},
+          "W2: Monday 1 AM ET: Sunday's 9 PM jobs (4th retry), the 5 PM library (8th, the last) and the news digest (7th)")
+    check("expert-views.yml+scheduled" in due(at(2027, 3, 15, 1, 0, UTC)) and "expert-views.yml+scheduled" in due(at(2027, 3, 14, 2, 0, UTC)),
+          "W2: Expert Take's 21:00 slot exists on every night, the clock-change weekends included (the 02:00 slot it had for a few hours did not on 14 March)")
     check(due(at(2026, 11, 3, 17, 30, ET)) == {"market-read.yml+scheduled"},
           "W2: Tuesday 5:30 PM ET: only the evening read (data-refresh is quiet from 17:30)")
     check(due(at(2026, 11, 3, 17, 0, ET)) == {"data-refresh.yml", "market-breadth.yml", "market-library.yml+scheduled"},
           "W2: Tuesday 5:00 PM ET: the last data-refresh and breadth tick, and the library")
     check(due(at(2026, 11, 7, 6, 30, ET)) == set(), "W2: Saturday 6:30 ET: nothing (no weekday read, no data-refresh)")
-    check(due(at(2026, 11, 7, 9, 0, ET)) == {"news-summary.yml+scheduled", "market-library.yml+scheduled", "quarterly-results.yml+scheduled",
-                                             "expert-views.yml+scheduled"},
-          "W2: Saturday 9:00 ET: only retries of the daily jobs (no data-refresh, no weekday read)")
+    check(due(at(2026, 11, 7, 9, 0, ET)) == {"market-library.yml+scheduled", "quarterly-results.yml+scheduled"},
+          "W2: Saturday 9:00 ET: only retries of the morning jobs (no data-refresh, no weekday read, no news digest; Friday's 9 PM jobs are past their retries)")
     check(due(at(2026, 6, 15, 6, 30, ET)) == {"data-refresh.yml", "market-read.yml+scheduled"},
           "W2: Monday 6:30 ET in summer (EDT, 10:30 UTC): the same local time")
-    check(due(at(2026, 6, 15, 21, 0, ET)) == {"market-library.yml+scheduled", "fundamentals.yml+scheduled", "daily-alerts.yml+scheduled"},
+    check(due(at(2026, 6, 15, 21, 0, ET)) == {"market-library.yml+scheduled", "fundamentals.yml+scheduled", "daily-alerts.yml+scheduled",
+                                              "expert-views.yml+scheduled"},
           "W2: Monday 9 PM ET in summer: the same")
     check("weekly-wrapup.yml+scheduled" in due(at(2026, 11, 2, 2, 0, ET)),
           "W2: Monday 2 AM ET: still Sunday's wrap-up slot (a retry; the gate's days judge the slot)")
@@ -220,7 +240,9 @@ for wf_name, (slots, days) in GATED.items():
     check({int(x) for x in gate["slots"].split(",")} == {h for h, m in slots},
           f"W3: {wf_name}: the gate's slot hours {gate['slots']} are the Worker's ({sorted({h for h, m in slots})})")
     want_days = "" if days is None else ",".join(["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"][d] for d in sorted(days))
-    check(gate.get("days", "") == want_days, f"W3: {wf_name}: the gate's days ({gate.get('days', '')!r}) are the Worker's ({want_days!r})")
+    # compared as sets: "SUN,WED" and "WED,SUN" are the same days
+    check(set(filter(None, gate.get("days", "").split(","))) == set(filter(None, want_days.split(","))),
+          f"W3: {wf_name}: the gate's days ({gate.get('days', '')!r}) are the Worker's ({want_days!r})")
     ifs = [j.get("if", "") for n, j in wf["jobs"].items() if n != "gate" and "workflow_dispatch" in str(j.get("if", ""))]
     check(ifs and all("github.event.inputs.scheduled != 'true'" in i for i in ifs),
           f"W3: {wf_name}: only a dispatch BY HAND skips the gate ({ifs})")

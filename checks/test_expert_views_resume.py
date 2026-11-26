@@ -23,10 +23,11 @@ def check(ok, label):
 
 utc = lambda *a: datetime(*a, tzinfo=timezone.utc)
 
-# --- the slot this run works: latest 01:00 ET, both sides of daylight saving
-check(rev.slot_start_utc(utc(2026, 10, 23, 7, 0)) == utc(2026, 10, 23, 5, 0), "03:00 EDT -> tonight's 01:00 EDT slot (05:00 UTC)")
-check(rev.slot_start_utc(utc(2026, 10, 23, 4, 30)) == utc(2026, 10, 22, 5, 0), "00:30 EDT -> last night's slot, not one in the future")
-check(rev.slot_start_utc(utc(2026, 11, 3, 8, 0)) == utc(2026, 11, 3, 6, 0), "03:00 EST -> 01:00 EST is 06:00 UTC after the clocks change")
+# --- the slot this run works: latest 21:00 ET (01:00 ET until 2026-11-26), both sides of daylight saving
+check(rev.slot_start_utc(utc(2026, 10, 23, 2, 0)) == utc(2026, 10, 23, 1, 0), "22:00 EDT -> tonight's 21:00 EDT slot (01:00 UTC)")
+check(rev.slot_start_utc(utc(2026, 10, 23, 0, 30)) == utc(2026, 10, 22, 1, 0), "20:30 EDT -> last night's slot, not one in the future")
+check(rev.slot_start_utc(utc(2026, 10, 23, 6, 30)) == utc(2026, 10, 23, 1, 0), "02:30 EDT: a retry still works the 21:00 slot")
+check(rev.slot_start_utc(utc(2026, 11, 3, 3, 0)) == utc(2026, 11, 3, 2, 0), "22:00 EST -> 21:00 EST is 02:00 UTC after the clocks change")
 wf = (REPO / ".github/workflows/expert-views.yml").read_text()
 check(re.search(rf'slots: "{rev.SLOT_HOUR_ET}"', wf) is not None,
       f"SLOT_HOUR_ET ({rev.SLOT_HOUR_ET}) is the expert-views gate's slot")

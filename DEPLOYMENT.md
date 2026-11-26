@@ -96,9 +96,9 @@ Rough cost: an hourly gate run (a few seconds each) plus one full check per due 
 
 ## 7. News digest (Discord + News tab)
 
-A second, independent GitHub Actions workflow, `.github/workflows/news-summary.yml`, builds a daily news digest for every watchlist in scope (`news_watchlist_scope` in Settings — blank means the *All Invested* group; pick groups or individual watchlists on the News tab): for each ticker, it uses Gemini (with Google Search grounding, so it's real, cited web search — not the model's training data) to find important announcements, results, and stock moves from the last 24 hours, collates each watchlist into its own summary, saves the result to `news_summary.json`, and sends each summary to Discord. The app's **News** tab just displays that same `news_summary.json`.
+A second, independent GitHub Actions workflow, `.github/workflows/news-summary.yml`, builds a twice-weekly news digest (the last 7 days) for every watchlist in scope (`news_watchlist_scope` in Settings — blank means the *All Invested* group; pick groups or individual watchlists on the News tab): for each ticker, it uses Gemini (with Google Search grounding, so it's real, cited web search — not the model's training data) to find important announcements, results, and stock moves from the last 24 hours, collates each watchlist into its own summary, saves the result to `news_summary.json`, and sends each summary to Discord. The app's **News** tab just displays that same `news_summary.json`.
 
-It does its work once per **6:00 AM ET** slot: the Cloudflare Worker dispatches it at 6:00 AM and hourly for 8 hours after, and the shared slot gate lets the first run that succeeds through (same pattern as every other scheduled workflow — see AGENTS.md).
+It does its work once per **6:00 PM ET** slot on **Sunday and Wednesday only** (owner, 2026-11-26; it was 6:00 AM ET every day): the Cloudflare Worker dispatches it at 6:00 PM on those days and hourly for 8 hours after, and the shared slot gate lets the first run that succeeds through (same pattern as every other scheduled workflow — see AGENTS.md).
 
 To enable it, add one more repo secret (repo → Settings → Secrets and variables → Actions → New repository secret):
 
@@ -131,7 +131,7 @@ A few things worth knowing:
 
 ## 8b. Expert Views generation
 
-A fourth GitHub Actions workflow, `.github/workflows/expert-views.yml`, does its work once per **1:00 AM ET** slot. It refreshes `data_snapshot.json` first to guarantee same-day price data, then generates AI Expert Take verdicts (`ACCUMULATE`, `HOLD`, `CAUTION`) across all tickers and commits `expert_views.json` (and the updated snapshot) to the private data repo. Each verdict also reads that ticker's checked quarterly facts from `fundamentals.json`, which the 9:00 PM Sentiment run (8c) writes a few hours earlier.
+A fourth GitHub Actions workflow, `.github/workflows/expert-views.yml`, does its work once per **9:00 PM ET** slot (full runs Wednesday and Saturday, a top-up the other nights). It refreshes `data_snapshot.json` first to guarantee same-day price data, then generates AI Expert Take verdicts (`ACCUMULATE`, `HOLD`, `CAUTION`) across all tickers and commits `expert_views.json` (and the updated snapshot) to the private data repo. Each verdict also reads that ticker's checked quarterly facts from `fundamentals.json`, which the 9:00 PM Sentiment run (8c) writes a few hours earlier.
 
 If 10 tickers in a row fail (typically dead keys or an exhausted quota), the run stops, keeps every previous verdict, and fails, so it shows red in the Actions tab; the slot gate retries it at the next hourly wake-up. The same applies to 8c.
 
@@ -224,9 +224,9 @@ The **Re-analyze All** and **Refresh news** buttons start GitHub Actions runs in
 | Discord alerts (automatic, 9:00 PM ET) | Needs `DISCORD_WEBHOOK_URL` repo secret — GitHub Actions workflow is already committed |
 | Data storage + push config edits (made on the deployed app) | Needs a private data repo and `DATA_REPO_TOKEN` (Streamlit + Actions secrets) |
 | Re-analyze / Refresh news buttons | Needs `GITHUB_TOKEN`/`GITHUB_REPO` secrets (Actions permission on the code repo) |
-| Daily news digest (News tab + Discord, 6:00 AM ET) | Needs `GEMINI_API_KEY` repo secret (free at aistudio.google.com) — GitHub Actions workflow is already committed |
+| News digest (News tab + Discord, Sunday + Wednesday 6:00 PM ET) | Needs `GEMINI_API_KEY` repo secret (free at aistudio.google.com) — GitHub Actions workflow is already committed |
 | Hourly data refresh (around the clock) | No new secret needed — GitHub Actions workflow is already committed |
-| Daily Expert Views (1:00 AM ET) | Needs `GEMINI_API_KEY` repo secret — GitHub Actions workflow is already committed |
+| Expert Views (9:00 PM ET) | Needs `GEMINI_API_KEY` repo secret — GitHub Actions workflow is already committed |
 | Daily Fundamental Views (9:00 PM ET) | Needs `GEMINI_API_KEY` repo secret — GitHub Actions workflow is already committed |
 | Market Breadth & Performance (1 AM, 7 AM, 1 PM & 7 PM ET) | No new secret needed — GitHub Actions workflow is already committed |
 | Weekly Wrap-up digest (Sunday 9:00 PM ET) | Uses `DISCORD_WEBHOOK_URL` repo secret — GitHub Actions workflow is already committed |

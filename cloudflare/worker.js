@@ -62,11 +62,11 @@ const RETRY_HOURS = 8;
 // slots: [hour, minute] in New York time; days: the SLOT's weekday (the gate's `days`), absent =
 // every day. Cloudflare ticks only at :00 and :30, so a slot is on one of those.
 const GATED_JOBS = [
-  { workflow: "news-summary.yml", slots: [[6, 0]] },
+  { workflow: "news-summary.yml", slots: [[18, 0]], days: ["Sun", "Wed"] },
   { workflow: "market-read.yml", slots: [[6, 30], [17, 30]], days: WEEKDAYS },
   { workflow: "market-library.yml", slots: [[7, 0], [17, 0]] },
   { workflow: "quarterly-results.yml", slots: [[4, 0]] },
-  { workflow: "expert-views.yml", slots: [[1, 0]] },
+  { workflow: "expert-views.yml", slots: [[21, 0]] },
   { workflow: "fundamentals.yml", slots: [[21, 0]] },
   { workflow: "daily-alerts.yml", slots: [[21, 0]] },
   { workflow: "weekly-wrapup.yml", slots: [[21, 0]], days: ["Sun"] },

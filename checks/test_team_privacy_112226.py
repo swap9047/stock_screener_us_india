@@ -160,7 +160,14 @@ def run_rf(env, store):
     rf.load_fundamentals = lambda: store
     rf.save_fundamentals = lambda s: None
     rf.generate_fundamental_view = gen
-    _, text = captured(rf.main)
+    # Pinned to a full night (Tuesday 2026-11-24 21:00 ET): the weekday the test happens to run on would otherwise
+    # decide between a full run and a top-up (test_ai_schedule_112626.py covers the top-up nights).
+    real_slot = rf.slot_start_utc
+    rf.slot_start_utc = lambda now=None: datetime(2026, 11, 25, 2, 0, tzinfo=timezone.utc)
+    try:
+        _, text = captured(rf.main)
+    finally:
+        rf.slot_start_utc = real_slot
     return sorted(calls), text
 
 
