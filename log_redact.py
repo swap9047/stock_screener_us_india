@@ -11,6 +11,9 @@ from the data repo first) and never raises: with no readable data it passes
 lines through, since losing a log is worse than an unmasked one on a run that
 had no data to leak. Run steps under `shell: bash` so pipefail keeps the
 script's exit status.
+
+It also masks every Gemini API key in the environment, each key of a comma-joined GEMINI_API_KEYS on its own
+(key_patterns): the runner masks only a secret's whole value.
 """
 import json
 import os
@@ -119,6 +122,27 @@ def build_patterns(folder="."):
     return [(re.compile(BOUNDARY_BEFORE + re.escape(lit) + BOUNDARY_AFTER), literals[lit]) for lit in ordered]
 
 
+def key_patterns(environ=None):
+    """[(regex, placeholder)] for every Gemini API key in the environment, so a key printed ON ITS OWN never shows.
+
+    One secret may hold every key joined by commas (GEMINI_API_KEYS, owner 2026-11-26), and the runner masks only
+    a secret's WHOLE value: a single key quoted by itself (an SDK error echoing its request) would otherwise reach
+    this public repo's log. Every name starting GEMINI_API_KEY is read, split on commas and line breaks like
+    llm_util.split_key_list, and any part of 8+ characters is masked wherever it appears (no word boundaries: a
+    key is not a word). Never raises; no keys, no patterns."""
+    patterns = []
+    try:
+        environ = os.environ if environ is None else environ
+        keys = set()
+        for name, value in environ.items():
+            if str(name).upper().startswith("GEMINI_API_KEY") and isinstance(value, str):
+                keys.update(part.strip() for part in re.split(r"[,\n]", value) if len(part.strip()) >= 8)
+        patterns = [(re.compile(re.escape(k)), "[key]") for k in sorted(keys, key=len, reverse=True)]
+    except Exception:
+        patterns = []
+    return patterns
+
+
 def redact(line, patterns):
     for pattern, placeholder in patterns:
         line = pattern.sub(placeholder, line)
@@ -127,11 +151,12 @@ def redact(line, patterns):
 
 def main():
     try:
-        patterns = build_patterns(".")
+        data_patterns = build_patterns(".")
     except Exception:
-        patterns = []
-    if not patterns:
+        data_patterns = []
+    if not data_patterns:
         print("[log_redact] no data files found -- output is NOT masked", flush=True)
+    patterns = key_patterns() + data_patterns        # a key first: it is one token, never half-masked
     for line in sys.stdin:
         try:
             line = redact(line, patterns)

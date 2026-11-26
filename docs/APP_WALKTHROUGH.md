@@ -359,7 +359,7 @@ plumbing.
 collects the facts, and a second model reasons over only those facts.
 
 **Key rotation.** Every environment variable or secret whose name starts with
-`GEMINI_API_KEY` joins the rotation. A key is picked at random for each call. A key
+`GEMINI_API_KEY` joins the rotation, and one secret (`GEMINI_API_KEYS`) may hold several keys joined by commas. A key is picked at random for each call. A key
 that fails authentication is retired for the rest of the run; a key that hits its quota
 cools down for 120 s, and the call is retried on another key. Each run logs
 `[key rotation] N key(s)` at the start and a per-key failure summary at the end.

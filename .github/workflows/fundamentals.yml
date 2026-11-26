@@ -125,6 +125,9 @@ jobs:
           GEMINI_API_KEY_BACKUP_B7: ${{ secrets.GEMINI_API_KEY_BACKUP_B7 }}
           GEMINI_API_KEY_BACKUP_B8: ${{ secrets.GEMINI_API_KEY_BACKUP_B8 }}
           GEMINI_API_KEY_BACKUP_B9: ${{ secrets.GEMINI_API_KEY_BACKUP_B9 }}
+          # Or every key in ONE secret, separated by commas (owner, 2026-11-26): llm_util splits it, and a secret that
+          # is not set comes through blank. log_redact masks each key of the list on its own.
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
           PYTHONUNBUFFERED: "1"
           # github.event.inputs (not `inputs`) so scheduled runs, which carry
           # no inputs at all, resolve to an empty string = every watchlist.

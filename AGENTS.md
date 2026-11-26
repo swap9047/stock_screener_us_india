@@ -29,7 +29,7 @@ also load `.env`.
 
 **Gemini keys are discovered by name prefix:** every secret or env var starting with
 `GEMINI_API_KEY` joins the rotation (`llm_util.gemini_api_keys`), and
-`RotatingGeminiClient` picks one per call to divide the ~250-call nightly load. **A new key needs a secret AND a line in five workflows,
+`RotatingGeminiClient` picks one per call to divide the ~250-call nightly load. **One secret can hold them all** (owner, 2026-11-26): `GEMINI_API_KEYS` = `key1,key2,...` (commas or line breaks; the same value works in Streamlit's secrets as a top-level line, where the dashboard's Re-analyze reads it). The five workflows name it like any other key (one line, no `toJSON`), and a value with commas under ANY `GEMINI_API_KEY*` name is split (`llm_util.split_key_list`), each key named `GEMINI_API_KEYS[n]` by its place in the list, a key also listed on its own counted once. The runner masks only a secret's WHOLE value and this repo's logs are public, so `log_redact.py` (every AI step pipes through it) masks each key of the list on its own (`key_patterns`). GitHub secrets cannot be read back, so adding a key means pasting the whole list again; with this secret a new key needs no workflow line at all, whatever its number. Separate secrets keep working. **A new key as its own secret needs a secret AND a line in five workflows,
 unless it takes a spare name** (2026-11-26): Actions only exposes a secret to a step that names it, so the four AI
 workflows (news, Sentiment, Expert Take, market read) and `gemini-keys-check.yml` each list the keys in the env of the
 step that runs the AI script -- `GEMINI_API_KEY`, `_BACKUP`, `_BACKUP_B` and `_B2` through `_B9`; a secret that is not set comes
@@ -39,7 +39,7 @@ through blank and `llm_util` ignores it, so a key added under the next free name
 whole secrets context -- the run is parked as `action_required` with no jobs until someone approves it, so the by-hand
 check never started and the 9 PM jobs would have been held (probed on a throwaway branch: the same trivial workflow ran
 with a plain step and was held with `toJSON(secrets)`; the check fails if it comes back). **Gemini keys: run "Check Gemini
-keys"** (`gemini-keys-check.yml`, by hand) after adding one: it lists the keys the job found and tries each once on 3.5
+keys"** (`gemini-keys-check.yml`, by hand) after adding one: it lists the keys the job found (each key of a joined secret by its place, `GEMINI_API_KEYS[2]`) and tries each once on 3.5
 Flash Lite. Every AI run logs `[key rotation] N key(s): ...`; if that number is lower than expected, a secret is missing
 or misnamed (the name must start with `GEMINI_API_KEY`). A key that hits a per-minute limit sits out 120 s for THAT model only (the pause is per (key, model) since 2026-11-23: a key-wide pause let one model's 429s bench the key for every other model); one that spends its DAILY quota
 for a model (Google's `...PerDay...` quota id) is retired for that model for the rest of the
