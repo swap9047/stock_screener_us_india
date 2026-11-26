@@ -296,9 +296,13 @@ check("SCHEDULED_DISPATCH: ${{ github.event.inputs.scheduled }}" in exp and "SCH
       "W5: Expert Take's resume reads the flag (checks/test_expert_views_resume.py runs it)")
 
 # --- W6 the Worker is the only clock (phase 2, owner 2026-11-02) -------------------------------------
-# Every workflow but checks.yml (it runs on a push) is started by the Worker and by nothing else: no GitHub
-# `schedule:` trigger, and every one is named in worker.js, so a job cannot be left without a clock.
-every = sorted(p.name for p in WF.glob("*.yml") if p.name != "checks.yml")
+# Every workflow but checks.yml (it runs on a push) and gemini-keys-check.yml (by hand only, 2026-11-26) is
+# started by the Worker and by nothing else: no GitHub `schedule:` trigger, and every one is named in worker.js,
+# so a job cannot be left without a clock.
+BY_HAND = {"checks.yml", "gemini-keys-check.yml"}
+every = sorted(p.name for p in WF.glob("*.yml") if p.name not in BY_HAND)
+check(not (yaml.safe_load((WF / "gemini-keys-check.yml").read_text()).get(True) or {}).keys() - {"workflow_dispatch"},
+      "W6: gemini-keys-check.yml is dispatched by hand only (no schedule, no push trigger)")
 for name in every:
     wf = yaml.safe_load((WF / name).read_text())
     on = wf.get(True) or wf.get("on")

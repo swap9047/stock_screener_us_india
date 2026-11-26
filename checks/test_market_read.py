@@ -402,9 +402,11 @@ pub = steps[-1]
 check(steps.index(pub) > ci and "publish_market.py reads" in pub["run"] and pub.get("continue-on-error") is True and pub.get("if") == "always()"
       and pub.get("shell") == "bash" and "| python -u log_redact.py" in pub["run"] and pub["env"] == {"MARKET_DB_URL": "${{ secrets.MARKET_DB_URL }}"},
       "M8: after the commit the reads are published to the research library, redacted, never failing the run")
-keys = re.findall(r"(GEMINI_API_KEY\w*):", steps[py].get("env") and text[text.index("Write the market reads"):])
-check({"GEMINI_API_KEY", "GEMINI_API_KEY_BACKUP", "GEMINI_API_KEY_BACKUP_B", "GEMINI_API_KEY_BACKUP_B2",
-       "GEMINI_API_KEY_BACKUP_B3", "GEMINI_API_KEY_BACKUP_B4"} <= set(keys), "M8: every Gemini key secret is passed to the step")
+# Since 2026-11-26 the keys are found by name: a step before the AI step exports every GEMINI_API_KEY* secret
+# (checks/test_gemini_keys_export.py E5 holds all four AI workflows to it), so no step names a key.
+exp = next((i for i, st in enumerate(steps) if st.get("uses") == "./.github/actions/gemini-keys"), None)
+check(exp is not None and exp < py and "secrets.GEMINI_API_KEY" not in text,
+      "M8: every Gemini key secret reaches the step through the gemini-keys action, before it")
 check("market_read.json" in github_sync.PULLABLE_FILES and "market_read.json" not in [n for n, _ in github_sync.SYNCABLE_FILES]
       and "market_read.json" in github_sync.DATA_FILES, "M8: the app pulls market_read.json and never pushes it")
 

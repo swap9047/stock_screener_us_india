@@ -116,23 +116,17 @@ jobs:
           # true of the half of the job that ran after it.
           REFRESH_MARKETS: ${{ github.event.inputs.markets }}
 
+      # Every GEMINI_API_KEY* secret, found by name (owner, 2026-11-26): a new key needs only its secret.
+      # The step sees the whole secrets context; only the Gemini keys leave it (see the action).
+      - name: Export the Gemini keys
+        uses: ./.github/actions/gemini-keys
+        with:
+          secrets: ${{ toJSON(secrets) }}
+
       - name: Generate AI Expert Views
         shell: bash
         run: python -u refresh_expert_views.py 2>&1 | python -u log_redact.py
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          # Second key so llm_util.make_client can spread the run's calls
-          # across both projects' quotas -- see llm_util's rotation section.
-          # Absent/blank is fine: rotation just falls back to one key.
-          GEMINI_API_KEY_BACKUP: ${{ secrets.GEMINI_API_KEY_BACKUP }}
-          # A third key (2026-09-16). Actions only exposes secrets a step names, so
-          # each new key needs a line here; llm_util discovers it by name prefix.
-          GEMINI_API_KEY_BACKUP_B: ${{ secrets.GEMINI_API_KEY_BACKUP_B }}
-          # More keys (2026-10-24): same rule, one line each. A secret that isn't set comes
-          # through blank and is ignored, so a line for a key not added yet is harmless.
-          GEMINI_API_KEY_BACKUP_B2: ${{ secrets.GEMINI_API_KEY_BACKUP_B2 }}
-          GEMINI_API_KEY_BACKUP_B3: ${{ secrets.GEMINI_API_KEY_BACKUP_B3 }}
-          GEMINI_API_KEY_BACKUP_B4: ${{ secrets.GEMINI_API_KEY_BACKUP_B4 }}
           # github.event.inputs (not `inputs`) so scheduled runs, which carry
           # no inputs at all, resolve to an empty string = every watchlist.
           REFRESH_MARKETS: ${{ github.event.inputs.markets }}

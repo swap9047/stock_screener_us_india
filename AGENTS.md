@@ -29,16 +29,21 @@ also load `.env`.
 
 **Gemini keys are discovered by name prefix:** every secret or env var starting with
 `GEMINI_API_KEY` joins the rotation (`llm_util.gemini_api_keys`), and
-`RotatingGeminiClient` picks one per call to divide the ~250-call nightly load. Adding a
-key is a config change here, but a workflow change too -- Actions only exposes secrets a
-step names, so each key needs a line in the AI steps' `env:` blocks. Every run logs
-`[key rotation] N key(s): ...`; if that number is lower than expected, that line is
-missing. A key that hits a per-minute limit sits out 120 s for THAT model only (the pause is per (key, model) since 2026-11-23: a key-wide pause let one model's 429s bench the key for every other model); one that spends its DAILY quota
+`RotatingGeminiClient` picks one per call to divide the ~250-call nightly load. **A new key needs only its
+repository secret** (owner, 2026-11-26): Actions only exposes a secret to a step that names it, except through the
+`secrets` context itself, so the four AI workflows (news, Sentiment, Expert Take, market read) run
+`.github/actions/gemini-keys` before their AI step, which takes `${{ toJSON(secrets) }}` and exports ONLY the
+`GEMINI_API_KEY*` entries to the job's environment (`export_keys.py`: stdlib, prints names and a count, never a
+value; the step does see every secret, so keep it that small). Before it, each key needed a line in four files, and two
+of eight keys added on 2026-11-26 were never passed. **Gemini keys: run "Check Gemini keys"** (`gemini-keys-check.yml`,
+by hand) after adding one: it lists the keys the job found and tries each once on 3.5 Flash Lite. Every AI run logs
+`[key rotation] N key(s): ...`; if that number is lower than expected, a secret is missing or misnamed (the name must
+start with `GEMINI_API_KEY`). A key that hits a per-minute limit sits out 120 s for THAT model only (the pause is per (key, model) since 2026-11-23: a key-wide pause let one model's 429s bench the key for every other model); one that spends its DAILY quota
 for a model (Google's `...PerDay...` quota id) is retired for that model for the rest of the
 run, and once every key is out the ladder steps to its fallback model at once. Before
 2026-10-23 a daily-exhausted key rejoined every 120 s and failed again.
 
-**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 3058
+**There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 3094
 offline regression checks in ~1.5 min on 4 cores (no secrets, no network, no data files; the suites run in parallel,
 `CHECKS_JOBS` workers, default the CPU count, `CHECKS_JOBS=1` serial, output in sorted order), and
 `.github/workflows/checks.yml` runs them on every push. Anything needing real prices, the

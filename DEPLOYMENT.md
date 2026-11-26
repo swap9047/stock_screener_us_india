@@ -108,7 +108,7 @@ GEMINI_API_KEY = <your key from aistudio.google.com>
 
 Get a free key at [Google AI Studio](https://aistudio.google.com/apikey). The workflow reuses the same `DISCORD_WEBHOOK_URL` secret as the alerts workflow.
 
-**Spreading the load over several keys.** A nightly AI run is ~250 calls against one project's free quota, so the three AI workflows rotate across every key they find, picking one per call. Any secret or env var whose **name starts with `GEMINI_API_KEY`** counts — `GEMINI_API_KEY_BACKUP`, `GEMINI_API_KEY_BACKUP_B`, `GEMINI_API_KEY_2`, whatever you like. Two steps per key: add the repo secret, then add a matching line to the `env:` block of the AI steps in `news-summary.yml`, `expert-views.yml` and `fundamentals.yml` (Actions only exposes secrets a step names explicitly). Each run logs `[key rotation] N key(s): ...` so you can confirm it sees them all. For local runs, put the keys in `.env`.
+**Spreading the load over several keys.** A nightly AI run is ~250 calls against one project's free quota, so the three AI workflows rotate across every key they find, picking one per call. Any secret or env var whose **name starts with `GEMINI_API_KEY`** counts — `GEMINI_API_KEY_BACKUP`, `GEMINI_API_KEY_BACKUP_B`, `GEMINI_API_KEY_2`, whatever you like. One step per key: add the repo secret (Settings -> Secrets and variables -> Actions). The four AI workflows find every secret named `GEMINI_API_KEY*` themselves (`.github/actions/gemini-keys`), so no workflow needs editing. To check that a new key is loaded and answers, run the **Check Gemini keys** workflow from the Actions tab. Each run logs `[key rotation] N key(s): ...` so you can confirm it sees them all. For local runs, put the keys in `.env`.
 
 A few things worth knowing:
 
