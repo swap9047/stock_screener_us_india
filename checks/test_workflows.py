@@ -16,7 +16,7 @@ R = REPO + "/.github"
 # checks.yml is the CI suite: it loads no data, commits nothing and prints only
 # invented fixtures, so the data rules below do not apply to it. Its exemption is
 # asserted rather than assumed, just below.
-NON_DATA = {"checks.yml", "keep-alive.yml"}
+NON_DATA = {"checks.yml", "keep-alive.yml", "gemini-keys-check.yml"}
 # Workflows whose only output is rows in the research library's database (publish_market.py):
 # they load data and redact like the rest, but have nothing to commit.
 DB_ONLY = {"market-library.yml"}
@@ -36,6 +36,19 @@ check("load-data" not in ka_text and "commit-data" not in ka_text and "DATA_REPO
 check(re.findall(r"secrets\.(\w+)", ka_text) == ["APP_URL"], "keep-alive.yml uses only the APP_URL secret")
 check((ka.get("permissions") or {}).get("contents") == "read" and "git push" not in ka_text,
       "keep-alive.yml is read-only on this repo")
+
+# gemini-keys-check.yml (by hand) tries each Gemini key once: no data, no commits, and the only secret
+# it touches is the secrets context handed to the gemini-keys action, which exports the GEMINI_API_KEY*
+# entries and nothing else (checks/test_gemini_keys_export.py).
+gk_text = open(f"{R}/workflows/gemini-keys-check.yml").read()
+gk = yaml.safe_load(gk_text)
+check("load-data" not in gk_text and "commit-data" not in gk_text and "DATA_REPO_TOKEN" not in gk_text,
+      "gemini-keys-check.yml never touches the data repo")
+check(re.findall(r"secrets\.(\w+)", gk_text) == [] and gk_text.count("toJSON(secrets)") == 1,
+      "gemini-keys-check.yml names no secret; the keys come in through the gemini-keys action")
+check((gk.get("permissions") or {}).get("contents") == "read" and "git push" not in gk_text
+      and list((gk.get("on") or gk.get(True)).keys()) == ["workflow_dispatch"],
+      "gemini-keys-check.yml is by hand only and read-only on this repo")
 
 for path in sorted(glob.glob(f"{R}/workflows/*.yml")):
     if path.rsplit("/", 1)[1] in NON_DATA:

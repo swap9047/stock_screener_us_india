@@ -117,6 +117,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # Every GEMINI_API_KEY* secret, found by name (owner, 2026-11-26): a new key needs only its secret.
+      # The step sees the whole secrets context; only the Gemini keys leave it (see the action).
+      - name: Export the Gemini keys
+        uses: ./.github/actions/gemini-keys
+        with:
+          secrets: ${{ toJSON(secrets) }}
+
       # The script exits 1 when a reading is still forming or every model failed on a
       # read; `shell: bash` runs with pipefail, so the pipe through log_redact.py keeps
       # that exit code. Counts only: a read describes the invested list.
@@ -127,15 +134,6 @@ jobs:
         env:
           MARKET_READ_BACKFILL: ${{ github.event.inputs.backfill }}
           MARKET_READ_FORCE: ${{ github.event.inputs.force }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          # More keys: Actions only exposes secrets a step names, so each key needs a
-          # line here; llm_util discovers them by name prefix. A secret that isn't set
-          # comes through blank and is ignored.
-          GEMINI_API_KEY_BACKUP: ${{ secrets.GEMINI_API_KEY_BACKUP }}
-          GEMINI_API_KEY_BACKUP_B: ${{ secrets.GEMINI_API_KEY_BACKUP_B }}
-          GEMINI_API_KEY_BACKUP_B2: ${{ secrets.GEMINI_API_KEY_BACKUP_B2 }}
-          GEMINI_API_KEY_BACKUP_B3: ${{ secrets.GEMINI_API_KEY_BACKUP_B3 }}
-          GEMINI_API_KEY_BACKUP_B4: ${{ secrets.GEMINI_API_KEY_BACKUP_B4 }}
 
       # always(): reads written before a failure are kept; the job still reports red.
       - name: Commit updated market_read.json
