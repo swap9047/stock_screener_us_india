@@ -8,6 +8,9 @@ single transient 429 permanently demoted a ticker to the Gemma fallback in the
 other two. This module is the one implementation they now share.
 """
 
+import atexit
+import datetime
+import hashlib
 import os
 import random
 import re
@@ -608,6 +611,140 @@ def split_key_list(value):
     return [part.strip() for part in re.split(r"[,\n]", value) if part.strip()]
 
 
+# --- calls per key, shared with the transcription app (kg_key_usage) ---------------------------------------------------
+# Every request this code sends to Google is counted against the key that carried it and the model, per Google quota day
+# (Pacific), and added to the shared table in the research library's database, where the transcription app's calls and
+# every other job's are added too: one table of "calls today" per key. A key is only ever a short fingerprint.
+# quota_day / key_fingerprint are copies of the transcription app's knowledge_store.quota_day / key_fingerprint (two
+# repos, no shared module): checks/test_key_usage_112626.py holds them to the same answers.
+QUOTA_TZ = "America/Los_Angeles"
+KEY_USAGE_PENDING_MAX = 5000      # entries kept while the database can't be reached
+_USAGE = {}                       # (quota day, key fingerprint, model) -> requests sent
+_USAGE_LOCK = threading.Lock()
+_USAGE_STATE = {"atexit": False, "flushed_at": None}
+
+
+def quota_day(now=None):
+    """Google's quota day (Pacific time) as 'YYYY-MM-DD'. `now` is an aware datetime (default: now)."""
+    from zoneinfo import ZoneInfo
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    return now.astimezone(ZoneInfo(QUOTA_TZ)).date().isoformat()
+
+
+def key_fingerprint(key):
+    """A short, stable id for an API key: the first 8 hex digits of its SHA-256. Nothing of the key can be recovered
+    from it, and the same key has the same id in every app and job."""
+    return hashlib.sha256(str(key).strip().encode("utf-8")).hexdigest()[:8]
+
+
+def count_key_call(key, model, n=1):
+    """Count `n` requests sent on this key and model. Every attempt counts, failures and retries included: that is what a
+    daily limit counts. The model is kept without a leading "models/". The first count registers a flush at exit, so a
+    job that never calls flush_key_usage still adds its counts. Never raises."""
+    try:
+        if not key:
+            return
+        entry = (quota_day(), key_fingerprint(key), str(model).removeprefix("models/"))
+        with _USAGE_LOCK:
+            _USAGE[entry] = _USAGE.get(entry, 0) + n
+            register = not _USAGE_STATE["atexit"]
+            _USAGE_STATE["atexit"] = True
+        if register:
+            atexit.register(flush_key_usage)
+    except Exception:
+        pass
+
+
+def key_usage_table(rows, pool_keys=()):
+    """The shared per-key counts as rows for st.dataframe, the same table the transcription app shows: one row per key (its
+    place in THIS app's pool and its fingerprint; a key this app doesn't hold is still listed), one column per model
+    (most-called first), a Total column and an All keys row. `rows` are {key_id, model, calls}; `pool_keys` the key values."""
+    place = {key_fingerprint(k): i for i, k in enumerate(pool_keys, 1)}
+    by_key, per_model = {}, {}
+    for r in rows:
+        calls = int(r.get("calls") or 0)
+        by_key.setdefault(r["key_id"], {})
+        by_key[r["key_id"]][r["model"]] = by_key[r["key_id"]].get(r["model"], 0) + calls
+        per_model[r["model"]] = per_model.get(r["model"], 0) + calls
+    models = sorted(per_model, key=lambda m: (-per_model[m], m))
+    table = []
+    for kid in sorted(by_key, key=lambda k: (place.get(k, 10 ** 6), k)):
+        label = f"key {place[kid]} · {kid}" if kid in place else f"not in this app's pool · {kid}"
+        table.append({"Key": label, **{m: by_key[kid].get(m, 0) for m in models}, "Total": sum(by_key[kid].values())})
+    if table:
+        table.append({"Key": "All keys", **{m: per_model[m] for m in models}, "Total": sum(per_model.values())})
+    return table
+
+
+def _usage_endpoint():
+    """The Vercel function's address for the counts, from MARKET_API_URL (".../api/market": the same route serves them)."""
+    url = os.environ.get("MARKET_API_URL", "").strip().rstrip("/")
+    return url if url.startswith("https://") else ""
+
+
+def _send_key_usage(rows):
+    """Add rows of (day, key_id, model, calls) to the shared table. By the database when MARKET_DB_URL is set (the jobs: the
+    market_writer role), else through the Vercel function when MARKET_API_URL and MARKET_API_TOKEN are set (the dashboard,
+    which holds no database secret). Returns (True, "") or (False, reason); the reason names a class, never a value."""
+    reason = "no MARKET_DB_URL, or MARKET_API_URL with MARKET_API_TOKEN, to send them to"
+    if os.environ.get("MARKET_DB_URL", "").strip():
+        try:
+            import market_lookup
+            db, err = market_lookup.MarketDB.from_env()
+            if db is not None:
+                try:
+                    db.add_key_usage(rows)
+                    return True, ""
+                finally:
+                    db.close()
+            reason = err or "database unavailable"
+        except Exception as e:
+            reason = f"database write failed ({type(e).__name__})"
+    url, token = _usage_endpoint(), os.environ.get("MARKET_API_TOKEN", "").strip()
+    if url and token:
+        try:
+            import requests
+            r = requests.post(url, json={"key_usage": [list(row) for row in rows]}, timeout=15,
+                              headers={"Authorization": f"Bearer {token}"})
+            return (True, "") if r.status_code == 200 else (False, f"the usage endpoint answered {r.status_code}")
+        except Exception as e:
+            return False, f"the usage endpoint did not answer ({type(e).__name__})"
+    return False, reason
+
+
+def flush_key_usage(min_interval=None):
+    """Send the pending per-key counts to the shared table. True when sent. `min_interval` (seconds) skips the send when
+    one was made that recently (the dashboard calls it on every run). A failed send puts the counts back for the next try
+    (up to KEY_USAGE_PENDING_MAX entries); with nowhere configured to send them they are dropped. Prints one count-only
+    line (this repo's logs are public). Never raises."""
+    try:
+        now = time.monotonic()
+        with _USAGE_LOCK:
+            if not _USAGE:
+                return False
+            last = _USAGE_STATE["flushed_at"]
+            if min_interval and last is not None and now - last < min_interval:
+                return False
+            pending = dict(_USAGE)
+            _USAGE.clear()
+            _USAGE_STATE["flushed_at"] = now
+        rows = [(d, k, m, n) for (d, k, m), n in sorted(pending.items())]
+        ok, reason = _send_key_usage(rows)
+        calls = sum(pending.values())
+        if ok:
+            print(f"  [key usage] {calls} call(s) added to the shared table")
+            return True
+        print(f"  [key usage] {calls} call(s) not added: {reason}")
+        if not reason.startswith("no "):      # something configured failed: keep them for the next try
+            with _USAGE_LOCK:
+                for entry, n in pending.items():
+                    if len(_USAGE) < KEY_USAGE_PENDING_MAX or entry in _USAGE:
+                        _USAGE[entry] = _USAGE.get(entry, 0) + n
+        return False
+    except Exception:
+        return False
+
+
 def _key_names(st_secrets=None):
     """Every secret/env name that looks like a Gemini key, primary and backup
     first. GitHub upper-cases secret names (GEMINI_API_KEY_BACKUP_B) while a
@@ -765,6 +902,8 @@ class RotatingGeminiClient:
             name, key = random.choice(choices)
             self.call_counts[name] = self.call_counts.get(name, 0) + 1
             self.last_key_name = name
+        if model:
+            count_key_call(key, model)   # the shared per-key table (see count_key_call)
         return name, self._client_for(key)
 
     def _usable(self, name, model):

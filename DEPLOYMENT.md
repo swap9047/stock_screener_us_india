@@ -108,6 +108,13 @@ GEMINI_API_KEY = <your key from aistudio.google.com>
 
 Get a free key at [Google AI Studio](https://aistudio.google.com/apikey). The workflow reuses the same `DISCORD_WEBHOOK_URL` secret as the alerts workflow.
 
+**Calls per key today (owner, 2026-11-26).** The table under Settings · Models → 🔑 Calls per key today, in this app and in the
+transcription app, shows today's Gemini calls per key and model from BOTH apps and every job, in one shared table (Google's quota day,
+Pacific time). The jobs write it with the `MARKET_DB_URL` repo secret (already used by the publish jobs). For this dashboard to read and
+add to it, put `MARKET_API_URL` (`https://<project>.vercel.app/api/market`) and `MARKET_API_TOKEN` (the token set on Vercel) in its
+Streamlit secrets, as in the transcription app's; without them the panel says what to add. The table itself is created the first
+time the transcription app (or its daily upgrade) opens the knowledge database after its update.
+
 **Spreading the load over several keys.** A nightly AI run is ~250 calls against one project's free quota, so the three AI workflows rotate across every key they find, picking one per call. Any secret or env var whose **name starts with `GEMINI_API_KEY`** counts — `GEMINI_API_KEY_BACKUP`, `GEMINI_API_KEY_BACKUP_B`, `GEMINI_API_KEY_2`, whatever you like. Add the repo secret (Settings -> Secrets and variables -> Actions) under the next free name: the four AI workflows and the key check name `GEMINI_API_KEY`, `GEMINI_API_KEY_BACKUP`, `GEMINI_API_KEY_BACKUP_B` and `GEMINI_API_KEY_BACKUP_B2` through `_B9` (Actions only exposes a secret to a step that names it, and GitHub holds back a workflow that reads the whole secrets context to find keys by prefix). A name outside that list also needs a line in those five workflows. **Or keep every key in ONE secret:** a repo secret named `GEMINI_API_KEYS` holding `key1,key2,key3,...` (commas or line breaks) is already named in those workflows, so any number of keys needs no workflow edit; the same text goes in Streamlit's secrets as `GEMINI_API_KEYS = "key1,key2,..."` (a top-level line, not under a `[section]`). GitHub secrets cannot be read back, so to add a key paste the whole list again; keep it in a password manager. To check that a new key is loaded and answers, run the **Check Gemini keys** workflow from the Actions tab. Each run logs `[key rotation] N key(s): ...` so you can confirm it sees them all. For local runs, put the keys in `.env`.
 
 A few things worth knowing:

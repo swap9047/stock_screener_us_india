@@ -3998,6 +3998,36 @@ def _model_settings_flip_rows(step, delta):
     st.session_state[key] = max(1, min(8, st.session_state.get(key, 1) + delta))
 
 
+def _render_key_usage():
+    """Today's Gemini calls per key and model (llm_util.key_usage_table), read from the shared table through the Vercel
+    function: this app holds no database secret, only MARKET_API_URL and MARKET_API_TOKEN (the values the transcription app
+    uses). Its own pending counts are sent first, so the table is current to the call."""
+    import requests
+    url, token = llm_util._usage_endpoint(), os.environ.get("MARKET_API_TOKEN", "").strip()
+    if not (url and token):
+        st.caption("To show the shared counts, add MARKET_API_URL and MARKET_API_TOKEN to this app's secrets (the same values the "
+                   "transcription app uses).")
+        return
+    llm_util.flush_key_usage()
+    try:
+        r = requests.get(url, params={"usage": "today"}, headers={"Authorization": f"Bearer {token}"}, timeout=20)
+        if r.status_code != 200:
+            st.caption(f"Couldn't read the counts: the usage endpoint answered {r.status_code}.")
+            return
+        body = r.json()
+    except Exception as e:
+        st.caption(f"Couldn't read the counts ({type(e).__name__}).")
+        return
+    table = llm_util.key_usage_table(body.get("rows") or [], [k for _, k in llm_util.gemini_api_keys(st.secrets)])
+    if not table:
+        st.caption(f"No calls counted for {body.get('day')} yet. The transcription app and the nightly jobs add theirs as they run.")
+        return
+    st.dataframe(table, hide_index=True, width="stretch")
+    st.caption(f"Quota day {body.get('day')} (Pacific: it resets at midnight there, 3 AM Eastern). Every request sent to Google "
+               "counts, failures and retries included, as it does against a daily limit. Added every few minutes and when a job "
+               "ends, so the latest calls may not show yet.")
+
+
 def render_model_settings():
     """Sidebar "Settings · Models" (owner, 2026-10-31): every place the app calls a model -- the news
     digest's search, filter and collation, Expert Take's search and write-up, Sentiment's two searches
@@ -4053,6 +4083,12 @@ def render_model_settings():
             skipped = (" · skipped: " + ", ".join(_skip_labels.get(m, model_settings.short(m)) for m in _gone)) if _gone else ""
             lines.append(f"- {name}: `{model_settings.describe(cfg['chain'])}`{thinking}{mark}{skipped}")
         st.markdown("\n".join(lines))
+
+        if st.checkbox("🔑 Calls per key today", key="ms_key_usage",
+                       help="Every request sent to Google today (Google's quota day, Pacific time), per key and model, from this app, "
+                            "the nightly jobs AND the transcription app: they all add to one table. Keys show as a short "
+                            "fingerprint, never the key."):
+            _render_key_usage()
 
         step = st.selectbox("Change a step", list(model_settings.STEPS), index=None, key="model_settings_step",
                             format_func=lambda k: model_settings.STEPS[k]["label"], placeholder="Pick a step...")
@@ -7654,4 +7690,11 @@ if not os.environ.get("SKIP_GITHUB_PULL"):
                 st.session_state["_config_push_error"] = (_pending_cfg, _cfg_msg)
     except Exception as _e:                                   # never break the page
         st.session_state["_config_push_error"] = (["config"], f"{type(_e).__name__}: {_e}")
+
+# The dashboard's own Gemini calls (the Re-analyze buttons) join the shared per-key table every few minutes; a run with
+# nothing counted costs a dict check.
+try:
+    llm_util.flush_key_usage(min_interval=300)
+except Exception:
+    pass
 

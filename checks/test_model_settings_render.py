@@ -12,6 +12,9 @@ repo (as test_market_read_render.py), over synthetic prices.
   P5  the old pickers are gone from the News tab and AI Analysis Controls, which point here;
   P6  the repository lists the models and Add puts a new one in the pickers;
   P7  Test with no Gemini key says so instead of failing.
+  P9  "Calls per key today" is off until ticked; then the shared per-key table read through the Vercel function (the
+      request carries the token and asks for today), with its quota day under it; without MARKET_API_URL and
+      MARKET_API_TOKEN, or when the endpoint refuses, the panel says what is missing instead of failing (owner, 2026-11-26).
   P8  the "Skip Gemini 3.8 Flash calls" switch is the panel's first control; ticking it saves it in
       settings.json (inside ai_models, the chains untouched) and notes the skip on the two market read
       steps only; unticking takes it out again (owner, 2026-11-07).
@@ -281,6 +284,64 @@ if at:
     check(not any(k and ("reasoning_model_select" in k or "reasoning_budget_select" in k) for k in allkeys)
           and any("Settings · Models" in c.value for c in at.caption),
           "P5: AI Analysis Controls has no model pickers either")
+
+
+# --- P9: Calls per key today ------------------------------------------------------------------------------------
+import types as _types
+import requests as _requests
+import llm_util as _llm
+
+_posts_seen = []
+_real_get = _requests.get
+_rows = [{"key_id": _llm.key_fingerprint("AIzaSyDUMMY0001"), "model": "gemma-9-test", "calls": 6},
+         {"key_id": _llm.key_fingerprint("AIzaSyDUMMY0000"), "model": "gemma-9-test", "calls": 4},
+         {"key_id": _llm.key_fingerprint("AIzaSyDUMMY0000"), "model": "gemini-9-test", "calls": 1},
+         {"key_id": "deadbeef", "model": "gemma-9-test", "calls": 2}]
+
+
+def _fake_get(url, params=None, headers=None, timeout=None):
+    _posts_seen.append((url, params, headers))
+    return _types.SimpleNamespace(status_code=_fake_get.status, json=lambda: {"day": "2026-11-26", "rows": _rows})
+
+
+def _key_tables(a):
+    return [d for d in sidebar_df(a) if "Key" in d.columns]      # the panel also draws the model repository
+
+
+_fake_get.status = 200
+_requests.get = _fake_get
+os.environ.update({"MARKET_API_URL": "https://usage.example/api/market", "MARKET_API_TOKEN": "tok-test",
+                   "GEMINI_API_KEY": "AIzaSyDUMMY0000", "GEMINI_API_KEY_BACKUP": "AIzaSyDUMMY0001"})
+at = render()
+check(at is not None, "P9: the page renders with the usage endpoint configured")
+if at:
+    off = not _key_tables(at) and not _posts_seen
+    at.sidebar.checkbox(key="ms_key_usage").set_value(True).run()
+    tables = _key_tables(at)
+    rows = tables[-1].to_dict("records") if tables else []
+    check(off and not at.exception and [r["Key"] for r in rows] == [f"key 1 · {_llm.key_fingerprint('AIzaSyDUMMY0000')}",
+                                                                    f"key 2 · {_llm.key_fingerprint('AIzaSyDUMMY0001')}",
+                                                                    "not in this app's pool · deadbeef", "All keys"]
+          and rows[0]["gemma-9-test"] == 4 and rows[-1]["Total"] == 13 and list(tables[-1].columns)[1] == "gemma-9-test"
+          and any("2026-11-26" in c.value and "Pacific" in c.value for c in at.sidebar.caption),
+          "P9: Calls per key today is off until ticked (nothing fetched); then the table, a row per key by its place in this app's pool "
+          "(a key it doesn't hold still shown), models most-called first, an All keys row, the quota day and Pacific said under it")
+    check(bool(_posts_seen) and _posts_seen[-1][0] == "https://usage.example/api/market" and _posts_seen[-1][1] == {"usage": "today"}
+          and _posts_seen[-1][2] == {"Authorization": "Bearer tok-test"},
+          "P9: the request goes to the configured address with the token as a Bearer header and asks for today")
+    _fake_get.status = 503
+    at.sidebar.checkbox(key="ms_key_usage").set_value(False).run()
+    at.sidebar.checkbox(key="ms_key_usage").set_value(True).run()
+    check(not at.exception and any("answered 503" in c.value for c in at.sidebar.caption) and not _key_tables(at),
+          "P9: an endpoint that refuses is said so, with no table and no crash")
+for k in ("MARKET_API_URL", "MARKET_API_TOKEN"):
+    os.environ.pop(k, None)
+at = render()
+if at:
+    at.sidebar.checkbox(key="ms_key_usage").set_value(True).run()
+    check(not at.exception and any("MARKET_API_URL" in c.value and "MARKET_API_TOKEN" in c.value for c in at.sidebar.caption),
+          "P9: without MARKET_API_URL and MARKET_API_TOKEN the panel says what to add")
+_requests.get = _real_get
 
 print("FAILURES:", fails)
 sys.exit(fails)
