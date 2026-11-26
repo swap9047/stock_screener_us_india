@@ -10,6 +10,9 @@ import os
 import sys
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from llm_util import split_key_list  # noqa: E402  (the rule the jobs use, so the check cannot read a list differently)
+
 MODEL = "models/gemini-3.5-flash-lite"
 
 
@@ -25,15 +28,22 @@ def main():
     from google import genai
     from google.genai import types
 
-    names = sorted((n for n in os.environ if n.startswith("GEMINI_API_KEY") and os.environ[n].strip()),
-                   key=lambda n: (n != "GEMINI_API_KEY", n != "GEMINI_API_KEY_BACKUP", n))
+    secret_names = sorted((n for n in os.environ if n.startswith("GEMINI_API_KEY") and os.environ[n].strip()),
+                          key=lambda n: (n != "GEMINI_API_KEY", n != "GEMINI_API_KEY_BACKUP", n))
+    # One secret may hold several keys joined by commas (GEMINI_API_KEYS): each is tried on its own, named NAME[1],
+    # NAME[2], ... by its place in the list, so a failure says which one to look at.
+    keys = []
+    for secret in secret_names:
+        parts = split_key_list(os.environ[secret])
+        keys += [(secret, parts[0])] if len(parts) == 1 else [(f"{secret}[{n}]", part) for n, part in enumerate(parts, 1)]
+    names = [name for name, _ in keys]
     print(f"{len(names)} Gemini key(s) in this job: {', '.join(names) or 'none'}")
-    distinct = len({os.environ[n].strip() for n in names})
+    distinct = len({value for _, value in keys})
     if distinct != len(names):
         print(f"::warning::{len(names) - distinct} key(s) hold the same value as another (a key pasted twice rotates as one)")
     bad = 0
-    for name in names:
-        client = genai.Client(api_key=os.environ[name].strip(), http_options=types.HttpOptions(timeout=60_000))
+    for name, value in keys:
+        client = genai.Client(api_key=value, http_options=types.HttpOptions(timeout=60_000))
         started = time.time()
         try:
             reply = client.models.generate_content(

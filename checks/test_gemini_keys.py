@@ -50,6 +50,48 @@ check(len([k for _, k in dupe if k == os.environ["GEMINI_API_KEY_BACKUP_B"]]) ==
       f"the same key under two spellings appears once: {[n for n, _ in dupe]}")
 check(len(llm_util.gemini_api_keys(extra="k1")) == len(found), "a caller-supplied key already configured is not double-counted")
 
+# --- one secret holding several keys, joined by commas (GEMINI_API_KEYS, owner 2026-11-26)
+_saved_env = {k: v for k, v in os.environ.items() if k.startswith("GEMINI")}
+def _only_env(**kv):
+    for k in [k for k in os.environ if k.startswith("GEMINI")]:
+        del os.environ[k]
+    os.environ.update(kv)
+
+_only_env(GEMINI_API_KEYS=" j1 , j2,\n j3,, j4 ,")
+joined_pool = llm_util.gemini_api_keys()
+check([k for _, k in joined_pool] == ["j1", "j2", "j3", "j4"] and [n for n, _ in joined_pool] == [f"GEMINI_API_KEYS[{i}]" for i in (1, 2, 3, 4)],
+      f"a joined secret gives one key per entry, named by place; spaces, line breaks, blanks and a trailing comma ignored: {joined_pool}")
+_only_env(GEMINI_API_KEYS="only-one")
+check(llm_util.gemini_api_keys() == [("GEMINI_API_KEYS", "only-one")], "a joined secret holding ONE key keeps its plain name")
+_only_env(GEMINI_API_KEYS=" , ,")
+check(llm_util.gemini_api_keys() == [], "a joined secret with nothing in it is no key (never an empty or broken one)")
+_only_env(GEMINI_API_KEY="j2", GEMINI_API_KEY_BACKUP="j9", GEMINI_API_KEYS="j1,j2,j3")
+mixed = llm_util.gemini_api_keys()
+check([k for _, k in mixed] == ["j2", "j9", "j1", "j3"] and mixed[0][0] == "GEMINI_API_KEY" and mixed[1][0] == "GEMINI_API_KEY_BACKUP",
+      f"separate secrets and a joined one work together: primary and backup first, a repeated key counted once: {mixed}")
+sec = llm_util.gemini_api_keys(st_secrets={"GEMINI_API_KEYS": "s1,s2", "OTHER": "x,y"})
+check([n for n, _ in sec if n.startswith("GEMINI_API_KEYS")] == ["GEMINI_API_KEYS[1]", "GEMINI_API_KEYS[2]"]
+      and [k for n, k in sec if n.startswith("GEMINI_API_KEYS")] == ["s1", "s2"] and "x" not in [k for _, k in sec],
+      f"Streamlit's secrets take the same joined value; other secrets are never read: {sec}")
+check(llm_util.gemini_api_keys(st_secrets={"GEMINI_API_KEYS": "s1,s2"}, extra="s2") == llm_util.gemini_api_keys(st_secrets={"GEMINI_API_KEYS": "s1,s2"}),
+      "a caller-supplied key that is already in the joined list is not double-counted")
+
+# ...and the rotation spreads the load over each of its keys
+_only_env(GEMINI_API_KEYS="r1,r2,r3,r4")
+rot_calls = []
+class _Stub:
+    def __init__(self, key): self.models = types.SimpleNamespace(generate_content=lambda **kw: rot_calls.append(key) or "ok")
+rot = llm_util.make_client()
+rot._client_for = lambda key: _Stub(key)
+for _ in range(400):
+    rot.models.generate_content(model="m", contents="c")
+check(sorted(rot.key_names) == [f"GEMINI_API_KEYS[{i}]" for i in (1, 2, 3, 4)] and set(rot_calls) == {"r1", "r2", "r3", "r4"}
+      and all(rot_calls.count(k) > 40 for k in ("r1", "r2", "r3", "r4")),
+      f"the client rotates over every key of the joined secret, each served by its own client: { {k: rot_calls.count(k) for k in sorted(set(rot_calls))} }")
+check(sorted(rot.call_counts) == sorted(rot.key_names) and sum(rot.call_counts.values()) == 400,
+      f"the per-key counters carry each key's own name: {rot.call_counts}")
+_only_env(**_saved_env)
+
 # --- rotation spreads calls across all three keys
 os.environ.pop("GEMINI_API_KEY_4")
 calls = []

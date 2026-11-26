@@ -534,6 +534,7 @@ def same_model_tiers(model, attempts=3, backoff=None):
 # call sites.
 # ---------------------------------------------------------------------------
 
+# One secret may hold SEVERAL keys joined by commas (GEMINI_API_KEYS, owner 2026-11-26): see split_key_list.
 # Discovery is by NAME PREFIX: any secret or environment variable whose name
 # starts with GEMINI_API_KEY is a key, whatever the suffix (_BACKUP, _BACKUP_B,
 # _2, ...). It used to be a fixed list of names, which silently ignored
@@ -592,6 +593,21 @@ def _is_daily_quota_error(exc):
     return "perday" in squashed
 
 
+def split_key_list(value):
+    """The keys one secret holds, as a list: separated by commas (or line breaks, which a pasted list often
+    carries), each stripped, blanks dropped. A plain single key comes back as itself in a one-item list; a
+    non-string or empty value as [].
+
+    One secret named GEMINI_API_KEYS may hold every key joined by commas (owner, 2026-11-26): GitHub secrets cannot
+    be read back, so one value to paste again beats eight secrets to keep apart, and the same text works in
+    Streamlit's secrets. ANY GEMINI_API_KEY* name is split the same way, so a joined value under another name works too.
+    .github/actions/gemini-keys/export_keys.py has a copy of this rule (it is stdlib only and cannot import this
+    module); checks/test_gemini_keys_export.py holds the two to the same answers."""
+    if not isinstance(value, str):
+        return []
+    return [part.strip() for part in re.split(r"[,\n]", value) if part.strip()]
+
+
 def _key_names(st_secrets=None):
     """Every secret/env name that looks like a Gemini key, primary and backup
     first. GitHub upper-cases secret names (GEMINI_API_KEY_BACKUP_B) while a
@@ -636,17 +652,27 @@ def gemini_api_keys(st_secrets=None, extra=None):
         if value and isinstance(value, str) and value not in {k for _, k in found}:
             found.append((name, value))
 
+    def add_secret(name, value):
+        """One configured secret: a single key under its own name, a joined list as NAME[1], NAME[2], ... (the
+        names are what the rotation logs and the per-key counters show, so each key needs its own)."""
+        parts = split_key_list(value)
+        if len(parts) == 1:
+            add(name, parts[0])
+        else:
+            for n, part in enumerate(parts, 1):
+                add(f"{name}[{n}]", part)
+
     # Named discovery first, so a key the caller also passed keeps its real
     # name in the rotation logs instead of showing up as "caller[0]".
     for name in _key_names(st_secrets):
         if st_secrets is not None:
             try:
                 if name in st_secrets:
-                    add(name, st_secrets[name])
+                    add_secret(name, st_secrets[name])
                     continue
             except Exception:
                 pass
-        add(name, os.environ.get(name))
+        add_secret(name, os.environ.get(name))
 
     if isinstance(extra, str):
         add("caller", extra)
