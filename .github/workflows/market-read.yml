@@ -117,13 +117,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Every GEMINI_API_KEY* secret, found by name (owner, 2026-11-26): a new key needs only its secret.
-      # The step sees the whole secrets context; only the Gemini keys leave it (see the action).
-      - name: Export the Gemini keys
-        uses: ./.github/actions/gemini-keys
-        with:
-          secrets: ${{ toJSON(secrets) }}
-
       # The script exits 1 when a reading is still forming or every model failed on a
       # read; `shell: bash` runs with pipefail, so the pipe through log_redact.py keeps
       # that exit code. Counts only: a read describes the invested list.
@@ -132,6 +125,21 @@ jobs:
         run: |
           python -u refresh_market_read.py 2>&1 | python -u log_redact.py
         env:
+          # The Gemini keys, one line each. GitHub holds back a workflow that serialises the whole secrets
+          # context, so they cannot be found by name here. llm_util finds them by prefix; a secret that is
+          # not set comes through blank and is ignored, so a new key needs only its secret while it is named
+          # here (spare slots through _B9). checks/test_gemini_keys_workflows.py keeps every list identical.
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_API_KEY_BACKUP: ${{ secrets.GEMINI_API_KEY_BACKUP }}
+          GEMINI_API_KEY_BACKUP_B: ${{ secrets.GEMINI_API_KEY_BACKUP_B }}
+          GEMINI_API_KEY_BACKUP_B2: ${{ secrets.GEMINI_API_KEY_BACKUP_B2 }}
+          GEMINI_API_KEY_BACKUP_B3: ${{ secrets.GEMINI_API_KEY_BACKUP_B3 }}
+          GEMINI_API_KEY_BACKUP_B4: ${{ secrets.GEMINI_API_KEY_BACKUP_B4 }}
+          GEMINI_API_KEY_BACKUP_B5: ${{ secrets.GEMINI_API_KEY_BACKUP_B5 }}
+          GEMINI_API_KEY_BACKUP_B6: ${{ secrets.GEMINI_API_KEY_BACKUP_B6 }}
+          GEMINI_API_KEY_BACKUP_B7: ${{ secrets.GEMINI_API_KEY_BACKUP_B7 }}
+          GEMINI_API_KEY_BACKUP_B8: ${{ secrets.GEMINI_API_KEY_BACKUP_B8 }}
+          GEMINI_API_KEY_BACKUP_B9: ${{ secrets.GEMINI_API_KEY_BACKUP_B9 }}
           MARKET_READ_BACKFILL: ${{ github.event.inputs.backfill }}
           MARKET_READ_FORCE: ${{ github.event.inputs.force }}
 

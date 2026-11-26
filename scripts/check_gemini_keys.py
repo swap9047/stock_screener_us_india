@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Try every Gemini key the job has (the gemini-keys action exported them) with one tiny call each.
+"""Try every Gemini key the job has (gemini-keys-check.yml names them in its env) with one tiny call each.
 
 Run by gemini-keys-check.yml, by hand: "are all my keys loaded, and does each one answer?". One plain reply from
 gemini-3.5-flash-lite per key -- a few dozen tokens -- and a line per key naming it (never printing it). Exits 1
