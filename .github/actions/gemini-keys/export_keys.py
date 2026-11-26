@@ -8,11 +8,16 @@ names back in either), mask each value, and append it to $GITHUB_ENV under the u
 (llm_util discovers keys by that prefix, case-sensitively). Nothing else is written or printed: the log
 gets the names (llm_util prints them too) and a count, never a value.
 
+A secret may hold several keys joined by commas (GEMINI_API_KEYS, owner 2026-11-26). The runner masks only a
+secret's WHOLE value, so a single key printed on its own (an SDK error quoting its request) would show in this public
+repo's log: each key of a joined value is masked separately here. llm_util splits the value itself.
+
 Stdlib only; checks/test_gemini_keys_export.py runs it with a fake secrets blob.
 """
 
 import json
 import os
+import re
 import secrets
 import sys
 
@@ -36,6 +41,12 @@ def keys_from(blob):
     return found
 
 
+def split_keys(value):
+    """The keys one secret holds: comma (or line break) separated, stripped, blanks dropped. The same rule as
+    llm_util.split_key_list -- checks/test_gemini_keys_export.py holds the two to the same answers."""
+    return [part.strip() for part in re.split(r"[,\n]", value or "") if part.strip()]
+
+
 def env_file_block(name, value):
     """The $GITHUB_ENV text for one variable, in the multi-line-safe form with a random delimiter (a plain
     NAME=value line would let a value with a newline define other variables)."""
@@ -54,10 +65,19 @@ def main():
     if keys:
         with open(env_file, "a", encoding="utf-8") as fh:
             for name, value in sorted(keys.items()):
-                print(f"::add-mask::{value}")
+                parts = split_keys(value)
+                # A mask command is ONE line: a value with a line break cannot be masked whole (its later lines
+                # would print as plain log text), so it is masked key by key. A joined list is masked whole AND key by key.
+                masks = [value] if "\n" not in value else []
+                if len(parts) > 1:
+                    masks += parts
+                for mask in masks:
+                    print(f"::add-mask::{mask}")
                 fh.write(env_file_block(name, value))
     names = ", ".join(sorted(keys))
-    print(f"Gemini keys exported to the job: {len(keys)}" + (f" ({names})" if keys else ""))
+    total = sum(len(split_keys(v)) for v in keys.values())
+    print(f"Gemini keys exported to the job: {len(keys)}" + (f" ({names})" if keys else "")
+          + (f"; {total} key(s) in all" if total != len(keys) else ""))
     if not keys:
         print("::warning::no GEMINI_API_KEY* secret found -- the AI steps will have no key")
     return 0
