@@ -4400,7 +4400,7 @@ def render_expert_view_expander(market, filtered_rows, settings, results=None):
                 # Sentiment FIRST: Expert Take's prompt now reads this quarter's
                 # fundamentals from fundamentals.json (section 4), so running it
                 # second hands it the facts this click just refreshed -- the
-                # same order as the nightly jobs (9 PM Sentiment, 2 AM Expert).
+                # same order as the nightly jobs (Sentiment Tue + Fri, Expert Take Wed + Sat, both 9 PM).
                 sent_ok = True
                 try:
                     analyze_single_ticker_sentiment(ticker, row, api_key, is_retry=True,
@@ -6719,7 +6719,7 @@ with tab_news, _Contained("The News tab"):
         st.caption(
             "Major announcements, developments, and stock moves for your watchlist tickers in the "
             "last 7 days, summarized via Gemini (Google Search grounding). Runs twice a week, "
-            "Sunday and Wednesday at 4:00 PM ET, via GitHub Actions and is also sent to Discord — "
+            "Sunday and Wednesday at 6:00 PM ET, via GitHub Actions and is also sent to Discord — "
             "this tab just shows the same result."
         )
         news_data = load_news_summary()

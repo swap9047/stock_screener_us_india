@@ -54,11 +54,11 @@ check("GH_DISPATCH_TOKEN" in WORKER and "never the data repo" in WORKER, "W0: it
 # --- the independent model ------------------------------------------------------------------
 RETRIES = 8
 GATED = {                                   # slot (hour, minute) ET, and the slot's weekdays (Monday = 0)
-    "news-summary.yml": ([(16, 0)], {6, 2}),
+    "news-summary.yml": ([(18, 0)], {6, 2}),
     "market-read.yml": ([(6, 30), (17, 30)], {0, 1, 2, 3, 4}),
     "market-library.yml": ([(7, 0), (17, 0)], None),
     "quarterly-results.yml": ([(4, 0)], None),
-    "expert-views.yml": ([(2, 0)], None),
+    "expert-views.yml": ([(21, 0)], None),
     "fundamentals.yml": ([(21, 0)], None),
     "daily-alerts.yml": ([(21, 0)], None),
     "weekly-wrapup.yml": ([(21, 0)], {6}),
@@ -104,10 +104,9 @@ def model(start, end):
                     if days is not None and slot.weekday() not in days:
                         continue
                     if slot.astimezone(UTC).astimezone(ET).hour != h:
-                        # The spring-forward Sunday has no 02:00 in New York: the slot does not exist that night, and
-                        # the Worker (which looks for the wall-clock hour) sends nothing. That is Expert Take's 2 AM
-                        # slot on a top-up night (its full runs are Wednesday and Saturday), so one Sunday a year
-                        # skips a top-up and Monday's slot works as usual.
+                        # A wall-clock time that does not exist (02:00-02:59 on the spring-forward Sunday): the Worker looks
+                        # for the wall-clock hour and sends nothing, so the model has no such slot either. No slot sits in
+                        # that hour today (Expert Take's 2 AM slot, 2026-11-26, was the one that did, for a few hours).
                         continue
                     for k in range(RETRIES + 1):
                         tick = slot.astimezone(UTC) + timedelta(hours=k)
@@ -176,43 +175,43 @@ else:
     # Winter (EST) and summer (EDT) wall times
     check(due(at(2026, 11, 2, 6, 30, ET)) == {"data-refresh.yml", "market-read.yml+scheduled"},
           "W2: Monday 6:30 ET (winter): data-refresh and the morning market read")
-    check(due(at(2026, 11, 2, 6, 0, ET)) == {"data-refresh.yml", "market-breadth.yml",
-                                             "quarterly-results.yml+scheduled", "expert-views.yml+scheduled"},
-          "W2: Monday 6:00 ET: data-refresh, breadth, and the retries of the 4:00 results job (2nd) and 2:00 Expert Take (4th); no news digest (Sunday + Wednesday 4 PM only)")
-    check(due(at(2026, 11, 2, 21, 0, ET)) == {"market-library.yml+scheduled", "fundamentals.yml+scheduled", "daily-alerts.yml+scheduled"},
-          "W2: Monday 9 PM ET (inside the quiet gap): the two 9 PM jobs, and the 4th retry of the 5 PM library")
+    check(due(at(2026, 11, 2, 6, 0, ET)) == {"data-refresh.yml", "market-breadth.yml", "quarterly-results.yml+scheduled"},
+          "W2: Monday 6:00 ET: data-refresh, breadth, and the 2nd retry of the 4:00 results job; no news digest, and Sunday's 9 PM jobs are past their 8 retries")
+    check(due(at(2026, 11, 2, 21, 0, ET)) == {"market-library.yml+scheduled", "fundamentals.yml+scheduled", "daily-alerts.yml+scheduled",
+                                              "expert-views.yml+scheduled"},
+          "W2: Monday 9 PM ET (inside the quiet gap): the three 9 PM jobs, and the 4th retry of the 5 PM library")
     check(due(at(2026, 11, 1, 21, 0, ET)) == {"market-library.yml+scheduled", "fundamentals.yml+scheduled", "daily-alerts.yml+scheduled",
-                                              "weekly-wrapup.yml+scheduled", "news-summary.yml+scheduled"},
-          "W2: Sunday 9 PM ET: the wrap-up joins them, and the news digest's 5th retry (its slot is Sunday 4 PM)")
-    check(due(at(2026, 11, 1, 16, 0, ET)) == {"news-summary.yml+scheduled"},
-          "W2: Sunday 4 PM ET: the news digest's slot (Sunday + Wednesday only)")
-    check(due(at(2026, 11, 4, 16, 0, ET)) == {"data-refresh.yml", "market-breadth.yml", "news-summary.yml+scheduled"},
-          "W2: Wednesday 4 PM ET: the news digest's slot, with the last data-refresh / breadth ticks of the day's active period")
-    check("news-summary.yml+scheduled" not in due(at(2026, 11, 5, 16, 0, ET)) and "news-summary.yml+scheduled" not in due(at(2026, 11, 3, 16, 0, ET)),
-          "W2: Tuesday and Thursday 4 PM ET: no news digest")
-    check("news-summary.yml+scheduled" in due(at(2026, 11, 5, 0, 0, ET)) and "news-summary.yml+scheduled" not in due(at(2026, 11, 5, 0, 30, ET)),
-          "W2: Wednesday's retries run to midnight (the 8th at 00:00 Thursday) and no further")
+                                              "expert-views.yml+scheduled", "weekly-wrapup.yml+scheduled", "news-summary.yml+scheduled"},
+          "W2: Sunday 9 PM ET: the wrap-up joins them, and the news digest's 3rd retry (its slot is Sunday 6 PM)")
+    check(due(at(2026, 11, 1, 18, 0, ET)) == {"news-summary.yml+scheduled", "market-library.yml+scheduled"},
+          "W2: Sunday 6 PM ET: the news digest's slot (Sunday + Wednesday only), and the 1st retry of the 5 PM library")
+    check(due(at(2026, 11, 4, 18, 0, ET)) == {"news-summary.yml+scheduled", "market-library.yml+scheduled"},
+          "W2: Wednesday 6 PM ET: the news digest's slot (no data-refresh: the evening gap starts at 17:30)")
+    check("news-summary.yml+scheduled" not in due(at(2026, 11, 5, 18, 0, ET)) and "news-summary.yml+scheduled" not in due(at(2026, 11, 3, 18, 0, ET)),
+          "W2: Tuesday and Thursday 6 PM ET: no news digest")
+    check("news-summary.yml+scheduled" in due(at(2026, 11, 5, 2, 0, ET)) and "news-summary.yml+scheduled" not in due(at(2026, 11, 5, 3, 0, ET)),
+          "W2: Wednesday's news retries run to 2 AM Thursday (the 8th) and no further")
     check(due(at(2026, 11, 2, 2, 0, ET)) == {"data-refresh.yml", "market-breadth.yml", "expert-views.yml+scheduled",
-                                             "fundamentals.yml+scheduled", "daily-alerts.yml+scheduled", "weekly-wrapup.yml+scheduled"},
-          "W2: Monday 2 AM ET: Expert Take's slot, plus Sunday's 9 PM jobs (5th retry); the 5 PM library's last retry was at 1 AM")
+                                             "fundamentals.yml+scheduled", "daily-alerts.yml+scheduled", "weekly-wrapup.yml+scheduled",
+                                             "news-summary.yml+scheduled"},
+          "W2: Monday 2 AM ET: Sunday's 9 PM jobs (5th retry) and the news digest's last (8th) retry; the 5 PM library's last was at 1 AM")
     check(due(at(2026, 11, 2, 1, 0, ET)) == {"data-refresh.yml", "market-breadth.yml", "market-library.yml+scheduled",
-                                             "fundamentals.yml+scheduled", "daily-alerts.yml+scheduled", "weekly-wrapup.yml+scheduled"},
-          "W2: Monday 1 AM ET: Sunday's 9 PM jobs (4th retry) and the 5 PM library (8th, the last); Expert Take is not yet due")
-    check("expert-views.yml+scheduled" not in due(at(2026, 11, 2, 1, 0, ET)),
-          "W2: Monday 1 AM ET: Expert Take's slot has moved to 2 AM, so nothing dispatches it at 1")
-    check("expert-views.yml+scheduled" not in due(at(2027, 3, 14, 7, 0, UTC)) and "expert-views.yml+scheduled" not in due(at(2027, 3, 14, 6, 0, UTC)),
-          "W2: the spring-forward Sunday has no 02:00 ET, so no Expert Take dispatch that night (a top-up night; Monday works as usual)")
+                                             "fundamentals.yml+scheduled", "daily-alerts.yml+scheduled", "weekly-wrapup.yml+scheduled",
+                                             "expert-views.yml+scheduled", "news-summary.yml+scheduled"},
+          "W2: Monday 1 AM ET: Sunday's 9 PM jobs (4th retry), the 5 PM library (8th, the last) and the news digest (7th)")
+    check("expert-views.yml+scheduled" in due(at(2027, 3, 15, 1, 0, UTC)) and "expert-views.yml+scheduled" in due(at(2027, 3, 14, 2, 0, UTC)),
+          "W2: Expert Take's 21:00 slot exists on every night, the clock-change weekends included (the 02:00 slot it had for a few hours did not on 14 March)")
     check(due(at(2026, 11, 3, 17, 30, ET)) == {"market-read.yml+scheduled"},
           "W2: Tuesday 5:30 PM ET: only the evening read (data-refresh is quiet from 17:30)")
     check(due(at(2026, 11, 3, 17, 0, ET)) == {"data-refresh.yml", "market-breadth.yml", "market-library.yml+scheduled"},
           "W2: Tuesday 5:00 PM ET: the last data-refresh and breadth tick, and the library")
     check(due(at(2026, 11, 7, 6, 30, ET)) == set(), "W2: Saturday 6:30 ET: nothing (no weekday read, no data-refresh)")
-    check(due(at(2026, 11, 7, 9, 0, ET)) == {"market-library.yml+scheduled", "quarterly-results.yml+scheduled",
-                                             "expert-views.yml+scheduled"},
-          "W2: Saturday 9:00 ET: only retries of the daily jobs (no data-refresh, no weekday read, no news digest)")
+    check(due(at(2026, 11, 7, 9, 0, ET)) == {"market-library.yml+scheduled", "quarterly-results.yml+scheduled"},
+          "W2: Saturday 9:00 ET: only retries of the morning jobs (no data-refresh, no weekday read, no news digest; Friday's 9 PM jobs are past their retries)")
     check(due(at(2026, 6, 15, 6, 30, ET)) == {"data-refresh.yml", "market-read.yml+scheduled"},
           "W2: Monday 6:30 ET in summer (EDT, 10:30 UTC): the same local time")
-    check(due(at(2026, 6, 15, 21, 0, ET)) == {"market-library.yml+scheduled", "fundamentals.yml+scheduled", "daily-alerts.yml+scheduled"},
+    check(due(at(2026, 6, 15, 21, 0, ET)) == {"market-library.yml+scheduled", "fundamentals.yml+scheduled", "daily-alerts.yml+scheduled",
+                                              "expert-views.yml+scheduled"},
           "W2: Monday 9 PM ET in summer: the same")
     check("weekly-wrapup.yml+scheduled" in due(at(2026, 11, 2, 2, 0, ET)),
           "W2: Monday 2 AM ET: still Sunday's wrap-up slot (a retry; the gate's days judge the slot)")

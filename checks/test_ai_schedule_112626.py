@@ -1,12 +1,12 @@
 """Sentiment twice a week, Expert Take twice a week (owner, 2026-11-26).
 
-Sentiment's FULL run is Tuesday and Friday 21:00 ET; Expert Take's is Wednesday and Saturday 02:00 ET (each five
-hours after a Sentiment full run). The Worker still dispatches both slots every night; on any other night the job is a
+Sentiment's FULL run is Tuesday and Friday 21:00 ET; Expert Take's is Wednesday and Saturday, also at 21:00 ET (the
+evening after a Sentiment full run). The Worker still dispatches both slots every night; on any other night the job is a
 TOP-UP that analyses only the stocks the last full run missed, so a stock Google's search model failed on is retried
 the next night as before. A view may therefore be ~4 days old when the next full run replaces it: the stale limits
 are 5 days (they were 4).
 
-S1  the last full slot: Sentiment (Tue/Fri 21:00 ET) and Expert Take (Wed/Sat 02:00 ET), every weekday, both sides
+S1  the last full slot: Sentiment (Tue/Fri 21:00 ET) and Expert Take (Wed/Sat 21:00 ET), every weekday, both sides
     of a clock change -- expectations built from the ET calendar by hand, not by the code's own helper
 S2  the longest gap between two full runs stays inside the stale limit with a margin for the run itself
 S3  Sentiment's run on a full night works the whole list, on a top-up night only what the last full run missed
@@ -82,7 +82,7 @@ retry = utc(2026, 11, 25, 6, 30)   # Wed 01:30 EST: the Tue 21:00 slot's retry
 check(rf.last_full_slot_start_utc(rf.slot_start_utc(retry)) == et_slot(2026, 11, 24, 21),
       "S1: a 01:30 retry of Tuesday's slot is still Tuesday's full run")
 
-EXP = {  # slot date (01:00 ET) -> last full (Wed/Sat) date
+EXP = {  # slot date (21:00 ET) -> last full (Wed/Sat) date
     (2026, 11, 23): (2026, 11, 21),   # Mon -> Sat
     (2026, 11, 24): (2026, 11, 21),   # Tue
     (2026, 11, 25): (2026, 11, 25),   # Wed is full
@@ -90,15 +90,15 @@ EXP = {  # slot date (01:00 ET) -> last full (Wed/Sat) date
     (2026, 11, 27): (2026, 11, 25),   # Fri
     (2026, 11, 28): (2026, 11, 28),   # Sat is full
     (2026, 11, 29): (2026, 11, 28),   # Sun
-    (2026, 11, 1): (2026, 10, 31),    # Sun 1 Nov 02:00 is EST (clocks went back at 02:00 EDT) -> Sat 31 Oct
+    (2026, 11, 1): (2026, 10, 31),    # Sun 1 Nov 21:00 EST (the clocks went back that morning) -> Sat 31 Oct 21:00 EDT
     (2026, 11, 4): (2026, 11, 4),     # Wed 4 Nov (EST)
 }
 for day, last in EXP.items():
-    slot = rev.slot_start_utc(et_slot(*day, 2) + timedelta(minutes=30))
+    slot = rev.slot_start_utc(et_slot(*day, 21) + timedelta(minutes=30))
     got = rf.last_full_slot_start_utc(slot, rev.FULL_RUN_WEEKDAYS, rev.SLOT_HOUR_ET)
-    want = et_slot(*last, 2)
-    check(slot == et_slot(*day, 2) and got == want,
-          f"S1: Expert Take, slot of {day} -> last full slot {last} 02:00 ET ({got:%Y-%m-%d %H:%M} UTC)")
+    want = et_slot(*last, 21)
+    check(slot == et_slot(*day, 21) and got == want,
+          f"S1: Expert Take, slot of {day} -> last full slot {last} 21:00 ET ({got:%Y-%m-%d %H:%M} UTC)")
 check(set(rf.FULL_RUN_WEEKDAYS) == {1, 4} and set(rev.FULL_RUN_WEEKDAYS) == {2, 5},
       "S1: Sentiment's full weekdays are Tue + Fri, Expert Take's Wed + Sat")
 
@@ -209,7 +209,7 @@ captured(rf.main)
 check(sorted(calls) == ALL, f"S3: a dispatch by hand redoes everything on a top-up night ({sorted(calls)})")
 
 # --- S4 -----------------------------------------------------------------------------------------------
-EXP_FULL = et_slot(2026, 11, 25, 2)          # Wed 25 Nov 02:00 EST
+EXP_FULL = et_slot(2026, 11, 25, 21)         # Wed 25 Nov 21:00 EST
 exp_good = {"verdict": "HOLD", "headline": "h", "model_used": "m"}
 
 
@@ -239,18 +239,18 @@ def run_expert(slot_date, store):
     rev.alerts_text_for = lambda a, t: ""
     rev.generate_expert_view = lambda client, row, **kw: calls.append(row["ticker"]) or {
         **exp_good, "as_of": stamp(datetime.now(timezone.utc))}
-    rev.slot_start_utc = lambda now=None: et_slot(*slot_date, 2)
+    rev.slot_start_utc = lambda now=None: et_slot(*slot_date, 21)
     _, text = captured(rev.main)
     return sorted(calls), text
 
 
-calls, text = run_expert((2026, 11, 27), exp_store())                # Friday 01:00: a top-up night
+calls, text = run_expert((2026, 11, 27), exp_store())                # Friday 21:00: a top-up night
 check(calls == ["A1", "B1"] and "Top-up night" in text and "3 ticker(s) already done since the last full run" in text,
       f"S4: Expert Take on a Friday retries only what Wednesday's full run missed ({calls})")
 calls, text = run_expert((2026, 11, 28), exp_store())                # Saturday: a full night
 check(calls == ALL and "Top-up" not in text, f"S4: Expert Take on a Saturday works every stock ({calls})")
 sat = exp_store()
-sat_slot = et_slot(2026, 11, 28, 2)
+sat_slot = et_slot(2026, 11, 28, 21)
 for t in ("A0", "C0"):
     sat[t] = {**exp_good, "as_of": stamp(sat_slot + timedelta(hours=1))}
 calls, text = run_expert((2026, 11, 28), sat)
@@ -283,10 +283,10 @@ gate = lambda wf: next(s for s in wf["jobs"]["gate"]["steps"] if "slot-gate" in 
 check(gate(fwf).get("slots") == str(rf.SLOT_HOUR_ET) and "days" not in gate(fwf),
       "S6: fundamentals.yml's gate is still the nightly 21:00 slot (the code decides full run or top-up)")
 check(gate(ewf).get("slots") == str(rev.SLOT_HOUR_ET) and "days" not in gate(ewf),
-      "S6: expert-views.yml's gate is the nightly 02:00 slot")
+      "S6: expert-views.yml's gate is the nightly 21:00 slot")
 worker = (REPO / "cloudflare/worker.js").read_text()
 check(re.search(r'workflow: "fundamentals.yml", slots: \[\[21, 0\]\] \}', worker) is not None
-      and re.search(r'workflow: "expert-views.yml", slots: \[\[2, 0\]\] \}', worker) is not None,
+      and re.search(r'workflow: "expert-views.yml", slots: \[\[21, 0\]\] \}', worker) is not None,
       "S6: the Worker still dispatches both slots every night (no Cloudflare change needed)")
 
 print("FAILURES:", fails)

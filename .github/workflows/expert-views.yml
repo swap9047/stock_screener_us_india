@@ -10,7 +10,7 @@ run-name: ${{ (github.event.inputs.markets || github.event.inputs.limit || githu
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
-# Does its work once per 2:00 AM ET slot (1:00 AM until 2026-11-26; full runs Wed + Sat, top-ups the other nights). First refreshes data_snapshot.json, then
+# Does its work once per 9:00 PM ET slot (1:00 AM until 2026-11-26; full runs Wed + Sat, top-ups the other nights). First refreshes data_snapshot.json, then
 # generates AI Expert Takes for all tickers, so the views always work from same-day
 # price data. The slot gate keeps that to one run a day.
 on:
@@ -62,7 +62,7 @@ jobs:
       - id: slot
         uses: ./.github/actions/slot-gate
         with:
-          slots: "2"
+          slots: "21"
           grace-hours: "22"
           work-job: build
           workflow-file: expert-views.yml

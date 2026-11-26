@@ -107,6 +107,14 @@ gap = {"as_of": "2026-11-03 15:05 UTC", "markets": {"x": {"ACME": {"2026-10-20":
 check(ns.session_moves("ACME", gap, "2026-11-03", now)[0] == {},
       "N3: a previous close more than MOVE_MAX_GAP_DAYS back is a data hole, not a move")
 check(ns.session_moves("NOPE", PERF, "2026-11-03", now) == ({}, []), "N3: no stored closes -> nothing")
+# The digest slot is 18:00 ET (4 PM until the owner's second change on 2026-11-26): Wednesday's US session closed at 16:00,
+# settled at 16:30 ET (21:30Z) and the hourly perf run at 17:00 ET stored its close (22:05Z), so a run at 18:00 ET
+# (23:00Z) lists that day's move; at 16:00 ET (21:00Z) the session had not settled and its move would wait for the next digest.
+WED = {"as_of": "2026-11-04 22:05 UTC", "markets": {"us_invested": {"ACME": {"2026-11-03": 100.0, "2026-11-04": 108.0}}}}
+check(ns.session_moves("ACME", WED, "2026-11-04", datetime(2026, 11, 4, 23, 0, tzinfo=UTC))[0] == {"2026-11-04": 8.0},
+      "N3: a 6 PM ET digest lists the same day's US session (settled 16:30, close stored 17:05)")
+check(ns.session_moves("ACME", WED, "2026-11-04", datetime(2026, 11, 4, 21, 0, tzinfo=UTC)) == ({}, ["2026-11-03"]),
+      "N3: ...which a 4 PM ET run could not (the session had not settled: its move would wait for the next digest)")
 line = ns.moves_line({"ACME": {"2026-11-02": 7.2}, "ZORP": {"2026-11-02": -5.2},
                       "ZED.NS": {"2026-11-02": -6.0, "2026-11-03": 12.8}}, NAMES)
 check(line == "**Big moves (5%+)** · 2 Nov: ▲ Acme (ACME) +7.2% · ▼ Zed Industries (ZED) -6.0% · "
@@ -219,9 +227,9 @@ ns.load_news_summary = lambda: PREV
 ns._load_dashboard_perf = lambda: PERF
 try:
     res = ns.build_news_summary({"us_invested": ["ACME", "ZORP", "CORE", "ZED.NS"]}, "k",
-                                now=datetime(2026, 11, 3, 17, 0, tzinfo=ET))
+                                now=datetime(2026, 11, 3, 19, 0, tzinfo=ET))
     full = ns.build_news_summary({"us_invested": ["ACME", "ZORP", "CORE", "ZED.NS"]}, "k",
-                                 now=datetime(2026, 11, 3, 17, 0, tzinfo=ET), reuse_failed_run=False)
+                                 now=datetime(2026, 11, 3, 19, 0, tzinfo=ET), reuse_failed_run=False)
 finally:
     (ns.fetch_single_raw_news, llm_util.run_model_ladder, llm_util.make_client, ns.time.sleep,
      sd.load_settings, sd.load_data_snapshot, ns.load_news_summary, ns._load_dashboard_perf) = _saved

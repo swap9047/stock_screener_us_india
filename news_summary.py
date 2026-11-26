@@ -31,7 +31,7 @@ run once per unique (ticker, window date), NEWS_CONCURRENT_TICKERS at a time,
 so a ticker in three watchlists costs one search, not three, while still
 appearing in all three digests -- only Stage 3 is genuinely per-market.
 
-News is generated twice a week (Sunday and Wednesday, 4:00 PM ET) via GitHub Actions (news-summary.yml).
+News is generated twice a week (Sunday and Wednesday, 6:00 PM ET) via GitHub Actions (news-summary.yml).
 The watchlist scope (which markets to include) is controlled by the
 ``news_watchlist_scope`` key in settings.json (empty list = all markets).
 
@@ -132,19 +132,19 @@ COLLATE_FALLBACK = "fallback"
 
 NO_NEWS_SENTENCE = "No major news for this watchlist's tickers in the last 7 days."
 
-# The digest's slot: 4 PM ET (6 AM until 2026-11-26, 8 PM until 2026-10-08), the news-summary.yml gate's
+# The digest's slot: 6 PM ET (6 AM until 2026-11-26, 8 PM until 2026-10-08), the news-summary.yml gate's
 # `slots`. A digest is dated and windowed by this slot, not by when GitHub started
 # the run -- it started the 8 PM job anywhere from 8:17 PM to 2:53 AM ET
 # (2026-09-27..10-04), so dating
 # by the run's own clock gave two digests dated 2026-09-29 and none for 09-28,
 # and moved the search window with it. checks/test_news_digest_100426.py ties
 # this to the workflow.
-# 4 PM ET on Sunday and Wednesday (owner, 2026-11-26: "twice a week, before Sunday evening and Wednesday
-# evening"; it was 6 AM ET every day). The gate (news-summary.yml: slots "16", days SUN,WED) and the Worker
-# (GATED_JOBS) keep the weekdays; this hour dates the slot and anchors each ticker's window. The US session is
-# still closing at 16:00, so its last session's big move reaches the NEXT digest (session_moves only counts a
-# settled session, each once); NSE closed ten hours earlier.
-NEWS_SLOT_HOUR_ET = 16
+# 6 PM ET on Sunday and Wednesday (owner, 2026-11-26: "twice a week", then "6 pm et"; it was 6 AM ET every
+# day). The gate (news-summary.yml: slots "18", days SUN,WED) and the Worker (GATED_JOBS) keep the weekdays; this
+# hour dates the slot and anchors each ticker's window. The US session closed at 16:00 and the hourly perf run
+# at 17:00 ET stored its close (session_moves only counts a settled session whose close was stored after it
+# settled), so that day's big moves are in the same digest; NSE closed twelve hours earlier.
+NEWS_SLOT_HOUR_ET = 18
 
 # How far back a digest looks (owner, 2026-11-26: "always the last 7 days"). It was one day while the digest
 # ran every morning. Consecutive digests now overlap by 3-4 days; the previous digest's note per ticker
@@ -267,7 +267,7 @@ def news_slot_date(now=None):
 def slot_window_date(ticker, slot_date):
     """The exchange-local date ending a ticker's search window, taken AT the
     slot (NEWS_SLOT_HOUR_ET) -- so a late start no longer moves it. For a US ticker that is
-    the slot date; for an Indian one, the IST date at that moment: 4 PM ET is 1:30-2:30 AM IST
+    the slot date; for an Indian one, the IST date at that moment: 6 PM ET is 3:30-4:30 AM IST
     the NEXT calendar day, which is what the clock there says (it was the same date at the old
     6 AM ET slot, 3:30-4:30 PM IST)."""
     slot_dt = datetime(slot_date.year, slot_date.month, slot_date.day, NEWS_SLOT_HOUR_ET, tzinfo=_ET)

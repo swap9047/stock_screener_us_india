@@ -12,7 +12,7 @@ env:
 
 # Does its work once per slot, building a Gemini grounded-search news digest (major
 # announcements/developments/stock moves in the last 7 days) for each watchlist and
-# sending it to Discord. Sunday and Wednesday at 4 PM ET only (owner, 2026-11-26: before
+# sending it to Discord. Sunday and Wednesday at 6 PM ET only (owner, 2026-11-26: before
 # Sunday evening and Wednesday evening; it was 6 AM ET every day, and 8 PM ET before
 # 2026-10-08): the gate's `days` is the SLOT's weekday, the Worker dispatches only those
 # slots and their hourly retries. 23 h grace: a late start still does the slot.
@@ -60,7 +60,7 @@ jobs:
       - id: slot
         uses: ./.github/actions/slot-gate
         with:
-          slots: "16"
+          slots: "18"
           days: "SUN,WED"
           grace-hours: "23"
           work-job: build

@@ -129,22 +129,22 @@ if is_fund:
 SRC = (REPO / "stock_data.py").read_text()
 check('"quote_type": quote_type' in SRC, "D5: the snapshot stores Yahoo's quoteType")
 
-# --- D6 dated by the 4 PM ET slot (6 AM until 2026-11-26) ----------------------------------
+# --- D6 dated by the 6 PM ET slot (6 AM until 2026-11-26) ----------------------------------
 slot = fn("news_slot_date")
 if slot:
-    for now, want in ((datetime(2026, 10, 3, 16, 25, tzinfo=ET), date(2026, 10, 3)),
+    for now, want in ((datetime(2026, 10, 3, 18, 25, tzinfo=ET), date(2026, 10, 3)),
                       (datetime(2026, 10, 3, 22, 2, tzinfo=ET), date(2026, 10, 3)),
                       (datetime(2026, 10, 4, 4, 53, tzinfo=ET), date(2026, 10, 3)),
-                      (datetime(2026, 10, 3, 15, 59, tzinfo=ET), date(2026, 10, 2)),
-                      (datetime(2026, 10, 3, 16, 0, tzinfo=ET), date(2026, 10, 3))):
+                      (datetime(2026, 10, 3, 17, 59, tzinfo=ET), date(2026, 10, 2)),
+                      (datetime(2026, 10, 3, 18, 0, tzinfo=ET), date(2026, 10, 3))):
         check(slot(now) == want, f"D6: a run at {now:%a %H:%M} ET belongs to the {want} slot (got {slot(now)})")
 win = fn("slot_window_date")
 if win:
     check(win("ACME", date(2026, 10, 3)) == "2026-10-03", "D6: a US ticker's window ends on the slot date")
     check(win("ZED.NS", date(2026, 10, 3)) == "2026-10-04",
-          "D6: an Indian ticker's ends on the IST date at 4 PM ET: 1:30 AM IST, already the next day")
+          "D6: an Indian ticker's ends on the IST date at 6 PM ET: 3:30 AM IST, already the next day")
     check(win("ZED.NS", date(2026, 12, 3)) == "2026-12-04",
-          "D6: ...in winter too (4 PM EST is 2:30 AM IST)")
+          "D6: ...in winter too (6 PM EST is 4:30 AM IST)")
 WF = (REPO / ".github/workflows/news-summary.yml").read_text()
 check(f'slots: "{ns.NEWS_SLOT_HOUR_ET}"' in WF, "D6: NEWS_SLOT_HOUR_ET matches the workflow's slot")
 

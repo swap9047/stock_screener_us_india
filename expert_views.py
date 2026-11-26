@@ -442,7 +442,7 @@ def is_pending_view(view):
     return bool(view) and not _is_valid_view(view)
 
 
-# 5, not 4, since 2026-11-26: full runs are Wednesday and Saturday 02:00 ET (refresh_expert_views.FULL_RUN_WEEKDAYS),
+# 5, not 4, since 2026-11-26: full runs are Wednesday and Saturday 21:00 ET (refresh_expert_views.FULL_RUN_WEEKDAYS),
 # so a write-up is up to ~4 days old when the next full run replaces it.
 EXPERT_STALE_DAYS = 5
 

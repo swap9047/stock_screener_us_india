@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Scheduled news digest checker. Meant to run twice a week (GitHub Actions,
-Sunday and Wednesday 4:00 PM ET; 6:00 AM ET every day until 2026-11-26) -- independent of the
+Sunday and Wednesday 6:00 PM ET; 6:00 AM ET every day until 2026-11-26) -- independent of the
 alert checker.
 
 Uses Gemini (Google Search grounding) to build a single collated summary

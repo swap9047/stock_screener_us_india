@@ -1,7 +1,7 @@
 """
 Background script to automatically generate AI Expert Takes for all
-watchlisted tickers. Run by expert-views.yml at 2:00 AM ET (06:00 UTC
-EDT / 07:00 UTC EST; 1:00 AM until 2026-11-26), as the step AFTER that workflow's own refresh_data.py --
+watchlisted tickers. Run by expert-views.yml at 9:00 PM ET (01:00 UTC
+EDT / 02:00 UTC EST; 1:00 AM until 2026-11-26), as the step AFTER that workflow's own refresh_data.py --
 so data_snapshot.json is same-day by construction, not by timing luck.
 
 News is fetched per ticker by expert_views.fetch_gemma_expert_news (a grounded
@@ -47,16 +47,16 @@ MAX_CONCURRENT_TICKERS = 3
 TICKER_PAUSE_SECONDS = 5
 RETRY_PAUSE_SECONDS = 30
 
-# The gate's slot for this workflow (expert-views.yml: slots "2"), in ET.
+# The gate's slot for this workflow (expert-views.yml: slots "21"), in ET.
 # checks/test_expert_views_resume.py pins the two together.
-SLOT_HOUR_ET = 2
+SLOT_HOUR_ET = 21
 ET = ZoneInfo("America/New_York")
 
-# Full runs on these slot weekdays only (the ET date of the 02:00 slot, Mon=0): Wednesday and Saturday
-# (owner, 2026-11-26: "make it 2 am"), each five hours after Sentiment's Tuesday / Friday 21:00 full run, so the write-up
-# gets fresh quarter facts. Any other night is a TOP-UP: it skips what was written since the last full slot
+# Full runs on these slot weekdays only (the ET date of the 21:00 slot, Mon=0): Wednesday and Saturday
+# (owner, 2026-11-26: "make expert take 9 pm ET"), the evening after Sentiment's Tuesday / Friday 21:00 full run, so the
+# write-up gets fresh quarter facts. Any other night is a TOP-UP: it skips what was written since the last full slot
 # and analyses only the stocks that run missed. Write-ups are 3 days old at the longest before a full run and
-# 4 before the other (Sat 02:00 -> Wed 02:00), hence EXPERT_STALE_DAYS 5. The VERDICT is decided live from
+# 4 before the other (Sat 21:00 -> Wed 21:00), hence EXPERT_STALE_DAYS 5. The VERDICT is decided live from
 # the columns and does not wait for this job; only the write-up text and the news-risk badge do.
 FULL_RUN_WEEKDAYS = (2, 5)
 
