@@ -103,6 +103,35 @@ class MarketDB:
             cols = [d[0] for d in cur.description]
             return [dict(zip(cols, r)) for r in cur.fetchall()]
 
+    def add_key_usage(self, rows):
+        """Add Gemini call counts to kg_key_usage: rows of (day, key_id, model, calls). INCREMENTS the stored count, since
+        the transcription app and every job add to the same row. Rows go in key order so two writers never wait on each
+        other in a cycle. Returns how many rows were added."""
+        totals = {}
+        for day, key_id, model, calls in rows:
+            try:
+                calls = int(calls)
+            except (TypeError, ValueError):
+                continue
+            if calls > 0:
+                entry = (str(day), str(key_id), str(model))
+                totals[entry] = totals.get(entry, 0) + calls
+        if not totals:
+            return 0
+        now = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+        batch = [(d, k, m, n, now) for (d, k, m), n in sorted(totals.items())]
+        with self.conn.transaction():
+            with self.conn.cursor() as cur:
+                cur.executemany(
+                    "INSERT INTO kg_key_usage (day, key_id, model, calls, updated_at) VALUES (%s, %s, %s, %s, %s) "
+                    "ON CONFLICT (day, key_id, model) DO UPDATE SET calls = kg_key_usage.calls + EXCLUDED.calls, "
+                    "updated_at = EXCLUDED.updated_at", batch)
+        return len(batch)
+
+    def key_usage(self, day):
+        """[{key_id, model, calls}] for one quota day, by key then model."""
+        return self._all("SELECT key_id, model, calls FROM kg_key_usage WHERE day = %s ORDER BY key_id, model", (day,))
+
     def known_tickers(self, tickers):
         rows = self._all("SELECT ticker FROM kg_market WHERE ticker = ANY(%s) "
                          "UNION SELECT ticker FROM kg_companies WHERE ticker = ANY(%s)", (tickers, tickers))

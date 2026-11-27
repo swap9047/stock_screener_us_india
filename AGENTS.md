@@ -46,6 +46,19 @@ for a model (Google's `...PerDay...` quota id) is retired for that model for the
 run, and once every key is out the ladder steps to its fallback model at once. Before
 2026-10-23 a daily-exhausted key rejoined every 120 s and failed again.
 
+**Calls per key, one table for both apps and every job** (owner, 2026-11-26; `kg_key_usage` in the research library's database,
+created by the transcription app's store). `RotatingGeminiClient._pick` counts every request under Google's quota day (Pacific,
+`llm_util.quota_day`), the key's fingerprint (`key_fingerprint`: 8 hex digits of its SHA-256; no key is ever stored or shown) and the
+model; `flush_key_usage` adds the counts to the shared table, which also holds the transcription app's: by the database when
+`MARKET_DB_URL` is set (the four AI workflows install `psycopg` and pass it to the AI step; `market_lookup.MarketDB.add_key_usage`
+INCREMENTS the stored count, as `market_writer`, which `kg.MARKET_TABLES` lets write it), else POSTed to the Vercel function
+(`api/market.py`: `POST /api/market {"key_usage": [[day, key_id, model, calls], ...]}` and `GET /api/market?usage=today`, both
+token-checked and validated row by row, on the existing route so no third function is bundled) when `MARKET_API_URL` and
+`MARKET_API_TOKEN` are set (the dashboard: **add both to the screener app's Streamlit secrets**, the values the transcription app
+uses), else dropped. A job flushes at exit (`atexit`, registered by its first count), the dashboard at most every 5 minutes. The log line
+has a count only. The dashboard's **Settings · Models → 🔑 Calls per key today** shows the table (`llm_util.key_usage_table`, the
+same as the transcription app's). `checks/test_key_usage_112626.py` and P9 of `checks/test_model_settings_render.py`.
+
 **There is no test framework, but there are checks.** `python3 checks/run_all.py` runs 3106
 offline regression checks in ~1.5 min on 4 cores (no secrets, no network, no data files; the suites run in parallel,
 `CHECKS_JOBS` workers, default the CPU count, `CHECKS_JOBS=1` serial, output in sorted order), and
