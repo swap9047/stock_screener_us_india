@@ -65,6 +65,8 @@ COLLATION_BUDGET_CHOICES = [4096, 8192]
 # a thinking budget). A chain always runs in order, one try after another (see the module docstring);
 # the alternating "pairs" shape collation used to have was removed 2026-11-01 (owner).
 # Owner, 2026-11-01: 3.8-flash and 3.6-flash twice each wherever they are in a chain, 3.5-flash-lite twice.
+# Owner, 2026-11-27: 3.8-flash and Gemini 4 Hydrogen once (a failed call moves on to the next model; the transcription app
+# holds them to one try too), 3.6-flash twice.
 STEPS = {
     "N1": {"group": "News digest", "label": "News · grounded search", "kind": "search",
            "chain": [(GEMMA_26B, 3)], "budget": None},
@@ -83,9 +85,9 @@ STEPS = {
     "F3": {"group": "Sentiment", "label": "Sentiment · reasoning (both passes)", "kind": "reasoning",
            "chain": [(FLASH_LITE, 2), (GEMMA_26B, 1)], "budget": 8192},
     "R1": {"group": "Market read", "label": "Market read · the index charts' summary", "kind": "read",
-           "chain": [(FLASH_38, 2), (HYDROGEN, 2), (FLASH_36, 2)], "budget": 4096},
+           "chain": [(FLASH_38, 1), (HYDROGEN, 1), (FLASH_36, 2)], "budget": 4096},
     "R2": {"group": "Market read", "label": "Market read · invested lists and takeaways", "kind": "read",
-           "chain": [(FLASH_38, 2), (HYDROGEN, 2), (FLASH_36, 2)], "budget": 4096},
+           "chain": [(FLASH_38, 1), (HYDROGEN, 1), (FLASH_36, 2)], "budget": 4096},
 }
 
 # The settings.json keys each step's model and budget were edited under before the sidebar panel.
