@@ -70,9 +70,9 @@ for step in ("N2", "E2", "F3"):
 want = llm_util.sequential_tiers([(F37, 2), (F36, 2), (L, 2)])
 check(two(ms.tiers("N3", CLEAN)) == want and [t[0] for t in ms.tiers("N3", CLEAN)] == [F37, F37, F36, F36, L, L],
       f"S1: N3 is 3.7, 3.6 and flash-lite twice each, one after the other (owner, 2026-11-01): {ms.tiers('N3', CLEAN)}")
-want = llm_util.sequential_tiers([(F38, 2), (ms.HYDROGEN, 2), (F36, 2)])
-check(two(ms.tiers("R1", CLEAN)) == want, "S1: R1 is 3.8-flash x2, Hydrogen x2 (owner, 2026-11-15), then 3.6-flash x2 (no flash-lite)")
-check([t[0] for t in ms.tiers("R2", CLEAN)] == [F38] * 2 + [ms.HYDROGEN] * 2 + [F36] * 2, f"S1: R2 is 3.8-flash x2, Hydrogen x2, then 3.6-flash x2: {[t[0][-9:] for t in ms.tiers('R2', CLEAN)]}")
+want = llm_util.sequential_tiers([(F38, 1), (ms.HYDROGEN, 1), (F36, 2)])
+check(two(ms.tiers("R1", CLEAN)) == want, "S1: R1 is 3.8-flash x1, Hydrogen x1 (owner, 2026-11-27; x2 before), then 3.6-flash x2 (no flash-lite)")
+check([t[0] for t in ms.tiers("R2", CLEAN)] == [F38] + [ms.HYDROGEN] + [F36] * 2, f"S1: R2 is 3.8-flash x1, Hydrogen x1, then 3.6-flash x2: {[t[0][-9:] for t in ms.tiers('R2', CLEAN)]}")
 check(llm_util.RETRY_BACKOFF_SECONDS == 5 and [llm_util.retry_wait(n) for n in range(7)] == [0, 5, 10, 20, 30, 30, 30],
       "S1: the wait before a retry doubles from the base and stops at 30 s (the base is read at call time)")
 llm_util.RETRY_BACKOFF_SECONDS = 2

@@ -225,17 +225,17 @@ check([m for m, *_ in ms.tiers("R1", allskip)] == [F38, F38, H, H, F36, F36, F38
 check(ms.SKIP_MODELS_KEY not in ms.STEPS, "R6: the list's key is not a step id")
 
 # --- R7 Hydrogen ----------------------------------------------------------------------------------------
-check(ms.STEPS["R1"]["chain"] == ms.STEPS["R2"]["chain"] == [(F38, 2), (H, 2), (F36, 2)],
-      "R7: the market reads are 3.8 x2, Hydrogen x2, 3.6 x2")
-check(all(spec["chain"][i + 1] == (H, 2) for spec in ms.STEPS.values() for i, (m, _n) in enumerate(spec["chain"]) if m == F38),
-      "R7: every default chain with 3.8 Flash has Hydrogen x2 right after it")
+check(ms.STEPS["R1"]["chain"] == ms.STEPS["R2"]["chain"] == [(F38, 1), (H, 1), (F36, 2)],
+      "R7: the market reads are 3.8 x1, Hydrogen x1 (owner, 2026-11-27), 3.6 x2")
+check(all(spec["chain"][i + 1] == (H, 1) for spec in ms.STEPS.values() for i, (m, _n) in enumerate(spec["chain"]) if m == F38),
+      "R7: every default chain with 3.8 Flash has Hydrogen x1 right after it")
 repo = {m["id"]: m for m in ms.repository({})}
 check(H in repo and repo[H]["supports_thinking"] and repo[H]["label"] == "Gemini 4 Hydrogen",
       "R7: Hydrogen is in the model repository, with thinking")
 check(ms.budget("R1", {}) == 4096 and H in [t[0] for t in ms.tiers("R1", {})],
       "R7: Hydrogen runs in R1, at the step's own thinking budget (4096, one budget for every rung)")
 import market_read as mr
-check(mr.FALLBACK_MODELS[0] == H and mr.FALLBACK_ATTEMPTS == 2, "R7: the market read's built-in ladder has Hydrogen after 3.8")
+check(mr.FALLBACK_MODELS[0] == H and mr.FALLBACK_ATTEMPTS == {H: 1, F36: 2} and mr.PRIMARY_ATTEMPTS == 1, "R7: the market read's built-in ladder has Hydrogen after 3.8")
 
 print(f"FAILURES: {fails}")
 sys.exit(1 if fails else 0)

@@ -286,8 +286,8 @@ good = json.dumps({**GOOD, "headline": "India Invested holds up far better than 
 bad = json.dumps({**GOOD, "headline": "India Invested is up 99.9%."})
 cl = Client([bad, good])
 read, model = lr.generate_list_read(cl, "India Invested", facts_t, [], tiers=ms.tiers("R2", {"ai_models": {}}), budget=4096)
-check(read and model == "models/gemini-3.8-flash" and len(cl.calls) == 2 and read["takeaways"],
-      "L6: the real ladder: a reply with an invented number is refused and the next try answers")
+check(read and model == "models/gemini-4-hydrogen" and len(cl.calls) == 2 and read["takeaways"],
+      "L6: the real ladder: a reply with an invented number is refused (3.8 is tried once, 2026-11-27) and the next model answers")
 check(cl.calls[0][1].thinking_config.thinking_budget == 4096, "L6: at the step's thinking budget")
 
 # --- L7 the box -----------------------------------------------------------------------------------

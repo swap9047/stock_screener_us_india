@@ -39,12 +39,13 @@ F38, F37, F36, L, G = ms.FLASH_38, ms.FLASH_37, ms.FLASH_36, ms.FLASH_LITE, ms.G
 for step, spec in ms.STEPS.items():
     for model, attempts in spec["chain"]:
         if model in (F38, ms.HYDROGEN, F36, L):
-            check(attempts == 2, f"Q1: {step}: {ms.short(model)} is tried twice (got {attempts})")
+            want_tries = 1 if model in (F38, ms.HYDROGEN) else 2   # 3.8 and Hydrogen once since 2026-11-27
+            check(attempts == want_tries, f"Q1: {step}: {ms.short(model)} is tried {want_tries}x (got {attempts})")
 check([(ms.short(m), n) for m, n in ms.STEPS["N3"]["chain"]]
       == [("gemini-3.7-flash", 2), ("gemini-3.6-flash", 2), ("gemini-3.5-flash-lite", 2)],
       "Q1: collation is 3.7 x2, 3.6 x2, flash-lite x2")
-check(ms.STEPS["R1"]["chain"] == ms.STEPS["R2"]["chain"] == [(F38, 2), (ms.HYDROGEN, 2), (F36, 2)],
-      "Q1: the market reads are 3.8 x2, Hydrogen x2 (owner, 2026-11-15), 3.6 x2")
+check(ms.STEPS["R1"]["chain"] == ms.STEPS["R2"]["chain"] == [(F38, 1), (ms.HYDROGEN, 1), (F36, 2)],
+      "Q1: the market reads are 3.8 x1, Hydrogen x1 (owner, 2026-11-27; x2 before), 3.6 x2")
 check(all(ms.STEPS[s]["chain"] == [(G, 3)] for s in ("N1", "E1", "F1", "F2")), "Q1: Gemma's searches are untouched (3 tries)")
 check([ms.STEPS[s]["budget"] for s in ("N2", "N3", "E2", "F3", "R1", "R2")] == [8192, 8192, 8192, 8192, 4096, 4096],
       "Q1: the thinking budgets are as they were")
@@ -52,9 +53,9 @@ check(llm_util.sequential_tiers([(F38, 2), (F36, 2)]) == [(F38, 0), (F38, 2), (F
       "Q1: llm_util's own builder is the same sequence")
 import market_read
 check(llm_util.sequential_tiers([(market_read.PRIMARY_MODEL, market_read.PRIMARY_ATTEMPTS)]
-                                + [(m, market_read.FALLBACK_ATTEMPTS) for m in market_read.FALLBACK_MODELS])
-      == [(F38, 0), (F38, 2), (ms.HYDROGEN, 4), (ms.HYDROGEN, 8), (F36, 16), (F36, 30)],
-      "Q1: the market read's own default ladder (no saved chain) is 3.8 x2, Hydrogen x2, 3.6 x2")
+                                + [(m, market_read.FALLBACK_ATTEMPTS[m]) for m in market_read.FALLBACK_MODELS])
+      == [(F38, 0), (ms.HYDROGEN, 2), (F36, 4), (F36, 8)],
+      "Q1: the market read's own default ladder (no saved chain) is 3.8 x1, Hydrogen x1, 3.6 x2")
 
 # --- Q2 exponential waits, in the ladder as it runs --------------------------------------------
 check(llm_util.RETRY_BACKOFF_SECONDS == 2 and llm_util.RETRY_BACKOFF_MAX_SECONDS == 30,
